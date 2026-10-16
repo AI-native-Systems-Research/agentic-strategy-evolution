@@ -153,6 +153,7 @@ class TranscriptMeter:
         self.last_assistant_ts: float | None = None
         self.last_api_error_ts: float | None = None
         self.api_errors_since_reply = 0
+        self._truncated: set[str] = set()  # ids of replies that stopped at the output-token limit
         self._lock = threading.Lock()
         self._paths: list = []
         self._located: tuple[frozenset, float] | None = None
@@ -209,6 +210,8 @@ class TranscriptMeter:
         if kind == "assistant":
             self.last_assistant_ts = max(self.last_assistant_ts or 0.0, now)
             self.api_errors_since_reply = 0
+            if msg and msg.get("stop_reason") == "max_tokens":
+                self._truncated.add(str(msg.get("id") or d.get("uuid")))
         usage = msg.get("usage") if msg else None
         if not isinstance(usage, dict):
             return
@@ -223,6 +226,11 @@ class TranscriptMeter:
 
     def cost(self) -> float:
         return usage_cost(self.totals(), self._rates)
+
+    @property
+    def output_limit_hits(self) -> int:
+        with self._lock:
+            return len(self._truncated)
 
     def max_reply_cost(self) -> float:
         with self._lock:
@@ -739,6 +747,7 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
         cost_rates: dict | None = None,
         transcript_caps: bool = False,
         hang_after_s: float | None = None,
+        stop_on_output_limit: bool = False,
     ) -> SDKResult:
         try:
             import anyio
@@ -758,7 +767,7 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
         # v8: the transcript is the cost truth (the stream reports a few output tokens per reply), and
         # its system/api_error lines show a session stuck in gateway timeouts.
         meter = (TranscriptMeter(locate, cwd, since=time.time(), rates=cost_rates)
-                 if transcript_caps or hang_after_s else None)
+                 if transcript_caps or hang_after_s or stop_on_output_limit else None)
         if meter is not None and resume:
             meter.session_ids.add(resume)
         live = {"reply": time.time(), "api_error": 0.0, "stream_usd": 0.0}
@@ -780,6 +789,10 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
             if transcript_caps and max_cost_usd is not None:
                 if max(meter.cost(), live["stream_usd"]) >= max_cost_usd:
                     return "cap"
+            if stop_on_output_limit and meter.output_limit_hits:
+                # The CLI would retry at the same effort and redo the lost reasoning; stop so the
+                # dispatcher can resume this session at a lower effort.
+                return "output_limit"
             if hang_after_s:
                 # A long legitimate reply can sit behind one or two timeouts and still arrive; only
                 # repeated timeouts with no reply for the whole window count as a hang.
@@ -844,6 +857,13 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
             """The cap or hang outcome after the watcher (or the loop) ended the session."""
             totals = _best_usage(_partial_totals())
             spent = usage_cost(totals, cost_rates)
+            if stop.get("why") == "output_limit":
+                return SDKResult(text=text, is_error=True,
+                                 error_message="a reply hit the CLI's max_output_tokens limit; session stopped",
+                                 subtype="error_output_limit", cost_usd=spent,
+                                 duration_ms=int((time.time() - t0) * 1000), num_turns=n, session_id=session_id,
+                                 max_reply_usd=meter.max_reply_cost() if meter is not None else 0.0,
+                                 **{k: int(totals.get(k, 0) or 0) for k in _USAGE_KEYS})
             if stop.get("why") == "hang":
                 err = SDKHangError(f"no assistant reply for over {hang_after_s:.0f}s while only API errors "
                                    "arrived; session killed")
@@ -1145,6 +1165,7 @@ class SDKDispatcher(CLIDispatcher):
         # #282: per-phase SDK effort. None means "don't pass effort" — the
         # SDK applies its own default ("high"), so behaviour is unchanged.
         self._effort = effort
+        self._last_effort: str | None = None  # v8: the effort the current session runs at
         # #193: resolve sandbox mode. Order: explicit kwarg > campaign.sandbox
         # > "bypass" default (which maps to permission_mode="bypassPermissions").
         # Pass "default" to keep the SDK's default permission gating.
@@ -1413,8 +1434,17 @@ class SDKDispatcher(CLIDispatcher):
         v8 = is_v8(self.campaign or {})
         # v8: a capped session's spend comes from its transcript, and a hung session is stopped.
         v8_kw: dict = {}
+        effort = self._effort
+        limit_prompt = OUTPUT_LIMIT_PROMPT
         if v8:
+            from orchestrator.design_profile import V8_OUTPUT_LIMIT_PROMPT
+            from orchestrator.effort import session_effort
             v8_kw["hang_after_s"] = v8_settings(self.campaign).hang_minutes * 60.0
+            v8_kw["stop_on_output_limit"] = True
+            effort = session_effort(self.campaign, self.work_dir, self.model, explicit=self._effort)
+            output_limit_resumes_left = 3
+            limit_prompt = V8_OUTPUT_LIMIT_PROMPT
+        self._last_effort = effort
         # v8: after a dollar cap the orchestrator writes the artifacts from disk; only the design
         # session (whose bundle nothing else can write) keeps its wrap-up.
         cap_wrap_up = not (v8 and self._session_label != "design")
@@ -1449,7 +1479,7 @@ class SDKDispatcher(CLIDispatcher):
                     event_log_path=self._event_log_path,
                     permission_mode=self._permission_mode,
                     turn_silence_threshold=self._turn_silence_threshold,
-                    effort=self._effort,
+                    effort=effort,
                     **({"resume": resume_id} if resume_id else {}),
                     **({"max_cost_usd": budget, "cost_rates": self._cost_rates()}
                        if cap is not None else {}),
@@ -1525,7 +1555,13 @@ class SDKDispatcher(CLIDispatcher):
                     and _is_output_limit(result)):
                 output_limit_resumes_left -= 1
                 self._log_retry("output_limit_resume", failure_count + 1, RuntimeError(result.error_message))
-                resume_id, prompt = result.session_id, OUTPUT_LIMIT_PROMPT
+                resume_id, prompt = result.session_id, limit_prompt
+                if v8:
+                    from orchestrator.effort import lower, record_output_limit
+                    record_output_limit(self.work_dir)
+                    effort = lower(effort or "high")
+                    self._last_effort = effort
+                    logger.warning("v8: a reply hit the output limit; resuming at effort %s", effort)
                 continue
             if resume_id is not None:
                 if budget_wrap_up_done:
@@ -1592,6 +1628,8 @@ class SDKDispatcher(CLIDispatcher):
         extra = {} if budget is None else {"budget_usd": budget, "session_label": self._session_label}
         if getattr(result, "max_reply_usd", 0.0):
             extra["max_reply_usd"] = round(float(result.max_reply_usd), 4)
+        if self._last_effort:
+            extra["effort"] = self._last_effort
         log_metrics(self._metrics_path, {
             "dispatcher": "sdk",
             "role": self._current_role,

@@ -89,7 +89,7 @@ def _iso(t=None):
 
 
 def _transcript_sdk(transcript: Path, spawned: dict, *, replies=0, stream_out=10, tx_out=10_000,
-                    silent_s=0.0, api_errors=False, finish=True):
+                    silent_s=0.0, api_errors=False, finish=True, stop_reason=None):
     """A fake SDK whose CLI is a real sleeping process; the stream ends when that process is killed.
 
     Each reply streams ``stream_out`` output tokens (what the SDK reports) and writes ``tx_out`` to the
@@ -147,7 +147,8 @@ def _transcript_sdk(transcript: Path, spawned: dict, *, replies=0, stream_out=10
                 return
             for _ in range(2):  # one reply is several transcript lines repeating its usage
                 write({"type": "assistant", "timestamp": _iso(), "uuid": f"u{i}",
-                       "message": {"id": f"msg_{i}", "usage": {"output_tokens": tx_out}}})
+                       "message": {"id": f"msg_{i}", "usage": {"output_tokens": tx_out},
+                                   "stop_reason": stop_reason}})
             yield AssistantMessage(i)
             await anyio.sleep(0.01)
         t0 = time.time()
@@ -253,6 +254,15 @@ class TestTranscriptCaps:
         with d.session_budget(9.0, label="h-main"):
             d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
         assert _metrics(tmp_path)[-1]["max_reply_usd"] == pytest.approx(0.75)  # 10k output tokens
+
+    def test_a_reply_cut_at_the_output_limit_stops_the_session(self, monkeypatch, tmp_path, spawned):
+        runner, _ = _transcript_runner(monkeypatch, tmp_path, spawned, replies=1, stop_reason="max_tokens",
+                                       silent_s=20.0, finish=False)
+        t0 = time.time()
+        res = runner(prompt="p", model="m", cwd=tmp_path, max_turns=5, stop_on_output_limit=True)
+        assert time.time() - t0 < 15
+        assert res.is_error and res.subtype == "error_output_limit" and "max_output_tokens" in res.error_message
+        assert not _alive(spawned["cli"])
 
     def test_default_locator_finds_session_and_subagent_files(self, tmp_path):
         from orchestrator.sdk_dispatch import default_transcript_paths, project_key
@@ -1416,3 +1426,67 @@ def test_a_window_left_open_by_a_killed_run_is_closed_on_resume(tmp_path, monkey
     assert not (it / "arms" / "h-main" / "result.json").exists()
     w = json.loads((it / "arms" / "state.json").read_text())["sessions"]["h-main"]["windows"][0]
     assert w["closed_on_resume"] is True
+
+
+# ─── effort ladder ──────────────────────────────────────────────────────────────────────────
+
+class _EffortRunner:
+    """Scripted SDK runner: the first reply is cut at the output limit, the resume succeeds."""
+
+    def __init__(self, cut=1):
+        self.efforts, self.cut = [], cut
+
+    def __call__(self, **kw):
+        self.efforts.append(kw.get("effort"))
+        if len(self.efforts) <= self.cut:
+            return SDKResult(text="", is_error=True, subtype="error_output_limit", session_id="s1",
+                             error_message="a reply hit the CLI's max_output_tokens limit; session stopped")
+        return SDKResult(text="done", session_id="s1")
+
+
+def _official(work, score):
+    (work / "official_measures.jsonl").write_text(json.dumps({"ts": 1.0, "sha256": "x", "score": score}) + "\n")
+
+
+class TestEffortLadder:
+    def test_first_solution_at_medium_then_the_model_default(self, tmp_path):
+        from orchestrator.effort import session_effort
+        c = _v8()
+        assert session_effort(c, tmp_path, "claude-opus-4-6") == "medium"
+        _official(tmp_path, 0.0)
+        assert session_effort(c, tmp_path, "claude-opus-4-6") == "medium"  # a 0 is not a solution
+        _official(tmp_path, 12.5)
+        assert session_effort(c, tmp_path, "claude-opus-4-6") == "high"
+        assert session_effort(c, tmp_path, "aws/claude-opus-5-5") == "medium"  # its default
+        assert session_effort(c, tmp_path, "claude-opus-4-6", explicit="xhigh") == "xhigh"
+
+    def test_lost_replies_lower_later_sessions_but_not_below_medium(self, tmp_path):
+        from orchestrator.effort import record_output_limit, session_effort
+        c = _v8()
+        _official(tmp_path, 12.5)
+        record_output_limit(tmp_path)
+        assert session_effort(c, tmp_path, "claude-opus-4-6") == "medium"
+        record_output_limit(tmp_path)
+        assert session_effort(c, tmp_path, "claude-opus-4-6") == "medium"
+
+    def test_cut_reply_resumes_the_session_one_level_lower(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        _official(tmp_path, 12.5)
+        r = _EffortRunner()
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=r, max_retries=1)
+        d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        assert r.efforts == ["high", "medium"]
+        assert json.loads((tmp_path / "effort_state.json").read_text())["step_down"] == 1
+        assert [m.get("effort") for m in _metrics(tmp_path)] == ["high", "medium"]
+        assert "output_limit_resume" in (tmp_path / "retry_log.jsonl").read_text()
+
+    def test_v7_sessions_keep_the_sdk_default(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _campaign(design_profile="v7")
+        c["target_system"]["repo_path"] = str(tmp_path)
+        r = _EffortRunner(cut=0)
+        SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=r, max_retries=1).dispatch(
+            "planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        assert r.efforts == [None] and not (tmp_path / "effort_state.json").exists()

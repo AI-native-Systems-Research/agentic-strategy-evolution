@@ -54,6 +54,12 @@ OUTPUT_LIMIT_PROMPT = (
 )
 
 
+V8_OUTPUT_LIMIT_PROMPT = OUTPUT_LIMIT_PROMPT + (
+    " If no solution has an official score above 0 yet, first write the simplest correct solution and "
+    "measure it officially, then improve it."
+)
+
+
 V4_DESIGN_EXTRA = (
     "- **Target the largest measured gap:** from the second iteration on, read the gap analysis in the "
     "executor update. `h-main` must attack the largest remaining loss it reports with a change that "
