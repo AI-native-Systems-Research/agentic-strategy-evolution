@@ -48,7 +48,10 @@ def test_held_out_is_reported_and_shifting_it_changes_no_decision(
     ha, hb = a.report["held_out"]["recommendation"], b.report["held_out"]["recommendation"]
     assert ha["n_rows"] > 0, "the recommended configuration's rows were not found"
     assert hb["metrics"]["ho"]["mean"] == pytest.approx(ha["metrics"]["ho"]["mean"] + 100.0)
-    strip = lambda rep: {k: v for k, v in rep.items() if k != "held_out"}  # noqa: E731
+    # `provenance` is a RECORD of the inputs, not a decision: it hashes the
+    # runs.jsonl bytes, which carry the shifted held-out values.
+    strip = lambda rep: {k: v for k, v in rep.items()  # noqa: E731
+                         if k not in ("held_out", "provenance")}
     assert strip(a.report) == strip(b.report), "a held-out metric moved a decision"
 
 

@@ -253,8 +253,15 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
                     and r.get("native_test")})
     evidence: dict[str, dict] = {}
     need_mutant = []
+    preexisting_ok = bool(((campaign.get("optimization") or {}).get("build_checks")
+                           or {}).get("allow_preexisting_tests"))
     for t in tests:
-        if t in ran and t not in passed and kinds.get(t, "unknown") in ("behavioral", "unknown"):
+        if t in passed and preexisting_ok:
+            # The author declared (build_checks.allow_preexisting_tests) that
+            # these relations cover PRE-EXISTING behaviour; 2(b) honours that and
+            # so does 2(d). Recorded, and listed in provenance.waivers.
+            evidence[t] = {"evidence": "declared_preexisting_behaviour"}
+        elif t in ran and t not in passed and kinds.get(t, "unknown") in ("behavioral", "unknown"):
             evidence[t] = {"evidence": "pre_build_behavioral_failure"
                            if kinds.get(t) == "behavioral" else "pre_build_failure_unclassified"}
         else:
@@ -289,6 +296,7 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
                 shutil.rmtree(dest.parent, ignore_errors=True)
     for t in need_mutant:
         why_pre = ("did not exist before the build" if t not in ran
+                   else "passed before the build" if t in passed
                    else "failed before the build only on a missing symbol")
         if "unavailable" in mutant_info:
             evidence[t] = {"evidence": None,
