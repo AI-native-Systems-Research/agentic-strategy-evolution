@@ -316,3 +316,27 @@ def test_rust_assertion_text_is_behavioral():
 def test_go_missing_symbol_is_still_absence():
     out = "# calc [calc.test]\n./calc_test.go:9:9: undefined: Boost\nFAIL calc [build failed]\n"
     assert failure_kind(out) == "absence"
+
+
+# ─── round 2, B3: the stub-body mutant catches existence-only evasions ───────
+
+
+@pytest.mark.parametrize("probe", [
+    "assert 'fast' in dir(calc)",
+    "assert 'fast' in vars(calc)",
+    "assert 'fast' in calc.__dict__",
+    "import inspect; assert any(n == 'fast' for n, _ in inspect.getmembers(calc))",
+])
+def test_an_existence_only_test_that_dodges_the_revert_mutant_is_caught(
+        tmp_path, monkeypatch, probe):
+    """Against the revert mutant these fail BY ASSERTION (calc has no `fast`),
+    which reads as behavioural; with the body stubbed they still pass."""
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+
+    with pytest.raises(OptimizationAborted, match="stubbed"):
+        _run(tmp_path, monkeypatch, {
+            "calc.py": "def scale(x):\n    return x\n\ndef fast(x):\n    return 2 * x\n",
+            "tests/test_mech.py": f"import calc\n\ndef test_mech():\n    {probe}\n",
+        })
+    rec = json.loads((tmp_path / "vac" / "authored_tests.json").read_text())
+    assert "calc.py:fast" in rec["mutant"]["stubbed"]

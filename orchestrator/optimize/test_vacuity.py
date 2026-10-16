@@ -60,8 +60,12 @@ were INJECTED with no test output (``output_recorded: false``, the unit-test
 seam), an unclassifiable pre-build failure is accepted as
 ``pre_build_failure_unclassified`` and listed in report.json's waivers.
 
-Not implemented: a second mutant that keeps the new symbols but stubs their
-bodies, which would also catch tests that assert on a value any stub returns.
+A SECOND, STUB-BODY mutant (``build_stub_mutant``, Python only) keeps the
+patch's new symbols but replaces the body of every new or changed function with
+``raise NotImplementedError``; a test that still PASSES there only checks that
+names exist (``hasattr``, ``in dir(m)``, ``vars(m)``, ``__dict__``,
+``inspect``) and is rejected. For other languages there is no stub mutant, and
+an existence check phrased as an assertion over reflection can still pass.
 A git failure while building the mutant is recorded as ``mutant.unavailable``
 with git's error, and the test then lacks evidence -- it is not called vacuous.
 """
@@ -289,6 +293,75 @@ def build_mutant_clean(repo: Path, work_dir: Path, rec: dict, declared: list[str
     return reverted
 
 
+class _Stubber:
+    """Replace the bodies of NEW or CHANGED functions with a raise."""
+
+    def __init__(self, base_src: str | None):
+        import ast
+
+        self.base = {}
+        if base_src is not None:
+            try:
+                for q, node in self._defs(ast.parse(base_src)):
+                    self.base[q] = ast.dump(node)
+            except SyntaxError:
+                pass
+        self.stubbed: list[str] = []
+
+    @staticmethod
+    def _defs(tree, prefix=""):
+        import ast
+
+        for node in getattr(tree, "body", []):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                yield prefix + node.name, node
+            elif isinstance(node, ast.ClassDef):
+                yield from _Stubber._defs(node, prefix + node.name + ".")
+
+    def apply(self, src: str) -> str:
+        import ast
+
+        tree = ast.parse(src)
+        for q, node in list(self._defs(tree)):
+            if self.base.get(q) == ast.dump(node):
+                continue
+            node.body = [ast.Raise(exc=ast.Call(
+                func=ast.Name(id="NotImplementedError", ctx=ast.Load()),
+                args=[ast.Constant("nous stub mutant")], keywords=[]), cause=None)]
+            self.stubbed.append(q)
+        return ast.unparse(ast.fix_missing_locations(tree))
+
+
+def build_stub_mutant(repo: Path, work_dir: Path, rec: dict, declared: list[str],
+                      dest: Path) -> list[str]:
+    """The STUB-BODY mutant (Python only): base commit + the whole patch, with
+    the body of every new or changed function in the patch's non-test ``.py``
+    files replaced by ``raise NotImplementedError``. The new SYMBOLS still
+    exist, so a test that only checks existence (``hasattr``, ``in dir(m)``,
+    ``vars(m)``, ``inspect``) still PASSES here -- which is how it is caught.
+    Returns the stubbed qualified names ("path:qualname")."""
+    from orchestrator.optimize.build_scope import _git
+    from orchestrator.optimize.clean_tree import PATCH
+
+    base = rec["base_sha"]
+    _git(repo, "worktree", "add", "--detach", "--force", str(dest), base)
+    patch = (Path(work_dir) / PATCH).resolve()
+    if patch.stat().st_size:
+        _git(dest, "apply", "--binary", "--whitespace=nowarn", str(patch))
+    stubbed = []
+    for rel in rec.get("touched") or []:
+        if not rel.endswith(".py") or is_test_path(rel, declared) or not (dest / rel).exists():
+            continue
+        base_src = _git(repo, "show", f"{base}:{rel}", check=False)
+        st = _Stubber(base_src)
+        try:
+            (dest / rel).write_text(st.apply((dest / rel).read_text()))
+        except SyntaxError:
+            continue
+        stubbed += [f"{rel}:{q}" for q in st.stubbed]
+    return stubbed
+
+
 def remove_mutant(repo: Path, dest: Path) -> None:
     from orchestrator.optimize.build_scope import _git
 
@@ -402,6 +475,37 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
                            "why": f"{why_pre}, and against the mechanism-reverted "
                                   f"mutant it fails only on a missing symbol ({k}): it "
                                   f"checks that a name exists, not what it does"}
+    # THE STUB-BODY MUTANT (B3): a test with evidence so far must also FAIL when
+    # the mechanism's new/changed function bodies are stubbed. One that still
+    # passes only checks that the names exist.
+    clean_rec = (records or {}).get("clean_tree.json")
+    with_evidence = [t for t, e in evidence.items() if e["evidence"] in (
+        "pre_build_behavioral_failure", "mutant_behavioral_failure")]
+    if with_evidence and clean_rec and repo is not None and run_tests is not None:
+        from orchestrator.optimize.build_scope import GitError
+
+        scratch = wd / ".mutant-tmp"
+        scratch.mkdir(exist_ok=True)
+        dest = Path(tempfile.mkdtemp(prefix="nous-stub-", dir=scratch)) / "tree"
+        try:
+            declared = [r["native_test"] for f in factors for r in (f.relations or ())
+                        if isinstance(r, dict) and r.get("native_test")]
+            stubbed = build_stub_mutant(Path(repo), wd, clean_rec, declared, dest)
+            mutant_info["stubbed"] = stubbed
+            if stubbed:
+                sv, _ = run_tests(dest)
+                mutant_info["stub_verdicts"] = {t: sv.get(t) for t in with_evidence}
+                for t in with_evidence:
+                    if sv.get(t):
+                        evidence[t] = {"evidence": None, "why": (
+                            "it PASSES with every new or changed function body "
+                            "stubbed to raise NotImplementedError: it checks that "
+                            "the mechanism's names exist, not what they do")}
+        except GitError as exc:
+            mutant_info["stub_unavailable"] = str(exc)
+        finally:
+            remove_mutant(Path(repo), dest)
+            shutil.rmtree(scratch, ignore_errors=True)
     bad = {t: e for t, e in evidence.items() if e["evidence"] is None}
     waiver = ((campaign.get("optimization") or {}).get("build_checks") or {}).get(
         "allow_nondiscriminating_tests")
