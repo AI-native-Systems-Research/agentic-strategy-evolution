@@ -185,35 +185,77 @@ def input_hashes(work_dir: Path) -> dict[str, str]:
 
 
 def waivers(work_dir: Path, campaign: dict | None) -> list[dict]:
-    """Every hard gate this campaign explicitly opted out of, with the
-    author's recorded reason, so a certificate never reads as if the gate
-    had run. Read from the campaign and from the gate artifacts on disk."""
+    """Every gate that did not run as a full check, read FROM THE GATE
+    ARTIFACTS the oracles wrote (what was actually waived, skipped or left
+    unclassified), with the campaign's waiver keys used only as a cross-check.
+    A build record that is missing or unreadable is itself an entry: a record
+    must never claim more than was checked."""
     import json
 
+    wd = Path(work_dir)
     out: list[dict] = []
     opt = ((campaign or {}).get("optimization") or {}) if isinstance(campaign, dict) else {}
     bc = opt.get("build_checks") if isinstance(opt.get("build_checks"), dict) else {}
-    for key in WAIVER_KEYS:
-        reason = bc.get(key)
-        if isinstance(reason, str) and reason.strip():
-            out.append({"gate": f"build_checks.{key}", "reason": reason.strip()})
-    if bc.get("allow_preexisting_tests") is True:
-        out.append({"gate": "build_checks.allow_preexisting_tests",
-                    "reason": "declared true (oracle 2(b) not applied)"})
+
+    def _read(name):
+        p = wd / name
+        if not p.exists():
+            return None, "missing"
+        try:
+            return json.loads(p.read_text()), None
+        except (OSError, ValueError):
+            return None, "unreadable"
+
+    try:
+        from orchestrator.optimize.build_scope import build_declared
+
+        built = build_declared(campaign or {}) or (wd / "pre_build_tests.json").exists()
+    except Exception:  # noqa: BLE001 -- a malformed campaign is not a build
+        built = (wd / "pre_build_tests.json").exists()
+    if built:
+        for name, gate in (("baseline_equivalence.json", "oracle_2c_baseline"),
+                           ("authored_tests.json", "oracle_2d_authored_tests"),
+                           ("build_scope.json", "build_write_scope"),
+                           ("build_review.json", "build_review")):
+            doc, problem = _read(name)
+            if problem:
+                out.append({"gate": gate, "reason": f"record {problem}",
+                            "note": f"{name} is {problem}; the gate's outcome is not on record"})
+                continue
+            if doc.get("waived"):
+                out.append({"gate": gate, "reason": str(doc["waived"]),
+                            "note": "waived by the campaign"
+                                    + ("" if any(bc.get(k) == doc["waived"] for k in WAIVER_KEYS)
+                                       else " (the waiver is not in this campaign's build_checks)")})
+        be, _ = _read("baseline_equivalence.json")
+        if be and be.get("armed") is False and not be.get("waived"):
+            out.append({"gate": "oracle_2c_baseline", "reason": "not armed",
+                        "note": str(be.get("unarmed_because") or be.get("pre_unavailable"))})
+        at, _ = _read("authored_tests.json")
+        for t, e in sorted(((at or {}).get("tests") or {}).items()):
+            ev = (e or {}).get("evidence")
+            if ev in ("pre_build_failure_unclassified", "declared_preexisting_behaviour"):
+                out.append({"gate": "oracle_2d_authored_tests", "reason": ev, "note": t})
+        if (at or {}).get("mutant", {}).get("unavailable"):
+            out.append({"gate": "oracle_2d_authored_tests", "reason": "mutant unavailable",
+                        "note": str(at["mutant"]["unavailable"])})
+        sc, _ = _read("build_scope.json")
+        if sc and sc.get("applicable") is False:
+            out.append({"gate": "build_write_scope", "reason": "not applicable",
+                        "note": str(sc.get("why_not") or "no diff to check")})
+        rv, _ = _read("build_review.json")
+        if rv and rv.get("auto"):
+            out.append({"gate": "build_review", "reason": "auto-approved",
+                        "note": "no human reviewed the built mechanism"})
+        if bc.get("allow_preexisting_tests") is True:
+            out.append({"gate": "oracle_2b_preexisting_tests",
+                        "reason": "build_checks.allow_preexisting_tests: true",
+                        "note": "tests that passed before the build were accepted"})
     unverified = opt.get("unverified_locks")
     if isinstance(unverified, dict):
         for k, reason in sorted(unverified.items()):
             out.append({"gate": f"locked_parameters.{k}", "reason": str(reason),
                         "note": "lock declared but NOT verified at run time"})
-    review = Path(work_dir) / "build_review.json"
-    if review.exists():
-        try:
-            rec = json.loads(review.read_text())
-            if rec.get("auto"):
-                out.append({"gate": "build_review", "reason": "auto-approved",
-                            "note": "no human reviewed the built mechanism"})
-        except (OSError, ValueError):
-            pass
     return out
 
 

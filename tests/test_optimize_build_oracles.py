@@ -553,8 +553,9 @@ def test_an_unarmed_oracle_proceeds_only_with_a_recorded_waiver(tmp_path, monkey
     be = json.loads((wd / "baseline_equivalence.json").read_text())
     assert be["armed"] is False and be["waived"] == "the harness is authored by the build itself"
     from orchestrator.optimize.provenance import waivers
-    assert {"gate": "build_checks.allow_unarmed_baseline",
-            "reason": "the harness is authored by the build itself"} in waivers(wd, c)
+    assert any(w["gate"] == "oracle_2c_baseline"
+               and w["reason"] == "the harness is authored by the build itself"
+               for w in waivers(wd, c)), waivers(wd, c)
 
 
 def test_a_build_with_no_control_attempt_is_unarmed_too(tmp_path, monkeypatch):
