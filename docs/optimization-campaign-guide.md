@@ -387,6 +387,18 @@ neighbouring front points cannot be separated by a few replicates and stay
 `possibly_dominated`: that is the honest answer, and more `replicates` (or a
 wider epsilon) is the remedy.
 
+**What the report will not do.** It never reads an unknown as a zero: an
+epsilon with no reference (a `pct` of a zero best -- declare `abs` instead) is
+shown as unknown and withholds certification (`epsilon_unknown`); a
+hypervolume with no confident point is `null` with its reason; a configuration
+that reported some objective as a non-finite number is listed under
+`pareto.excluded_incomplete` (and, as a finalist, is `unmeasured`); a lone
+admissible configuration is never certified (`no_feasible_rival`). The
+dominance statuses are a simultaneous claim over the whole front, so a front
+of many close points with noise near epsilon will be mostly
+`possibly_dominated`. Preference weights, `order` and epsilon-map keys match
+objective names case-insensitively, as the validator does.
+
 **Vacated seats are refilled once.** With `response.constraints` declared, a
 confirm round at the round cap that measured finalists infeasible and left
 fewer than two admissible ones runs ONE extra registered round (`refill vacated

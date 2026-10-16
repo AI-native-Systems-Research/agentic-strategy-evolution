@@ -205,9 +205,18 @@ none of these paths.
    `eps_k` somewhere.
 6. **Confident status.** `c` is `confidently_nondominated` iff for EVERY other
    measured admissible configuration `d` some objective's one-sided upper bound
-   on `d - c` is below `eps_k` (Bonferroni over rivals x objectives), and no
-   ADEQUATE-model prediction (other than at `c`'s own levels) beats `c`'s
-   measured mean by `eps_k` on every objective.
+   on `d - c` is below `eps_k`, and no ADEQUATE-model prediction (other than at
+   `c`'s own levels) beats `c`'s measured mean by `eps_k` on every objective.
+   The bounds are SIMULTANEOUS over the front: `alpha = delta / (N (N-1) K)`,
+   Bonferroni over every (member, rival, objective), because the statuses are
+   one claim about all members at once and the certified point is selected
+   from them (review A3; it was per point, `delta / ((N-1) K)`).
+   `pareto.predicted_rivals` records whether predicted rivals were used.
+6a. **An unknown epsilon stays unknown** (review A2). A `pct` epsilon whose
+   reference is zero is `null` throughout: it resolves no rival, a predicted
+   rival merely ahead on that objective stays unresolved, no gap threshold is
+   computed from it (`gap_threshold: null` when no epsilon is known), the
+   scalar epsilon is `null`, and certification is withheld (`epsilon_unknown`).
 7. **Variance: pooled pure error**, not per-pair Welch. The within-configuration
    mean square per objective over every configuration with >= 2 complete rows.
    With the default 3 replicates a per-pair Welch t has 2-4 df and a Bonferroni
@@ -218,12 +227,23 @@ none of these paths.
    represented by its confirm rows only (its fitting rows are what nominated it,
    so pooling them carries the winner's curse); fitting-only configurations keep
    their fitting rows.
+8a. **Incomplete rows are recorded, not dropped** (review A4/A6). A complete
+   row lacking a usable value for some objective (+inf, a string; a vanished or
+   null key already aborts the epoch through the adapter contract, and a NaN is
+   the semantic `nan_response`) is not a measurement of the trade-off.
+   Fitting-stage configurations keep only fully measured rows; a confirm
+   configuration with such a replicate is left out of the front, listed in
+   `pareto.excluded_incomplete`, its finalist marked `unmeasured`, and
+   certification withheld (`finalist_unmeasured`) -- never re-based on its
+   fitting rows.
 9. **Two levels, two looks.** Front statuses and the hypervolume are one claim at
    the end: `delta_terminal`. Certification is a stopping rule evaluated every
    round, so it pays for every registered look: the preferred point must be
    confident at `delta_terminal / max_rounds` ("Bonferroni over rounds") and the
    scalar regret is taken at that level. Charging rounds to the statuses made
-   every extra registered round shrink the confident set.
+   every extra registered round shrink the confident set. A lone admissible
+   configuration has no regret bound (`null`, `no_feasible_rival`), never a
+   certifying 0 (review A5).
 10. **Scalar regret.** Rivals are EVERY measured admissible configuration, not
     only the front. Weights apply to objectives normalised by the measured range
     (`epsilon_scalar = sum_k w_k eps_k / range_k`); knee (K = 2) uses the unit
@@ -234,7 +254,8 @@ none of these paths.
     range_k` as stated above.
 11. **Hypervolume** over the confident points in the measured-range frame;
     reference = `known_valid_baseline`'s measured means when it was measured,
-    else the worst measured value per objective.
+    else the worst measured value per objective. `null` with a `reason` when
+    no point is confident -- undefined, not zero (review B3).
 12. **Gaps.** K = 2: adjacency along the front sorted by the first objective;
     K > 2: the edges of the Euclidean minimum spanning tree. Size is L-infinity
     in normalised units. A gap is "large" above `max(2 x max_k eps_k / range_k,
@@ -250,6 +271,27 @@ none of these paths.
     `certified -> report`: the epoch's product is the front.
 14. **Noise map.** `build_checks` baseline tolerance with a map-valued
     `noise_estimate_pct` uses the first objective's entry.
+15. **Names resolve once** (review A7). `preference.weights` / `order` are
+    resolved to the declared objective names at compile time, and the
+    epsilon / noise maps fall back to the unique case/whitespace-insensitive
+    match -- the validator's rule, so an accepted `F1:` weight is never 0.
+16. **Recorded provenance** (review B1/B4). `recommendation.json` carries
+    `preferred_basis` (`predicted_front_preference`, or
+    `primary_argmax_fallback` with the reason when an objective model could not
+    be estimated and no predicted front exists; confirm labels the seat
+    accordingly). Unreadable inputs are logged and recorded: a corrupt
+    effects/recommendation file gives source `unknown`; a missing or corrupt
+    `refill_pool.json` or an uncodeable level lands in `confirmation.json`
+    `warnings` (the candidate is skipped, never coded as the centre); the
+    refill pool is 256 deep (64 missed every near-feasible candidate when the
+    admissible corner predicts lowest on the first objective).
+17. **report.md** (review C, B2, B5): every objective's mean and interval at the
+    recommendation; one finalist column per objective (`means` in
+    confirmation.json); a Bounds table stating per-objective epsilon (unknown
+    flagged), the preference's scalar regret and epsilon, and the model bound
+    labelled as the first objective's; whether predicted rivals were used; the
+    hypervolume beside its confident count; and, for an empty front, why
+    nothing was admissible.
 
 ### Oracle results (seeds 1-8, default multi-objective campaign)
 
@@ -260,7 +302,14 @@ none of these paths.
 | `pareto_with_constraint` | 0.70-1.00 | 0.859-0.974 | 8/8 | 1/8 | 0 | 56 |
 | `pareto_three` | 0.42-0.59 | 0.836-0.860 | 8/8 | 7/8 | 0 | 78 |
 | `pareto_choice_split` | 0.84-0.95 | 0.950-0.957 | 8/8 | 7/8 | 0 | 52 |
-| `pareto_noisy` (noise ~ epsilon) | 0.40-1.00 | 0.781-0.967 | 8/8 | 1/8 | 0 | 56 |
+| `pareto_noisy` (noise ~ epsilon) | 0.10-0.80 | 0.490-0.951 | 8/8 | 1/8 | 0 | 56 |
+| `pareto_convex_min` (minimised cost) | 1.00 | 0.992-0.996 | 8/8 | 8/8 | 0 | 56 |
+| `pareto_three_noisy` | 0.02-0.24 | 0.345-0.721 | 8/8 | 0/8 | 0 | 78 |
+
+(After the review's A3 the statuses are simultaneous over the front; only the
+noisy rows moved -- `pareto_noisy` was 0.40-1.00 / 0.781-0.967. Certified
+recommendations are also checked IN TRUTH: their true scalarised regret over
+the reported front is within the stated scalar epsilon on every seed.)
 
 Property 1 (every confident point within epsilon of the true front and truly
 admissible): 0 violations everywhere. Property 5 (raising `confirm_max_rounds`

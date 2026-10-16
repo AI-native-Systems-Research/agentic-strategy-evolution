@@ -140,7 +140,9 @@ says which step catches it. **[static]** = `nous validate campaign`,
   `nous create-campaign --kind optimization --objectives 2` scaffolds it: ≥ 2
   distinct `{metric, direction}` entries, an optional `preference` (`knee`
   default, `weights`, `lexicographic`) choosing the one recommended point, and
-  `policy.epsilon` per objective (one spec, or a map by metric). The epoch
+  `policy.epsilon` per objective (one spec, or a map by metric). Prefer
+  `{abs: ...}` for an objective whose best can be 0: a `pct` of zero is
+  unknown and withholds certification (`epsilon_unknown`). The epoch
   reports the trade-off front. A metric with a known acceptable bound is a
   constraint instead — never both. `--liveness` prints a table per objective
   and lists the trade-off candidate factors. See the guide, "Multi-objective:

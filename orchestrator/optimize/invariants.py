@@ -1755,7 +1755,8 @@ _ENTRIES: tuple[Invariant, ...] = (
                             "eps-dominated in point estimate by another, a confidently "
                             "nondominated point names no possible dominator and a possibly "
                             "dominated one names one, the front is sorted by the first "
-                            "objective, and the normalised hypervolume is in [0, 1].",
+                            "objective, and the normalised hypervolume is in [0, 1] -- or null "
+                            "with a reason, exactly when no point is confident.",
               "STAT", "artifact", "pareto.measured_front; pareto_stage.front_record",
               TEST, check_pareto_front,
               note="tests/test_optimize_pareto.py runs the checker over every oracle "
