@@ -582,3 +582,43 @@ def test_an_enumerated_space_that_drops_its_models_keeps_its_wording(tmp_path, m
     assert entry["reason"] == (
         "modelled, but NOT applied: the models predict every candidate confidently "
         "infeasible, and an empty space can only abort -- left to measurement instead")
+
+
+# ─── stage-0 review: report.json carries the searched caveat (A4) ───────────
+
+
+def _latest_rec(work_dir):
+    recs = sorted(Path(work_dir).glob("runs/iter-*/recommendation.json"),
+                  key=lambda p: int(p.parent.name.split("-")[1]))
+    return json.loads(recs[-1].read_text())
+
+
+def test_report_json_carries_the_searched_candidate_space(tmp_path, monkeypatch):
+    """report.json copied only residual_regret_model.value, so a reader of the
+    report could not tell the bound was over an evaluated set. It now carries
+    the same candidate_space as the recommendation it copied the bound from."""
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    rschema = json.loads((Path(__file__).resolve().parents[1] / "orchestrator" / "schemas"
+                          / "report.schema.json").read_text())
+    monkeypatch.setattr(decide, "CANDIDATE_CAP", 1)
+    res = run_synthetic_campaign(SURFACES["bowl"](), seed=2, parent_dir=tmp_path)
+    report = json.loads((Path(res.work_dir) / "report.json").read_text())
+    rec = _latest_rec(res.work_dir)
+    jsonschema.validate(report, rschema)
+    assert report["candidate_space"] == rec["candidate_space"]
+    assert report["candidate_space"]["exhaustive"] is False
+    assert check_candidate_space(rec, report) == []
+    assert check_candidate_space(rec, {k: v for k, v in report.items()
+                                       if k != "candidate_space"})
+
+
+def test_an_enumerated_report_has_no_candidate_space(tmp_path):
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    res = run_synthetic_campaign(SURFACES["bowl"](), seed=2, parent_dir=tmp_path)
+    report = json.loads((Path(res.work_dir) / "report.json").read_text())
+    assert "candidate_space" not in report
+    assert check_candidate_space(_latest_rec(res.work_dir), report) == []

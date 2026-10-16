@@ -2236,6 +2236,12 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
             **({"value": value} if value is not None else {}),
         },
         "residual_regret_model": (rec.get("residual_regret_model") or {}).get("value"),
+        # The searched caveat travels with the bound copied above it: present
+        # exactly when that recommendation's candidate space was SEARCHED, so
+        # report.json alone says the model bound and argmax are over the
+        # evaluated set only. Absent (byte-identical) when enumerated.
+        **({"candidate_space": dict(rec["candidate_space"])}
+           if rec.get("candidate_space") else {}),
         "residual_regret_terminal": (
             conf.get("residual_regret_terminal") if conf else None
         ),

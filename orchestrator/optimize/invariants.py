@@ -973,10 +973,12 @@ def check_pareto_front(pareto_block: dict) -> list[str]:
     return out
 
 
-def check_candidate_space(rec: dict) -> list[str]:
+def check_candidate_space(rec: dict, report: dict | None = None) -> list[str]:
     """INV-STAT18: a searched candidate space is recorded honestly.
 
-    From ``recommendation.json`` alone. Vacuous when ``candidate_space`` is
+    From ``recommendation.json``, and -- given ``report``, the ``report.json``
+    whose ``residual_regret_model`` was copied from ``rec`` -- that the report
+    carries the same ``candidate_space`` exactly when ``rec`` does. Vacuous when ``candidate_space`` is
     absent (the space was enumerated). When present: ``exhaustive`` is false,
     ``method`` is the search, the full ``size`` exceeds ``decide.CANDIDATE_CAP``
     (a space under the cap must be enumerated), ``evaluated`` is at most
@@ -989,10 +991,14 @@ def check_candidate_space(rec: dict) -> list[str]:
     """
     from orchestrator.optimize.decide import CANDIDATE_CAP
 
-    cs = (rec or {}).get("candidate_space")
-    if cs is None:
-        return []
     out: list[str] = []
+    cs = (rec or {}).get("candidate_space")
+    if report is not None and (report or {}).get("candidate_space") != cs:
+        out.append("report.json's candidate_space does not match the recommendation's "
+                   f"({(report or {}).get('candidate_space')!r} vs {cs!r}): the searched "
+                   "caveat must travel with the model bound")
+    if cs is None:
+        return out
     if cs.get("exhaustive") is not False:
         out.append("candidate_space is present but does not say exhaustive: false")
     if cs.get("method") != "sampled_coordinate_ascent":
