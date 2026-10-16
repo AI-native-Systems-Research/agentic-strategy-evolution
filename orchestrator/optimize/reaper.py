@@ -282,4 +282,39 @@ def run_in_process_group(cmd, *, cwd=None, env=None, timeout=None,
         raise
     finally:
         untrack(proc)
+    # The command RETURNED; anything still in its process group outlived it (a
+    # backgrounded server, a stray watcher). Kill the group and record it: a
+    # target process that outlives its command can change the tree or the
+    # results after every check (round 3, C2).
+    if _supports_process_groups():
+        _reap_leftover_group(proc.pid, cmd)
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+#: Every target command whose process group still had members after it
+#: returned: ``{"cmd", "pgid"}``. Drained by ``take_survivors``.
+SURVIVORS: list[dict] = []
+_SURVIVORS_LOCK = threading.Lock()
+
+
+def _reap_leftover_group(pgid: int, cmd) -> None:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return
+    except PermissionError:
+        pass
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+    with _SURVIVORS_LOCK:
+        SURVIVORS.append({"cmd": " ".join(map(str, cmd)) if isinstance(cmd, (list, tuple))
+                          else str(cmd), "pgid": pgid})
+
+
+def take_survivors() -> list[dict]:
+    with _SURVIVORS_LOCK:
+        out = list(SURVIVORS)
+        SURVIVORS.clear()
+    return out

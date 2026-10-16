@@ -1180,8 +1180,12 @@ def run_test_command(
         except OSError as exc:  # never let logging break the gate
             logger.warning("could not write test log to %s: %s", log_path, exc)
 
+    from orchestrator.optimize import reaper
+
     try:
-        proc = subprocess.run(
+        # In its own session; the group is reaped when the command returns
+        # (reaper.run_in_process_group), and leftovers are recorded (C2).
+        proc = reaper.run_in_process_group(
             shlex.split(command), cwd=str(cwd), capture_output=True,
             text=True, timeout=timeout, env=target_env(),
         )

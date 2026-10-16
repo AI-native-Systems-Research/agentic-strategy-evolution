@@ -600,3 +600,62 @@ def test_writing_the_agent_repos_git_control_files_aborts_the_build(tmp_path, mo
     _, build, _ = _adversarial(tmp_path, monkeypatch, act)
     with pytest.raises(OptimizationAborted, match="git control files"):
         build()
+
+
+# ─── round 3, C1/C2: isolation fails closed and covers target commands ───────
+
+
+def test_isolation_fails_closed_when_processes_cannot_be_observed(tmp_path, monkeypatch):
+    from orchestrator.optimize import isolation
+
+    def broken(*a, **k):
+        raise isolation.ObservationError("could not observe processes: ps exited 1")
+    monkeypatch.setattr(isolation, "_table", broken)
+    with pytest.raises(isolation.BuildSurvivors, match="could not observe"):
+        with isolation.track(tmp_path):
+            pass
+
+
+def test_a_poller_failure_mid_build_fails_the_build(tmp_path, monkeypatch):
+    import time
+
+    from orchestrator.optimize import isolation
+
+    real, calls = isolation._table, {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] == 3:
+            raise isolation.ObservationError("could not observe processes: ps timed out")
+        return real()
+    monkeypatch.setattr(isolation, "_table", flaky)
+    with pytest.raises(isolation.BuildSurvivors, match="could not be observed throughout"):
+        with isolation.track(tmp_path, interval=0.05):
+            time.sleep(0.5)
+    assert json.loads((tmp_path / "build_isolation.json").read_text())["poll_errors"]
+
+
+def test_a_target_command_that_leaves_a_process_running_is_reaped_and_recorded(tmp_path):
+    import os
+    import sys
+    import time
+
+    from orchestrator.optimize import reaper, runner
+
+    reaper.take_survivors()
+    pidf = tmp_path / "pid"
+    cmd = (f"{sys.executable} -c \"import subprocess,sys; "
+           f"p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],"
+           f"stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+           f"open({str(pidf)!r},'w').write(str(p.pid))\"")
+    runner.run_test_command(cmd, cwd=tmp_path)
+    left = reaper.take_survivors()
+    assert left and left[0]["cmd"].startswith(sys.executable)
+    time.sleep(0.2)
+    pid = int(pidf.read_text())
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        pass
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)

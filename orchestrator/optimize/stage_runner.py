@@ -1372,6 +1372,7 @@ def _check_authored_tests_discriminate(campaign: dict, work_dir: Path, factors,
         def run_tests(cwd: Path):
             raw = runner.run_test_command(opt["test_command"], cwd=Path(cwd),
                                           timeout=resolve_test_timeout(opt), log_path=log)
+            _check_survivors(work_dir, iteration, "2(d) mutant test command")
             return runner.match_declared_tests(factors, raw), test_vacuity.read_log(raw)
     try:
         test_vacuity.check(
@@ -2183,6 +2184,24 @@ import contextvars
 _REANALYSIS = contextvars.ContextVar("nous_reanalysis", default=False)
 
 
+def _check_survivors(work_dir, iteration, what: str) -> None:
+    """Raise when a target command left processes running after it returned
+    (reaper.run_in_process_group reaped them and recorded it; round 3, C2)."""
+    from orchestrator.optimize import reaper
+
+    left = reaper.take_survivors()
+    if not left:
+        return
+    p = Path(work_dir) / "runs" / f"iter-{iteration}" / "target_survivors.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(p, {"after": what, "survivors": left})
+    raise OptimizationGateFailed(
+        f"after the {what}: {len(left)} target command(s) left processes running "
+        f"after they returned ({[x['cmd'][:60] for x in left[:3]]}); they were killed. "
+        f"A process that outlives its command can change the measured tree or the "
+        f"results after every check. See {p.name}.")
+
+
 def _check_clean_tree_after(campaign, work_dir, what: str) -> None:
     """Raise when target code modified the clean tree (clean_tree.check)."""
     from orchestrator.optimize import clean_tree as _ct
@@ -2544,6 +2563,9 @@ def run_stage(
         finalize_iteration,
     )
 
+    from orchestrator.optimize import reaper as _reaper
+
+    _reaper.take_survivors()          # none from an earlier stage count here
     _reanalysis_token = _REANALYSIS.set(bool(reanalysis))
     try:
         return _run_stage_body(
@@ -2683,6 +2705,7 @@ def _run_stage_body(
         # `match_declared_tests` returns a plain dict, and an empty one reads
         # the same whether the suite was killed, crashed, or printed nothing.
         test_run = raw
+        _check_survivors(work_dir, iteration, f"{stage_name} test command")
         test_results = runner.match_declared_tests(parse_factors(opt["factors"]), raw)
         logger.info(
             "test_command reported %d test(s); %d matched a declared "
@@ -3603,6 +3626,7 @@ def _run_stage_body(
     # The measurement batch ran target code in the clean tree: check the tree
     # right after it, so a batch that modified what it measured fails THIS
     # iteration rather than the next one (round 3, A4).
+    _check_survivors(work_dir, iteration, f"{stage_name} measurement batch")
     _check_clean_tree_after(campaign, work_dir, f"{stage_name} measurement batch")
 
     # Restore DESIGN order before anything reads these positionally.
