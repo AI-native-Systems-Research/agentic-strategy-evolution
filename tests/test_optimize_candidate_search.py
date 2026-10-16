@@ -420,3 +420,34 @@ def test_search_drops_constraint_models_only_when_nothing_feasible_is_found():
                       held_fixed={}, top=None, constraint_models=cm)
     assert r.space.constraint_models_applied is False
     assert set(r[0].levels.values()) == {1}
+
+
+@pytest.mark.parametrize("seed", [1, 2])
+def test_a_searched_constraint_record_counts_the_set_the_ranking_filtered(
+        tmp_path, monkeypatch, seed):
+    """Search forced on a campaign whose constraint IS modelled. The record's
+    ``applied`` is what the ranking did (``candidate_space``), its exclusion
+    count is over the evaluated set (never more than was evaluated), the
+    recommendation is not confidently infeasible, and the corner every
+    measurement refused never reaches ``top_candidates``."""
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    monkeypatch.setattr(decide, "CANDIDATE_CAP", 1)
+    s = SURFACES["infeasible_corner_interior"]()
+    ov = {"response": {"primary": {"metric": "m", "direction": s.direction},
+                       "constraints": [{"metric": "p99_ms", "op": "<=", "value": 90}]},
+          "stages": ["verify", "screen", "confirm"]}
+    res = run_synthetic_campaign(s, seed=seed, parent_dir=tmp_path, campaign_overrides=ov,
+                                 max_iterations=12)
+    rec = json.loads((Path(res.work_dir) / "runs" / "iter-2" / "recommendation.json").read_text())
+    jsonschema.validate(rec, SCHEMA)
+    cs = rec["candidate_space"]
+    (entry,) = rec["constraint_models"]
+    assert entry["modelled"] is True
+    assert cs["constraint_models_applied"] is True
+    assert entry["applied"] is cs["constraint_models_applied"]
+    assert 1 <= entry["excluded_confidently_infeasible"] <= cs["evaluated"]
+    assert entry["at_recommendation"]["verdict"] in ("feasible", "uncertain")
+    assert not [c for c in rec["top_candidates"]
+                if c["levels"]["BS"] == 32 and c["levels"]["CMP"] == 2]

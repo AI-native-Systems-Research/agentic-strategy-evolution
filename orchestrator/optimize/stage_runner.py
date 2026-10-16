@@ -805,7 +805,8 @@ def _fit_row_records(work_dir: Path, outcomes, stage_name: str,
             for r in screen] + fold
 
 
-def _constraint_models_record(models, scored_all, rec, *, delta: float) -> list[dict]:
+def _constraint_models_record(models, scored_all, rec, *, delta: float,
+                              applied: bool | None = None) -> list[dict]:
     """What the constraint models did, per constraint, for ``recommendation.json``.
 
     ``scored_all`` is the candidate space BEFORE the model-based exclusion, so
@@ -813,13 +814,19 @@ def _constraint_models_record(models, scored_all, rec, *, delta: float) -> list[
     constraint removed (a candidate two constraints both exclude is counted
     under each). ``at_recommendation`` gives the argmax's own verdict, so a
     recommendation that is merely UNCERTAIN on a constraint says so.
+
+    ``scored_all`` is the ranking's own ``Scored.unfiltered``: the same set the
+    exclusion was applied to -- the whole space when enumerated, the SEARCH's
+    evaluated set above the cap (``candidate_space`` says which). ``applied``,
+    when given, is what the ranking actually did
+    (``CandidateSpace.constraint_models_applied``); when ``None`` it is derived
+    from ``scored_all``, which is the same thing for an enumerated space.
     """
     d = cmodels.per_constraint_delta(models, delta)
-    n_kept = sum(
-        1 for c in scored_all
-        if not cmodels.confidently_infeasible(models, c.coded, delta=delta)
-    )
-    applied = n_kept > 0
+    if applied is None:
+        applied = any(
+            not cmodels.confidently_infeasible(models, c.coded, delta=delta)
+            for c in scored_all)
     out: list[dict] = []
     for m in models:
         entry = {
@@ -4021,13 +4028,15 @@ def run_stage(
         epsilon_pct=float((pol["objective"]["epsilon"] or {}).get("pct", 2.0)),
         constraint_models=cmods, constraint_delta=delta_s, **_search,
     )
+    # Counted over the set the ranking ACTUALLY filtered (`scored.unfiltered`),
+    # not a fresh ranking: above the cap a second search would evaluate a
+    # different set and could disagree about whether the models applied.
     constraint_record = _constraint_models_record(
         cmods,
-        decide.ranked(
-            fit, factors, direction=direction, fitted_ids=fitted_ids,
-            held_fixed=held_now, exclude_levels=excluded, top=None, **_search,
-        ) if any(m.modelled for m in cmods) else [],
+        scored.unfiltered if any(m.modelled for m in cmods) else [],
         rec, delta=delta_s,
+        applied=(None if candidate_space.exhaustive
+                 else bool(candidate_space.constraint_models_applied)),
     )
     uncertain_at_rec = [
         e["metric"] for e in constraint_record
