@@ -2176,6 +2176,18 @@ def _epoch_end_remedy(when: dict) -> str:
     )
 
 
+def _check_clean_tree_after(campaign, work_dir, what: str) -> None:
+    """Raise when target code modified the clean tree (clean_tree.check)."""
+    from orchestrator.optimize import clean_tree as _ct
+
+    if not (Path(work_dir) / _ct.RECORD).exists():
+        return
+    try:
+        _ct.check(Path(work_dir))
+    except _ct.CleanTreeError as exc:
+        raise OptimizationGateFailed(f"after the {what}: {exc}") from exc
+
+
 def _run_report(engine, campaign, work_dir, iteration, pol, *,
                 recommendation_levels, epoch_ended: str | None = None) -> None:
     """Write ``report.json`` and end the campaign at DONE.
@@ -2228,6 +2240,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     into one number would advertise the assumption-light guarantee while
     delivering the model-dependent one.
     """
+    # No report on measurements from a tree target code modified (round 3, A4).
+    _check_clean_tree_after(campaign, work_dir, "last stage, at the terminal transition")
     primary = _primary_of((campaign.get("optimization") or {}).get("response"))
     metric = primary.get("metric") or ""
     direction = primary.get("direction") or pol["objective"]["direction"]
@@ -3536,6 +3550,10 @@ def run_stage(
         # to runs.jsonl stay on disk (append-only), which is what lets an author
         # see which rows preceded the change.
         raise OptimizationGateFailed(str(exc)) from exc
+    # The measurement batch ran target code in the clean tree: check the tree
+    # right after it, so a batch that modified what it measured fails THIS
+    # iteration rather than the next one (round 3, A4).
+    _check_clean_tree_after(campaign, work_dir, f"{stage_name} measurement batch")
 
     # Restore DESIGN order before anything reads these positionally.
     # `_fitting_responses` walks `outcomes` in sequence and `fit_effects` pairs

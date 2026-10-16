@@ -185,3 +185,33 @@ def test_a_missing_clean_tree_is_recreated_identically(tmp_path, monkeypatch):
     from orchestrator.optimize.clean_tree import ensure
     dest = ensure(repo, wd)
     assert (dest / "calc.py").read_text() == before
+
+
+
+def test_a_measurement_batch_that_modifies_the_clean_tree_fails_that_iteration(tmp_path, monkeypatch):
+    """A4: checked right after the batch, not at the next iteration's start."""
+    from orchestrator.engine import Engine
+    from orchestrator.optimize.clean_tree import TREE, tree_root
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+
+    repo, wd, stage = _setup(tmp_path, monkeypatch, _honest)
+    stage(1)
+    stage(2)
+    from orchestrator.optimize import stage_runner as sr
+    real = None
+
+    def tampering_runner(row):
+        (tree_root(wd) / TREE / "bench.py").write_text("print('rigged')\n")
+        return real(row)
+
+    from orchestrator.optimize.synthetic import SURFACES, make_synthetic_runner
+    real = make_synthetic_runner(SURFACES["additive"](), seed=1)
+    eng = Engine(wd)
+    if eng.phase != "DONE":
+        eng.transition("DONE")
+    eng.transition("DESIGN")
+    import yaml
+    c = yaml.safe_load((wd / "campaign.epoch-1.yaml").read_text())
+    with pytest.raises(OptimizationAborted, match="after the screen measurement batch"):
+        sr.run_stage(c, wd, iteration=3, config_runner=tampering_runner)
+    assert not (wd / "runs" / "iter-3" / "effects.json").exists()
