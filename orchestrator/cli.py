@@ -252,6 +252,19 @@ def _cmd_run(args):
     run_id = args.run_id or campaign.get("run_id") or (campaign_path.parent.name + "-run")
     repo_path = campaign["target_system"].get("repo_path")
 
+    # A build campaign's preconditions, checked BEFORE plan/build spends a
+    # token (round 3, D3): a committed git repo and a work_dir outside it.
+    if _campaign_kind(campaign) == "optimization":
+        from orchestrator.optimize.clean_tree import build_preconditions
+
+        _pre = build_preconditions(campaign, run_id)
+        if _pre:
+            print(f"Refusing to run {campaign_path}: its build stage cannot start.",
+                  file=sys.stderr)
+            for p_ in _pre:
+                print(f"  x {p_}", file=sys.stderr)
+            sys.exit(1)
+
     # #251 (F6): warn at campaign load time about ``worktree_extras``
     # entries that are tracked in the target repo's main branch.
     # Tracked paths are already in every git worktree checkout;
@@ -767,6 +780,14 @@ def _validate_campaign_file(
             warnings.append(item[len("WARN:"):].strip())
         else:
             errors.append(f"{rule_tag} {item}")
+    if kind == "optimization":
+        from orchestrator.optimize.clean_tree import build_preconditions
+
+        try:
+            for item in build_preconditions(campaign):
+                errors.append(f"[build] {item}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"[build] preconditions could not be checked ({exc})")
 
     if warnings:
         print(f"\n{len(warnings)} warning(s) — not fatal, but worth reading:")

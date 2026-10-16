@@ -2739,6 +2739,13 @@ def _run_stage_body(
         # never mentioned it", which is the fail-closed case verify already owns.
         from orchestrator.optimize import gate_records, test_vacuity
 
+        # A build needs a repo at all (round 3, E3): say so here rather than
+        # failing later with a misleading "record absent" seal error.
+        if not repo:
+            raise OptimizationGateFailed(
+                "a build stage needs target_system.repo_path: the mechanism is "
+                "authored in that repository and verified in a clean checkout of its "
+                "commit.")
         # Gate records live OUTSIDE the repo and are sealed (gate_records.py).
         try:
             gate_records.require_outside_repo(work_dir, Path(repo) if repo else None)

@@ -659,3 +659,20 @@ def test_a_target_command_that_leaves_a_process_running_is_reaped_and_recorded(t
         pass
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_a_build_with_no_repo_is_refused_with_a_clear_message(tmp_path, monkeypatch):
+    """E3: not a misleading 'record absent' seal error at verify."""
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    s, c = _build_campaign(tmp_path, tmp_path / "unused")
+    c["target_system"]["repo_path"] = None
+    wd = setup_work_dir("norepo", repo_path=None, campaign=c)
+    with pytest.raises(OptimizationAborted, match="needs target_system.repo_path"):
+        run_stage(c, wd, iteration=1, stage="build",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: False for t in _declared_ids(c)},
+                  sdk_runner=_fake_build({}))

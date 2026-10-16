@@ -327,6 +327,9 @@ def test_screen_mde_formula_matches_the_guide_example():
 
 
 def _build_campaign(tmp_path, capsys, *, new_file_exists: bool) -> Path:
+    import os
+    if not os.environ.get("NOUS_CAMPAIGN_PARENT"):
+        raise AssertionError("set NOUS_CAMPAIGN_PARENT outside the repo (monkeypatch)")
     camp = _filled(tmp_path, capsys)
     repo = tmp_path / "target"
     if new_file_exists:  # authored, but the mechanism is not there yet
@@ -341,10 +344,18 @@ def _build_campaign(tmp_path, capsys, *, new_file_exists: bool) -> Path:
     opt["factors"][1]["relations"][0]["native_test"] = (
         "tests/test_new.py::test_choice_mechanism")
     camp.write_text(yaml.safe_dump(doc, sort_keys=False))
+    # A build campaign's preconditions (clean_tree.build_preconditions): a
+    # committed git repo, and a work_dir outside it.
+    import subprocess
+    for a in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        subprocess.run(["git", *a], cwd=repo, check=True)
+    subprocess.run(["git", "add", "-A"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "x"], cwd=repo, check=True)
     return camp
 
 
-def test_smoke_with_build_does_not_fail_on_tests_build_will_author(tmp_path, capsys):
+def test_smoke_with_build_does_not_fail_on_tests_build_will_author(tmp_path, capsys, monkeypatch):
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "campaigns"))
     camp = _build_campaign(tmp_path, capsys, new_file_exists=False)
     code, out, err = _nous(["validate", "campaign", str(camp), "--smoke"], capsys)
     assert code == 0, err + out
@@ -360,10 +371,11 @@ def test_smoke_with_build_does_not_fail_on_tests_build_will_author(tmp_path, cap
     assert "already PASS pre-build" not in out
 
 
-def test_smoke_warns_when_a_built_factors_test_already_passes(tmp_path, capsys):
+def test_smoke_warns_when_a_built_factors_test_already_passes(tmp_path, capsys, monkeypatch):
     """The case oracle 2(b) exists for: a factor the build AUTHORS also declares
     a test that is green before the mechanism exists. Smoke must say so, with
     exactly the verdict verify will reach."""
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "campaigns"))
     camp = _build_campaign(tmp_path, capsys, new_file_exists=False)
     doc = yaml.safe_load(camp.read_text())
     factors = doc["optimization"]["factors"]
@@ -375,9 +387,10 @@ def test_smoke_warns_when_a_built_factors_test_already_passes(tmp_path, capsys):
     assert "already PASS pre-build" in out and existing in out, err + out
 
 
-def test_smoke_with_build_still_fails_an_unmatched_existing_test(tmp_path, capsys):
+def test_smoke_with_build_still_fails_an_unmatched_existing_test(tmp_path, capsys, monkeypatch):
     """Only tests build will AUTHOR are excused. A path-style id in a file that
     exists now must still be reported by the runner, or smoke fails."""
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "campaigns"))
     camp = _build_campaign(tmp_path, capsys, new_file_exists=False)
     doc = yaml.safe_load(camp.read_text())
     doc["optimization"]["factors"][0]["relations"][0]["native_test"] = (
@@ -392,7 +405,8 @@ def test_smoke_with_build_still_fails_an_unmatched_existing_test(tmp_path, capsy
 
 def test_liveness_with_build_reports_authored_factor_as_not_applicable(
     tmp_path, capsys,
-):
+ monkeypatch):
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "campaigns"))
     camp = _build_campaign(tmp_path, capsys, new_file_exists=True)
     code, out, err = _nous(["validate", "campaign", str(camp), "--liveness"], capsys)
     assert code == 0, err + out

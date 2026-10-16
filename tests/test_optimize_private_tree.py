@@ -198,3 +198,67 @@ def test_worktree_extras_are_copied_not_symlinked_and_recorded(tmp_path):
     assert (d / "data" / "corpus.txt").read_text() == "rows\n"
     with pytest.raises(ct.CleanTreeError, match="worktree_extras"):
         ct.ensure(repo, wd, fresh=True)
+
+
+# ─── round 3, D3 / E3: preconditions before any token is spent ───────────────
+
+
+def _build_campaign_for(repo):
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    c = synthetic_campaign(SURFACES["additive"](), stages=["build", "verify", "screen", "confirm"],
+                           known_valid_baseline={"A": 2, "B": 2, "C": "off"},
+                           build_checks={"mechanism_paths": ["mech"]})
+    c["target_system"]["repo_path"] = str(repo) if repo else None
+    return c
+
+
+def test_preconditions_name_a_dirty_tree_a_work_dir_inside_the_repo_and_a_missing_repo(
+        setup, tmp_path, monkeypatch):
+    repo, _ = setup                         # mech/m.py is modified in this fixture
+    monkeypatch.delenv("NOUS_CAMPAIGN_PARENT", raising=False)
+    probs = ct.build_preconditions(_build_campaign_for(repo), "r1")
+    assert any("committed" in p and "git commit" in p for p in probs), probs
+    assert any("INSIDE the target repo" in p and "NOUS_CAMPAIGN_PARENT" in p for p in probs), probs
+    assert ct.build_preconditions(_build_campaign_for(None))[0].startswith(
+        "a build stage needs target_system.repo_path")
+    _git(repo, "commit", "-qam", "clean")
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "campaigns"))
+    assert ct.build_preconditions(_build_campaign_for(repo), "r1") == []
+
+
+def test_nous_run_refuses_a_build_campaign_before_spending_a_token(setup, tmp_path, monkeypatch, capsys):
+    import sys
+
+    import yaml
+
+    from orchestrator import cli
+
+    repo, _ = setup
+    monkeypatch.delenv("NOUS_CAMPAIGN_PARENT", raising=False)
+    camp = tmp_path / "c.yaml"
+    camp.write_text(yaml.safe_dump(_build_campaign_for(repo)))
+    calls = []
+    monkeypatch.setattr("orchestrator.campaign.run_campaign", lambda *a, **k: calls.append(1))
+    monkeypatch.setattr(sys, "argv", ["nous", "run", str(camp), "--auto-approve"])
+    with pytest.raises(SystemExit) as e:
+        cli.main()
+    assert e.value.code == 1 and not calls
+    assert "its build stage cannot start" in capsys.readouterr().err
+
+
+def test_nous_validate_reports_the_build_preconditions(setup, tmp_path, monkeypatch, capsys):
+    import sys
+
+    import yaml
+
+    from orchestrator import cli
+
+    repo, _ = setup
+    camp = tmp_path / "c.yaml"
+    camp.write_text(yaml.safe_dump(_build_campaign_for(repo)))
+    monkeypatch.setattr(sys, "argv", ["nous", "validate", "campaign", str(camp)])
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert "[build]" in capsys.readouterr().err

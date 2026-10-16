@@ -502,3 +502,53 @@ def check(work_dir: Path) -> None:
             "the clean checkout the epoch measures was modified (" + "; ".join(problems)
             + "). Target code changed the tree it is measured in; the measurements "
             "since the last check describe a different system. Start a new campaign.")
+
+
+def build_preconditions(campaign: dict, run_id: str | None = None) -> list[str]:
+    """What a build campaign needs BEFORE any token is spent (round 3, D3, E3):
+    a git repo, every tracked file committed, and a work_dir outside the repo.
+    Returns human-readable problems (empty when ready, or when no build)."""
+    from orchestrator.optimize.build_scope import build_declared
+
+    try:
+        if not build_declared(campaign):
+            return []
+    except (TypeError, ValueError, AttributeError):
+        return []
+    repo = (campaign.get("target_system") or {}).get("repo_path")
+    if not repo:
+        return ["a build stage needs target_system.repo_path: the mechanism is authored "
+                "in that repository and verified in a clean checkout of its commit."]
+    repo_p = Path(str(repo)).expanduser()
+    if not repo_p.is_dir():
+        return [f"target_system.repo_path {repo} does not exist"]
+    out: list[str] = []
+    try:
+        require_clean_base(repo_p)
+    except CleanTreeError as exc:
+        msg = str(exc)
+        if "not a git repository" in msg:
+            out.append(f"a build stage needs target_system.repo_path to be a git "
+                       f"repository; {repo} is not one. `git init && git add -A && "
+                       f"git commit` it first.")
+        elif "Dirty:" in msg:
+            head, dirty = msg.split("Dirty:", 1)
+            out.append(head.strip() + " Commit them (`git commit -am ...`) before "
+                       "running. Dirty:" + dirty)
+        else:
+            out.append(msg)
+    try:
+        from orchestrator.work_dir_resolver import resolve_work_dir
+
+        wd = resolve_work_dir(run_id or campaign.get("run_id") or "run", repo_p)
+        Path(wd).resolve().relative_to(repo_p.resolve())
+        out.append(
+            f"the campaign work_dir would be {wd}, INSIDE the target repo: a build "
+            f"stage's agent and every target command run there, so its gate records "
+            f"would be in their reach. Export NOUS_CAMPAIGN_PARENT to a directory "
+            f"outside the repo (e.g. `export NOUS_CAMPAIGN_PARENT=~/nous-campaigns`).")
+    except ValueError:
+        pass
+    except Exception:  # noqa: BLE001 -- resolution problems are reported elsewhere
+        pass
+    return out
