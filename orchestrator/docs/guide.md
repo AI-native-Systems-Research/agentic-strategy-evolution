@@ -1637,47 +1637,86 @@ passed before the build; give the reason in a comment beside it, and expect it i
 - A mechanism that lives entirely in NEW files, reached only by a new entry
   point, leaves nothing to revert, so its mutant equals the build and every test
   reads as vacuous.
-- No second mutant stubs the new symbols' bodies, so a test that asserts on a
-  value any stub would return is not caught.
+- A second, stub-body mutant (Python only) keeps the new symbols but replaces
+  the body of every new or changed function with `raise NotImplementedError`. A
+  test that still passes there checks only that names exist (`hasattr`,
+  `in dir(m)`, `vars(m)`, `__dict__`, `inspect`), and it is rejected. Other
+  languages have no stub mutant.
 - The oracle removes existence-only tests. It does not grade whether an
   assertion is the right one.
 
-**The build's write scope is checked, and the check fails closed.** Just before
-the agent call and just after it, the build stage snapshots the target:
+**Clean-checkout verification: what is measured is the recorded mechanism.**
+Any check that runs in the same tree as agent-authored code can be tampered
+with by that code: it runs again at verify (the test command) and in every epoch
+(the run command). So after a build, Nous measures the RECORDED artifact in a
+clean environment, as reproducible builds do:
 
-- the bytes of every tracked file, hashed directly so `--skip-worktree` cannot
-  hide an edit, and of every untracked file;
-- ignored source and config files;
+1. The pre-build tree must have every tracked file committed, and
+   `build_checks.mechanism_paths` must name a real scope. Validation and the
+   build stage both refuse a missing scope or a whole-repo entry (`.`, `**`).
+2. After the agent call, the mechanism is recorded as exactly the diff of
+   `mechanism_paths` against the pre-build commit. That is
+   `mechanism.clean.patch`: binary-safe, with new and deleted files, ignored
+   files excluded. Its sha256 is the mechanism hash the policy is compiled
+   with. A patch that touches the benchmark harness or a pre-existing declared
+   test is refused, unless that file is listed by exact path.
+3. Verify's test runs, the baseline re-measurement, the 2(d) mutants and EVERY
+   epoch measurement run in `clean-tree/` inside the work dir. That is a fresh
+   `git worktree` of the pre-build commit with the patch applied. The agent's
+   own working tree is never measured, so out-of-scope writes, commits, hidden
+   or ignored files, symlink swaps and planted caches there are simply absent.
+4. Before every later stage the clean tree must still be base + patch: the
+   mechanism paths diff to the same patch, no tracked file outside them
+   changed, and no untracked code file appeared. Target code that modifies the
+   checkout it is measured in aborts the campaign. A missing clean tree, for
+   example on a resume, is recreated from the recorded commit and patch.
+
+**Gate records are kept out of reach and sealed.** A build campaign's work dir
+must be outside the target repo (export `NOUS_CAMPAIGN_PARENT`).
+
+- Every build record (`pre_build_tests.json`, `baseline_equivalence.json`,
+  `build_scope.json`, `clean_tree.json`, the patch, and after verify
+  `authored_tests.json` and `build_review.json`) is sealed with HMAC-SHA256
+  under a per-campaign random key (`.nous_gate_key`, mode 0600).
+- Verify loads and checks the seals once, before any target code runs, and the
+  oracles use those in-memory copies. A record edited later is reported as a
+  broken seal in `provenance.waivers` and by `nous reanalyze`.
+
+**Nothing the build starts may outlive it.** A poller records every process the
+build call starts. Any still running when the call returns is killed, together
+with its process group, and the build fails (`build_isolation.json`).
+
+**No planted bytecode.** Every target command runs with `PYTHONPYCACHEPREFIX`
+set to a Nous-owned directory, so a `__pycache__` file in any tree is never
+imported. Other runtimes' caches are not redirected.
+
+**The write-scope diff is an early signal.** Just before and just after the
+agent call, the build stage snapshots the target:
+
+- tracked and untracked files, by bytes;
+- ignored source and config files, by bytes up to 1 MiB;
 - symlinks and submodules;
-- `HEAD`, the branch, `refs/stash`, the index, the per-file flags,
-  `.git/info/exclude` and `core.excludesFile`;
-- the digests of Nous's own gate records.
+- `HEAD`, the branch, the stash, the index, per-file flags and the exclude
+  files.
 
-`build_scope.json` records the difference. Each of the following aborts the
-campaign, and none of them can be waived:
+The build is refused before anything is measured when the agent committed,
+stashed or checked out, changed git flags or excludes, edited a gate record,
+left the tree unreadable, or wrote outside `mechanism_paths` or to a protected
+input. `build_scope.json` records what was written and what the diff cannot
+see. Correctness no longer depends on this check: the clean checkout is what is
+measured. The path rules can be waived with
+`build_checks.allow_out_of_scope_writes: "<why>"`; that waiver does not let a
+protected file into the patch.
 
-- a commit, checkout or stash;
-- a flag or exclude-file change;
-- an edit to a gate record;
-- a tree that was readable before the build and is unreadable after it.
+**What all of this still does not cover:**
 
-So does a write outside `mechanism_paths`, which a `build` campaign must declare
-(validation rejects one that does not). So does a write to a protected input,
-unless that file is listed by exact path in `mechanism_paths`. The protected
-inputs are any tracked file the `run_command` names, lives under (a directory
-token), reaches by `-m pkg.mod` or `make`, and every pre-existing declared test
-file. The path rules (not the integrity rules) can be waived with
-`build_checks.allow_out_of_scope_writes: "<why>"`.
-
-What the check cannot see:
-
-- writes outside the repository, such as a home-directory config or a system
-  library;
-- an edit the agent makes and reverts within its own call;
-- writes under dependency or build-output trees (`node_modules`, `.venv`,
-  `target`, `dist`, `build`);
-- anything at all on a non-git target. That is recorded as `applicable: false`
-  and listed as a waiver.
+- the build agent runs as the same OS user, so a process that reads
+  `.nous_gate_key` could forge a seal;
+- target code can modify the clean tree WITHIN one stage and restore it before
+  the next check;
+- anything outside the repository (the home directory, system libraries);
+- a process that double-forks and detaches within one polling interval;
+- untracked data files in the clean tree (only code files are checked).
 
 **The build review gate: a human only without `--auto-approve`.** After the
 build's automatic oracles pass, and before it compiles the policy, `verify`
