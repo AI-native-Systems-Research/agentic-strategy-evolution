@@ -273,6 +273,26 @@ generalized resolution read off the PSEUDO-COLUMN matrix (no word shorter than
 R) and the strength R-1 proportional-frequency property read off the LEVEL
 matrix (Addelman / Rao).
 
+## Implementation notes (as built)
+
+- `design.mixed_fraction` / `mixed_screen` build the screen; `Design.groups`
+  maps columns to factors (empty on every two-level design, which keeps the
+  textbook path and its artifacts byte-identical). `matrix.coded_as_run`
+  turns the planned pseudo-factor columns into the fit's L-1 contrast columns.
+- When the fitted rows cannot support any 2fi (e.g. a resolution-III mixed
+  screen whose collapsed contrasts leave 2fi columns partially aliased), the
+  fit is main effects only and `effects.json["interactions_dropped"]` says so.
+- Findings and principles project a categorical ONCE, from its F test and
+  LS means (its individual contrasts are basis-dependent).
+- Validator: rule 3 rejects `screen_levels` on a multi-level choice; rule 7
+  names the mixed screen's aliases; rule 8 prices the mixed screen (corners +
+  centres); rule 29 (warning) states each categorical's pseudo-factors, df,
+  collapsing and the screen's run cost. Rule 28 (feature 3) warns on a level
+  no centre point covers.
+- Examples whose 3- and 5-level choice factors were previously screened at
+  two levels needed larger budgets (finetune-hyperparams: 128 corners at
+  resolution V; the guide's alert-threshold example: 64).
+
 ## What this design cannot answer (open questions)
 
 - Non-regular mixed-level designs (e.g. the 18-run OA(18, 2^1 3^7), 36-run

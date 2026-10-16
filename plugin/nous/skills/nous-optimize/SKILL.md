@@ -66,7 +66,9 @@ Fill every `TODO-`. The rules that have cost real campaigns:
 - Integer levels need `grid: 1`; geometric knobs need `scale: log`. A knob
   that runs only at listed values (powers of two, a menu of sizes) needs
   `levels_only: true` instead of `grid`: everything run or recommended is then
-  a declared level.
+  a declared level. A `choice` factor may list any number of levels; every
+  one is screened (L levels cost 2^ceil(log2 L) screen slots), fitted with
+  L-1 df and recommendable -- do not split a multi-level choice into binaries.
 - Any number of knobs is fine; the screen is always a fraction. Past about 10
   knobs, screen at `resolution: 4` first (about 2k runs) and refine the live
   ones next epoch; the `--liveness` preview prices each option.

@@ -552,8 +552,24 @@ else has a default.
   `continuous` / `ordinal` / `categorical` vocabulary is not accepted —
   see anti-pattern §6.7.
 - **`levels`** — every runnable setting, as a flat list, `>= 2` entries.
-  Screening uses the pair from `screen_levels` (default: `levels[0]` and
-  `levels[-1]`); interior levels are explored only in `refine`.
+  A numeric factor is screened at the pair from `screen_levels` (default:
+  `levels[0]` and `levels[-1]`); its interior levels are explored only in
+  `refine`. A `choice` factor with **more than two levels** is screened at
+  **every** level, by the *method of replacement* (Addelman 1962; Wu & Hamada,
+  *Experiments*, ch. 7): `m = ceil(log2 L)` two-level pseudo-factor columns,
+  with every one of its `2^m - 1` contrast components treated as a main-effect
+  column when the fraction's resolution is guaranteed (generalized resolution:
+  at V, no component of any factor's main effect or 2fi is aliased with
+  another). When `L < 2^m` the surplus combinations collapse onto the
+  first-declared levels, which then run twice as often (recorded in
+  `design_matrix.json["categoricals"]`). The fit gives it an `L-1` df main
+  effect, tested by an F test (`effects.json["categoricals"]`, with each
+  level's least-squares mean); candidates, the search, constraint models, the
+  predicted front, refine's held level and confirm all cover every level. A
+  3-level factor costs 4 slots, a 5-level one 8 — `nous validate` (rule 29)
+  and the `--liveness` preview print the expanded column count and run cost.
+  Measured: `[lru, lfu, arc]` with `lfu` best is now found on 8/8 seeds; before,
+  `lfu` was never run.
 - **`scale`** (numeric only; `linear` default, or `log`) — the space the
   design's ±1 coding is linear in. Declare `log` for a geometric knob — a
   cache/buffer size, a batch size, an interval spanning orders of magnitude.
@@ -584,7 +600,8 @@ else has a default.
 - **`screen_levels`** — the two `levels` members the 2-level screen uses for
   this factor. Declare only when the extremes are known-pathological and
   the screen should bracket a narrower span; otherwise omit and take the
-  default.
+  default. Not on a `choice` factor with more than two levels (every level
+  is screened; a hard error): to screen fewer, declare fewer.
 - **`apply`** — the seam that removes the LLM from the inner loop: how a
   level becomes a runnable configuration, mechanically, with zero model
   involvement. A bare string is CLI-flag shorthand
@@ -2194,7 +2211,8 @@ Per iteration, under `runs/iter-N/`:
 best-predicted configuration over the *candidate space*: the product of the
 fitted factors' axes — up to 9 evenly spaced points (snapped to the grid,
 de-duplicated) per refinable numeric factor, exactly the declared levels of a
-`levels_only` factor, the two screen levels per choice or two-level factor. That product is exponential in the number of knobs (9^6 =
+`levels_only` factor, every level of a multi-level `choice` factor, the two
+screen levels per two-level choice or two-level factor. That product is exponential in the number of knobs (9^6 =
 531k at six, 9^12 = 2.8e11 at twelve), so:
 
 - **At or below `decide.CANDIDATE_CAP` = 50,000 candidates** the space is
@@ -2658,7 +2676,9 @@ optimization:
     screen:  {resolution: 5, center_points: 4}
     refine:  {kind: central_composite, center_points: 4}
     confirm: {replicates: 3}
-    max_runs: 60
+    # F4 has five levels: all are screened (method of replacement, 8 slots),
+    # so the resolution-V screen is 64 corners + 4 centres.
+    max_runs: 120
 
   test_command: "pytest -q tests/prop_*.py --json-report"
 ```
@@ -3615,13 +3635,16 @@ optimization:
            , native_test: "tests/test_train_props.py::test_master_weights_are_fp32"}
 
   design:
-    screen: {resolution: 5, center_points: 3}
+    # OPT, SCH and PREC have three levels each: every level is screened (method
+    # of replacement, 4 slots apiece), so resolution V takes 128 corners; six
+    # centres cycle the choice levels in three configurations of two.
+    screen: {resolution: 5, center_points: 6}
     # No `refine`: BS is the only numeric factor with more than two levels, and
     # a central-composite design needs >= 2 to have a surface with curvature.
     # The validator hard-fails a `refine` block here rather than running one
     # that could only fit a line -- see the note after this block.
     confirm: {replicates: 4, shortlist_size: 3}
-    max_runs: 60
+    max_runs: 160
 
   stages: [verify, screen, confirm]
 
@@ -3670,9 +3693,11 @@ degraded campaign: screening still estimates every two-factor interaction, and
 claim still does not rest on the fitted surface. Compare §3.2, which reaches the
 same schedule from an all-`choice` factor set.
 
-**Expect one warning from `nous validate campaign` on this campaign, and read
-it.** A 6600-second per-row ceiling against `max_runs: 60` is ~110 hours of
-worst-case wall clock, and the validator says so. That warning is correct and
+**Expect warnings from `nous validate campaign` on this campaign, and read
+them.** Rule 29 states what each three-level choice factor costs (two
+pseudo-factor columns, the first level run twice). And a 6600-second per-row
+ceiling against `max_runs: 160` is ~293 hours of worst-case wall clock, and the
+validator says so. That warning is correct and
 this campaign keeps the ceiling anyway, because the measurement really is
 compound (a full fine-tuning run) and shortening it would change the
 experiment rather than the schedule. The warning exists so that decision is

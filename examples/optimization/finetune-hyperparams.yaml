@@ -180,7 +180,12 @@ optimization:
           statement: "master weights and optimizer state stay fp32 at every compute precision, so a precision change is a compute change and not a silently different algorithm"
           native_test: "tests/test_train_props.py::test_master_weights_are_fp32"
   design:
-    screen: {resolution: 5, center_points: 3}
+    # OPT, SCH and PREC have three levels each, so each is screened at EVERY
+    # level by the method of replacement: two pseudo-factor columns apiece
+    # (4 slots, the first level run twice), 7 columns in all, and resolution V
+    # over three 4-slot factors and BS takes 128 runs. Six centre points cycle
+    # the choice levels in three configurations of two (pure-error df 3).
+    screen: {resolution: 5, center_points: 6}
     # No `refine`: BS is the only numeric factor with more than two levels, and a
     # central-composite design needs >= 2 to have curvature to fit. The validator
     # hard-fails a `refine` block here rather than running one that could only fit
@@ -188,7 +193,7 @@ optimization:
     # two-factor interaction, and confirm still does terminal discrimination over
     # a shortlist, so the final claim still does not rest on the fitted surface.
     confirm: {replicates: 4, shortlist_size: 3}
-    max_runs: 60
+    max_runs: 160
   stages: [verify, screen, confirm]
   design_space:
     invariants:

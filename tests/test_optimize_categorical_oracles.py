@@ -262,7 +262,7 @@ def test_rule8_prices_the_mixed_screen_not_the_two_level_one():
     c = _camp()
     c["optimization"]["design"]["max_runs"] = 12   # mixed screen needs 16 corners
     errs = validate_optimization_campaign(c)
-    assert any("needs 16 runs" in e for e in errs), errs
+    assert any("16 corners" in e and "method of replacement" in e for e in errs), errs
 
 
 def test_preview_shows_the_mixed_screen_its_columns_and_its_bound():

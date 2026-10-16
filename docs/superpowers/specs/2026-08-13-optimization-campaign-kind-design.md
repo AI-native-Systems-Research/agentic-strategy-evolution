@@ -981,7 +981,9 @@ optimization:
     screen:  {resolution: 5, center_points: 4}
     refine:  {kind: central_composite, center_points: 4}
     confirm: {replicates: 3}
-    max_runs: 60
+    # 120 since 2026-10-16: F4's five levels are all screened (method of
+    # replacement, spec 2026-10-16-mixed-level-factors-design.md), 68 runs.
+    max_runs: 120
 
   test_command: "pytest -q tests/prop_*.py --json-report"
 ```

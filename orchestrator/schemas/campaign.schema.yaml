@@ -1023,9 +1023,13 @@ properties:
               minItems: 2
               description: >
                 Every runnable setting for this factor, as a flat list.
-                Example: ``[2, 4, 8, 16]`` or ``[off, on]``. Screening
-                uses ``screen_levels`` (default: first and last); the
-                remaining interior levels are explored only in ``refine``.
+                Example: ``[2, 4, 8, 16]`` or ``[off, on]``. A numeric
+                factor is screened at ``screen_levels`` (default: first and
+                last) and its interior levels are explored only in
+                ``refine``. A ``choice`` factor with more than two levels is
+                screened at EVERY level by the method of replacement
+                (ceil(log2 L) pseudo-factor columns), fitted with L-1 df,
+                and every level is a candidate for the recommendation.
               items: {}
             grid:
               type: number
@@ -1078,7 +1082,9 @@ properties:
                 factor. Must both be members of ``levels``. Default (when
                 omitted): ``levels[0]`` and ``levels[-1]``. Declare this
                 only when the extremes are known-pathological and the
-                screen should bracket a narrower span.
+                screen should bracket a narrower span. Not allowed on a
+                ``choice`` factor with more than two levels (every level is
+                screened).
               items: {}
             apply:
               description: >
