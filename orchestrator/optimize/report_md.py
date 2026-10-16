@@ -791,8 +791,9 @@ def _provenance_lines(report: dict) -> list[str]:
     out = [f"- **Nous:** {ver}" + (f" at `{commit[:12]}`" if commit else "")
            + (f", source sha256 `{src[:12]}`" if src else "")]
     out.append(f"- **Inputs hashed:** {len(prov.get('inputs') or {})} file(s) "
-               "(`runs.jsonl`, `design_matrix.json`); `nous reanalyze` re-derives "
-               "this report from them")
+               "(`runs.jsonl`, `design_matrix.json`, `relations.json`, each epoch's "
+               "registered campaign); `nous reanalyze` re-derives this report's "
+               "analysis from them")
     for w in prov.get("waivers") or []:
         out.append(f"- **Gate waived:** `{w.get('gate')}` -- {w.get('reason')}"
                    + (f" ({w['note']})" if w.get("note") else ""))

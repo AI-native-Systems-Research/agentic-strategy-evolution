@@ -1586,7 +1586,9 @@ def _review_build(gate, work_dir: Path) -> None:
         artifact_path=str(wd / "mechanism.patch") if (wd / "mechanism.patch").exists() else None,
         files=files,
     )
-    auto = getattr(gate, "_response", None) is not None
+    # A gate that cannot say whether a human answered is treated as automatic:
+    # the record must not claim a review that may not have happened.
+    auto = bool(getattr(gate, "is_automatic", True))
     _write_json(wd / "build_review.json", {
         "decision": decision, "reason": reason, "auto": auto, "files": files})
     if decision != "approve":

@@ -382,3 +382,21 @@ def test_a_build_stage_without_mechanism_paths_fails_validation():
     c["optimization"]["build_checks"] = {"mechanism_paths": ["src"]}
     errs = [e for e in validate_optimization_campaign(c) if not e.startswith("WARN:")]
     assert not any("mechanism_paths is not declared" in e for e in errs), errs
+
+
+def test_a_gate_that_does_not_say_whether_a_human_answered_is_recorded_as_automatic(
+        tmp_path, monkeypatch):
+    """A custom gate object (no is_automatic) must not be recorded as a human review."""
+    class _Gate:
+        def prompt(self, *a, **k):
+            return "approve", None
+
+    wd = _verify(tmp_path, monkeypatch, _Gate())
+    assert json.loads((wd / "build_review.json").read_text())["auto"] is True
+
+
+def test_humangate_reports_whether_it_is_automatic():
+    from orchestrator.gates import HumanGate
+
+    assert HumanGate(auto_response="approve").is_automatic is True
+    assert HumanGate().is_automatic is False

@@ -84,24 +84,48 @@ def _read_git_head(root: Path) -> str | None:
     return None
 
 
+#: What ``source_sha256`` covers, stated in the record itself.
+SOURCE_SCOPE = ("orchestrator/**/*.py, orchestrator/**/*.json, orchestrator/**/*.yaml "
+                "(code, schemas, templates, defaults) and prompts/**/*.md when present")
+
+
 @functools.lru_cache(maxsize=1)
 def _source_digest(pkg_root: str) -> str:
-    """sha256 over every ``orchestrator/**/*.py`` (path + bytes): identifies
+    """sha256 over the files ``SOURCE_SCOPE`` names (path + bytes): identifies
     the exact analysis code even when the checkout is dirty or not git."""
     h = hashlib.sha256()
     root = Path(pkg_root)
-    for p in sorted(root.rglob("*.py")):
+    files = [p for pat in ("*.py", "*.json", "*.yaml") for p in root.rglob(pat)]
+    prompts = root.parent / "prompts"
+    if prompts.is_dir():
+        files += list(prompts.rglob("*.md"))
+    for p in sorted(set(files)):
         if "__pycache__" in p.parts:
             continue
-        h.update(p.relative_to(root).as_posix().encode() + b"\0")
+        h.update(p.relative_to(root.parent).as_posix().encode() + b"\0")
         h.update(p.read_bytes())
     return h.hexdigest()
 
 
+def runtime_versions() -> dict:
+    """Interpreter and numerical-library versions the analysis ran under
+    (read from package metadata; nothing is imported)."""
+    import importlib.metadata as md
+    import platform
+
+    out = {"python": platform.python_version()}
+    for pkg in ("scipy", "numpy", "jsonschema", "pyyaml"):
+        try:
+            out[pkg] = md.version(pkg)
+        except md.PackageNotFoundError:
+            out[pkg] = None
+    return out
+
+
 def nous_version_info() -> dict:
-    """``{"package_version", "git_commit", "source_sha256"}``. ``git_commit``
-    is None for an installed wheel; ``source_sha256`` always identifies the
-    code that ran (uncommitted edits included)."""
+    """``{"package_version", "git_commit", "source_sha256", "source_scope"}``.
+    ``git_commit`` is None for an installed wheel; ``source_sha256`` identifies
+    the code that ran (uncommitted edits included) over ``source_scope``."""
     import importlib.metadata as md
 
     try:
@@ -111,7 +135,8 @@ def nous_version_info() -> dict:
     pkg = Path(__file__).resolve().parents[1]
     return {"package_version": version,
             "git_commit": _read_git_head(pkg.parent),
-            "source_sha256": _source_digest(str(pkg))}
+            "source_sha256": _source_digest(str(pkg)),
+            "source_scope": SOURCE_SCOPE}
 
 
 def analysis_constants() -> dict:
@@ -163,8 +188,9 @@ def analysis_constants() -> dict:
     }
 
 
-#: The per-iteration inputs every fitted artifact is derived from.
-INPUT_FILES = ("runs.jsonl", "design_matrix.json")
+#: The per-iteration inputs every fitted artifact is derived from: the rows,
+#: the registered design, and the test verdicts verify reconciled.
+INPUT_FILES = ("runs.jsonl", "design_matrix.json", "relations.json")
 
 
 def input_hashes(work_dir: Path) -> dict[str, str]:
@@ -181,6 +207,9 @@ def input_hashes(work_dir: Path) -> dict[str, str]:
             p = d / name
             if p.exists():
                 out[f"runs/{d.name}/{name}"] = sha256_file(p)
+    # The campaign each epoch registered: the analysis is a function of it too.
+    for p in sorted(Path(work_dir).glob("campaign.epoch-*.yaml")):
+        out[p.name] = sha256_file(p)
     return out
 
 
@@ -267,6 +296,7 @@ WAIVER_KEYS = ("allow_unarmed_baseline", "allow_nondiscriminating_tests",
 def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None = None) -> dict:
     return {
         "nous": nous_version_info(),
+        "runtime": runtime_versions(),
         "policy_hash": policy_hash,
         "inputs": input_hashes(work_dir),
         "analysis_constants": analysis_constants(),
@@ -316,7 +346,14 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
         total += spent
         epochs.append({"epoch": e, "delta_screen": d[0], "delta_terminal": d[1],
                        "spent": spent,
-                       "compiled_after_data": e > 1})
+                       "compiled_after_data": e > 1,
+                       # An earlier epoch's policy.json was overwritten by the
+                       # recompile, so its deltas are re-derived from its
+                       # registered campaign by the compile_policy of the Nous
+                       # writing THIS report, not the one that ran that epoch.
+                       "deltas_from": ("this epoch's policy.json" if e == current
+                                       else f"campaign.epoch-{e}.yaml recompiled by "
+                                            f"the current Nous")})
     return {
         "epochs": epochs,
         "this_epoch": epochs[-1]["spent"] if epochs else None,

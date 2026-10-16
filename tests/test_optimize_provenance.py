@@ -28,9 +28,11 @@ def test_report_hashes_every_runs_file_and_design_matrix_it_rests_on(tmp_path):
     rep = json.loads((res.work_dir / "report.json").read_text())
     jsonschema.validate(rep, SCHEMA)
     inputs = rep["provenance"]["inputs"]
-    on_disk = sorted(str(p.relative_to(res.work_dir))
-                     for name in ("runs.jsonl", "design_matrix.json")
-                     for p in res.work_dir.glob(f"runs/iter-*/{name}"))
+    on_disk = sorted([str(p.relative_to(res.work_dir))
+                      for name in ("runs.jsonl", "design_matrix.json", "relations.json")
+                      for p in res.work_dir.glob(f"runs/iter-*/{name}")]
+                     + [p.name for p in res.work_dir.glob("campaign.epoch-*.yaml")])
+    assert "runs/iter-1/relations.json" in on_disk and "campaign.epoch-1.yaml" in on_disk
     assert sorted(inputs) == on_disk and on_disk, (inputs, on_disk)
     for rel, digest in inputs.items():
         assert _sha(res.work_dir / rel) == digest, rel
@@ -120,3 +122,18 @@ def test_an_unrecoverable_earlier_epoch_makes_the_budget_a_lower_bound(tmp_path,
 
     eb = error_budget(wd, read_policy(wd))
     assert eb["cumulative_is_lower_bound"] is True and eb["unrecovered_epochs"] == [1]
+
+
+def test_the_record_names_its_runtime_and_source_scope(tmp_path):
+    res = run_synthetic_campaign(SURFACES["bowl"](), seed=4, parent_dir=tmp_path)
+    prov = res.report["provenance"]
+    assert prov["runtime"]["python"] and "scipy" in prov["runtime"]
+    assert "orchestrator/**/*.py" in prov["nous"]["source_scope"]
+    assert "schemas" in prov["nous"]["source_scope"] or ".json" in prov["nous"]["source_scope"]
+
+
+def test_an_earlier_epochs_deltas_say_how_they_were_recovered(tmp_path, monkeypatch):
+    wd, _ = _two_epochs(tmp_path, monkeypatch)
+    e1, e2 = json.loads((wd / "report.json").read_text())["error_budget"]["epochs"]
+    assert "recompiled by the current Nous" in e1["deltas_from"]
+    assert e2["deltas_from"] == "this epoch's policy.json"

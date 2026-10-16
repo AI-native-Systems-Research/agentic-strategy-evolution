@@ -30,7 +30,7 @@
         "analysis_constants"
       ],
       "additionalProperties": false,
-      "description": "What this report rests on (audit Q7), written by provenance.build_provenance: the Nous package version and git commit, the sha256 of every runs/iter-*/runs.jsonl and design_matrix.json on disk when the report was written, the policy hash, the analysis constants and switches that change the analysis without changing the policy hash, and every hard gate the campaign explicitly waived. `nous reanalyze` checks the input hashes before re-deriving the report. Optional only so reports written before the field existed still validate.",
+      "description": "What this report rests on (audit Q7), written by provenance.build_provenance: the Nous package version and git commit, the sha256 of every runs/iter-*/runs.jsonl, design_matrix.json and relations.json and of every campaign.epoch-*.yaml on disk when the report was written (source_sha256 covers the scope named in nous.source_scope), the policy hash, the analysis constants and switches that change the analysis without changing the policy hash, and every hard gate the campaign explicitly waived. `nous reanalyze` checks the input hashes before re-deriving the report. Optional only so reports written before the field existed still validate.",
       "properties": {
         "nous": {
           "type": "object",
@@ -51,6 +51,10 @@
               "type": "string"
             }
           }
+        },
+        "runtime": {
+          "type": "object",
+          "description": "Python and numerical-library versions the analysis ran under."
         },
         "policy_hash": {
           "type": "string"
