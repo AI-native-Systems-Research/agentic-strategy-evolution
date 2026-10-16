@@ -1969,7 +1969,9 @@ properties:
               Set true only when the relation genuinely covers
               pre-existing behaviour — a backward-compatibility test
               asserting an existing default did not change is the
-              legitimate case.
+              legitimate case. It also skips oracle 2(d) for the tests that
+              passed before the build; report.json lists that under
+              provenance.waivers, so say why in a comment beside it.
           baseline_replicates:
             type: integer
             minimum: 1

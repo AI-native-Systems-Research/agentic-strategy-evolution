@@ -1607,44 +1607,85 @@ did not exist, so `import mech; assert mech.f` would pass for any build that
 creates `f`. Each declared `correctness` test of a built factor therefore needs
 one of two kinds of evidence (`authored_tests.json` records which):
 
-- it ran before the build and failed for a reason that is NOT a missing name
-  (`ImportError`, `ModuleNotFoundError`, `AttributeError ... has no attribute`,
-  `NameError`, `unexpected keyword argument`, Go `undefined:`, and their
-  equivalents in other languages); or
-- it fails, by assertion or another behavioural error, against a
-  **mechanism-reverted mutant**. Nous builds the mutant in a temporary git
-  worktree: the post-build tree with every pre-existing non-test file the build
-  edited restored to `HEAD`, and the build's tests and new files kept. An
-  import-only test passes there (vacuous). A test that drives the mechanism
-  through the code it is wired into fails there.
+- it ran before the build and failed **by assertion**; or
+- it fails **by assertion** against a **mechanism-reverted mutant**. Nous builds
+  the mutant in a temporary git worktree: the post-build tree with every
+  pre-existing non-test file the build edited restored to `HEAD`, and the build's
+  tests and new files kept. An import-only test passes there (vacuous). A test
+  that drives the mechanism through the code it is wired into fails there.
 
-A test with neither fails `verify`. Write tests that exercise the mechanism
+**The classification is a text match on the test's own output, and it fails
+closed.** Any missing-name signature (`ImportError`, `ModuleNotFoundError`,
+`AttributeError ... has no attribute`, `NameError`, `hasattr(`/`getattr(`
+probes, arity errors, a missing pytest fixture, Go `undefined:`, Rust `no method
+named`, TypeScript `does not exist on type`, and others) makes a failure an
+*absence* failure, even next to an assertion. Only an assertion signature makes
+it *behavioural*. Anything else is *unknown* and is not evidence: a timeout, a
+crash, an echoed source line, a framework whose per-test output Nous cannot
+isolate. A test's text is isolated exactly, never by substring, and never by
+falling back to the whole log. The one accepted unclassified case: verdicts that
+were injected with no test output (the unit-test seam). Those are listed in
+`report.json` `provenance.waivers` as `pre_build_failure_unclassified`.
+
+A test with no evidence fails `verify`. Write tests that exercise the mechanism
 through code that existed before the build and assert on what it does. The
 waiver is `build_checks.allow_nondiscriminating_tests: "<why>"`, recorded in
-`report.json`. One limit to know: a mechanism that lives entirely in NEW files,
-reached only by a new entry point, leaves nothing to revert, so its mutant equals
-the build and every test reads as vacuous. The oracle removes existence-only
-tests. It does not grade whether an assertion is the right one.
+`report.json`. `allow_preexisting_tests: true` also skips 2(d) for the tests that
+passed before the build; give the reason in a comment beside it, and expect it in
+`provenance.waivers`. Known limits:
 
-**The build's write scope is enforced.** The build stage records the target's
-dirty files just before the agent call and just after it. The difference is what
-the build wrote (`build_scope.json`). A write outside `mechanism_paths`, when
-declared, aborts. So does a write to a protected input, whether or not
-`mechanism_paths` is declared: a pre-existing file the `run_command` names (the
-benchmark harness that produces your objective) or the file of a declared test
-that already ran before the build. To make such an edit part of the mechanism,
-list its exact path in `mechanism_paths`. Tool caches (`__pycache__`,
-`.pytest_cache`, ...) and Nous's own outputs never count. The waiver is
+- A mechanism that lives entirely in NEW files, reached only by a new entry
+  point, leaves nothing to revert, so its mutant equals the build and every test
+  reads as vacuous.
+- No second mutant stubs the new symbols' bodies, so a test that asserts on a
+  value any stub would return is not caught.
+- The oracle removes existence-only tests. It does not grade whether an
+  assertion is the right one.
+
+**The build's write scope is checked, and the check fails closed.** Just before
+the agent call and just after it, the build stage snapshots the target:
+
+- the bytes of every tracked file, hashed directly so `--skip-worktree` cannot
+  hide an edit, and of every untracked file;
+- ignored source and config files;
+- symlinks and submodules;
+- `HEAD`, the branch, `refs/stash`, the index, the per-file flags,
+  `.git/info/exclude` and `core.excludesFile`;
+- the digests of Nous's own gate records.
+
+`build_scope.json` records the difference. Each of the following aborts the
+campaign, and none of them can be waived:
+
+- a commit, checkout or stash;
+- a flag or exclude-file change;
+- an edit to a gate record;
+- a tree that was readable before the build and is unreadable after it.
+
+So does a write outside `mechanism_paths`, which a `build` campaign must declare
+(validation rejects one that does not). So does a write to a protected input,
+unless that file is listed by exact path in `mechanism_paths`. The protected
+inputs are any tracked file the `run_command` names, lives under (a directory
+token), reaches by `-m pkg.mod` or `make`, and every pre-existing declared test
+file. The path rules (not the integrity rules) can be waived with
 `build_checks.allow_out_of_scope_writes: "<why>"`.
 
-**A human reviews a built mechanism before any budget is spent.** After the
-build's automatic oracles pass, `verify` asks the gate to approve
-`mechanism.patch` together with the oracle records, before it compiles the
-policy. A reject or abort ends the campaign with nothing spent, and the decision
-is recorded in `build_review.json`. Under `--auto-approve` (this kind's default)
-the gate approves itself, and `report.json` `provenance.waivers` records the
-mechanism as auto-approved, unreviewed by a human. Run without
-`--auto-approve` to review it yourself.
+What the check cannot see:
+
+- writes outside the repository, such as a home-directory config or a system
+  library;
+- an edit the agent makes and reverts within its own call;
+- writes under dependency or build-output trees (`node_modules`, `.venv`,
+  `target`, `dist`, `build`);
+- anything at all on a non-git target. That is recorded as `applicable: false`
+  and listed as a waiver.
+
+**The build review gate: a human only without `--auto-approve`.** After the
+build's automatic oracles pass, and before it compiles the policy, `verify`
+consults the gate with `mechanism.patch` and the oracle records. A reject or
+abort ends the campaign with nothing spent, and `build_review.json` records the
+decision. Under `--auto-approve` (this kind's default) **no human sees it**: the
+gate approves itself, and `report.json` `provenance.waivers` lists the build as
+auto-approved, unreviewed. Run without `--auto-approve` to review it yourself.
 
 #### `mechanism_paths`: declare it, `build` stage or not
 
@@ -2202,41 +2243,71 @@ it. (The reflective kind writes the first two with an LLM call and derives the
 verdict from `best_found.json`; this kind does neither, so its only model
 calls remain `plan` and `build`.)
 
-### Reproducing a report: provenance, `nous reanalyze`, the error budget
+### Re-deriving a report's analysis: provenance, `nous reanalyze`, the error budget
 
 `report.json` records what it rests on, in `provenance`:
 
-- `nous`: the package version, the git commit and a sha256 over the package
-  source, so uncommitted edits are visible;
-- `inputs`: the sha256 of every `runs/iter-*/runs.jsonl` and
-  `design_matrix.json` on disk when the report was written;
+- `nous`: the package version, the git commit, and a sha256 over the package
+  source. `nous.source_scope` names what the hash covers (the `orchestrator/`
+  code, schemas and templates, and the prompts), so uncommitted edits are
+  visible;
+- `runtime`: the Python, scipy and numpy versions;
+- `inputs`: the sha256 of every `runs/iter-*/runs.jsonl`, `design_matrix.json`
+  and `relations.json`, and of every `campaign.epoch-*.yaml`, on disk when the
+  report was written;
 - `policy_hash`: the pre-registration;
 - `analysis_constants`: the numbers and switches that change the analysis
   without changing the policy hash (candidate cap, search sample and starts,
   design restarts, the lack-of-fit and screen alphas, feature switches), read
   live from the code that ran;
-- `waivers`: every gate the campaign waived, with the reason given: unverified
-  locks, waived build oracles, an auto-approved build review.
+- `waivers`: every gate that did not run as a full check, read from the gate
+  RECORDS rather than from the campaign. That covers waived oracles, an unarmed
+  oracle, unclassified test evidence, an unavailable mutant, a write scope that
+  could not be checked, an auto-approved build review, a build record that is
+  missing, and unverified locks.
 
-`nous reanalyze <campaign.yaml|work_dir>` re-derives the whole analysis from the
-recorded rows. It spends zero tokens and runs zero measurements. It re-drives
-the real stage runner over a scratch work dir with each epoch's registered
-campaign (`campaign.epoch-<e>.yaml`), and a replay runner answers each row with
-the observation recorded for it. It then diffs every derived artifact against
-disk (policy, transitions, design matrices, fits, recommendations, shortlists,
-confirmations, `report.json`, `report.md`). Before that, it checks the recorded
-input hashes. Exit 0 means the report follows from these rows under this code;
-exit 1 lists each input that changed after the report was written and each
-artifact that differs. Agent calls (`plan`, `build`) and the build oracles are
-measurements of the target, so they are not re-run; the output names them.
+`nous reanalyze <campaign.yaml|work_dir>` re-derives the ANALYSIS from the
+recorded rows. It spends zero tokens and runs zero measurements. It re-drives the
+real stage runner over a scratch work dir with each epoch's registered campaign
+(`campaign.epoch-<e>.yaml`; one that does not parse is reported as a
+difference, never substituted). A replay runner answers each row with the
+observation recorded for it. Row attempt counts and durations are not replayed,
+and are left out of the comparison. It then diffs every derived artifact against
+disk: policy, transitions, design matrices, fits, recommendations, shortlists,
+confirmations, `report.json` and `report.md`. Before that, it checks the input
+hashes the report recorded. A missing report is reported as `inputs_unchecked`.
+
+Some things are not re-run, and the output says so:
+
+- `plan` and `build`, which are agent calls;
+- the build gates (2(b), 2(c), 2(d), the write-scope check, the build review),
+  which are measurements of the target tree. Their records are carried over, not
+  re-derived.
+
+Every file left out of the comparison is listed under `excluded` with the
+reason. Exit codes:
+
+- 0: the analysis re-derives identically under this code (the measurements
+  themselves are taken as recorded);
+- 1: something differs, and each input that changed after the report and each
+  differing artifact is listed;
+- 2: the work dir cannot be reanalysed at all.
 
 `error_budget` gives the family-wise figure. Each epoch spends
 `delta_screen + delta_terminal`, and every epoch after the first was compiled
 after the earlier epochs' data were seen. `cumulative` is therefore the union
 bound over every epoch on the work dir, and `report.md` prints it beside the
-per-epoch deltas. `certified` is still judged at this epoch's own deltas; the
-cumulative figure is what to quote when asking "could any of these decisions be
-wrong?".
+per-epoch deltas. Read it with three qualifications:
+
+- It is valid only under each epoch's own response-model assumptions. It does
+  not cover misspecification: on the benchmark's non-quadratic family, 22 of
+  22 certificates were false at a nominal 0.10.
+- An earlier epoch's deltas are recovered by recompiling its registered campaign
+  with the current Nous (`deltas_from` says which).
+- `cumulative_is_lower_bound` is true when an earlier epoch's campaign could not
+  be recovered.
+
+`certified` is still judged at this epoch's own deltas.
 
 ### Artifacts the epoch writes
 
