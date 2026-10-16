@@ -1057,6 +1057,16 @@ def _rule30_mixed_resolution_three_foldover(opt: dict, design: dict,
         return []
     if not bool(((opt or {}).get("policy") or {}).get("foldover", True)):
         return []
+    try:
+        from orchestrator.optimize.design import mixed_screen_options
+        from orchestrator.optimize.factors import parse_factors
+
+        if mixed_screen_options(parse_factors(factors), 3)["chosen"] == "level_full":
+            # The screen Nous builds is the level-space full factorial, which
+            # aliases nothing: there is no aliasing for a fold to clear (N10).
+            return []
+    except ValueError:
+        pass
     return [
         "design.screen.resolution=3 with a multi-level choice factor and the "
         "registered foldover on: a full foldover of a mixed-level screen does "

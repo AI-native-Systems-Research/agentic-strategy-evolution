@@ -122,8 +122,10 @@ def test_M3_validator_refuses_mixed_res_III_with_the_foldover_on():
     from orchestrator.optimize.synthetic import Surface
     from orchestrator.validate import validate_optimization_campaign
 
-    s = Surface(name="m3", factors=(_numeric("A"), _choice("C", ("a", "b", "c"))),
-                fn=lambda lv: 0.0)
+    # Four numerics + a 3-level choice: the res-III replacement fraction (8
+    # runs) is smaller than the level-space factorial (48), so it is built.
+    s = Surface(name="m3", factors=tuple(_numeric(x) for x in "ABDE")
+                + (_choice("C", ("a", "b", "c")),), fn=lambda lv: 0.0)
     c = synthetic_campaign(s)
     c["optimization"]["design"]["screen"]["resolution"] = 3
     hard = [e for e in validate_optimization_campaign(c) if not e.startswith("WARN")]

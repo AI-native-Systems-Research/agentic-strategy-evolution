@@ -151,6 +151,11 @@ class Fit:
     #: Mixed-level fits only: whether the coefficients were estimated with one
     #: indicator per centre configuration (from the corner rows alone).
     centre_isolated: bool = False
+    #: Why not, when a mixed fit with centre rows could not isolate them.
+    centre_isolation_reason: str | None = None
+    #: Replicated centres with ZERO pure error and residuals that vanish: no
+    #: F test exists, but the model fits exactly (deterministic targets).
+    lof_exact_fit: bool = False
 
 
 def pure_error(center_responses) -> tuple[float | None, int]:
@@ -436,7 +441,10 @@ def fit_effects(design: Design, responses, *, factor_ids,
     pts = design.points
 
     coefs = _solve_normal_equations(cols, ys)
-    mixed = bool(design.groups) and len(set(design.groups)) < len(design.groups)
+    # A fit with a categorical's contrast columns (several per factor, or one
+    # surviving contrast of a categorical reduced to two levels, N6).
+    mixed = bool(design.groups) and any(
+        c != g for c, g in zip(design.factor_ids, design.groups))
     coefs_lof = coefs
     centre_ind = _centre_indicators(pts, cols) if mixed else []
     if centre_ind:
@@ -544,6 +552,11 @@ def fit_effects(design: Design, responses, *, factor_ids,
             alias_classes, pe_var, pe_df, tcrit, have_se, alpha,
             extra_cols=centre_ind)
         extra["centre_isolated"] = bool(centre_ind)
+        if not centre_ind and any(p.role == "center" for p in pts):
+            # Recorded, never silent (stage-1b N3): the corner model is not of
+            # full column rank, so indicators would make it singular and the
+            # coefficients rest partly on the centre rows -- curvature can leak.
+            extra["centre_isolation_reason"] = "corner_model_rank_deficient"
         # The aliasing THIS matrix has, read off the model it solved (stage-1
         # M6): exact duplicates collapsed into a kept column, and 2fi columns
         # in the span of kept columns on the corner rows. ``alias_pairs`` reads
@@ -570,6 +583,17 @@ def fit_effects(design: Design, responses, *, factor_ids,
             ss_lof = max(ss_resid - ss_pe, 0.0)
             lof_f = (ss_lof / df_lof) / pe_var
             lof_p = float(1.0 - fisher_f.cdf(lof_f, df_lof, pe_df))
+
+    # A DETERMINISTIC response (replicated centres, zero pure error) has no F
+    # test, but lack of fit is then decidable exactly: a model whose residuals
+    # vanish fits (stage-1b N5). Not written to effects.json.
+    exact_fit = False
+    if lof_p is None and pe_df > 0 and pe_var is not None and pe_var == 0.0:
+        resid0 = [ys[r] - sum(coefs_lof[c] * cols[c][r] for c in range(len(cols)))
+                  for r in range(n)]
+        scale = 1.0 + sum(v * v for v in ys)
+        exact_fit = sum(v * v for v in resid0) <= 1e-18 * scale
+    extra["lof_exact_fit"] = exact_fit
 
     return Fit(
         intercept=coefs[0], effects=tuple(built), n_runs=n,
@@ -660,7 +684,10 @@ def _exact_inference(design, labels, terms, cols, coefs, built, quads, quad_star
     for c, g in pairs:
         by_factor.setdefault(g, []).append(c)
     for g, cs in by_factor.items():
-        if len(cs) < 2:
+        # A single column that is NOT the factor's own id is a categorical
+        # reduced to two retained levels (one contrast; stage-1b N6): it keeps
+        # its 1-df test so the survivor rule can still drop it.
+        if len(cs) < 2 and cs[0] == g:
             continue
         idxs = [labels.index(c) for c in cs if c in labels]
         q = len(idxs)

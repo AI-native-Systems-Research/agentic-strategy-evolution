@@ -713,8 +713,11 @@ not chosen freely.
   Under H0 the lack-of-fit F is exactly F; curvature under a covered level
   gives it power. A level no centre covers is recorded
   (`design_matrix.json["centre_points"]`, and `curvature_untested_levels` in
-  `effects.json` and `recommendation.json`, whose `model_adequate` is then
-  unknown, `null`) and `nous validate` warns (rule 28): `center_points >=
+  `effects.json`, `recommendation.json` and `report.json`, whose
+  `model_adequate` is then unknown, `null`: confirm shortlists as for an
+  adequate model, and certification is WITHHELD as `curvature_untested`; the
+  same holds, as `lack_of_fit_not_computable`, when the final fitting stage
+  has no computable lack-of-fit test) and `nous validate` warns (rule 28): `center_points >=
   2 x the largest choice level count` covers every level twice — with one
   two-level choice factor, 3 centres leave `on` uncovered and 4 cover both. Pure error with 2 df is very noisy; a lack-of-fit verdict resting on
   it is weak either way, so prefer 4–6 centre points when the constraint

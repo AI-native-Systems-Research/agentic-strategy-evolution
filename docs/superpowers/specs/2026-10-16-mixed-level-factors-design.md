@@ -334,6 +334,50 @@ matrix (Addelman / Rao).
   basis); the preview's MDE line applies to two-level contrasts, and a
   categorical level comparison has SE about `sd * sqrt(2L/N)`.
 
+## Stage-1b re-review fixes (nous-e2e/audit/stage1b-mixed-rereview-fixes.md)
+
+- N1/N5: `model_adequate` is three-valued, defined once in
+  `stage_runner._model_adequacy`: False (lack of fit rejected), None
+  (UNKNOWN: `lack_of_fit_not_computable`, `curvature_untested`,
+  `curvature_not_isolated`, named in `model_adequate_basis`), True. Unknown
+  shortlists like adequate (its ranking was not rejected; every finalist is
+  re-measured) and WITHHOLDS certification with the basis as the reason; the
+  policy observes None; INV-SEM17 covers it. Replicated centres with zero pure
+  error and vanishing residuals (a deterministic exact fit) stay adequate.
+- N2: a lost level has `ls_mean`/`effect` null and is never "best"; other
+  categoricals are averaged over retained levels.
+- N3: a level measured only at centre rows (every corner run failed) is lost
+  (its centre rows are left out, `lost_at_corners`); a mixed fit that cannot
+  isolate its centres records `centre_isolated: false` + reason and has
+  unknown adequacy.
+- N4: report.json/report.md carry unknown adequacy, untested curvature, lost
+  and inadmissible levels (each only when present).
+- N6: a categorical reduced to two levels keeps a 1-df F test and can drop.
+- N7: `excluded_measured_infeasible` holds only measured exclusions;
+  INV-SEM19 checks the recommended and ranked levels.
+- N8: every level inadmissible is recorded (`all_levels_inadmissible`), none
+  excluded; a rejected row counts as inadmissible.
+- N10: rule 30 skips a level-space factorial screen. N11:
+  `design_matrix.json["screen_choice"]`. N12: lost levels are not "untested".
+- N13: span-aliased 2fi are listed as `aliases_not_assessed`;
+  `alias_consequential` assesses exact aliases only.
+
+**Byte-identity exception (N9), stated precisely.** Every pure two-level
+campaign keeps byte-identical artifacts EXCEPT where the new adequacy
+semantics apply: (a) a campaign with a choice factor whose centre points do
+not cover every level (e.g. one two-level choice and 2-3 centre points), and
+(b) a campaign whose final fitting stage has no computable lack-of-fit test
+(no replicated centre points, or no residual df beyond pure error) and no exact
+deterministic fit. Their recommendation.json / effects.json / report.json gain
+the adequacy fields and certification is WITHHELD; with max_rounds > 1 the
+registered confirm rounds may then continue, as for `model_inadequate`.
+Measured on the 16 SURFACES x seeds 1-8 against nousko fecd076: at the default
+4 centre points all 16 are unchanged; at center_points 3 only
+`choice_x_numeric` changes (certified 7/8 -> 0/8, curvature_untested); at
+center_points 0 only `drift` and `interaction_only` change (8/8 -> 0/8,
+lack_of_fit_not_computable). In all 256 runs the recommendation and the stage
+path are identical; no false certification appears either side.
+
 ## What this design cannot answer (open questions)
 
 - Non-regular mixed-level designs (e.g. the 18-run OA(18, 2^1 3^7), 36-run

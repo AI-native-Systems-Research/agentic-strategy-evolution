@@ -2246,6 +2246,16 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # evaluated set only. Absent (byte-identical) when enumerated.
         **({"candidate_space": dict(rec["candidate_space"])}
            if rec.get("candidate_space") else {}),
+        # The latest fitting stage's model-adequacy facts (stage-1b N4), each
+        # present only when it says something (unknown adequacy, untested
+        # curvature, lost or inadmissible levels), so a report without them is
+        # byte-identical. A REJECTED model is already named by
+        # certification_withheld (model_inadequate).
+        **({"model_adequate": None,
+            "model_adequate_basis": rec.get("model_adequate_basis")}
+           if "model_adequate" in rec and rec["model_adequate"] is None else {}),
+        **({k: dict(rec[k]) for k in ("curvature_untested_levels", "lost_levels",
+                                      "inadmissible_levels") if rec.get(k)}),
         "residual_regret_terminal": (
             conf.get("residual_regret_terminal") if conf else None
         ),
@@ -3638,6 +3648,43 @@ def run_stage(
         outcomes, stage_name, dropped, n_total=len(ys), n_fold=fold_n,
         work_dir=work_dir, screen_iter=screen_iter,
     )
+    # ── a categorical level measured ONLY at centre rows (stage-1b N3) ──────
+    #
+    # When every CORNER run at a level failed but a centre row at it measured,
+    # that level is estimable only through the centre rows -- i.e. from the
+    # centre-vs-corner contrast, which is curvature: the M1 defect, silently.
+    # Its centre rows are therefore left out of the fit (reason
+    # "level_lost_at_corners") and the level is LOST like any other.
+    lost_at_corners: dict = {}
+    if design.groups:
+        from orchestrator.optimize.factors import is_categorical as _is_cat
+
+        _dropped0 = set(dropped)
+        _kept0 = [i for i in range(len(ys)) if i not in _dropped0]
+        _marked: set = set()
+        for f in factors:
+            if not _is_cat(f) or f.id not in set(fitted_ids):
+                continue
+            corner_seen = {json.dumps((levels_by_pos[i] or {}).get(f.id)) for i in _kept0
+                           if design.points[i].role != "center" and levels_by_pos[i]}
+            hits = [i for i in _kept0 if design.points[i].role == "center"
+                    and levels_by_pos[i]
+                    and json.dumps(levels_by_pos[i].get(f.id)) not in corner_seen]
+            if hits:
+                lost_at_corners[f.id] = sorted(
+                    {json.dumps(levels_by_pos[i][f.id]) for i in hits})
+                lost_at_corners[f.id] = [json.loads(v) for v in lost_at_corners[f.id]]
+                _marked |= set(hits)
+        if _marked:
+            logger.warning(
+                "%s: categorical level(s) %s were measured only at CENTRE rows "
+                "(every corner run at them failed); those centre rows are left out "
+                "of the fit and the level(s) treated as lost, since they could be "
+                "estimated only from curvature.", stage_name, lost_at_corners)
+            dropped = sorted(_dropped0 | _marked)
+            keep = [i for i in range(len(ys)) if i not in set(dropped)]
+            for i in _marked:
+                excluded_reasons[i] = "level_lost_at_corners"
     # ── INV-STAT14: fit the coordinates that RAN, not the ones planned ──────
     #
     # `design` is the pre-registered plan (what `design_matrix.json` records and
@@ -3870,7 +3917,7 @@ def run_stage(
     untested = _curvature_untested_levels(
         factors, fitted_ids, [design_for_fit.points[k].role
                               for k in range(len(design_for_fit.points))],
-        [levels_by_pos[i] for i in _fit_pos])
+        [levels_by_pos[i] for i in _fit_pos], lost=lost_levels)
     _fit_records = _fit_row_records(work_dir, outcomes, stage_name, screen_iter,
                                     n_total=len(ys), n_fold=fold_n)
     if design_for_fit.groups:
@@ -3912,6 +3959,7 @@ def run_stage(
         omitted_terms=omitted_terms,
         interactions_dropped=interactions_dropped,
         curvature_untested_levels=untested,
+        lost_levels=lost_levels,
         planned_aliases_separated=(
             planned_aliases_separated(design_mod.alias_pairs(design), fit)
             if design.groups else None),
@@ -3937,6 +3985,7 @@ def run_stage(
             "non_identifiable_factors": sorted(non_identifiable_held),
             **({"lost_levels": {k: list(v) for k, v in lost_levels.items()}}
                if lost_levels else {}),
+            **({"lost_at_corners": lost_at_corners} if lost_at_corners else {}),
             "interactions_dropped": interactions_dropped,
             "omitted_terms": [list(t) for t in omitted_terms],
             "fitted_ids": list(fitted_ids),
@@ -3998,12 +4047,25 @@ def run_stage(
     # so the pin is visible next to the narrowed `fitted_ids`.
     held_now.update(non_identifiable_held)
     excluded = _measured_infeasible(work_dir)
+    # What was MEASURED inadmissible, kept apart from the synthetic level
+    # exclusions below (stage-1b N7): recommendation.json's
+    # excluded_measured_infeasible must mean exactly that.
+    excluded_measured = list(excluded)
     # Levels the fit cannot speak for: LOST (no retained row, M5) or measured
     # INADMISSIBLE on every row that ran them. Both are excluded from the
     # recommendation outright; ``_excluded`` matches on shared keys, so
     # ``{C: level}`` removes every candidate at that level.
     inadmissible_levels = _inadmissible_categorical_levels(work_dir, factors)
-    for fid, lvs in {**inadmissible_levels, **lost_levels}.items():
+    _by = {f.id: f for f in factors}
+    all_bad = sorted(fid for fid, lvs in inadmissible_levels.items()
+                     if fid in _by and len(lvs) >= len(_by[fid].levels))
+    if all_bad:
+        logger.warning(
+            "%s: EVERY level of %s was inadmissible wherever measured; recorded "
+            "(all_levels_inadmissible) but none is excluded, which would leave "
+            "no candidate.", stage_name, all_bad)
+    for fid, lvs in {**{k: v for k, v in inadmissible_levels.items()
+                        if k not in all_bad}, **lost_levels}.items():
         for lv in lvs:
             excluded = list(excluded) + [{fid: lv}]
     # ── the constraint models (constrained response-surface practice) ──────
@@ -4237,6 +4299,18 @@ def run_stage(
             "one-sided bound straddles the threshold, so only a measurement can "
             "say whether it is admissible.", stage_name, uncertain_at_rec,
         )
+    # MODEL ADEQUACY, three-valued and defined ONCE (stage-1b N1/N5/N3):
+    #   False -- lack of fit rejected (or a rejected objective model);
+    #   None  -- UNKNOWN: the lack-of-fit test was never computable (no pure
+    #            error, or no residual df beyond it), a choice level was never
+    #            measured at the centre (curvature_untested), or a mixed fit
+    #            could not isolate curvature from its coefficients;
+    #   True  -- the test was computed, did not reject, and covered every level.
+    # Confirm shortlists an unknown model like an adequate one (its ranking is
+    # not REJECTED, and every finalist is re-measured anyway) but certification
+    # is withheld with the basis named (``_finish_confirm``).
+    adequate, adequacy_basis = _model_adequacy(
+        decision, mo_rejected, fit, untested, design_for_fit)
     _write_json(iter_dir / "recommendation.json", {
         "stage": stage_name,
         "iteration": iteration,
@@ -4270,15 +4344,15 @@ def run_stage(
         # this is the same fact written where the consumer can read it.
         # UNKNOWN (None), not True, when lack of fit did not reject but some
         # choice level was never measured at the centre (stage-1 M8).
-        "model_adequate": (False if (Trigger.LACK_OF_FIT in set(decision.triggers)
-                                     or mo_rejected)
-                           else None if untested else True),
+        "model_adequate": adequate,
+        **({"model_adequate_basis": adequacy_basis} if adequate is None else {}),
         **({"curvature_untested_levels": untested} if untested else {}),
-        "excluded_measured_infeasible": excluded,
+        "excluded_measured_infeasible": excluded_measured,
         **({"lost_levels": {k: list(v) for k, v in lost_levels.items()}}
            if lost_levels else {}),
         **({"inadmissible_levels": {k: list(v) for k, v in inadmissible_levels.items()}}
            if inadmissible_levels else {}),
+        **({"all_levels_inadmissible": all_bad} if all_bad else {}),
         # Per declared constraint: was it modelled (and if not, why not), how
         # many candidates its model removed as CONFIDENTLY infeasible, and its
         # verdict at the recommendation itself. An auditor can reconcile
@@ -4292,6 +4366,13 @@ def run_stage(
         "residual_regret_model": rb.as_dict(),
         "epsilon": epsilon,
         "alias_consequential": [list(p) for p in alias_pairs_consequential],
+        # 2fi NOT fitted because their corner column lies in the span of kept
+        # columns (stage-1 M1): alias_consequential re-attributes ONE coefficient
+        # to ONE alternative term, so it cannot assess these (stage-1b N13).
+        # In a resolution-III mixed screen they are the 2fi~main aliases rule
+        # 30 guards against; listed so the gap is visible, not silent.
+        **({"aliases_not_assessed": ["".join(t) for t, _sp in fit.span_aliased]}
+           if fit.span_aliased else {}),
         "aliases": [list(p) for p in fit.aliases],
         # ── the caveat travels WITH the bound, not in a sibling file ────────
         #
@@ -4344,7 +4425,7 @@ def run_stage(
         "measured-infeasible configuration(s) excluded; "
         "residual regret R_%.3g=%s vs epsilon=%.6g (%s)",
         stage_name, rec.levels, primary or "response", rec.predicted,
-        len(scored), len(excluded), rb.delta,
+        len(scored), len(excluded_measured), rb.delta,
         "unknown" if rb.value is None else f"{rb.value:.6g}",
         epsilon, rb.method,
     )
@@ -4362,7 +4443,7 @@ def run_stage(
     findings = artifacts.project_findings(
         fit, factors=factors, stage=stage_name, decision=decision_summary,
         iteration=iteration, bundle_ref=f"runs/iter-{iteration}/design_matrix.json",
-        direction=direction,
+        direction=direction, lost_levels=lost_levels,
     )
     _write_json(iter_dir / "findings.json", findings)
     # principle_updates.json is a BARE LIST on disk (verified against real
@@ -4373,6 +4454,7 @@ def run_stage(
     # file — so unwrap it here.
     updates = artifacts.project_principle_updates(
         fit, factors=factors, stage=stage_name, direction=direction,
+        lost_levels=lost_levels,
     )
     _write_json(
         iter_dir / "principle_updates.json",
@@ -4483,6 +4565,10 @@ def run_stage(
     # arithmetic behind the branch reconstructible from the log alone. This is
     # also what makes the key live rather than dead vocabulary.
     obs["alias_consequential"] = bool(alias_pairs_consequential)
+    # The policy observes what the artifact says (stage-1b N1): unknown
+    # adequacy is None, never True.
+    if adequate is None and obs.get("model_adequate") is True:
+        obs["model_adequate"] = None
     if mo_record is not None:
         # NOT the semantic "optimum outside the hull" exception. That guard
         # says the declared ranges cannot contain THE optimum; a front has no
@@ -5250,7 +5336,11 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # this field existed came from a stage that had no lack-of-fit verdict
         # recorded here, and treating "not stated" as "inadequate" would silently
         # switch every such campaign's terminal stage to a different shortlist.
-        model_ok = bool(rec.get("model_adequate", True))
+        # Three-valued (stage-1b N1): only a REJECTED model (False) seeds the
+        # shortlist from measured leaders; UNKNOWN (None) shortlists like an
+        # adequate one -- its ranking was not rejected and every finalist is
+        # re-measured -- and certification is withheld for it instead.
+        model_ok = rec.get("model_adequate", True) is not False
         if model_ok:
             _add(rec.get("levels"), f"{rec.get('stage') or 'model'} recommendation")
             best = _best_observed(work_dir, primary, direction=direction)
@@ -5312,7 +5402,7 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # backstop for every unmodelled constraint and for model error.
         invalid = _measured_infeasible(work_dir)
         rec = _read_recommendation(work_dir) or {}
-        if not rec.get("model_adequate", True):
+        if rec.get("model_adequate", True) is False:
             # Same priority as the round-1 ladder: an inadequate model does not
             # get first pick, so measured leaders go in ahead of its ranking. The
             # ranking still follows, for the reason the ladder above records at
@@ -5884,6 +5974,12 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # `_confirm_rows`. Like `fit_bias`, this changes what the campaign CLAIMS,
     # never where it goes.
     model_inadequate = _rec_for_bias.get("model_adequate") is False
+    # UNKNOWN adequacy (stage-1b N1): withhold, naming WHY it is unknown. An
+    # absent key still reads as adequate (records predating the field).
+    adequacy_unknown = ("model_adequate" in _rec_for_bias
+                        and _rec_for_bias["model_adequate"] is None)
+    adequacy_reason = str(_rec_for_bias.get("model_adequate_basis")
+                          or "model_adequacy_unknown")
     # EVERY non-"ok" status counts, and the reason is a bug this line already
     # caused once. The statuses were split into "infeasible" (measured
     # inadmissible) and "unmeasured" (the instrument failed on an admissible
@@ -5932,6 +6028,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         bound.value is not None and eps is not None and bound.value <= eps
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
         and not fit_bias and not model_inadequate and not refilled
+        and not adequacy_unknown
     )
     # NO ADMISSIBLE FINALIST is its own reason, not `bound_not_computable`. Every
     # finalist was MEASURED (numerically, completely) and every one had at least
@@ -6047,6 +6144,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("finalist_unmeasured", bool(unmeasured)),
                 ("fit_exclusions_level_correlated", fit_bias),
                 ("model_inadequate", model_inadequate),
+                (adequacy_reason, adequacy_unknown),
             ) if hit
         ],
         **({"terminal_bound_measured_only": measured_only.as_dict()}
@@ -6083,6 +6181,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             pol, work_dir, summary, rec=_rec_for_bias, status=status, ok=ok,
             unmeasured=unmeasured, fit_bias=fit_bias,
             model_inadequate=model_inadequate,
+            adequacy_unknown=(adequacy_reason if adequacy_unknown else None),
         )
 
     # Did the winning finalist actually beat everything the campaign measured?
@@ -6299,7 +6398,8 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
 
 def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: dict,
                            ok: dict, unmeasured: list, fit_bias: bool,
-                           model_inadequate: bool) -> tuple[bool, list]:
+                           model_inadequate: bool,
+                           adequacy_unknown: str | None = None) -> tuple[bool, list]:
     """The multi-objective verdict of a confirm round, written into ``summary``.
 
     Spec steps 5-8: the measured front over every admissible configuration of
@@ -6345,7 +6445,8 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
                      for x in par.get("excluded_incomplete") or [])
     certified = bool(pref["chosen"]) and chosen_ok and within and not unmeasured \
         and not infeasible_veto and not fit_bias and not model_inadequate \
-        and not refilled and not eps_unknown and not incomplete
+        and not refilled and not eps_unknown and not incomplete \
+        and not adequacy_unknown
     reasons = [r for r, hit in (
         ("no_admissible_finalist", no_admissible),
         ("no_feasible_rival", no_rival and not no_admissible),
@@ -6357,6 +6458,7 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
         ("finalist_unmeasured", bool(unmeasured) or incomplete),
         ("fit_exclusions_level_correlated", fit_bias),
         ("model_inadequate", model_inadequate),
+        (adequacy_unknown or "", bool(adequacy_unknown)),
         ("shortlist_refilled", refilled),
     ) if hit]
     if not certified and not reasons:
@@ -6721,7 +6823,24 @@ def _corner_marginal_best(work_dir, iteration, factor_ids, primary: str,
     return out
 
 
-def _curvature_untested_levels(factors, fitted_ids, roles, levels_rows) -> dict:
+def _model_adequacy(decision, mo_rejected, fit, untested, design_for_fit):
+    """``(model_adequate, basis)`` -- see the block that calls it."""
+    if Trigger.LACK_OF_FIT in set(decision.triggers) or mo_rejected:
+        return False, None
+    if fit.lack_of_fit_p is None and not fit.lof_exact_fit:
+        return None, "lack_of_fit_not_computable"
+    if untested:
+        return None, "curvature_untested"
+    mixed = bool(design_for_fit.groups) and any(
+        c != g for c, g in zip(design_for_fit.factor_ids, design_for_fit.groups))
+    if (mixed and any(p.role == "center" for p in design_for_fit.points)
+            and not fit.centre_isolated):
+        return None, "curvature_not_isolated"
+    return True, None
+
+
+def _curvature_untested_levels(factors, fitted_ids, roles, levels_rows,
+                               lost=None) -> dict:
     """``{choice factor: [levels]}`` with NO fitted centre row: the lack-of-fit
     curvature check never looked under them. Empty when the fit has no centre
     rows at all (then nothing claims curvature was checked), or no choice
@@ -6737,7 +6856,11 @@ def _curvature_untested_levels(factors, fitted_ids, roles, levels_rows) -> dict:
         if f.type != "choice" or f.id not in fitted:
             continue
         seen = {json.dumps(lv.get(f.id)) for lv in centre}
-        miss = [lv for lv in centre_choice_levels(f) if json.dumps(lv) not in seen]
+        # A LOST level (no retained row at all) is not "untested curvature":
+        # it is reported as lost, and never recommended (stage-1b N12).
+        gone = {json.dumps(v) for v in (lost or {}).get(f.id, ())}
+        miss = [lv for lv in centre_choice_levels(f)
+                if json.dumps(lv) not in seen and json.dumps(lv) not in gone]
         if miss:
             out[f.id] = miss
     return out
@@ -6748,7 +6871,9 @@ def _inadmissible_categorical_levels(work_dir, factors) -> dict:
     was infeasible or rejected: ``{factor: [level, ...]}``. A heuristic stated
     as such -- "inadmissible wherever it was measured", not proven inadmissible
     everywhere -- recorded in recommendation.json, and the recommendation never
-    names such a level (stage-1 M5)."""
+    names such a level (stage-1 M5). A ``rejected`` row (a self-check or
+    design-space invariant violation) counts as inadmissible, like an
+    ``infeasible`` one; failed / unmeasured rows count as neither."""
     from orchestrator.optimize.factors import is_categorical
 
     cats = [f for f in factors if is_categorical(f)]
@@ -6768,7 +6893,10 @@ def _inadmissible_categorical_levels(work_dir, factors) -> dict:
     out: dict = {}
     for f in cats:
         bad = [v[0] for v in seen[f.id].values() if v[1] and v[1] == v[2]]
-        if bad and len(bad) < len(f.levels):
+        if bad:
+            # Recorded even when EVERY level is bad (stage-1b N8); the caller
+            # then excludes none of them -- excluding all would empty the
+            # space -- and says so.
             out[f.id] = bad
     return out
 

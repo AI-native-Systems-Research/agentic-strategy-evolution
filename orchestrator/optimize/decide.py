@@ -830,6 +830,12 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
     what gates the one state in this kind that spends budget purely to remove an
     assumption.
 
+    SCOPE: exact aliases only (``Effect.aliased_with``: a kept column and an
+    alternative column equal up to sign). A mixed-level fit's 2fi that lies in
+    the SPAN of several kept columns on the corners (``Fit.span_aliased``) has
+    no single alternative coefficient to re-attribute and is NOT assessed here;
+    ``recommendation.json["aliases_not_assessed"]`` lists them.
+
     Returns ``(kept_label, alt_label)`` pairs — ``AB``'s estimate could just as
     truthfully belong to ``CD``, and believing the latter would move the answer.
     An empty list means the aliasing is real, recorded, and irrelevant to the

@@ -550,8 +550,24 @@ def check_certificate_rests_on_adequate_model(certifying: dict,
     is unsupported: ``certified`` must be false and, whenever terminal
     discrimination ran, ``certification_withheld`` must name
     ``model_inadequate``. An absent ``model_adequate`` reads as adequate (records
-    predating the field).
+    predating the field). An UNKNOWN adequacy (``model_adequate: null``,
+    stage-1b N1) likewise forbids a certificate, and the withheld reasons must
+    name its ``model_adequate_basis``.
     """
+    if "model_adequate" in recommendation and recommendation["model_adequate"] is None:
+        basis = str(recommendation.get("model_adequate_basis") or "model_adequacy_unknown")
+        out_u: list[str] = []
+        if certifying.get("certified"):
+            out_u.append(
+                f"certified is true although the latest fitting stage's model "
+                f"adequacy is UNKNOWN ({basis}) -- an untested model cannot "
+                f"support the delta_screen premise")
+        withheld = list(certifying.get("certification_withheld") or [])
+        if withheld and "no_terminal_discrimination" not in withheld \
+                and basis not in withheld:
+            out_u.append(f"certification_withheld {withheld} omits {basis} although "
+                         f"the model's adequacy is unknown")
+        return out_u
     if recommendation.get("model_adequate") is not False:
         return []
     out: list[str] = []
@@ -938,6 +954,32 @@ def check_supported_feasible_candidate(recommendation: dict) -> list[str]:
         out.append("the supported-feasible candidate does not head its pool")
     if any(lv == levels for lv in recommendation.get("excluded_measured_infeasible") or []):
         out.append(f"{levels} was already measured inadmissible")
+    return out
+
+
+def check_recommendation_avoids_lost_levels(recommendation: dict) -> list[str]:
+    """INV-SEM19: the recommendation never names a categorical level the fit
+    could not speak for -- LOST (no retained row) or INADMISSIBLE wherever it
+    was measured (stage-1b N7). Matches the LEVEL, not a whole configuration,
+    so an interior configuration at a lost level is caught too. Checked on the
+    recommended levels and on every top candidate."""
+    bad = {}
+    every = set((recommendation or {}).get("all_levels_inadmissible") or ())
+    for key in ("lost_levels", "inadmissible_levels"):
+        for fid, lvs in ((recommendation or {}).get(key) or {}).items():
+            if key == "inadmissible_levels" and fid in every:
+                continue        # recorded, deliberately not excluded (N8)
+            bad.setdefault(fid, []).extend(lvs)
+    if not bad:
+        return []
+    out: list[str] = []
+    rows = [recommendation.get("levels") or {}] + [
+        c.get("levels") or {} for c in recommendation.get("top_candidates") or []]
+    for lv in rows:
+        for fid, lvs in bad.items():
+            if fid in lv and lv[fid] in lvs:
+                out.append(f"{fid}={lv[fid]!r} is lost or inadmissible but is "
+                           f"recommended/ranked in {lv}")
     return out
 
 
@@ -1674,6 +1716,12 @@ _ENTRIES: tuple[Invariant, ...] = (
                            "within epsilon_scalar; the report recommends that point.",
               "SEM", "artifact", "stage_runner._finish_confirm_pareto; spec 2026-10-15 "
               "step 7", TEST, check_pareto_certificate),
+    Invariant("INV-SEM19", "The recommendation and the ranked candidates never name a "
+                           "categorical level that is lost (no retained row) or "
+                           "inadmissible wherever it was measured.",
+              "SEM", "artifact", "stage_runner.run_stage (lost/inadmissible level "
+              "exclusions); spec 2026-10-16 stage-1b N7", ALWAYS,
+              check_recommendation_avoids_lost_levels),
     # ── statistical ───────────────────────────────────────────────────────
     Invariant("INV-STAT01", "One fitted coefficient per ALIAS CLASS, not per two-factor "
                             "interaction: a resolution-IV design must not make XtX singular.",

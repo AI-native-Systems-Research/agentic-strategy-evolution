@@ -504,8 +504,29 @@ def matrix_payload(design: Design, factors: list[Factor], *,
         **({"centre_points": centre} if centre is not None else {}),
         **({"categoricals": cats,
             "column_groups": list(design.groups),
-            "column_words": [list(w) for w in design.words]} if cats else {}),
+            "column_words": [list(w) for w in design.words],
+            **({"screen_choice": screen_choice_record(design, factors)}
+               if design.kind in ("mixed_fraction", "mixed_full", "mixed_level_full")
+               else {})} if cats else {}),
     }
+
+
+def screen_choice_record(design: Design, factors) -> dict:
+    """Which mixed-level screen was built and why (stage-1b N11): both
+    candidates' corner runs, the chosen one, and the rule."""
+    from orchestrator.optimize.design import mixed_screen_options
+
+    by_id = {f.id: f for f in factors}
+    fs = [by_id[fid] for fid, _ in factor_columns(design) if fid in by_id]
+    res = design.requested_resolution or design.resolution or 5
+    try:
+        opts = mixed_screen_options(fs, int(res))
+    except ValueError:
+        return {"chosen": design.kind}
+    return {**opts, "resolution_requested": int(res),
+            "rule": "the level-space full factorial when its runs are no more "
+                    "than the method-of-replacement fraction's (it aliases "
+                    "nothing); otherwise the fraction"}
 
 
 def categoricals_record(design: Design, factors, rows) -> list[dict]:

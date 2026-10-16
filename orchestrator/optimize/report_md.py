@@ -68,6 +68,18 @@ WITHHELD_MEANING = {
     "model_inadequate": "the fit behind the shortlist failed its lack-of-fit "
                         "test, so nothing supports the claim that screening "
                         "did not exclude the optimum",
+    "lack_of_fit_not_computable": "the fit behind the shortlist could not be "
+                                  "tested for lack of fit (no pure error, or "
+                                  "no residual df beyond it): its adequacy is "
+                                  "unknown, not established",
+    "curvature_untested": "some choice level was never measured at the centre, "
+                          "so the curvature check never looked under it: model "
+                          "adequacy is unknown there",
+    "curvature_not_isolated": "a mixed-level fit could not estimate its "
+                              "coefficients from the corners alone, so curvature "
+                              "may have leaked into them: adequacy unknown",
+    "model_adequacy_unknown": "the fit behind the shortlist has unknown "
+                              "adequacy",
     "no_terminal_discrimination": "no terminal discrimination ran",
     "front_point_possibly_dominated": "the preferred point of the measured front "
                                       "is only POSSIBLY nondominated -- some rival "
@@ -591,6 +603,16 @@ def render_report_markdown(work_dir: Path) -> str:
         lines.append("- **Certification withheld because:** " + "; ".join(
             f"`{r}` ({WITHHELD_MEANING.get(r, 'unrecognised reason')})"
             for r in withheld))
+    if "model_adequate" in report and report["model_adequate"] is None:
+        lines.append(f"- **Model adequacy:** unknown (`{report.get('model_adequate_basis')}`"
+                     f" — {WITHHELD_MEANING.get(str(report.get('model_adequate_basis')), '')})")
+    for key, label in (("curvature_untested_levels", "Curvature never checked under"),
+                       ("lost_levels", "Levels lost (no retained run; never recommended)"),
+                       ("inadmissible_levels",
+                        "Levels inadmissible wherever measured (never recommended)")):
+        if report.get(key):
+            lines.append(f"- **{label}:** " + "; ".join(
+                f"{fid}: {', '.join(map(str, lvs))}" for fid, lvs in report[key].items()))
     lines.append("")
     lines += _candidate_space_note(work_dir)
     if isinstance(report.get("pareto"), dict):

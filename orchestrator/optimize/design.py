@@ -15,6 +15,7 @@ resolution)``.
 """
 from __future__ import annotations
 
+import dataclasses
 import functools
 import itertools
 import math
@@ -78,6 +79,10 @@ class Design:
     #: (the base-column indices whose product it is), the construction's
     #: provenance, recorded in ``design_matrix.json``.
     words: tuple[tuple[int, ...], ...] = ()
+    #: Mixed-level screens only: the resolution the author asked for (a
+    #: level-space full factorial has ``resolution=None`` -- it aliases
+    #: nothing -- but was chosen against a fraction at this resolution).
+    requested_resolution: int | None = None
 
     @property
     def corners(self) -> tuple[DesignPoint, ...]:
@@ -416,6 +421,7 @@ def with_center_points(design: Design, n: int) -> Design:
         kind=design.kind, resolution=design.resolution,
         generators=design.generators, folded_on=design.folded_on,
         groups=design.groups, words=design.words,
+        requested_resolution=design.requested_resolution,
     )
 
 
@@ -571,6 +577,7 @@ def foldover(design: Design, *, on: str | None = None) -> Design:
         points=corners + centers, factor_ids=ids, kind="foldover",
         resolution=None, generators=design.generators, folded_on=on,
         groups=design.groups, words=design.words,
+        requested_resolution=design.requested_resolution,
     )
 
 
@@ -596,6 +603,7 @@ def combine(a: Design, b: Design) -> Design:
         points=a.points + b.points, factor_ids=a.factor_ids, kind="combined",
         resolution=None, generators=a.generators, folded_on=b.folded_on,
         groups=a.groups, words=a.words,
+        requested_resolution=a.requested_resolution,
     )
 
 
@@ -755,7 +763,9 @@ def mixed_screen(factors, *, resolution: int, center_points: int,
         # used instead. Non-regular mixed-level orthogonal arrays (OA(18),
         # Xu 2002's algorithmic designs) can be smaller still; they are NOT
         # implemented.
-        return with_center_points(_level_full(fs), int(center_points))
+        return with_center_points(
+            dataclasses.replace(_level_full(fs), requested_resolution=int(resolution)),
+            int(center_points))
     ids: list[str] = []
     groups: list[str] = []
     words: list[tuple[int, ...]] = []
@@ -771,7 +781,7 @@ def mixed_screen(factors, *, resolution: int, center_points: int,
     d = Design(points=tuple(pts), factor_ids=tuple(ids),
                kind="mixed_full" if n == sum(blocks) else "mixed_fraction",
                resolution=int(resolution), groups=tuple(groups),
-               words=tuple(words))
+               words=tuple(words), requested_resolution=int(resolution))
     return with_center_points(d, int(center_points))
 
 

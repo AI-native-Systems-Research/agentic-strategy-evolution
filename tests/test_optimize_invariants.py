@@ -244,6 +244,7 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_pareto_front", "check_pareto_certificate", "check_gap_fill_branch",
         "check_single_objective_untouched", "check_refill_branch",
         "check_candidate_space",
+        "check_recommendation_avoids_lost_levels",
     }
     registered = {i.checker.__name__ for i in inv.checkable()}
     assert registered <= exercised, (

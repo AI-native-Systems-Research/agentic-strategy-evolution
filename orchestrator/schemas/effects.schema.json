@@ -113,7 +113,9 @@
           "p": { "type": ["number", "null"] },
           "significant": { "type": ["boolean", "null"] },
           "test": { "type": "string" },
-          "levels": { "type": "array", "items": { "type": "object", "required": ["level", "coded", "effect", "ls_mean"] } }
+          "levels": { "type": "array", "items": { "type": "object", "required": ["level", "coded", "effect", "ls_mean"], "properties": { "ls_mean": { "type": ["number", "null"], "description": "null for a LOST level (no retained row): no estimate exists." }, "effect": { "type": ["number", "null"] }, "lost": { "const": true } } } },
+          "levels_fitted": { "type": "integer", "description": "Present when some levels were lost: how many levels the fit rests on (of levels_declared)." },
+          "levels_declared": { "type": "integer" }
         }
       }
     },
@@ -132,6 +134,8 @@
       "items": {"type": "object", "required": ["term", "spanned_by"]}
     },
     "curvature_untested_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Choice-factor levels with NO fitted centre row: the lack-of-fit curvature check never looked under them, so model adequacy is unknown there (stage-1 M8). Raise center_points to 2 x the largest choice level count to cover every level twice."},
+    "centre_isolated": {"type": "boolean", "description": "Mixed-level fits only: whether the coefficients were estimated with one indicator per centre configuration, i.e. from the corner rows alone (stage-1 M1). false with centre rows present means curvature may have leaked into them; centre_isolation_reason says why, and model adequacy is then unknown."},
+    "centre_isolation_reason": {"type": "string"},
     "variance_inflation": {
       "type": "object",
       "additionalProperties": { "type": "number" },

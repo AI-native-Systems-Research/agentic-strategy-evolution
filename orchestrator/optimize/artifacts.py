@@ -184,7 +184,8 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
                    omitted_terms=None,
                    interactions_dropped: bool = False,
                    planned_aliases_separated=None,
-                   curvature_untested_levels=None) -> Path:
+                   curvature_untested_levels=None,
+                   lost_levels=None) -> Path:
     """Write the fitted model: effects, pure error, lack-of-fit, aliases,
     dropped factors. ``factors`` supplies the factor-id universe that
     ``dropped_factors`` checks against -- the factors this fit was run
@@ -228,7 +229,10 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
         "dropped_factors": sorted(dropped),
     }
     if fit.factor_tests:
-        payload["categoricals"] = categorical_record(fit, factors)
+        payload["categoricals"] = categorical_record(fit, factors, lost_levels)
+        payload["centre_isolated"] = bool(fit.centre_isolated)
+        if fit.centre_isolation_reason:
+            payload["centre_isolation_reason"] = fit.centre_isolation_reason
         payload["variance_inflation"] = {k: v for k, v in fit.variance_inflation}
     if exclusion_balance is not None:
         payload["exclusion_balance"] = exclusion_balance
@@ -287,7 +291,7 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
     return target
 
 
-def categorical_record(fit: Fit, factors) -> list[dict]:
+def categorical_record(fit: Fit, factors, lost_levels=None) -> list[dict]:
     """``effects.json["categoricals"]``: per multi-level categorical, its L-1 df
     F test and, per level, the coded vector, the main-effect contribution
     ``sum_j b_j c_j(level)`` (defined only up to a constant -- it depends on
@@ -297,18 +301,30 @@ def categorical_record(fit: Fit, factors) -> list[dict]:
     level with every numeric and two-level factor at its coded centre and every
     other categorical averaged over its levels. With main effects and 2fi only
     (no 3fi), averaging a product equals the product of averages, so the
-    prediction at the averaged coding IS the marginal mean."""
+    prediction at the averaged coding IS the marginal mean.
+
+    A LOST level (``lost_levels``: no retained row; stage-1b N2) has NO
+    estimate -- its contrasts were dropped, so a prediction there would read
+    the dropped coefficients as zero and fabricate a mean. It is reported with
+    ``ls_mean``/``effect`` null and ``lost: true``, and other categoricals are
+    averaged over their RETAINED levels only."""
     from orchestrator.optimize.decide import predict
     from orchestrator.optimize.factors import code_vector, is_categorical, model_columns
 
     by_id = {f.id: f for f in factors}
     owner = dict(fit.groups)
+    gone = {k: {json.dumps(v) for v in vs} for k, vs in (lost_levels or {}).items()}
+
+    def retained(f):
+        return [lv for lv in f.levels if json.dumps(lv) not in gone.get(f.id, set())]
+
     base: dict[str, float] = {}
     for col, g in owner.items():
         f = by_id.get(g)
         if f is not None and is_categorical(f):
             k = model_columns(f).index(col)
-            base[col] = sum(code_vector(f, lv)[k] for lv in f.levels) / len(f.levels)
+            kept = retained(f)
+            base[col] = sum(code_vector(f, lv)[k] for lv in kept) / len(kept)
         else:
             base[col] = 0.0
     est = {e.terms[0]: e.estimate for e in fit.effects if len(e.terms) == 1}
@@ -318,15 +334,22 @@ def categorical_record(fit: Fit, factors) -> list[dict]:
         levels = []
         for lv in (f.levels if f is not None else ()):
             vec = code_vector(f, lv)
+            if json.dumps(lv) in gone.get(t.factor, set()):
+                levels.append({"level": lv, "coded": list(vec), "effect": None,
+                               "ls_mean": None, "lost": True})
+                continue
             coded = {**base, **dict(zip(model_columns(f), vec))}
             levels.append({
                 "level": lv, "coded": list(vec),
                 "effect": sum(est.get(c, 0.0) * v for c, v in zip(model_columns(f), vec)),
                 "ls_mean": predict(fit, coded),
             })
+        n_fit = sum(1 for x in levels if not x.get("lost"))
         out.append({"factor": t.factor, "columns": list(t.columns), "df": t.df,
                     "f": t.f, "p": t.p, "significant": t.significant,
-                    "test": "wald_f_on_pure_error", "levels": levels})
+                    "test": "wald_f_on_pure_error", "levels": levels,
+                    **({"levels_fitted": n_fit, "levels_declared": len(levels)}
+                       if f is not None and n_fit < len(levels) else {})})
     return out
 
 
@@ -431,6 +454,7 @@ def project_findings(fit: Fit, *, factors: list[Factor], stage: str,
                       decision: str, iteration: int, bundle_ref: str,
                       relation_verdicts: list[RelationVerdict] | None = None,
                       direction: str = "maximize",
+                      lost_levels=None,
                       ) -> dict:
     """Build a ``findings.schema.json``-conformant dict from a fitted model.
 
@@ -518,7 +542,7 @@ def project_findings(fit: Fit, *, factors: list[Factor], stage: str,
             },
         })
 
-    for c in (categorical_record(fit, factors) if fit.factor_tests else ()):
+    for c in (categorical_record(fit, factors, lost_levels) if fit.factor_tests else ()):
         arms.append(_categorical_arm(c, by_id.get(c["factor"]), stage, decision, fit,
                                      direction=direction))
 
@@ -586,7 +610,8 @@ def _confidence_from_ci(e: Effect) -> str:
 
 
 def project_principle_updates(fit: Fit, *, factors: list[Factor],
-                               stage: str, direction: str = "maximize") -> dict:
+                               stage: str, direction: str = "maximize",
+                               lost_levels=None) -> dict:
     """Build a ``principles.schema.json``-conformant dict from a fitted
     model. One principle per main effect (surviving or dropped); each
     entry's ``evidence`` is a list of numeric-citation strings that pass
@@ -656,7 +681,7 @@ def project_principle_updates(fit: Fit, *, factors: list[Factor],
             "derivation_type": "empirical",
         })
 
-    for c in (categorical_record(fit, factors) if fit.factor_tests else ()):
+    for c in (categorical_record(fit, factors, lost_levels) if fit.factor_tests else ()):
         principles.append(_categorical_principle(c, by_id.get(c["factor"]), stage, fit,
                                                  direction=objective_direction))
 
@@ -673,7 +698,8 @@ def _single_column_mains(fit: Fit) -> list[Effect]:
 
 
 def _cat_observed(c: dict, fit: Fit) -> str:
-    means = ", ".join(f"{lv['level']}={lv['ls_mean']:.6g}" for lv in c["levels"])
+    means = ", ".join(f"{lv['level']}={lv['ls_mean']:.6g}" if lv.get("ls_mean") is not None
+                      else f"{lv['level']}=lost" for lv in c["levels"])
     if c["f"] is None:
         return (f"L-1={c['df']} df main effect; significance unknown -- no "
                 f"pure-error estimate; LS means {means}; n_runs={fit.n_runs}")
@@ -684,10 +710,11 @@ def _cat_observed(c: dict, fit: Fit) -> str:
 def _best_ls(c: dict, direction: str):
     """The level with the BEST least-squares mean for the campaign's direction
     (lowest when minimizing; stage-1 M9), or ``None``."""
-    if not c["levels"]:
+    est = [lv for lv in c["levels"] if lv.get("ls_mean") is not None]
+    if not est:
         return None
     sign = -1.0 if direction == "minimize" else 1.0
-    return max(c["levels"], key=lambda lv: sign * lv["ls_mean"])
+    return max(est, key=lambda lv: sign * lv["ls_mean"])
 
 
 def _categorical_arm(c: dict, factor, stage: str, decision: str, fit: Fit, *,
