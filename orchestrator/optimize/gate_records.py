@@ -35,7 +35,8 @@ from pathlib import Path
 
 KEY_FILE = ".nous_gate_key"
 SEAL_FILE = "gate_records.seal"
-BUILD_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json", "build_scope.json")
+BUILD_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json", "build_scope.json",
+                 "clean_tree.json", "mechanism.clean.patch")
 VERIFY_RECORDS = ("authored_tests.json", "build_review.json")
 
 
@@ -130,6 +131,9 @@ def load(work_dir: Path, names=BUILD_RECORDS) -> dict:
                 + (" (missing)" if not (wd / n).exists() else "")
                 + ": the evidence the build oracles read cannot be shown to be what "
                   "the build stage wrote. Re-run the build stage in a fresh work_dir.")
+        if not n.endswith(".json"):
+            out[n] = (wd / n).read_bytes()
+            continue
         try:
             out[n] = json.loads((wd / n).read_text())
         except (OSError, ValueError) as exc:

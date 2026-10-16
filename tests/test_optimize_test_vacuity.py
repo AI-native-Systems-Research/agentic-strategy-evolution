@@ -44,11 +44,11 @@ def _run(tmp_path, monkeypatch, writes, *, build_checks=None, name="vac"):
         f["relations"] = [{"id": f"{f['id']}-R", "kind": "correctness",
                            "statement": "the mechanism does what it claims",
                            "native_test": TEST_ID}]
-    c["optimization"].setdefault("build_checks", {})
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["mech.py", "calc.py", "tests"]}
     c["optimization"]["test_command"] = (
         f"{sys.executable} -m pytest -v -p no:cacheprovider tests")
     if build_checks:
-        c["optimization"]["build_checks"] = build_checks
+        c["optimization"]["build_checks"].update(build_checks)
     wd = setup_work_dir(name, repo_path=str(repo), campaign=c)
 
     def sdk(**kw):
@@ -109,7 +109,8 @@ def test_a_test_that_observes_the_mechanisms_behaviour_passes(tmp_path, monkeypa
     assert "boost" in (Path(tmp_path) / "target" / "calc.py").read_text()
     wt = subprocess.run(["git", "worktree", "list"], cwd=tmp_path / "target",
                         capture_output=True, text=True).stdout
-    assert len(wt.strip().splitlines()) == 1, wt
+    # The repo itself plus the persistent clean checkout; no mutant left behind.
+    assert "nous-mutant" not in wt and len(wt.strip().splitlines()) == 2, wt
 
 
 def test_a_waiver_lets_a_nondiscriminating_test_through_and_is_recorded(tmp_path, monkeypatch):

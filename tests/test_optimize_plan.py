@@ -67,6 +67,7 @@ def _campaign(repo: Path, *, stages=None, constraints=None) -> dict:
         "design": {"screen": {"resolution": 5, "center_points": 0},
                    "confirm": {"replicates": 6}},
         "stages": stages or ["plan", "build", "verify", "screen", "confirm"],
+        "build_checks": {"mechanism_paths": ["src", "tests"]},
         "run_command": "python -P adapter/run.py",
         "test_command": "python -m pytest tests/ -v",
         "known_valid_baseline": {"DT": False},

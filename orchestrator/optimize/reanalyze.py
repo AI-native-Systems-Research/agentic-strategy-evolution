@@ -62,13 +62,16 @@ VOLATILE_KEYS = frozenset({
 NOT_DERIVED = frozenset({
     "pre_build_tests.json", "baseline_equivalence.json", "build_review.json",
     "authored_tests.json", "build_scope.json", "adapter_contract.json",
-    "mechanism_plan.json", "reanalysis.json",
+    "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
+    "mechanism.clean.patch", "gate_records.seal",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
 #: read from them); they are measurements of the target, never re-derived.
 CARRIED_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json",
-                   "authored_tests.json", "build_scope.json", "build_review.json")
+                   "authored_tests.json", "build_scope.json", "build_review.json",
+                   "clean_tree.json", "mechanism.clean.patch", "gate_records.seal",
+                   ".nous_gate_key")
 
 #: Bookkeeping files outside the analysis (engine state, ledgers, logs).
 IGNORED = frozenset({

@@ -252,6 +252,26 @@ def build_mutant(repo: Path, work_dir: Path, written: list[str],
     return sorted(reverted)
 
 
+def build_mutant_clean(repo: Path, work_dir: Path, rec: dict, declared: list[str],
+                       dest: Path) -> list[str]:
+    """The mechanism-reverted mutant in the clean-checkout model: a worktree of
+    the pre-build commit with ONLY the patch's test files and NEW files applied.
+    Every pre-existing non-test file the patch edits stays at the base commit."""
+    from orchestrator.optimize.build_scope import _git
+    from orchestrator.optimize.clean_tree import PATCH
+
+    base = rec["base_sha"]
+    _git(repo, "worktree", "add", "--detach", "--force", str(dest), base)
+    in_base = set(_git(repo, "ls-tree", "-r", "--name-only", base).splitlines())
+    keep = [p for p in rec.get("touched") or [] if is_test_path(p, declared) or p not in in_base]
+    reverted = sorted(p for p in rec.get("touched") or [] if p not in keep)
+    patch = (Path(work_dir) / PATCH).resolve()
+    if keep and patch.stat().st_size:
+        _git(dest, "apply", "--binary", "--whitespace=nowarn",
+             *[f"--include={p}" for p in keep], str(patch))
+    return reverted
+
+
 def remove_mutant(repo: Path, dest: Path) -> None:
     from orchestrator.optimize.build_scope import _git
 
@@ -317,7 +337,10 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
                 declared = [r["native_test"] for f in factors for r in (f.relations or ())
                             if isinstance(r, dict) and r.get("native_test")]
                 try:
-                    reverted = build_mutant(Path(repo), wd, written, declared, dest)
+                    clean_rec = (records or {}).get("clean_tree.json")
+                    reverted = (build_mutant_clean(Path(repo), wd, clean_rec, declared, dest)
+                                if clean_rec else
+                                build_mutant(Path(repo), wd, written, declared, dest))
                 except GitError as exc:
                     reverted = None
                     mutant_info["unavailable"] = f"could not build the mutant: {exc}"

@@ -58,11 +58,23 @@ def _campaign(repo: Path, *, stages=None) -> dict:
                 },
             ],
             "stages": stages or ["build", "verify", "screen", "confirm"],
+            "build_checks": {"mechanism_paths": ["sim"]},
             "design": {"screen": {"resolution": 3}, "confirm": {"replicates": 2}},
             "test_command": "go test ./sim/... -v",
             "run_command": "./bin run",
         },
     }
+
+
+def _init_git(repo: Path) -> None:
+    """A build needs a committed pre-build tree (clean_tree.py)."""
+    import subprocess as _sp
+
+    for args in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        _sp.run(["git", *args], cwd=repo, check=True)
+    (repo / "README").write_text("target\n")
+    _sp.run(["git", "add", "."], cwd=repo, check=True)
+    _sp.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "init"], cwd=repo, check=True)
 
 
 def _runner(result: SDKResult, seen: list[dict] | None = None):
@@ -233,6 +245,7 @@ def test_build_then_verify_end_to_end(tmp_path: Path, monkeypatch):
 
     repo = tmp_path / "repo"
     repo.mkdir()
+    _init_git(repo)
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "campaigns"))
 
     campaign = _campaign(repo, stages=["build", "verify", "screen", "confirm"])
@@ -293,6 +306,7 @@ def test_build_stage_runs_the_test_command_before_authoring(tmp_path: Path, monk
 
     repo = tmp_path / "repo"
     repo.mkdir()
+    _init_git(repo)
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "campaigns"))
     campaign = _campaign(repo)
     campaign["run_id"] = "prebuildtest"

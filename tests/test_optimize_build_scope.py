@@ -34,7 +34,7 @@ def _build(tmp_path, monkeypatch, writes, *, build_checks=None, run_command=None
     (repo / ".pytest_cache").mkdir(exist_ok=True)
     s, c = _build_campaign(tmp_path, repo)
     if build_checks:
-        c["optimization"]["build_checks"] = build_checks
+        c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], **build_checks}
     if run_command:
         c["optimization"]["run_command"] = run_command
     wd = setup_work_dir(name, repo_path=str(repo), campaign=c)
@@ -66,12 +66,13 @@ def test_writes_inside_the_scope_pass_and_are_recorded(tmp_path, monkeypatch):
     assert rec["ok"] is True and rec["written"] == ["mech.py"]
 
 
-def test_editing_the_benchmark_harness_aborts_even_without_mechanism_paths(tmp_path, monkeypatch):
+def test_editing_the_benchmark_harness_aborts(tmp_path, monkeypatch):
     from orchestrator.optimize.stage_runner import OptimizationAborted
 
     with pytest.raises(OptimizationAborted, match="benchmark harness"):
         _build(tmp_path, monkeypatch, {"mech.py": "X = 2\n", "bench.py": "print(99)\n"},
-               run_command="python bench.py --a={A}")
+               run_command="python bench.py --a={A}",
+               build_checks={"mechanism_paths": ["mech.py"]})
     assert _record(tmp_path / "scope")["protected_touched"] == ["bench.py"]
 
 
@@ -180,7 +181,7 @@ def _adversarial(tmp_path, monkeypatch, action, *, build_checks=None,
     subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "x",
                     "--allow-empty"], cwd=repo, check=True)
     s, c = _build_campaign(tmp_path, repo)
-    c["optimization"]["build_checks"] = build_checks or {"mechanism_paths": ["mech.py"]}
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["mech.py"], **(build_checks or {})}
     if run_command:
         c["optimization"]["run_command"] = run_command
     wd = setup_work_dir(name, repo_path=str(repo), campaign=c)
@@ -364,9 +365,12 @@ def test_the_harness_is_protected_however_the_run_command_reaches_it(
 
     _, build, _ = _adversarial(
         tmp_path, monkeypatch, act, run_command=cmd,
-        build_checks={"baseline_replicates": 3},   # no mechanism_paths: protection alone
+        # The harness's directory is in scope, the harness file itself is not
+        # listed exactly: protection alone must refuse the edit.
+        build_checks={"mechanism_paths": ["mech.py", harness.rsplit("/", 1)[0]
+                                          if "/" in harness else "mech.py"]},
         extra_tracked={harness: "original\n"})
-    with pytest.raises(OptimizationAborted, match="benchmark harness"):
+    with pytest.raises(OptimizationAborted, match="benchmark harness|outside build_checks"):
         build()
 
 

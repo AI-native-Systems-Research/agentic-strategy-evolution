@@ -349,6 +349,28 @@ def check(campaign: dict, repo: Path, work_dir: Path, before: dict,
     return record
 
 
+#: mechanism_paths entries that mean "the whole repo": refused (review C4).
+WHOLE_REPO = frozenset({"", ".", "./", "/", "*", "**", "**/*"})
+
+
+def mechanism_scope(campaign: dict) -> list[str]:
+    """The declared ``mechanism_paths``; raises when a build would have no real
+    scope (none declared, or an entry naming the whole repo)."""
+    bc = ((campaign.get("optimization") or {}).get("build_checks")) or {}
+    raw = bc.get("mechanism_paths") if isinstance(bc, dict) else None
+    paths = [str(p).strip() for p in (raw or [])]
+    whole = [p for p in paths if p.rstrip("/") in WHOLE_REPO or p in WHOLE_REPO]
+    paths = [p for p in paths if p]
+    if not paths or whole:
+        raise BuildScopeViolation(
+            "a build stage needs build_checks.mechanism_paths naming the files and "
+            "directories the mechanism may live in"
+            + (f"; {whole} names the whole repo, which is no scope at all" if whole else "")
+            + ". The mechanism verified and measured is exactly the diff of those "
+            "paths against the pre-build commit.")
+    return paths
+
+
 def build_declared(campaign: dict) -> bool:
     from orchestrator.optimize.policy import pre_epoch_stages
 
@@ -366,6 +388,10 @@ def validation_findings(campaign: dict) -> list[str]:
         return []
     bc = opt.get("build_checks") if isinstance(opt.get("build_checks"), dict) else {}
     paths = [p for p in (bc.get("mechanism_paths") or []) if str(p).strip()]
+    whole = [p for p in paths if str(p).strip().rstrip("/") in WHOLE_REPO]
+    if whole:
+        return [f"build_checks.mechanism_paths entry {whole} names the whole repo; a "
+                f"build's mechanism must be scoped to the files it may change."]
     if paths:
         return []
     return [

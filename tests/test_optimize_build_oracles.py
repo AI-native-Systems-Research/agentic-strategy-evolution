@@ -128,6 +128,7 @@ def test_build_stage_snapshots_the_mechanism_it_authored(tmp_path, monkeypatch):
     c = synthetic_campaign(s)
     c["target_system"]["repo_path"] = str(repo)
     c["optimization"]["stages"] = ["build", "verify", "screen", "confirm"]
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["mech.py", "test_mech.py"]}
     wd = setup_work_dir("buildsnap", repo_path=str(repo), campaign=c)
 
     class _Result:
@@ -148,7 +149,13 @@ def test_build_stage_snapshots_the_mechanism_it_authored(tmp_path, monkeypatch):
               config_runner=make_synthetic_runner(s, seed=1))
     patch = (Path(wd) / "mechanism.patch").read_text()
     assert "X = 42" in patch and "untracked: test_mech.py" in patch
-    assert (Path(wd) / "mechanism.sha256").read_text().strip() == current_mechanism_hash(repo)
+    # The registered mechanism is the CLEAN patch (clean_tree.py): the diff of
+    # mechanism_paths against the pre-build commit, which the epoch measures.
+    clean = json.loads((Path(wd) / "clean_tree.json").read_text())
+    assert (Path(wd) / "mechanism.sha256").read_text().strip() == clean["patch_sha256"]
+    cpatch = (Path(wd) / "mechanism.clean.patch").read_text()
+    assert "X = 42" in cpatch and "test_mech.py" in cpatch
+    assert clean["touched"] == ["mech.py", "test_mech.py"]
 
 
 # ─── oracle 2(b)/(c): the build's own claims, checked against measurement ───
@@ -167,6 +174,8 @@ def _build_campaign(tmp_path, repo):
     c = synthetic_campaign(s, stages=["build", "verify", "screen", "confirm"],
                            known_valid_baseline={"A": 2, "B": 2, "C": "off"})
     c["target_system"]["repo_path"] = str(repo)
+    # A build must declare its scope (build_scope.mechanism_scope).
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["mech.py", "test_mech.py"]}
     return s, c
 
 
@@ -252,7 +261,7 @@ def test_allow_preexisting_tests_opts_out_of_oracle_2b(tmp_path, monkeypatch):
     from orchestrator.optimize.synthetic import make_synthetic_runner
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
     repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
-    c["optimization"]["build_checks"] = {"allow_preexisting_tests": True}
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], "allow_preexisting_tests": True}
     wd = setup_work_dir("optout", repo_path=str(repo), campaign=c)
     all_pass = {t: True for t in _declared_ids(c)}
     run_stage(c, wd, iteration=1, stage="build",
@@ -328,7 +337,7 @@ def test_baseline_equivalence_records_the_measurement_even_when_it_passes(tmp_pa
     from orchestrator.optimize.synthetic import make_synthetic_runner
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
     repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
-    c["optimization"]["build_checks"] = {"baseline_replicates": 2,
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], "baseline_replicates": 2,
                                          "baseline_tolerance_pct": 25.0}
     wd = setup_work_dir("recorded", repo_path=str(repo), campaign=c)
     ids = _declared_ids(c)
@@ -537,7 +546,7 @@ def test_an_unarmed_oracle_proceeds_only_with_a_recorded_waiver(tmp_path, monkey
     from orchestrator.optimize.synthetic import make_synthetic_runner
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
     repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
-    c["optimization"]["build_checks"] = {
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], 
         "allow_unarmed_baseline": "the harness is authored by the build itself"}
     wd = setup_work_dir("waived", repo_path=str(repo), campaign=c)
     ids = _declared_ids(c)
@@ -1146,6 +1155,7 @@ def _seeded_campaign(tmp_path, repo, **workload):
                            known_valid_baseline={"A": 2, "B": 2, "C": "off"},
                            workload=wl)
     c["target_system"]["repo_path"] = str(repo)
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["mech.py", "test_mech.py"]}
     return s, c
 
 
@@ -1200,7 +1210,7 @@ def test_baseline_oracle_shares_workload_draws_across_the_build(tmp_path, monkey
     from orchestrator.optimize.stage_runner import run_stage
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
     repo = _git_repo(tmp_path); s, c = _seeded_campaign(tmp_path, repo)
-    c["optimization"]["build_checks"] = {"baseline_replicates": 4}
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], "baseline_replicates": 4}
     wd = setup_work_dir("crnbase", repo_path=str(repo), campaign=c)
     ids = _declared_ids(c)
 
@@ -1296,7 +1306,7 @@ def test_declared_workload_seeds_are_used_verbatim_on_both_sides(tmp_path, monke
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
     repo = _git_repo(tmp_path)
     s, c = _seeded_campaign(tmp_path, repo, seeds=[7, 11])
-    c["optimization"]["build_checks"] = {"baseline_replicates": 3}
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], "baseline_replicates": 3}
     wd = setup_work_dir("crnpinned", repo_path=str(repo), campaign=c)
     ids = _declared_ids(c)
     pre_seen: list = []

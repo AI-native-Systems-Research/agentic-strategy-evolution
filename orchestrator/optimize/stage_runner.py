@@ -2579,6 +2579,28 @@ def run_stage(
             except _gr.GateRecordError as exc:
                 raise OptimizationGateFailed(str(exc)) from exc
 
+    # WHERE TARGET CODE RUNS. With a build stage, every stage after it runs the
+    # target's commands in the CLEAN CHECKOUT of the pre-build commit plus the
+    # recorded mechanism patch (clean_tree.py) -- never in the agent's tree.
+    exec_repo = Path(repo) if repo else None
+    if (repo and not _is_build and stage_name != Stage.PLAN.value and not reanalysis):
+        from orchestrator.optimize import clean_tree as _ct
+
+        if _ct.active(campaign, work_dir):
+            from orchestrator.optimize import gate_records as _gr2
+
+            broken = [n for n in (_ct.RECORD, _ct.PATCH) if _gr2.check(work_dir, n) != "ok"]
+            if broken:
+                raise OptimizationGateFailed(
+                    f"the recorded mechanism {broken} fails its seal: what the epoch "
+                    f"would measure cannot be shown to be what the build produced.")
+            try:
+                exec_repo = _ct.ensure(Path(repo), work_dir,
+                                       fresh=stage_name == Stage.VERIFY.value)
+            except _ct.CleanTreeError as exc:
+                raise OptimizationGateFailed(str(exc)) from exc
+
+
     if test_results is None and opt.get("test_command") and repo:
         # Runs on the BUILD iteration too, and deliberately so (oracle 2(b),
         # spec §3.7). An earlier version skipped it here on the grounds that
@@ -2597,7 +2619,7 @@ def run_stage(
         # WHY, and re-running by hand may not reproduce a timeout or an
         # ordering-dependent failure.
         raw = runner.run_test_command(
-            opt["test_command"], cwd=Path(repo),
+            opt["test_command"], cwd=exec_repo,
             timeout=resolve_test_timeout(opt),
             log_path=Path(work_dir) / "runs" / f"iter-{iteration}" / "test_output.log",
         )
@@ -2617,7 +2639,7 @@ def run_stage(
     # the real campaigns it exists for.
     if config_runner is None and opt.get("run_command") and repo:
         config_runner = runner.make_config_runner(
-            opt["run_command"], cwd=Path(repo),
+            opt["run_command"], cwd=exec_repo,
             metric_path=_primary_of(opt.get("response")).get(
                 "metric", "",
             ),
@@ -2644,6 +2666,15 @@ def run_stage(
         except gate_records.GateRecordError as exc:
             raise OptimizationGateFailed(str(exc)) from exc
         gate_records.ensure_key(work_dir)
+        # The clean-checkout model (clean_tree.py): a real scope, and a committed
+        # pre-build tree whose commit the mechanism patch is taken against.
+        from orchestrator.optimize import build_scope as _bs0
+        from orchestrator.optimize import clean_tree
+        try:
+            _bs0.mechanism_scope(campaign)
+            _clean_base = clean_tree.require_clean_base(Path(repo)) if repo else None
+        except (_bs0.BuildScopeViolation, clean_tree.CleanTreeError) as exc:
+            raise OptimizationGateFailed(str(exc)) from exc
         _write_json(Path(work_dir) / "pre_build_tests.json", {
             "passed": sorted(t for t, ok in (test_results or {}).items() if ok),
             "ran": sorted(test_results or {}),
@@ -2767,7 +2798,15 @@ def run_stage(
                                   pre_ran=sorted(test_results or {}))
             except build_scope.BuildScopeViolation as exc:
                 raise OptimizationGateFailed(str(exc)) from exc
-        gate_records.seal(work_dir, gate_records.BUILD_RECORDS)
+        _clean_rec = None
+        if repo and _clean_base:
+            try:
+                _clean_rec = clean_tree.capture(
+                    campaign, Path(repo), work_dir, _clean_base,
+                    protected=build_scope.protected_paths(
+                        Path(repo), campaign, sorted(test_results or {})))
+            except (clean_tree.CleanTreeError, build_scope.GitError) as exc:
+                raise OptimizationGateFailed(str(exc)) from exc
         # Pre-register WHICH CODE the epoch will measure. `verify` compiles the
         # policy one iteration later and stamps this hash into it; every epoch
         # iteration re-checks it (below). Snapshot here rather than at verify
@@ -2790,7 +2829,14 @@ def run_stage(
                 "otherwise any file the test or run command leaves behind that "
                 "git does not ignore will read as mechanism drift)",
             )
-    elif repo and stage_name not in policy_mod.pre_epoch_stages(campaign):
+            if _clean_rec is not None:
+                # The registered mechanism IS the clean patch: the policy is
+                # compiled for its hash, and the epoch measures base + patch.
+                (Path(work_dir) / "mechanism.sha256").write_text(
+                    _clean_rec["patch_sha256"] + "\n")
+        gate_records.seal(work_dir, gate_records.BUILD_RECORDS)
+    elif (repo and stage_name not in policy_mod.pre_epoch_stages(campaign)
+          and exec_repo == Path(repo)):
         # ── drift oracle (spec §3.7, oracle 2) ──────────────────────────────
         #
         # A measurement is only about the system that was pre-registered. The

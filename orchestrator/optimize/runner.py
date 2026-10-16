@@ -1097,6 +1097,27 @@ def _as_text(stream) -> str:
     return stream if isinstance(stream, str) else ""
 
 
+_PYCACHE_PREFIX: str | None = None
+
+
+def target_env() -> dict:
+    """The environment every target command (test_command, run_command) runs
+    with: the caller's, plus ``PYTHONPYCACHEPREFIX`` pointing at a Nous-owned
+    temporary directory, so Python reads and writes bytecode only there and a
+    stale or PLANTED ``__pycache__`` in any tree is never imported. (Other
+    runtimes' caches -- Go's build cache, node_modules -- are not redirected.)
+    The gate key and Nous's own secrets never enter it."""
+    global _PYCACHE_PREFIX
+    import os
+    import tempfile
+
+    if _PYCACHE_PREFIX is None or not Path(_PYCACHE_PREFIX).is_dir():
+        _PYCACHE_PREFIX = tempfile.mkdtemp(prefix="nous-pycache-")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("NOUS_GATE")}
+    env["PYTHONPYCACHEPREFIX"] = _PYCACHE_PREFIX
+    return env
+
+
 def run_test_command(
     command: str, *, cwd: Path, timeout: int = DEFAULT_TEST_TIMEOUT_SEC,
     log_path: Path | None = None,
@@ -1159,7 +1180,7 @@ def run_test_command(
     try:
         proc = subprocess.run(
             shlex.split(command), cwd=str(cwd), capture_output=True,
-            text=True, timeout=timeout,
+            text=True, timeout=timeout, env=target_env(),
         )
     except subprocess.TimeoutExpired as exc:
         # A timeout still carries the partial output, and that is often the
@@ -1697,7 +1718,7 @@ def make_config_runner(
             proc = reaper.run_in_process_group(
                 cmd, cwd=str(cwd), capture_output=True, text=True,
                 timeout=timeout,
-                env={**os.environ, **{k: str(v) for k, v in env_extra.items()}},
+                env={**target_env(), **{k: str(v) for k, v in env_extra.items()}},
             )
         except (subprocess.TimeoutExpired, OSError) as exc:
             _dump_failed_run(log_dir, row, cmd, cwd, exc=exc)
