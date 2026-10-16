@@ -631,6 +631,32 @@ AUTHOR'S GUIDANCE ON THE MECHANISM (optimization.guidance.factor_nomination)
         if constraints else ""
     )
 
+    # The write scope and the rules the build is CHECKED against (build_scope.py,
+    # clean_tree.py): stated so the agent is told exactly what will be verified.
+    scope_paths = [str(p) for p in ((opt.get("build_checks") or {}).get("mechanism_paths")
+                                    or []) if str(p).strip()]
+    scope_block = "\n".join(f"  - {p}" for p in scope_paths) or "  (none declared -- the build will be refused)"
+    protected_note = (
+        "  - the benchmark harness the run command uses"
+        + (f" (`{run_command}`)" if run_command else "")
+        + ", unless a file of it is listed above by its exact path;\n"
+        "  - every pre-existing test file of the declared native tests.")
+    scope_section = f"""
+
+WRITE SCOPE — WHAT IS CHECKED
+Only changes under these paths are part of the mechanism. After you finish, Nous
+records exactly the diff of these paths against the pre-build commit, and every
+later test and measurement runs in a clean checkout of that commit with that diff
+applied -- anything you change elsewhere is not measured, and a write outside
+these paths aborts the campaign:
+{scope_block}
+Never modify (the campaign aborts if you do):
+{protected_note}
+Never commit, stash, check out, reset or rebase; never change git config,
+.git/info/exclude or per-file git flags (skip-worktree, assume-unchanged); never
+leave a process running when you finish. Leave your edits uncommitted in the
+working tree."""
+
     return f"""You are implementing a mechanism in a target repository so that a
 factorial optimization experiment can then measure it. Write code and tests only.
 Do NOT run the experiment, do not benchmark, do not tune parameters, and do not
@@ -649,6 +675,8 @@ instead would corrupt a parallel experiment and silently invalidate both. So:
     the same project and the file names match;
   - if a path you are about to touch does not start with that root, stop and
     re-derive it.
+
+{scope_section}
 
 RESEARCH QUESTION
 {rq}

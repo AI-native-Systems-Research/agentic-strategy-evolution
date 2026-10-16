@@ -516,3 +516,18 @@ def test_a_size_and_mtime_preserving_rewrite_of_an_ignored_config_is_seen(tmp_pa
         build()
     rec = json.loads((tmp_path / "adv" / "build_scope.json").read_text())
     assert rec["not_checked"] and "clean checkout" in rec["role"]
+
+
+def test_the_build_prompt_states_the_scope_the_protected_set_and_the_git_rules(tmp_path):
+    from orchestrator.optimize.build import build_prompt
+
+    repo = _git_repo(tmp_path)
+    _, c = _build_campaign(tmp_path, repo)
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["src/mech.py", "tests/test_mech.py"]}
+    c["optimization"]["run_command"] = "python bench/run.py --a={A}"
+    text = build_prompt(c, ["tests/test_mech.py::test_x"])
+    assert "  - src/mech.py" in text and "  - tests/test_mech.py" in text
+    assert "python bench/run.py" in text and "pre-existing test file" in text
+    for rule in ("Never commit, stash, check out", ".git/info/exclude", "skip-worktree",
+                 "never\nleave a process running"):
+        assert rule in text, rule
