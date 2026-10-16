@@ -5,12 +5,13 @@ orthogonal designs this module emits, every effect estimate has an exact
 closed form (contrast / N). That keeps the numerics auditable and keeps
 numpy out of the harness.
 
-Fractional designs use published generators. A 2^(k-p) design is built by
-taking p base factors' full factorial and defining each remaining factor as
-a product of base columns; which products you pick determines the
-resolution. ``_GENERATORS`` records the standard choices so the alias
-structure matches the textbook rather than whatever this module happens to
-compute.
+Fractional designs are regular 2^(k-p) designs: the full factorial in
+n = k - p base factors, with each remaining factor defined as a product of
+base columns; which products you pick determines the resolution.
+``_GENERATORS`` records the textbook choices for 4-8 factors (so the alias
+structure there matches the textbook rather than whatever this module happens
+to compute); ``_construct`` builds a design for every other ``(k,
+resolution)``.
 """
 from __future__ import annotations
 
@@ -75,8 +76,9 @@ class Design:
 
 #: Restarts of the seeded column search per base size, for resolution >= 5
 #: (resolutions III and IV are reached by a fixed column order; see
-#: ``_construct``). Measured: 64 restarts reach the largest known
-#: resolution-V column sets at 32..512 runs (6, 8, 11, 17, 23 factors).
+#: ``_construct``). Measured at resolution V: weight order alone reaches 6, 8,
+#: 11, 17, 22 and 29 factors at 32..1024 runs; 64 restarts add the 23rd factor
+#: at 512 runs (the largest known) and a 30th at 1024 (largest known: 33).
 _RESTARTS = 64
 
 
@@ -84,22 +86,112 @@ def _weight(m: int) -> int:
     return bin(m).count("1")
 
 
-#: The largest number of factors a REGULAR resolution-V 2^(k-p) design is
-#: known to accommodate in 2^n runs (Draper & Lin; Chen, Sun & Wu's catalogue
-#: of minimum-aberration designs): n -> k_max. Beyond this table the counting
-#: bound is used.
+#: The largest k for which a REGULAR resolution-V 2^(k-p) design in 2^n runs
+#: is KNOWN: n -> k_max, for n = 4..12. Such a design is a set of k columns of
+#: F_2^n no four or fewer of which sum to zero, i.e. the parity-check matrix of
+#: a binary linear [k, k - n, >= 5] code, so k_max is the longest such code with
+#: redundancy n. For n <= 10 the values are PROVEN maxima: the exact largest
+#: dimension of a binary [len, dim, 5] code is known for every len <= 33, and no
+#: [34, 24, 5] code exists (Bouyukliev & Varbanov, "Some results for linear
+#: binary codes with minimum distance 5", 2004). For n = 11 and 12 they are
+#: the BEST KNOWN: a [47, 36, 5] code (C. L. Chen, IEEE Trans. Inform. Theory
+#: 37, 1991, p. 1429) and a cyclic [65, 53, 5] code, both listed in Grassl's
+#: code tables (codetables.de), where a longer code at the same redundancy is
+#: open. Draper & Lin (Technometrics 32, 1990) relate these designs to
+#: resolution-III* designs; Chen, Sun & Wu (Int. Statist. Rev. 61, 1993)
+#: catalogue the small-run cases.
 _RES_V_MAX_FACTORS = {4: 5, 5: 6, 6: 8, 7: 11, 8: 17, 9: 23, 10: 33, 11: 47, 12: 65}
+
+#: The construction refuses a ``(k, resolution >= 5)`` whose greedy search
+#: would track more column subsets than resolution V at 100 factors does
+#: (``sum_{j=1}^{R-2} C(k, j)``; 166,750). Measured cold, the worst admitted
+#: case takes about 2 s (resolution V at 100 factors, VII at 29); resolution V
+#: at 150 factors took 10.7 s and resolution VIII grows as C(k, 6). Such a
+#: screen is never affordable anyway: resolution V at 100 factors needs at
+#: least 8,192 runs by the counting bound. Resolutions III and IV are built by
+#: a fixed column order and are not limited.
+_MAX_SUBSETS_TRACKED = sum(math.comb(100, j) for j in range(1, 4))
+
+
+def _subsets_tracked(k: int, resolution: int) -> int:
+    return sum(math.comb(k, j) for j in range(1, resolution - 1))
+
+
+def max_constructible_factors(resolution: int) -> int | None:
+    """The largest factor count ``_construct`` accepts at ``resolution``
+    (``None``: unlimited, resolutions III and IV)."""
+    if resolution < 5:
+        return None
+    k = resolution
+    while _subsets_tracked(k + 1, resolution) <= _MAX_SUBSETS_TRACKED:
+        k += 1
+    return k
+
+
+def _pow2_at_least(need: int) -> int:
+    n = 0
+    while (1 << n) < need:
+        n += 1
+    return 1 << n
+
+
+def _counting_bound_runs(k: int, resolution: int) -> int:
+    """The theoretical floor on a regular two-level design's run count.
+
+    Rao's (1947) bound for an orthogonal array of strength t = resolution - 1
+    with k two-level factors (Hedayat, Sloane & Stufken, *Orthogonal Arrays*,
+    1999, Thm 2.1): N >= sum_{i<=e} C(k, i) for t = 2e, plus C(k-1, e) for
+    t = 2e + 1 -- k + 1 at resolution III, 2k at IV, 1 + k + C(k, 2) at V.
+    Rounded up to a power of two (a regular design's run count) and capped at
+    the full factorial. A FLOOR: no design need attain it.
+    """
+    t = resolution - 1
+    e = t // 2
+    need = sum(math.comb(k, i) for i in range(e + 1))
+    if t % 2:
+        need += math.comb(k - 1, e)
+    return min(_pow2_at_least(need), 1 << k)
+
+
+def _smallest_known_runs(k: int, resolution: int) -> int | None:
+    """Run count of the smallest regular 2-level design of this resolution
+    that is KNOWN to exist, or ``None`` where no catalogue says.
+
+      * III and IV: the counting bound (``_counting_bound_runs``: k + 1 and 2k,
+        rounded up to a power of two), which the saturated and the even
+        designs attain -- so the minimum among REGULAR designs. (A
+        non-regular Plackett-Burman design can be smaller at resolution III.)
+      * V: the smallest 2^n whose known maximum (``_RES_V_MAX_FACTORS``)
+        reaches k, for k <= 65; ``None`` beyond the catalogue.
+      * VI and above: ``None`` -- no catalogue is consulted.
+
+    Never more than the full factorial, 2^k (3 factors at resolution V: 8).
+    """
+    if resolution <= 4:
+        return _counting_bound_runs(k, max(resolution, 3))
+    if resolution == 5:
+        for n in sorted(_RES_V_MAX_FACTORS):
+            if _RES_V_MAX_FACTORS[n] >= k:
+                return min(1 << n, 1 << k)
+    return None
 
 
 def _runs_lower_bound(k: int, resolution: int) -> int:
-    """The fewest runs a regular 2-level design of this resolution can have.
+    """DEPRECATED alias of ``_smallest_known_runs`` (kept for one release).
 
-    Resolution III must estimate the mean and k main effects (N >= k + 1);
-    resolution IV keeps mains clear of every 2fi, which forces N >= 2k (both
-    attained by ``_construct``). For resolution V and above, the smallest
-    2^n whose known maximum (``_RES_V_MAX_FACTORS``) reaches k; past that
-    table, the counting bound N >= 1 + k + k(k-1)/2 (mean, mains, every 2fi).
-    Rounded up to a power of two: the run count of a regular design.
+    Always an int, as it used to be: the counting bound where no catalogue
+    says. Note the name was never accurate -- see ``_smallest_known_runs``.
+    """
+    known = _smallest_known_runs(k, resolution)
+    return known if known is not None else _counting_bound_runs(k, resolution)
+
+
+def _construction_start_runs(k: int, resolution: int) -> int:
+    """Where ``_construct`` starts its search: a power of two no larger than
+    the smallest regular design of ``resolution`` (so starting there loses
+    nothing). Resolution III / IV: the counting bound; V and above: the
+    resolution-V catalogue, then its counting bound -- below the true minimum
+    at VI+, which only costs the search a few failed base sizes.
     """
     if resolution <= 3:
         need = k + 1
@@ -110,10 +202,7 @@ def _runs_lower_bound(k: int, resolution: int) -> int:
             if _RES_V_MAX_FACTORS[n] >= k:
                 return 1 << n
         need = 1 + k + k * (k - 1) // 2
-    n = 0
-    while (1 << n) < need:
-        n += 1
-    return 1 << n
+    return _pow2_at_least(need)
 
 
 def _greedy_columns(n: int, k: int, resolution: int, order) -> list[int] | None:
@@ -153,19 +242,27 @@ def _construct(k: int, resolution: int) -> tuple[int, tuple[tuple[int, ...], ...
     Well-established constructions, smallest base first:
 
       * III -- the saturated design: any distinct columns of weight >= 2.
-        Reaches 2^n - 1 factors in 2^n runs, which meets the bound.
+        Reaches 2^n - 1 factors in 2^n runs, which meets the counting bound
+        N >= k + 1 (optimal among regular designs).
       * IV  -- the even design (a resolution-III design folded over): only
         ODD-weight columns, so every defining word has even length, hence
         length >= 4. Reaches 2^(n-1) factors in 2^n runs (N = 2k), which
-        meets the bound.
-      * V and above -- a column set no ``resolution - 1`` of which XOR to
-        zero, built by ``_greedy_columns`` in weight order and then over
-        seeded restarts. It attains the smallest known regular design for
-        every k up to 30 (128 runs to 11 factors, 256 to 17, 512 to 23,
-        1024 to 30); beyond, it can need one more doubling (31..64 factors)
-        or two (measured at 100). The design preview reports the run count
-        against ``_runs_lower_bound``. Cached: k=100 at resolution V takes
-        seconds to construct, and the validator and preview ask repeatedly.
+        meets the bound N >= 2k that holds for any strength-3 orthogonal
+        array.
+      * V and above -- a column set no ``resolution - 1`` or fewer of which
+        XOR to zero, built by ``_greedy_columns`` in weight order and then
+        over seeded restarts. At resolution V it attains the smallest known
+        regular design for every k up to 30 (128 runs to 11 factors, 256 to
+        17, 512 to 23, 1024 to 30). Beyond, it needs one more doubling than
+        the best known for 31-33, 40-47 and 53-65 factors (and matches it
+        for 34-39 and 48-52); past the catalogue it takes 16384 runs for
+        69-88 factors and 32768 for 89-100, where the double-error-correcting
+        BCH code (columns ``(x, x^3)`` for nonzero x in GF(2^7)) gives up to
+        127 factors in 16384 and the counting bound at 100 factors is 8192.
+        The design preview reports the run count against
+        ``_smallest_known_runs`` / ``_counting_bound_runs``. Refused past
+        ``max_constructible_factors`` (see ``_MAX_SUBSETS_TRACKED``). Cached:
+        the validator and preview ask repeatedly.
 
     Returns ``None`` when no generator is needed (the full factorial is
     already the smallest design of that resolution). Deterministic: the same
@@ -173,7 +270,19 @@ def _construct(k: int, resolution: int) -> tuple[int, tuple[tuple[int, ...], ...
     """
     if resolution < 3:
         raise ValueError("resolution must be >= 3")
-    n = _runs_lower_bound(k, resolution).bit_length() - 1
+    limit = max_constructible_factors(resolution)
+    if limit is not None and k > limit:
+        raise ValueError(
+            f"{k} factors at resolution {resolution}: Nous constructs resolution "
+            f"{resolution} designs for at most {limit} factors (beyond that the "
+            f"column search is too costly to run in the validator), and such a "
+            f"screen would need at least {_counting_bound_runs(k, resolution)} "
+            f"runs by the counting bound anyway. Screen at resolution 4 "
+            f"({_counting_bound_runs(k, 4)} runs: main effects clear of every "
+            f"two-factor interaction), keep the live factors, and screen those "
+            f"at a higher resolution next epoch.",
+        )
+    n = _construction_start_runs(k, resolution).bit_length() - 1
     while n < k:
         cands = [m for m in range(1, 1 << n) if _weight(m) >= 2]
         if resolution == 4:
@@ -199,10 +308,10 @@ def generators_for(k: int, resolution: int) -> tuple[int, tuple[tuple[int, ...],
     """``(n_base, generators)`` of the design used for ``(k, resolution)``,
     or ``None`` when the full factorial is already the smallest such design.
 
-    The published table first (textbook generators, and the searched
-    minimum-aberration-style entries for 9..16 factors), then
-    ``_construct`` for every other combination -- so no factor count forces
-    a full factorial at resolution III, IV or V.
+    The textbook table first (``_GENERATORS``: 4-8 factors at IV, 5-8 at V,
+    7 at III), then ``_construct`` for every other combination -- so no
+    factor count forces a full factorial at resolution III, IV or V. Raises
+    ``ValueError`` past ``max_constructible_factors``.
     """
     if resolution < 3:
         raise ValueError("resolution must be >= 3")
@@ -228,7 +337,8 @@ def min_runs_for(k: int, resolution: int) -> int:
 
     Exact: ``2 ** n_base`` of the tabulated or constructed design, or
     ``2 ** k`` when the full factorial is already minimal. Compare with
-    ``_runs_lower_bound`` for how close to the theoretical minimum it is.
+    ``_smallest_known_runs`` (the best known construction) and
+    ``_counting_bound_runs`` (the theoretical floor).
     """
     entry = generators_for(k, resolution)
     return 2 ** (entry[0] if entry is not None else k)
@@ -245,7 +355,7 @@ def full_factorial(factor_ids) -> Design:
 
 
 def fractional_factorial(factor_ids, resolution: int) -> Design:
-    """A 2^(k-p) design achieving ``resolution`` using published generators."""
+    """A 2^(k-p) design achieving ``resolution`` (``generators_for``)."""
     ids = tuple(factor_ids)
     k = len(ids)
     if resolution < 3:
@@ -299,11 +409,15 @@ def central_composite(factor_ids, *, center_points: int,
     """Corners + axial (star) points + replicated centers.
 
     The cube is the full factorial while that is the smallest resolution-V
-    design (k <= 4), and a resolution-V FRACTION beyond (Box & Wilson's
-    small composite): a second-order model needs every main effect and 2fi
-    clear of one another, which resolution V gives, and the axial and centre
-    points supply the pure quadratics. A full 2^k cube made refining ten
-    survivors cost 1,024 corners where 128 suffice.
+    design (k <= 4), and a resolution-V FRACTION beyond -- the central
+    composite design of Box & Wilson (1951) and Box & Hunter (1957), whose
+    cube may be any resolution-V fraction. Resolution V is SUFFICIENT for the
+    second-order model (every main effect and 2fi clear of one another, the
+    axial and centre points supplying the pure quadratics), not necessary:
+    the "small composite" designs of Hartley (1959) and Draper & Lin (1990)
+    use a smaller resolution-III* cube, which this function does not build.
+    A full 2^k cube made refining ten survivors cost 1,024 corners where 128
+    suffice.
 
     ``alpha`` defaults to the rotatable value (cube runs)^(1/4), which makes
     the prediction variance depend only on distance from the center.
