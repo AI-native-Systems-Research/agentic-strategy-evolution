@@ -219,10 +219,12 @@ def test_preconditions_name_a_dirty_tree_a_work_dir_inside_the_repo_and_a_missin
     repo, _ = setup                         # mech/m.py is modified in this fixture
     monkeypatch.delenv("NOUS_CAMPAIGN_PARENT", raising=False)
     probs = ct.build_preconditions(_build_campaign_for(repo), "r1")
-    assert any("committed" in p and "git commit" in p for p in probs), probs
-    assert any("INSIDE the target repo" in p and "NOUS_CAMPAIGN_PARENT" in p for p in probs), probs
+    dirty = [p for p in probs if p.startswith("commit your changes first")]
+    assert dirty and "mech/m.py" in dirty[0] and "1 tracked file(s)" in dirty[0], probs
+    assert any(p.startswith("put the campaign's records outside the repo: `export "
+                            "NOUS_CAMPAIGN_PARENT=") for p in probs), probs
     assert ct.build_preconditions(_build_campaign_for(None))[0].startswith(
-        "a build stage needs target_system.repo_path")
+        "set target_system.repo_path")
     _git(repo, "commit", "-qam", "clean")
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "campaigns"))
     assert ct.build_preconditions(_build_campaign_for(repo), "r1") == []

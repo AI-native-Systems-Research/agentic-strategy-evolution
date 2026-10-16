@@ -689,8 +689,9 @@ def build_preconditions(campaign: dict, run_id: str | None = None) -> list[str]:
         return []
     repo = (campaign.get("target_system") or {}).get("repo_path")
     if not repo:
-        return ["a build stage needs target_system.repo_path: the mechanism is authored "
-                "in that repository and verified in a clean checkout of its commit."]
+        return ["set target_system.repo_path to the target's git repository: a build "
+                "stage authors the mechanism there and verifies it in a clean checkout "
+                "of its commit."]
     repo_p = Path(str(repo)).expanduser()
     if not repo_p.is_dir():
         return [f"target_system.repo_path {repo} does not exist"]
@@ -700,13 +701,17 @@ def build_preconditions(campaign: dict, run_id: str | None = None) -> list[str]:
     except CleanTreeError as exc:
         msg = str(exc)
         if "not a git repository" in msg:
-            out.append(f"a build stage needs target_system.repo_path to be a git "
-                       f"repository; {repo} is not one. `git init && git add -A && "
-                       f"git commit` it first.")
+            out.append(f"make {repo} a git repository with everything committed "
+                       f"(`git init && git add -A && git commit -m base`): a build is "
+                       f"verified in a clean checkout of that commit.")
         elif "Dirty:" in msg:
-            head, dirty = msg.split("Dirty:", 1)
-            out.append(head.strip() + " Commit them (`git commit -am ...`) before "
-                       "running. Dirty:" + dirty)
+            files = [ln.strip() for ln in msg.split("Dirty:", 1)[1].splitlines() if ln.strip()]
+            shown = ", ".join(f.split(maxsplit=1)[-1] for f in files[:5])
+            more = f" and {len(files) - 5} more" if len(files) > 5 else ""
+            out.append(f"commit your changes first (`git commit -am ...` in {repo}): "
+                       f"{len(files)} tracked file(s) are modified ({shown}{more}). A "
+                       f"build is verified in a clean checkout of the COMMIT, so "
+                       f"uncommitted edits would vanish from what is measured.")
         else:
             out.append(msg)
     try:
@@ -715,10 +720,10 @@ def build_preconditions(campaign: dict, run_id: str | None = None) -> list[str]:
         wd = resolve_work_dir(run_id or campaign.get("run_id") or "run", repo_p)
         Path(wd).resolve().relative_to(repo_p.resolve())
         out.append(
-            f"the campaign work_dir would be {wd}, INSIDE the target repo: a build "
-            f"stage's agent and every target command run there, so its gate records "
-            f"would be in their reach. Export NOUS_CAMPAIGN_PARENT to a directory "
-            f"outside the repo (e.g. `export NOUS_CAMPAIGN_PARENT=~/nous-campaigns`).")
+            f"put the campaign's records outside the repo: `export "
+            f"NOUS_CAMPAIGN_PARENT=~/nous-campaigns` (any directory outside {repo}). "
+            f"Without it the work_dir would be {wd}, inside the target repo, where "
+            f"the build agent and every target command could reach its gate records.")
     except ValueError:
         pass
     except Exception:  # noqa: BLE001 -- resolution problems are reported elsewhere
