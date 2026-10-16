@@ -413,7 +413,7 @@
     },
     "candidate_space": {
       "type": "object",
-      "required": ["exhaustive", "size", "evaluated", "method", "seed"],
+      "required": ["exhaustive", "size", "evaluated", "method", "seed", "constraint_models_applied"],
       "additionalProperties": false,
       "description": "How the candidate set behind levels, top_candidates, residual_regret_model and predicted_front was obtained. PRESENT ONLY WHEN THE SPACE WAS SEARCHED rather than enumerated: the product of the fitted factors' axis sizes exceeded decide.CANDIDATE_CAP, so the recommendation is the best EVALUATED candidate of a deterministic seeded search (multi-start coordinate ascent from every measured configuration plus a seeded uniform sample), not a proven argmax over X_valid, and the regret bound's max ran over the evaluated set only. Absent means the whole valid space was enumerated exactly.",
       "properties": {
@@ -421,8 +421,11 @@
         "size": {"type": "integer", "minimum": 1, "description": "The product of the fitted factors' axis sizes: the full candidate space, before exclusions."},
         "evaluated": {"type": "integer", "minimum": 1, "description": "Distinct configurations the search scored (before measured-inadmissible and confidently-infeasible exclusions)."},
         "method": {"const": "sampled_coordinate_ascent"},
-        "seed": {"type": "integer", "description": "The search seed (decide.SEARCH_SEED): the same fit and exclusions always reproduce the same evaluated set."}
+        "seed": {"type": "integer", "description": "The search seed (decide.SEARCH_SEED): the same fit and exclusions always reproduce the same evaluated set."},
+        "constraint_models_applied": {"type": ["boolean", "null"], "description": "Whether confidently-infeasible candidates were excluded. null: no constraint was modelled. true: applied at every evaluated point. false: dropped because neither the search nor a feasibility-seeking ascent (maximising the worst constraint margin) found an admissible point -- the searched analogue of the enumerated rule 'drop only when the whole space is confidently infeasible'. constraint_models[].applied agrees with it, and constraint_models[].excluded_confidently_infeasible counts over the evaluated set."}
       }
-    }
+    },
+    "alias_consequential_basis": {"const": "searched", "description": "Present only with candidate_space. alias_consequential was computed from searches: each alias resolution's optimal set is over what ITS search evaluated, so an empty list means no consequential alias was FOUND, not that none exists. The baseline is the primary search's argmax."},
+    "predicted_front_basis": {"const": "evaluated_points", "description": "Present only with candidate_space and a predicted_front. Each predicted_front status ('nondominated', 'possibly_nondominated') and front_size_predicted are relative to the evaluated points of the search, not to the whole valid space."}
   }
 }

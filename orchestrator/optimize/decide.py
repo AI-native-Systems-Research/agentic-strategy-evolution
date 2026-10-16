@@ -109,11 +109,17 @@ class CandidateSpace:
     evaluated: int
     method: str
     seed: int | None
+    #: Whether the confidently-infeasible exclusion was applied: ``None`` when
+    #: no constraint was modelled, ``False`` when the models were dropped
+    #: because no admissible point was found (enumerated: none EXISTS;
+    #: searched: neither the search nor the feasibility ascent found one).
+    constraint_models_applied: bool | None = None
 
     def as_dict(self) -> dict:
         return {"exhaustive": self.exhaustive, "size": int(self.size),
                 "evaluated": int(self.evaluated), "method": self.method,
-                "seed": self.seed}
+                "seed": self.seed,
+                "constraint_models_applied": self.constraint_models_applied}
 
 
 class Scored(list):
@@ -125,10 +131,16 @@ class Scored(list):
     """
 
     space: "CandidateSpace"
+    #: Every scored candidate BEFORE the confidently-infeasible filter (after
+    #: the measured-inadmissible one): the set the constraint record counts
+    #: exclusions over. The same set ``ranked`` would score with no models.
+    unfiltered: list
 
-    def __init__(self, items=(), space: "CandidateSpace | None" = None):
+    def __init__(self, items=(), space: "CandidateSpace | None" = None,
+                 unfiltered=None):
         super().__init__(items)
         self.space = space
+        self.unfiltered = list(self) if unfiltered is None else list(unfiltered)
 
 
 @dataclass(frozen=True)
@@ -333,11 +345,12 @@ def _weight_vectors(k: int, step: int = 4) -> list[tuple[float, ...]]:
 
 
 def _search(fit: Fit, ids, axes, by_id, *, direction: str, objectives,
-            seed_levels, admissible, seed: int, sample: int) -> list[tuple]:
+            seed_levels, admissible, seed: int, sample: int,
+            extra_pool=()) -> list[tuple]:
     """Every distinct axis-index tuple the search scored, ascending.
 
-    Pool: the axes' centre, ``seed_levels`` snapped onto the axes, then
-    ``sample`` seeded uniform draws. Then, per direction, a coordinate ascent from each of the
+    Pool: the axes' centre, ``extra_pool`` (index tuples), ``seed_levels``
+    snapped onto the axes, then ``sample`` seeded uniform draws. Then, per direction, a coordinate ascent from each of the
     best pooled admissible points: cycle every factor through ALL its axis
     values holding the others, move to the best admissible improvement, and
     repeat until a full sweep improves nothing. Directions: ``fit`` at
@@ -358,6 +371,10 @@ def _search(fit: Fit, ids, axes, by_id, *, direction: str, objectives,
     centre = tuple(s // 2 for s in sizes)
     seen: dict[tuple, None] = {centre: None}
     pool: list[tuple] = [centre]
+    for idx in extra_pool:
+        if idx not in seen:
+            seen[idx] = None
+            pool.append(idx)
     for lv in seed_levels or ():
         idx = _snap(lv, ids, axes, by_id)
         if idx is not None and idx not in seen:
@@ -426,6 +443,48 @@ def _search(fit: Fit, ids, axes, by_id, *, direction: str, objectives,
     return sorted(seen)
 
 
+def _feasibility_ascent(pool, axes, margin, *, starts: int) -> list[tuple]:
+    """Coordinate ascent on the WORST constraint margin, from the ``starts``
+    pooled points with the largest one; every tuple it scored, ascending.
+
+    ``margin(idx)`` is the minimum over the modelled constraints of how far the
+    violating-side bound is from confidently excluding the point (positive:
+    not confidently infeasible). Used only when the objective search found no
+    admissible point, to tell "the feasible region is narrow and the pool
+    missed it" from "nothing is feasible" -- the case in which the enumerated
+    path drops the models. An ascent stops as soon as it reaches a point with
+    a positive margin: from there the objective search takes over.
+    """
+    sizes = [len(a) for a in axes]
+    n = len(axes)
+    cache: dict[tuple, float] = {}
+
+    def m(idx):
+        v = cache.get(idx)
+        if v is None:
+            v = cache[idx] = margin(idx)
+        return v
+
+    for cur in sorted(pool, key=lambda idx: -m(idx))[:starts]:
+        cur_m = m(cur)
+        improved = cur_m <= 0
+        while improved and cur_m <= 0:
+            improved = False
+            for j in range(n):
+                best_v, best_m = cur[j], cur_m
+                for v in range(sizes[j]):
+                    if v != cur[j]:
+                        cand = cur[:j] + (v,) + cur[j + 1:]
+                        mv = m(cand)
+                        if mv > best_m:
+                            best_v, best_m = v, mv
+                if best_v != cur[j]:
+                    cur = cur[:j] + (best_v,) + cur[j + 1:]
+                    cur_m = best_m
+                    improved = True
+    return sorted(cache)
+
+
 def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
             exclude_levels, constraint_models=(),
             constraint_delta: float = 0.05, direction: str = "maximize",
@@ -457,15 +516,16 @@ def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
             for c in candidates(fitted_ids, factors, held_fixed=held_fixed,
                                 exclude_levels=exclude_levels)
         ]
-        space = CandidateSpace(True, size, size, "enumeration", None)
         if not modelled:
-            return Scored(scored, space)
+            return Scored(scored, CandidateSpace(True, size, size, "enumeration", None))
         from orchestrator.optimize.constraint_models import confidently_infeasible
 
         kept = [c for c in scored
                 if not confidently_infeasible(constraint_models, c.coded,
                                               delta=constraint_delta)]
-        return Scored(kept or scored, space)
+        return Scored(kept or scored,
+                      CandidateSpace(True, size, size, "enumeration", None, bool(kept)),
+                      unfiltered=scored)
 
     from orchestrator.optimize.constraint_models import confidently_infeasible
 
@@ -479,7 +539,7 @@ def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
         levels = {**held, **{fid: axes[j][idx[j]][1] for j, fid in enumerate(ids)}}
         return Candidate(levels=levels, coded=coded, predicted=float("nan"))
 
-    def run(use_models: bool):
+    def run(use_models: bool, extra_pool=()):
         memo: dict[tuple, bool] = {}
 
         def admissible(idx) -> bool:
@@ -494,21 +554,67 @@ def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
 
         visited = _search(fit, ids, axes, by_id, direction=direction,
                           objectives=objectives, seed_levels=seed_levels,
-                          admissible=admissible, seed=seed, sample=sample)
+                          admissible=admissible, seed=seed, sample=sample,
+                          extra_pool=extra_pool)
         return visited, [i for i in visited if admissible(i)]
 
+    applied = None
     visited, kept = run(modelled)
+    if modelled:
+        applied = True
     if modelled and not kept:
-        # The models would exclude every evaluated candidate: as in the
-        # enumerated case, the exclusion is not applied at all.
-        visited, kept = run(False)
-    out = []
-    for idx in kept:
-        c = build(idx)
-        out.append(Candidate(levels=c.levels, coded=c.coded,
-                             predicted=predict(fit, c.coded)))
+        # No EVALUATED point is admissible -- which is not "none exists". The
+        # enumerated path drops the models only when the whole space is
+        # confidently infeasible, so look for a feasible point first: an
+        # ascent on the worst constraint margin, then the objective search
+        # again with whatever it found in its pool.
+        from orchestrator.optimize.constraint_models import bound, per_constraint_delta
+
+        d = per_constraint_delta(constraint_models, constraint_delta)
+        live = [m for m in constraint_models if m.modelled]
+
+        def margin(idx) -> float:
+            coded = build(idx).coded
+            out_ = math.inf
+            for m in live:
+                b = bound(m, coded, delta=d)
+                if m.op in ("<", "<="):
+                    out_ = min(out_, float(m.value) - b["lower"])
+                else:
+                    out_ = min(out_, b["upper"] - float(m.value))
+            return out_
+
+        starts = sorted(visited, key=lambda idx: -margin(idx))[:SEARCH_STARTS]
+        feas_seen = _feasibility_ascent(starts, axes, margin, starts=SEARCH_STARTS)
+        found = [i for i in feas_seen if not _excluded(build(i).levels, exclude_levels)
+                 and not confidently_infeasible(constraint_models, build(i).coded,
+                                                delta=constraint_delta)]
+        if found:
+            v2, kept = run(True, extra_pool=found)
+            visited = sorted(set(visited) | set(feas_seen) | set(v2))
+        if not kept:
+            # Nothing feasible found anywhere: as in the enumerated case, the
+            # exclusion is not applied at all -- and the record says so.
+            applied = False
+            v3, kept = run(False)
+            visited = sorted(set(visited) | set(feas_seen) | set(v3))
+
+    def scored_of(idxs):
+        out_ = []
+        for idx in idxs:
+            c = build(idx)
+            out_.append(Candidate(levels=c.levels, coded=c.coded,
+                                  predicted=predict(fit, c.coded)))
+        return out_
+
+    kept_set = set(kept)
+    out = scored_of(sorted(kept_set))
+    unfiltered = (scored_of(i for i in visited
+                            if not _excluded(build(i).levels, exclude_levels))
+                  if modelled else out)
     return Scored(out, CandidateSpace(False, size, len(visited),
-                                      "sampled_coordinate_ascent", seed))
+                                      "sampled_coordinate_ascent", seed, applied),
+                  unfiltered=unfiltered)
 
 
 def recommend(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict,

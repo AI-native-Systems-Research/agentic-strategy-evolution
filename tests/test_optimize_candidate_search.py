@@ -356,7 +356,8 @@ def test_candidate_space_schema_rejects_an_exhaustive_record():
     """The record exists to flag a non-exhaustive search: ``exhaustive: true``
     would contradict its presence, so the schema refuses it."""
     good = {"exhaustive": False, "size": 9 ** 12, "evaluated": 4730,
-            "method": "sampled_coordinate_ascent", "seed": 0}
+            "method": "sampled_coordinate_ascent", "seed": 0,
+            "constraint_models_applied": None}
     sub = SCHEMA["properties"]["candidate_space"]
     jsonschema.validate(good, sub)
     with pytest.raises(jsonschema.ValidationError):
@@ -374,3 +375,48 @@ def test_ranked_shortlist_is_a_plain_list_and_the_whole_set_carries_the_record()
     whole = decide.ranked(fit, fs, top=None, **kw)
     assert [c.levels for c in top] == [c.levels for c in whole[:5]]
     assert dataclasses.asdict(whole.space)["evaluated"] >= len(whole)
+
+
+# ─── review fixes: a narrow feasible region the pool misses ─────────────────
+
+
+def _narrow_feasible(k: int = 5):
+    """Primary ``-sum x`` (best at every factor's LOW end) against a constraint
+    ``sum x >= 4.9`` with a tiny SE: confidently feasible only at the all-HIGH
+    corner, a region no uniform sample of 59,049 points is likely to hit."""
+    ids = _ids(k)
+    fit = Fit(0.0, tuple(Effect(i, (i,), -1.0) for i in ids), 30)
+    cfit = Fit(0.0, tuple(Effect(i, (i,), 1.0, se=1e-4) for i in ids), 30,
+               pure_error_var=1e-8, pure_error_df=10)
+    return ids, fit, [ConstraintModel("thr", ">=", 4.9, cfit, "")]
+
+
+def test_search_finds_a_narrow_feasible_region_enumeration_finds():
+    """Reviewer repro (k=5, 59,049 > cap). Enumeration recommends the feasible
+    all-17 corner; the search must too -- it may NOT drop the constraint models
+    just because its pool held no feasible point, since the whole space is not
+    infeasible. The record says the models were applied."""
+    ids, fit, cm = _narrow_feasible()
+    fs = _factors(len(ids))
+    kw = dict(direction="maximize", fitted_ids=ids, held_fixed={},
+              constraint_models=cm, constraint_delta=0.05)
+    ex = decide.recommend(fit, fs, cap=10 ** 6, **kw)
+    assert set(ex.levels.values()) == {17}
+    r = decide.ranked(fit, fs, top=None, **kw)
+    assert not r.space.exhaustive
+    assert r.space.constraint_models_applied is True
+    assert confidently_infeasible(cm, r[0].coded, delta=0.05) == []
+    assert r[0].levels == ex.levels
+    assert all(confidently_infeasible(cm, c.coded, delta=0.05) == [] for c in r)
+
+
+def test_search_drops_constraint_models_only_when_nothing_feasible_is_found():
+    """A constraint no point of the space can satisfy (``sum x >= 6`` over coded
+    x in [-1, 1]^5): as in enumeration the exclusion is not applied, and the
+    record says so."""
+    ids, fit, cm = _narrow_feasible()
+    cm = [dataclasses.replace(cm[0], value=6.0)]
+    r = decide.ranked(fit, _factors(len(ids)), direction="maximize", fitted_ids=ids,
+                      held_fixed={}, top=None, constraint_models=cm)
+    assert r.space.constraint_models_applied is False
+    assert set(r[0].levels.values()) == {1}
