@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import random
 from dataclasses import dataclass
 
 # Standard generator sets, keyed (n_factors, resolution) -> (n_base,
@@ -71,36 +72,162 @@ class Design:
         return tuple(p for p in self.points if p.role == "corner")
 
 
-def is_tabulated(k: int, resolution: int) -> bool:
-    """Whether a generator set for ``(k, resolution)`` is tabulated here.
+#: Restarts of the seeded column search per base size, for resolution >= 5
+#: (resolutions III and IV are reached by a fixed column order; see
+#: ``_construct``). Measured: 64 restarts reach the largest known
+#: resolution-V column sets at 32..512 runs (6, 8, 11, 17, 23 factors).
+_RESTARTS = 64
 
-    Callers deciding run-budget feasibility must consult this rather than
-    inferring it from ``min_runs_for``, whose untabulated fallback returns
-    ``2**k`` — a conservative upper bound, not the true minimum.
+
+def _weight(m: int) -> int:
+    return bin(m).count("1")
+
+
+#: The largest number of factors a REGULAR resolution-V 2^(k-p) design is
+#: known to accommodate in 2^n runs (Draper & Lin; Chen, Sun & Wu's catalogue
+#: of minimum-aberration designs): n -> k_max. Beyond this table the counting
+#: bound is used.
+_RES_V_MAX_FACTORS = {4: 5, 5: 6, 6: 8, 7: 11, 8: 17, 9: 23, 10: 33, 11: 47, 12: 65}
+
+
+def _runs_lower_bound(k: int, resolution: int) -> int:
+    """The fewest runs a regular 2-level design of this resolution can have.
+
+    Resolution III must estimate the mean and k main effects (N >= k + 1);
+    resolution IV keeps mains clear of every 2fi, which forces N >= 2k (both
+    attained by ``_construct``). For resolution V and above, the smallest
+    2^n whose known maximum (``_RES_V_MAX_FACTORS``) reaches k; past that
+    table, the counting bound N >= 1 + k + k(k-1)/2 (mean, mains, every 2fi).
+    Rounded up to a power of two: the run count of a regular design.
     """
-    return (k, resolution) in _GENERATORS
+    if resolution <= 3:
+        need = k + 1
+    elif resolution == 4:
+        need = 2 * k
+    else:
+        for n in sorted(_RES_V_MAX_FACTORS):
+            if _RES_V_MAX_FACTORS[n] >= k:
+                return 1 << n
+        need = 1 + k + k * (k - 1) // 2
+    n = 0
+    while (1 << n) < need:
+        n += 1
+    return 1 << n
+
+
+def _greedy_columns(n: int, k: int, resolution: int, order) -> list[int] | None:
+    """``k`` columns over ``n`` base bits, the first ``n`` the base itself,
+    such that no ``resolution - 1`` or fewer of them XOR to zero -- exactly
+    "every defining word has length >= resolution".
+
+    ``sums[j]`` holds the XOR of every set of ``j`` chosen columns, for
+    ``j <= resolution - 2``. A candidate ``c`` closes a word of length
+    ``j + 1`` iff ``c`` is in ``sums[j]``, so accepting only candidates in no
+    ``sums[j]`` keeps every word at length >= resolution BY CONSTRUCTION --
+    the guarantee does not rest on a table or on a later check.
+    """
+    depth = max(1, resolution - 2)
+    cols = [1 << i for i in range(n)]
+    sums: list[set[int]] = [set() for _ in range(depth + 1)]
+    for c in cols:
+        for j in range(depth, 1, -1):
+            sums[j] |= {c ^ x for x in sums[j - 1]}
+        sums[1].add(c)
+    for c in order:
+        if len(cols) == k:
+            break
+        if c == 0 or any(c in sums[j] for j in range(1, depth + 1)):
+            continue
+        for j in range(depth, 1, -1):
+            sums[j] |= {c ^ x for x in sums[j - 1]}
+        sums[1].add(c)
+        cols.append(c)
+    return cols if len(cols) == k else None
+
+
+def _construct(k: int, resolution: int) -> tuple[int, tuple[tuple[int, ...], ...]] | None:
+    """A regular 2^(k-p) design of at least ``resolution`` for ANY ``k``.
+
+    Well-established constructions, smallest base first:
+
+      * III -- the saturated design: any distinct columns of weight >= 2.
+        Reaches 2^n - 1 factors in 2^n runs, which meets the bound.
+      * IV  -- the even design (a resolution-III design folded over): only
+        ODD-weight columns, so every defining word has even length, hence
+        length >= 4. Reaches 2^(n-1) factors in 2^n runs (N = 2k), which
+        meets the bound.
+      * V and above -- a column set no ``resolution - 1`` of which XOR to
+        zero, built by ``_greedy_columns`` in weight order and then over
+        seeded restarts. It attains the smallest known regular design for
+        every k up to 29 (128 runs to 11 factors, 256 to 17, 512 to 23,
+        1024 to 29) and may need one more doubling beyond; the design
+        preview reports the run count against ``_runs_lower_bound``.
+
+    Returns ``None`` when no generator is needed (the full factorial is
+    already the smallest design of that resolution). Deterministic: the same
+    ``(k, resolution)`` always yields the same columns.
+    """
+    if resolution < 3:
+        raise ValueError("resolution must be >= 3")
+    n = _runs_lower_bound(k, resolution).bit_length() - 1
+    while n < k:
+        cands = [m for m in range(1, 1 << n) if _weight(m) >= 2]
+        if resolution == 4:
+            cands = [m for m in cands if _weight(m) % 2 == 1]
+        cands.sort(key=lambda m: (_weight(m), m))
+        cols = _greedy_columns(n, k, resolution, cands)
+        if cols is None and resolution >= 5:
+            rng = random.Random(1000 * resolution + k)
+            for _ in range(_RESTARTS):
+                shuffled = cands[:]
+                rng.shuffle(shuffled)
+                cols = _greedy_columns(n, k, resolution, shuffled)
+                if cols is not None:
+                    break
+        if cols is not None:
+            gens = tuple(tuple(i for i in range(n) if c >> i & 1) for c in cols[n:])
+            return n, gens
+        n += 1
+    return None
+
+
+def generators_for(k: int, resolution: int) -> tuple[int, tuple[tuple[int, ...], ...]] | None:
+    """``(n_base, generators)`` of the design used for ``(k, resolution)``,
+    or ``None`` when the full factorial is already the smallest such design.
+
+    The published table first (textbook generators, and the searched
+    minimum-aberration-style entries for 9..16 factors), then
+    ``_construct`` for every other combination -- so no factor count forces
+    a full factorial at resolution III, IV or V.
+    """
+    if resolution < 3:
+        raise ValueError("resolution must be >= 3")
+    entry = _GENERATORS.get((k, resolution))
+    if entry is not None:
+        return entry
+    return _construct(k, resolution)
+
+
+def is_tabulated(k: int, resolution: int) -> bool:
+    """Whether a FRACTIONAL design exists for ``(k, resolution)``.
+
+    True for every combination the full factorial does not already make
+    minimal (tabulated or constructed, see ``generators_for``). False means
+    the full factorial IS the smallest design of that resolution -- e.g. 3
+    factors at resolution V -- so callers use it.
+    """
+    return generators_for(k, resolution) is not None
 
 
 def min_runs_for(k: int, resolution: int) -> int:
-    """Run count of the smallest tabulated design for ``k`` factors.
+    """Run count of the design Nous uses for ``k`` factors at ``resolution``.
 
-    Exact only for ``(k, resolution)`` pairs present in ``_GENERATORS``.
-    For an untabulated pair (with ``resolution >= 3``) this returns
-    ``2 ** k`` — the full factorial's run count — as a *conservative upper
-    bound*, not the true minimum. A smaller fractional design may well
-    exist for that combination; it simply isn't tabulated here, and this
-    module has no way to derive one on the fly. Do not treat the fallback
-    value as "the minimum achievable run count" for feasibility decisions —
-    check ``(k, resolution) in _GENERATORS`` first, and treat an untabulated
-    combination as unknown rather than as "needs the full factorial."
+    Exact: ``2 ** n_base`` of the tabulated or constructed design, or
+    ``2 ** k`` when the full factorial is already minimal. Compare with
+    ``_runs_lower_bound`` for how close to the theoretical minimum it is.
     """
-    entry = _GENERATORS.get((k, resolution))
-    if entry is None:
-        if resolution <= 2:
-            raise ValueError("resolution must be >= 3")
-        return 2 ** k          # conservative upper bound, NOT the true minimum
-    n_base, _ = entry
-    return 2 ** n_base
+    entry = generators_for(k, resolution)
+    return 2 ** (entry[0] if entry is not None else k)
 
 
 def full_factorial(factor_ids) -> Design:
@@ -122,12 +249,13 @@ def fractional_factorial(factor_ids, resolution: int) -> Design:
             f"resolution must be >= 3 (got {resolution}); resolution II would "
             f"alias main effects with each other and estimate nothing.",
         )
-    entry = _GENERATORS.get((k, resolution))
+    entry = generators_for(k, resolution)
     if entry is None:
         raise ValueError(
-            f"no tabulated resolution-{resolution} design for {k} factors. "
-            f"Options: use the full factorial ({2 ** k} runs), reduce the "
-            f"factor count, or accept a lower resolution and its aliasing.",
+            f"no fractional resolution-{resolution} design exists for {k} "
+            f"factors with fewer runs than the full factorial ({2 ** k} runs), "
+            f"which is already the smallest design of that resolution: use "
+            f"full_factorial.",
         )
     n_base, gens = entry
     pts = []
@@ -166,16 +294,23 @@ def central_composite(factor_ids, *, center_points: int,
                       alpha: float | None = None) -> Design:
     """Corners + axial (star) points + replicated centers.
 
-    ``alpha`` defaults to the rotatable value (2^k)^(1/4), which makes the
-    prediction variance depend only on distance from the center.
+    The cube is the full factorial while that is the smallest resolution-V
+    design (k <= 4), and a resolution-V FRACTION beyond (Box & Wilson's
+    small composite): a second-order model needs every main effect and 2fi
+    clear of one another, which resolution V gives, and the axial and centre
+    points supply the pure quadratics. A full 2^k cube made refining ten
+    survivors cost 1,024 corners where 128 suffice.
+
+    ``alpha`` defaults to the rotatable value (cube runs)^(1/4), which makes
+    the prediction variance depend only on distance from the center.
     """
     ids = tuple(factor_ids)
     k = len(ids)
     if k < 1:
         raise ValueError("central_composite needs at least 1 factor")
-    a = float(alpha) if alpha is not None else (2 ** k) ** 0.25
-
-    base = full_factorial(ids)
+    base = (fractional_factorial(ids, 5) if is_tabulated(k, 5)
+            else full_factorial(ids))
+    a = float(alpha) if alpha is not None else len(base.points) ** 0.25
     axial: list[DesignPoint] = []
     for j in range(k):
         for sign in (-1.0, 1.0):

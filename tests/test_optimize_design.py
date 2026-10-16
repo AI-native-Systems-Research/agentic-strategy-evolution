@@ -62,24 +62,19 @@ def test_resolution_v_for_five_factors_needs_sixteen_runs():
     assert len(_corners(d)) == 16
 
 
-def test_min_runs_for_is_exact_only_for_tabulated_cells():
-    # Tabulated: exact, from _GENERATORS' n_base.
-    assert min_runs_for(5, 5) == 16
-    # Untabulated (k=6, resolution=3 has no _GENERATORS entry): the
-    # fallback is 2**k, a conservative upper bound, not a claim that 64
-    # is the true minimum run count achievable at resolution 3 for 6
-    # factors -- it may well be smaller and simply isn't tabulated here.
+def test_min_runs_for_is_exact_for_tabulated_and_constructed_cells():
+    assert min_runs_for(5, 5) == 16          # textbook table
     assert (6, 3) not in _GENERATORS
-    assert min_runs_for(6, 3) == 2 ** 6
+    assert min_runs_for(6, 3) == 8           # constructed (saturated)
+    assert min_runs_for(16, 4) == 32         # constructed (even design)
+    assert min_runs_for(3, 5) == 8           # full factorial is already minimal
 
 
-def test_is_tabulated_matches_the_generator_table_membership():
-    # Public predicate agrees with the private table for known members...
-    assert is_tabulated(5, 5) is True
-    assert is_tabulated(7, 3) is True
-    # ...and known non-members.
-    assert is_tabulated(6, 3) is False
-    assert is_tabulated(9, 5) is False
+def test_is_tabulated_means_a_fractional_design_exists():
+    assert is_tabulated(5, 5) and is_tabulated(7, 3)
+    assert is_tabulated(6, 3) and is_tabulated(9, 5) and is_tabulated(40, 4)
+    # The full factorial is the smallest design of that resolution here.
+    assert not is_tabulated(3, 5) and not is_tabulated(4, 5) and not is_tabulated(2, 4)
 
 
 def test_resolution_v_design_has_no_aliasing_among_mains_and_two_factor_terms():

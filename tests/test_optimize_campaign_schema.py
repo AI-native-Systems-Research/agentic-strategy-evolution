@@ -539,43 +539,26 @@ def test_rule8_tabulated_combination_within_max_runs_passes():
     assert not any("max_runs" in e for e in errors)
 
 
-def test_rule8_untabulated_combination_never_fabricates_a_number():
+def test_rule8_six_factors_at_resolution_three_need_eight_runs_not_sixty_four():
+    """(6, 3) used to fall back to the 64-run full factorial even though a
+    resolution-III design exists at 8 runs. min_runs_for is now exact for
+    every combination, so a budget of 8 fits and 4 does not."""
     campaign = _minimal_optimization_campaign()
-    # k=6 factors at resolution 3 is NOT in _GENERATORS (only (7,3) is
-    # tabulated at resolution III). The fallback 2**6=64 must NOT be
-    # compared against max_runs as if it were a real minimum.
-    factors = [
-        _numeric_factor(id=f"L{i}", name=f"f{i}")
-        for i in range(1, 7)
+    campaign["optimization"]["factors"] = [
+        _numeric_factor(id=f"L{i}", name=f"f{i}") for i in range(1, 7)
     ]
-    campaign["optimization"]["factors"] = factors
     campaign["optimization"]["design"]["screen"]["resolution"] = 3
     campaign["optimization"]["design"]["max_runs"] = 8
-    errors = validate_optimization_campaign(campaign)
-    not_tabulated = [
-        e for e in errors
-        if not e.startswith("WARN:") and "not a tabulated design" in e.lower()
-    ]
-    assert not_tabulated, errors
-    msg = not_tabulated[0]
-    assert "cannot certify" in msg.lower()
-    assert "64" in msg or "full factorial" in msg.lower()
-    # Must NOT claim 64 runs are "required" against the declared max_runs=8
-    # budget -- that would be comparing a fabricated number to the budget.
-    assert not any(
-        "required" in e and "64" in e and "8" in e for e in errors
-    )
+    assert not any("max_runs" in e for e in validate_optimization_campaign(campaign))
+    campaign["optimization"]["design"]["max_runs"] = 4
+    errors = [e for e in validate_optimization_campaign(campaign) if "max_runs" in e]
+    assert errors and "needs 8 runs" in errors[0], errors
 
 
-def test_min_runs_for_confirms_the_untabulated_fallback_is_conservative():
-    """Empirical check backing the rule-8 correction: (6, 3) is untabulated
-    and min_runs_for falls back to 2**6=64, even though a genuine
-    resolution-III design for 6 factors exists at 8 runs (via the
-    tabulated (7, 3) generator's 8-run base, dropping one column)."""
-    from orchestrator.optimize.design import _GENERATORS, min_runs_for
+def test_min_runs_for_six_factors_at_resolution_three_is_eight():
+    from orchestrator.optimize.design import min_runs_for
 
-    assert (6, 3) not in _GENERATORS
-    assert min_runs_for(6, 3) == 64
+    assert min_runs_for(6, 3) == 8
 
 
 # Rule 9: complexity_tier / tier_justification under kind: optimization is
@@ -781,12 +764,11 @@ def test_rule8_untabulated_but_full_factorial_fits_the_budget_is_feasible():
 
 
 def test_rule8_untabulated_and_full_factorial_exceeds_the_budget_still_errors():
-    """2**k is an upper bound on the minimum, so when it does not fit, the
-    honest answer is that Nous cannot certify a design within the budget —
-    not that none exists.
-    """
+    """Where the full factorial is already the smallest design of the
+    resolution (3 factors at resolution V), its 2**k IS the exact
+    requirement, and a budget below it is an error that names it."""
     errors = _hard_errors(_small_campaign(3, max_runs=4))  # needs 8
-    assert errors and "not a tabulated" in errors[0]
+    assert errors and "needs 8 runs" in errors[0], errors
 
 
 def test_rule8_tabulated_over_budget_still_names_the_exact_requirement():

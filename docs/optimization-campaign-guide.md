@@ -659,14 +659,41 @@ not chosen freely.
 - **`confirm`** (required) — `{replicates}`. Replicates the predicted
   optimum (snapped to each factor's `grid`); the report then summarises
   the `held_out` metrics at the configurations it names.
-- **`max_runs`** — your run budget. The validator fails with the two
-  honest options — raise the budget, or accept a lower resolution and its
-  named aliasing — rather than silently downgrading resolution to fit. If
-  your factor count has no tabulated design at the resolution you asked
-  for, the validator says so explicitly rather than fabricating a run-count
-  comparison; omit `max_runs` if you have not first checked that your
-  `(factor count, resolution)` pair is one Nous has a published generator
-  for.
+- **`max_runs`** — your run budget. The validator compares it with the
+  EXACT run count of the screen Nous will build and, when it does not fit,
+  names the options — raise the budget, accept a lower resolution (it says
+  which ones fit), or screen fewer factors this epoch — rather than silently
+  downgrading resolution to fit.
+
+#### How many knobs: any number, at resolution III, IV or V
+
+The screen is a regular two-level fraction for ANY factor count; no count
+forces a full factorial. For 5–8 factors it uses the textbook generators
+(Box, Hunter & Hunter; Montgomery). Beyond that it **constructs** one
+(`orchestrator/optimize/design.py`, `generators_for`):
+
+| resolution | construction | runs for k factors | 12 knobs | 16 knobs | 32 knobs |
+|---|---|---|---|---|---|
+| III | saturated design | smallest 2^n > k (optimal) | 16 | 32 | 64 |
+| IV | even (folded-over) design: odd-weight columns only, so every defining word has even length | smallest 2^n >= 2k (optimal) | 32 | 32 | 64 |
+| V | columns no four of which multiply to the identity, searched greedily with seeded restarts | the smallest known regular design for k <= 30; at most one doubling beyond | 256 | 256 | 2048 |
+
+Every resolution is guaranteed by construction and checked off the design
+matrix itself by `tests/test_optimize_design_construction.py`. The full
+factorial is used only where it is already the smallest design of the
+resolution (e.g. 3 or 4 factors at resolution V). Refine's composite design
+uses a resolution-V cube too once it has five or more factors (Box &
+Wilson's small composite), so refining ten survivors takes 128 corners,
+not 1,024.
+
+Choosing: resolution V costs about k²/2 runs and estimates every 2fi;
+resolution IV costs about 2k and keeps every main effect clear of 2fi (2fi
+alias in chains, which the registered foldover can untangle when an alias
+could change the answer). With many knobs, screen at IV first, keep the
+live ones, and refine them in the next epoch. The design preview (`nous
+validate campaign --liveness`) prints the design it chose, how it compares
+with the smallest known, when a higher resolution costs the same, and what a
+resolution-IV screen would cost.
 
 #### What the fit regresses on: the levels that ran (INV-STAT14)
 
@@ -2697,13 +2724,10 @@ optimization:
   test_command: "pytest -q tests/prop_*.py --json-report"
 ```
 
-Note `design.max_runs` is deliberately omitted here: with only 3 factors
-there is no tabulated fractional design in Nous's generator table at any
-resolution (the smallest tabulated resolution-V design starts at 5
-factors), so the screen runs the full 2^3 = 8-run factorial — already
-small enough that no budget ceiling is needed, and declaring one against
-an untabulated combination would only produce a validator error asking you
-to remove it or add factors.
+Note `design.max_runs` is omitted here: with only 3 factors the full 2^3 =
+8-run factorial is already the smallest resolution-V design, so no budget
+ceiling is needed (declaring one is fine; the validator compares it with
+those exact 8 runs).
 
 ### 3.3 Constrained multi-regime response — `composite-sensitivity-boundary`
 
@@ -2798,9 +2822,9 @@ optimization:
   test_command: "pytest -q tests/prop_composite.py --json-report"
 ```
 
-`design.max_runs` is omitted for the same reason as §3.2: 2 factors has no
-tabulated fractional generator either (the design runs the full 2^2 = 4-run
-screen), so there is no budget ceiling worth declaring. What this example
+`design.max_runs` is omitted for the same reason as §3.2: with 2 factors
+the full 2^2 = 4-run screen is already the smallest design, so there is no
+budget ceiling worth declaring. What this example
 demonstrates that a scalar objective cannot: the low-rho and high-rho
 regime checks are declared as a conjunction the fitted surface must
 satisfy in *both* places, not a single number averaged across rho — a
@@ -2981,10 +3005,9 @@ Three things this example demonstrates that the earlier ones don't:
 - **R6 is `behavioral`, not `correctness`, precisely at the lever whose
   main effect is negative.** This is the single highest-stakes
   classification decision in the whole spec — see anti-pattern §6.4.
-- **8 factors at resolution V is exactly the tabulated case (64 runs, no
-  aliasing)**, so unlike §3.2 and §3.3, `design.max_runs: 90` is safe to
-  declare here: the validator can certify the design against the budget
-  because the (8, 5) generator is published.
+- **8 factors at resolution V is a 64-run fraction (the published (8, 5)
+  generator, no aliasing among mains and 2fi)**, so `design.max_runs: 90`
+  fits with room for the centre points.
 
 ### 3.5 An objective that is the extremum of a feasible set — a PDE solver
 

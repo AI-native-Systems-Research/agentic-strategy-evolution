@@ -1205,7 +1205,7 @@ properties:
               resolution:
                 type: integer
                 minimum: 3
-                description: "Target design resolution (III, IV, or V). See orchestrator.optimize.design for the tabulated generators."
+                description: "Target design resolution (III, IV, or V). Any factor count gets a regular fraction of at least this resolution: textbook generators for 5-8 factors, constructed beyond (orchestrator.optimize.design.generators_for); the full factorial only where it is already the smallest such design."
               center_points:
                 type: integer
                 minimum: 0

@@ -15,7 +15,7 @@ from pathlib import Path
 import jsonschema
 import yaml
 
-from orchestrator.optimize.design import is_tabulated, min_runs_for
+from orchestrator.optimize.design import min_runs_for
 from orchestrator.optimize.factors import is_refinable
 from orchestrator.optimize.predicates import is_trivial
 
@@ -854,23 +854,14 @@ def _alias_pairs_safe(design_obj) -> list[tuple[str, str]]:
 
 
 def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]:
-    """Rule 8 (corrected, see task-10 brief): min_runs_for's fallback of
-    2**k for an untabulated (k, resolution) pair is a conservative UPPER
-    BOUND, not a true minimum -- comparing it against max_runs would
-    falsely reject a run budget that a real (untabulated) design could
-    satisfy. So:
+    """Rule 8: the screen's design must fit ``design.max_runs``.
 
-      * tabulated (k, resolution): compare the exact minimum against
-        max_runs, error with the two honest options if it's exceeded.
-      * untabulated (k, resolution) where the 2**k full factorial FITS
-        max_runs: feasible, no error. The full factorial aliases nothing,
-        so it achieves any requested resolution, and stage_runner falls
-        back to it -- erroring would reject a campaign the runner runs.
-      * untabulated (k, resolution) where 2**k does NOT fit: a distinct
-        error saying Nous cannot certify a design within the budget,
-        offering the full factorial's cost or fewer factors -- and noting
-        2**k is an upper bound on the minimum, so a smaller untabulated
-        design may exist that Nous cannot name.
+    ``min_runs_for`` is EXACT for every ``(k, resolution)``: the tabulated or
+    constructed fractional design's run count, or ``2**k`` where the full
+    factorial is already the smallest design of that resolution
+    (``design.generators_for``). So the comparison is honest for any factor
+    count; past the budget the error names the options, and Nous never
+    silently downgrades the resolution to fit.
     """
     if not isinstance(design, dict):
         return []
@@ -879,55 +870,26 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
         return []
     screen = design.get("screen") or {}
     resolution = screen.get("resolution")
-    if not isinstance(resolution, int):
+    if not isinstance(resolution, int) or resolution < 3:
         return []
     k = len(factors)
     if k == 0:
         return []
-    tabulated = is_tabulated(k, resolution)
-    if tabulated:
-        required = min_runs_for(k, resolution)
-        if required <= max_runs:
-            return []
-        return [
-            f"design.screen.resolution={resolution} over {k} factors "
-            f"needs {required} runs, but design.max_runs={max_runs} is "
-            f"lower. Two honest options: (1) raise max_runs to >= "
-            f"{required}, or (2) accept a lower resolution and its named "
-            f"aliasing (see the resolution-{resolution - 1} generator's "
-            f"alias_pairs) that fits within {max_runs} runs. Nous will "
-            f"not silently downgrade resolution to fit the budget."
-        ]
-    # Untabulated. The 2**k full factorial ALWAYS achieves the requested
-    # resolution, because it aliases nothing at all -- verified: k=2,3,4
-    # each give alias_pairs() == []. So when 2**k fits the budget the
-    # campaign is feasible and needs no error: that is exactly what
-    # stage_runner._build_design does, falling back to the full factorial
-    # for an untabulated combination. Erroring here would reject a campaign
-    # the runner executes correctly, which is why the small examples in
-    # docs/optimization-campaign-guide.md initially could not declare
-    # max_runs at all.
-    #
-    # What remains true, and is why this branch is still distinct from the
-    # tabulated one: 2**k is an upper bound on the MINIMUM, so a smaller
-    # untabulated fractional design may exist and Nous cannot name it. That
-    # matters only when 2**k does NOT fit -- then the honest answer is that
-    # Nous cannot certify a design within the budget, not that none exists.
-    full_factorial_runs = 2 ** k
-    if full_factorial_runs <= max_runs:
+    required = min_runs_for(k, resolution)
+    if required <= max_runs:
         return []
+    cheaper = [(r, min_runs_for(k, r)) for r in range(resolution - 1, 2, -1)]
+    fits = [f"resolution {r} at {n} runs" for r, n in cheaper if n <= max_runs]
     return [
-        f"design.screen.resolution={resolution} is not a tabulated "
-        f"design for {k} factors -- Nous has no published generator for "
-        f"this (factor count, resolution) combination, so it cannot "
-        f"certify a design for it, and it cannot say how many runs it "
-        f"actually needs -- do NOT assume the {full_factorial_runs}-run "
-        f"full-factorial fallback is the true minimum. Options: (1) use "
-        f"the full factorial at {full_factorial_runs} runs (guaranteed "
-        f"correct, no aliasing), or (2) reduce the factor count to a "
-        f"tabulated combination."
+        f"design.screen.resolution={resolution} over {k} factors needs "
+        f"{required} runs, but design.max_runs={max_runs} is lower. Options: "
+        f"(1) raise max_runs to >= {required}; (2) "
+        + (f"accept a lower resolution and its named aliasing ({'; '.join(fits)} "
+           f"fits)" if fits else "accept a lower resolution (none fits this "
+           "budget either)")
+        + "; (3) screen fewer factors this epoch. Nous will not silently "
+        "downgrade resolution to fit the budget."
     ]
-
 
 def _rule9_no_complexity_tier_under_optimization(
     campaign: dict, opt: dict,

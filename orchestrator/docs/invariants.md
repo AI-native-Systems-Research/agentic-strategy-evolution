@@ -218,7 +218,7 @@ either. See `INV-STAT05`.
 
 | ID | Statement | Level | Evidence | Checked | Defect? |
 |---|---|---|---|---|---|
-| `INV-STAT01` | One fitted coefficient per ALIAS CLASS, not per two-factor interaction. A resolution-IV design must not make `XᵀX` singular. | function | spec §4 D1 | `always` at the fit; `test` over every tabulated `(k, resolution)` | **yes** — D1 |
+| `INV-STAT01` | One fitted coefficient per ALIAS CLASS, not per two-factor interaction. A resolution-IV design must not make `XᵀX` singular. | function | spec §4 D1 | `always` at the fit; `test` over the textbook and constructed resolution-III/IV designs (k up to 16) | **yes** — D1 |
 | `INV-STAT02` | No fitted coefficient is NaN. A single NaN response must not poison every coefficient while returning a schema-valid `Fit`. | function | spec §4 D2 | `always` at the `stage_runner` caller; **module boundary still poisons** | **yes** — D2, partially open |
 | `INV-STAT03` | A residual-regret bound is never negative. The gap to the true optimum cannot be below zero. | function | `certificate.model_regret_bound` / `terminal_regret_bound` ("floors at 0.0") | `always` | — |
 | `INV-STAT04` | A bound is non-decreasing as δ shrinks. A stronger confidence requirement cannot produce a narrower certificate. | function | implied by the t-quantile; spec §3.5 | `test` (property, `hypothesis`) | — |
