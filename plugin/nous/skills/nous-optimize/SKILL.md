@@ -70,8 +70,9 @@ Fill every `TODO-`. The rules that have cost real campaigns:
   one is screened (L levels cost 2^ceil(log2 L) screen slots), fitted with
   L-1 df and recommendable -- do not split a multi-level choice into binaries.
 - Any number of knobs is fine; the screen is always a fraction. Past about 10
-  knobs, screen at `resolution: 4` first (about 2k runs) and refine the live
-  ones next epoch; the `--liveness` preview prices each option.
+  knobs, screen at `resolution: 4` first (the smallest power of two >= 2k
+  runs, i.e. 2k-4k) and refine the live ones next epoch; the `--liveness`
+  preview prices each option.
 - `known_valid_baseline` uses a declared level of every factor.
 - Declare `refine` (and add it to `stages`) whenever ≥ 2 numeric factors have
   > 2 levels — curvature at the screen routes there.

@@ -129,8 +129,9 @@ says which step catches it. **[static]** = `nous validate campaign`,
 - **Screen at `resolution: 5`**, so no main effect or two-factor interaction
   is aliased. Lower resolutions depend on a foldover to untangle what they
   confounded. [static warns]
-- **Any number of knobs works** — the screen is always a fraction (resolution
-  V: 128 runs to 11 knobs, 256 to 17; resolution IV: about 2k). With more than
+- **Any number of knobs works** (up to 100 at resolution V) — the screen is
+  always a fraction (resolution V: 128 runs to 11 knobs, 256 to 17; resolution
+  IV: the smallest power of two ≥ 2k, between 2k and 4k). With more than
   about 10 knobs, screen at `resolution: 4` first (32 runs for 16 knobs), keep
   the live ones, and refine them next epoch. The `--liveness` preview prints
   each option's cost. [live]

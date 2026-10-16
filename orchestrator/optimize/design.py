@@ -334,6 +334,10 @@ def generators_for(k: int, resolution: int) -> tuple[int, tuple[tuple[int, ...],
 def is_tabulated(k: int, resolution: int) -> bool:
     """Whether a FRACTIONAL design exists for ``(k, resolution)``.
 
+    The name is historical (it predates ``_construct``): it no longer means
+    "in the textbook table" but "a fraction smaller than the full factorial
+    exists", tabulated or constructed.
+
     True for every combination the full factorial does not already make
     minimal (tabulated or constructed, see ``generators_for``). False means
     the full factorial IS the smallest design of that resolution -- e.g. 3

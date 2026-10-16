@@ -415,7 +415,7 @@
       "type": "object",
       "required": ["exhaustive", "size", "evaluated", "method", "seed", "constraint_models_applied"],
       "additionalProperties": false,
-      "description": "How the candidate set behind levels, top_candidates, residual_regret_model and predicted_front was obtained. PRESENT ONLY WHEN THE SPACE WAS SEARCHED rather than enumerated: the product of the fitted factors' axis sizes exceeded decide.CANDIDATE_CAP, so the recommendation is the best EVALUATED candidate of a deterministic seeded search (multi-start coordinate ascent from every measured configuration plus a seeded uniform sample), not a proven argmax over X_valid, and the regret bound's max ran over the evaluated set only. Absent means the whole valid space was enumerated exactly.",
+      "description": "How the candidate set behind levels, top_candidates, residual_regret_model and predicted_front was obtained. PRESENT ONLY WHEN THE SPACE WAS SEARCHED rather than enumerated: the product of the fitted factors' axis sizes exceeded decide.CANDIDATE_CAP, so the recommendation is the best EVALUATED candidate of a deterministic seeded search (multi-start coordinate ascent from the best-predicted points of a pool of every measured configuration plus a seeded uniform sample), not a proven argmax over X_valid, and the regret bound's max ran over the evaluated set only. Absent means the whole valid space was enumerated exactly.",
       "properties": {
         "exhaustive": {"const": false, "description": "Always false when present: the evaluated set is a subset of the space."},
         "size": {"type": "integer", "minimum": 1, "description": "The product of the fitted factors' axis sizes: the full candidate space, before exclusions."},

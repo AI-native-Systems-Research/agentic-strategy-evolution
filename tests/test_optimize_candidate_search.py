@@ -8,7 +8,8 @@ ascent. These tests pin, on fitted models built directly:
 
   (a) the search agrees with enumeration where both can run, and is never
       worse than the best configuration it was seeded with;
-  (b) at 12 and 16 knobs it reaches a planted grid optimum, in seconds;
+  (b) at 12 and 16 knobs it reaches a planted (concave) grid optimum, in CPU
+      seconds;
   (c) measured-inadmissible and confidently-infeasible points are excluded at
       every evaluated point, exactly as in enumeration;
   (d) at or under the cap nothing changes -- enumeration, and no
@@ -16,8 +17,9 @@ ascent. These tests pin, on fitted models built directly:
   (e) above the cap a full campaign writes a schema-valid ``candidate_space``,
       says so in ``report.md``, and still finds the answer.
 
-Every test is behavioural: answers, artifacts and wall-clock, never which
-helper ran.
+Every test is behavioural: answers, artifacts and CPU time
+(``time.process_time``, so a loaded shared machine does not flake them),
+never which helper ran.
 """
 from __future__ import annotations
 
@@ -122,7 +124,7 @@ def test_search_finds_the_enumerated_argmax_on_random_quadratics():
                 else:
                     shortfall.append(abs(ex.predicted - se.predicted)
                                      / max(abs(ex.predicted), 1e-9))
-    assert hits >= 0.97 * n, (hits, n)
+    assert hits >= 0.97 * n, (hits, n)  # measured: 50/50
     assert max(shortfall, default=0.0) < 0.05, sorted(shortfall)[-5:]
 
 
@@ -147,16 +149,24 @@ def test_search_is_never_worse_than_the_best_configuration_it_was_seeded_with(k)
             assert sign * rec.predicted >= best_seed - 1e-12
 
 
-def test_search_is_deterministic():
-    """Same fit, same exclusions, same seed: the same evaluated set and the same
-    ranking -- so a searched campaign's artifacts are reproducible."""
+def test_a_twelve_knob_search_is_pinned():
+    """Golden values (B2): a change to Python's RNG, to SEARCH_SEED / SAMPLE /
+    STARTS or to the ascent would silently change every searched campaign's
+    artifacts; pinned here instead of comparing two runs of one process."""
+    import hashlib
+
     k = 12
-    fs = _factors(k)
-    fit = _random_quadratic(k, random.Random(3))
-    kw = dict(direction="maximize", fitted_ids=_ids(k), held_fixed={}, top=None)
-    a, b = decide.ranked(fit, fs, **kw), decide.ranked(fit, fs, **kw)
-    assert [c.levels for c in a] == [c.levels for c in b]
-    assert a.space == b.space
+    r = decide.ranked(_random_quadratic(k, random.Random(3)), _factors(k),
+                      direction="maximize", fitted_ids=_ids(k), held_fixed={}, top=None)
+    assert r.space.evaluated == len(r) == 5445
+    assert [[c.levels[i] for i in _ids(k)] for c in r[:3]] == [
+        [1, 1, 17, 13, 5, 1, 17, 17, 17, 17, 17, 1],
+        [1, 1, 17, 11, 5, 1, 17, 17, 17, 17, 17, 1],
+        [1, 1, 17, 13, 7, 1, 17, 17, 17, 17, 17, 1]]
+    assert r[0].predicted == pytest.approx(15.316508020038814, rel=1e-12)
+    assert hashlib.sha256(json.dumps([sorted(c.levels.items()) for c in r]).encode()
+                          ).hexdigest() == (
+        "5d1afb84703664a4dc8332b9e1355047d09f6ed349ac40a40244a4c13a06a3ea")
 
 
 # ─── (b) scale: 12 and 16 knobs ─────────────────────────────────────────────
@@ -165,18 +175,20 @@ def test_search_is_deterministic():
 @pytest.mark.parametrize("k", [12, 16])
 def test_search_reaches_a_planted_optimum_at_many_knobs_in_seconds(k):
     """A planted grid optimum among 9^12 = 2.8e11 (9^16 = 1.9e15) candidates is
-    found on every seed, and each ``ranked(top=None)`` takes well under the
-    stated 5 s (measured ~0.2 s at k=12, ~0.35 s at k=16)."""
+    found on every seed (planted, diagonally dominant concave quadratics -- an
+    easy case, not a guarantee for indefinite surfaces), and each
+    ``ranked(top=None)`` takes well under the stated 5 s of CPU (measured
+    worst 0.25 s at k=12, 0.41 s at k=16)."""
     fs = _factors(k)
     worst = 0.0
     for s in range(6):
         rng = random.Random(s)
         target = _grid_target(k, rng)
         fit = _planted(k, rng, target)
-        t0 = time.perf_counter()
+        t0 = time.process_time()
         r = decide.ranked(fit, fs, direction="maximize", fitted_ids=_ids(k),
                           held_fixed={}, top=None)
-        worst = max(worst, time.perf_counter() - t0)
+        worst = max(worst, time.process_time() - t0)
         assert r[0].coded == pytest.approx(target), s
         assert r.space.exhaustive is False
         assert r.space.size == 9 ** k
@@ -188,7 +200,7 @@ def test_search_reaches_a_planted_optimum_at_many_knobs_in_seconds(k):
 def test_sixteen_knob_recommend_ranked_and_predicted_front_finish_in_seconds():
     """The whole fitting-stage path at 16 knobs and two objectives: the primary
     argmax, the full ranked set, and the predicted front over it. Requirement:
-    seconds, not minutes (measured ~1.5 s in total). The front must reach each
+    seconds, not minutes (measured 3.6 s of CPU in total). The front must reach each
     objective's planted optimum -- its extremes."""
     k = 16
     fs = _factors(k)
@@ -199,13 +211,13 @@ def test_sixteen_knob_recommend_ranked_and_predicted_front_finish_in_seconds():
     objs = [pareto.Objective("a", "maximize", {}), pareto.Objective("b", "maximize", {})]
     models = {"a": ObjectiveModel("a", "maximize", f1, ""),
               "b": ObjectiveModel("b", "maximize", f2, "")}
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     kw = dict(direction="maximize", fitted_ids=_ids(k), held_fixed={})
     rec = decide.recommend(f1, fs, **kw)
     scored = decide.ranked(f1, fs, top=None, objectives=((f1, "maximize"), (f2, "maximize")),
                            **kw)
     front, n_nd = pareto.predicted_front(scored, models, objs, delta=0.05)
-    elapsed = time.perf_counter() - t0
+    elapsed = time.process_time() - t0
     assert elapsed < 10.0, elapsed
     assert rec.coded == pytest.approx(t1)
     nd = [p for p in front if p.status == "nondominated"]
@@ -702,3 +714,96 @@ def test_under_the_cap_every_alias_reading_is_enumerated():
                                      fitted_ids=_ids(k), held_fixed={}, record=rec)
     assert out == [("X00X01", "X02X03")]
     assert rec == {"readings": 1, "assessed": 1, "method": "enumeration", "unassessed": []}
+
+
+def test_report_md_names_unassessed_alias_readings_and_dropped_seeds(tmp_path):
+    """A7 / A9: what the search did NOT do is said in report.md, not only in
+    recommendation.json."""
+    from orchestrator.optimize.report_md import _candidate_space_note
+
+    d = tmp_path / "runs" / "iter-2"
+    d.mkdir(parents=True)
+    (d / "recommendation.json").write_text(json.dumps({
+        "stage": "screen",
+        "candidate_space": {"exhaustive": False, "size": 9 ** 24, "evaluated": 900,
+                            "method": "sampled_coordinate_ascent", "seed": 0,
+                            "constraint_models_applied": None, "seeds_dropped": 2},
+        "alias_assessment": {"readings": 245, "assessed": 64,
+                             "method": "local_coordinate_ascent",
+                             "unassessed": [["AB", "CD"]] * 181}}))
+    text = "\n".join(_candidate_space_note(tmp_path))
+    assert "181 of 245 alias readings NOT assessed" in text
+    assert "2 measured configuration(s) could not seed the search" in text
+
+
+# ─── stage-0 review: the search is seeded with what was measured (B1) ───────
+
+
+def _two_peaks():
+    """``y = 10 + x_A x_B + 0.1 x_A - 0.3 x_B`` (coded): two corner peaks.
+    From the axes' centre a coordinate ascent moves A up first (its main
+    effect is +0.1), then B follows A up: (+1, +1) at 10.8. The higher peak is
+    (-1, -1) at 11.2 -- a corner the screen MEASURES."""
+    from orchestrator.optimize.synthetic import Surface
+
+    def fn(lv):
+        a, b = (lv["A"] - 9) / 7, (lv["B"] - 9) / 7
+        return 10 + a * b + 0.1 * a - 0.3 * b
+
+    return Surface(name="two_peaks", noise_sd=0.01, factors=(_numeric("A"), _numeric("B")),
+                   fn=fn)
+
+
+def test_a_searched_campaign_starts_from_its_measured_configurations(tmp_path, monkeypatch):
+    """With the search forced (cap 1) and no uniform sample, the only starts
+    are the axes' centre and the measured configurations. The screen measured
+    the (-1, -1) corner, so the recommendation is that higher peak; a search
+    not seeded with the measurements climbs from the centre to (+1, +1)."""
+    from orchestrator.optimize.harness import run_synthetic_campaign
+
+    monkeypatch.setattr(decide, "CANDIDATE_CAP", 1)
+    monkeypatch.setattr(decide, "SEARCH_SAMPLE", 0)
+    res = run_synthetic_campaign(_two_peaks(), seed=1, parent_dir=tmp_path,
+                                 campaign_overrides={"stages": ["verify", "screen", "confirm"]})
+    rec = json.loads((Path(res.work_dir) / "runs" / "iter-2" / "recommendation.json")
+                     .read_text())
+    assert rec["candidate_space"]["exhaustive"] is False
+    assert rec["levels"] == {"A": 2, "B": 2}, rec["levels"]
+    # ... and it is the higher peak, not merely a different corner.
+    assert rec["predicted"] == pytest.approx(11.2, abs=0.05)
+
+
+# ─── stage-0 review: choice and held-fixed factors in the search (B6) ───────
+
+
+def test_search_with_a_choice_and_a_held_fixed_factor_matches_enumeration():
+    """Four refinable numerics plus a CHOICE factor (fitted, with interactions)
+    and a HELD-FIXED one (not fitted). Forced search vs exhaustive enumeration
+    over random indefinite quadratics, both directions: the same argmax in at
+    least 97% of cases, and the held level is carried into every candidate
+    either way, unchanged."""
+    from orchestrator.optimize.synthetic import _choice
+
+    fs = _factors(4) + parse_factors([_choice("C", levels=("lru", "fifo")),
+                                      _numeric("H", levels=(1, 2, 3))])
+    ids = _ids(4) + ["C"]
+    held = {"H": 2}
+    hits = n = 0
+    for s in range(25):
+        rng = random.Random(500 + s)
+        eff = [Effect(i, (i,), rng.gauss(0, 1)) for i in ids]
+        eff += [Effect(a + b, (a, b), rng.gauss(0, 0.7))
+                for a, b in itertools.combinations(ids, 2)]
+        quad = [Effect(i + i, (i, i), rng.gauss(0, 1)) for i in _ids(4)]
+        fit = Fit(rng.gauss(0, 1), tuple(eff), 30, quadratic=tuple(quad))
+        for d in ("maximize", "minimize"):
+            kw = dict(direction=d, fitted_ids=ids, held_fixed=held)
+            ex = decide.recommend(fit, fs, **kw)
+            r = decide.ranked(fit, fs, top=None, cap=0, sample=50, **kw)
+            assert not r.space.exhaustive
+            assert all(c.levels["H"] == 2 and "H" not in c.coded for c in r)
+            assert ex.levels["H"] == 2
+            assert {c.levels["C"] for c in r} == {"lru", "fifo"}
+            n += 1
+            hits += r[0].levels == ex.levels
+    assert hits >= 0.97 * n, (hits, n)  # measured: 50/50

@@ -78,8 +78,9 @@ class Effect:
     the effect. ``decide.alias_consequential`` multiplies by ``sign`` for
     exactly this reason.
 
-    No design ``design.py`` currently tabulates produces a negated alias (every
-    published generator word is positive, so all aliased columns are
+    No design ``design.py`` currently builds produces a negated alias (every
+    generator word it emits, textbook or constructed, is positive, so all
+    aliased columns are
     identical), but the detection loop below has always handled the negated
     case and a hand-built or folded design can reach it — so the sign is
     recorded rather than assumed to be ``+1``.
