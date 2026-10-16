@@ -2261,6 +2261,10 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         **({"boundary_optimum": boundary_block} if boundary_block else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
+        # What this report rests on (audit Q7): code version, input hashes,
+        # analysis constants, waived gates; and the cross-epoch error budget.
+        # See orchestrator/optimize/provenance.py.
+        **_report_provenance(work_dir, pol, campaign),
     })
     logger.info(
         "report: recommendation %s on basis %r (certified=%s); R_model=%s, "
@@ -2273,6 +2277,17 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         else "",
     )
     engine.transition("DONE")
+
+
+def _report_provenance(work_dir, pol, campaign) -> dict:
+    """``provenance`` and ``error_budget`` for report.json (provenance.py)."""
+    from orchestrator.optimize import provenance as prov_mod
+
+    return {
+        "provenance": prov_mod.build_provenance(
+            Path(work_dir), policy_mod.policy_hash(pol), campaign=campaign),
+        "error_budget": prov_mod.error_budget(Path(work_dir), pol),
+    }
 
 
 def _measured_infeasible_contains(work_dir, levels: dict, *,

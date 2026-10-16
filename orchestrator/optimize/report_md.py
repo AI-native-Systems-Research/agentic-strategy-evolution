@@ -727,12 +727,70 @@ def render_report_markdown(work_dir: Path) -> str:
         f"- **Path through the policy:** {' → '.join(report.get('path') or []) or '(none)'}",
         f"- **Policy hash:** `{report.get('policy_hash', '')}`",
         f"- **Known-valid baseline:** {_fmt_levels(baseline) if baseline else '(none declared)'}",
+        *_provenance_lines(report),
         "",
         "_Rendered from `report.json` with no model call; `report.json` is the "
         "record of the answer._",
         "",
     ]
-    return "\n".join(lines)
+    return "\n".join(_insert_error_budget(lines, report))
+
+
+def _error_budget_lines(report: dict) -> list[str]:
+    """The cumulative error budget over every epoch (audit Q7): a reader must
+    see the family-wise figure, not only this epoch's deltas."""
+    eb = report.get("error_budget")
+    if not isinstance(eb, dict):
+        return []
+    rows = [f"| {e.get('epoch')} | {_fmt(e.get('delta_screen'))} | "
+            f"{_fmt(e.get('delta_terminal'))} | {_fmt(e.get('spent'))} | "
+            f"{'yes' if e.get('compiled_after_data') else 'no'} |"
+            for e in eb.get("epochs") or []]
+    cum = _fmt(eb.get("cumulative"))
+    if eb.get("cumulative_is_lower_bound"):
+        cum = f">= {cum} (epoch(s) {eb.get('unrecovered_epochs')} not recoverable)"
+    return [
+        "## Error budget across epochs",
+        "",
+        "| epoch | delta, screen | delta, terminal | spent | compiled after earlier data |",
+        "|---|---|---|---|---|",
+        *rows,
+        "",
+        f"**Cumulative (union bound over epochs): {cum}.** Certification above is "
+        "judged at this epoch's deltas; the cumulative figure is the probability "
+        "bound that ANY epoch's decision on this work_dir is wrong.",
+        "",
+    ]
+
+
+def _insert_error_budget(lines: list[str], report: dict) -> list[str]:
+    extra = _error_budget_lines(report)
+    if not extra:
+        return lines
+    try:
+        at = lines.index("## Provenance")
+    except ValueError:
+        return lines + extra
+    return lines[:at] + extra + lines[at:]
+
+
+def _provenance_lines(report: dict) -> list[str]:
+    prov = report.get("provenance")
+    if not isinstance(prov, dict):
+        return []
+    nous = prov.get("nous") or {}
+    ver = nous.get("package_version") or "unknown"
+    commit = nous.get("git_commit")
+    src = nous.get("source_sha256")
+    out = [f"- **Nous:** {ver}" + (f" at `{commit[:12]}`" if commit else "")
+           + (f", source sha256 `{src[:12]}`" if src else "")]
+    out.append(f"- **Inputs hashed:** {len(prov.get('inputs') or {})} file(s) "
+               "(`runs.jsonl`, `design_matrix.json`); `nous reanalyze` re-derives "
+               "this report from them")
+    for w in prov.get("waivers") or []:
+        out.append(f"- **Gate waived:** `{w.get('gate')}` -- {w.get('reason')}"
+                   + (f" ({w['note']})" if w.get("note") else ""))
+    return out
 
 
 def write_report_markdown(work_dir: Path) -> Path:

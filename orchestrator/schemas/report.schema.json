@@ -21,6 +21,100 @@
   ],
   "additionalProperties": false,
   "properties": {
+    "provenance": {
+      "type": "object",
+      "required": [
+        "nous",
+        "policy_hash",
+        "inputs",
+        "analysis_constants"
+      ],
+      "additionalProperties": false,
+      "description": "What this report rests on (audit Q7), written by provenance.build_provenance: the Nous package version and git commit, the sha256 of every runs/iter-*/runs.jsonl and design_matrix.json on disk when the report was written, the policy hash, the analysis constants and switches that change the analysis without changing the policy hash, and every hard gate the campaign explicitly waived. `nous reanalyze` checks the input hashes before re-deriving the report. Optional only so reports written before the field existed still validate.",
+      "properties": {
+        "nous": {
+          "type": "object",
+          "properties": {
+            "package_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "git_commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_sha256": {
+              "type": "string"
+            }
+          }
+        },
+        "policy_hash": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "analysis_constants": {
+          "type": "object"
+        },
+        "waivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "gate",
+              "reason"
+            ]
+          }
+        }
+      }
+    },
+    "error_budget": {
+      "type": "object",
+      "required": [
+        "epochs",
+        "cumulative",
+        "cumulative_is_lower_bound"
+      ],
+      "description": "The cross-epoch error budget (audit Q7): each epoch spends delta_screen + delta_terminal, and epochs after the first were compiled after earlier epochs' data were seen, so `cumulative` is the union (Bonferroni) bound on the probability that ANY epoch's decision is wrong. Informational: `certified` is still judged per epoch at that epoch's deltas.",
+      "properties": {
+        "epochs": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "this_epoch": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cumulative": {
+          "type": "number"
+        },
+        "cumulative_is_lower_bound": {
+          "type": "boolean"
+        },
+        "unrecovered_epochs": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "accounting": {
+          "type": "string"
+        }
+      }
+    },
     "recommendation": {
       "type": "object",
       "required": ["levels", "basis"],
