@@ -555,10 +555,9 @@ def probe_imports(dest: Path, repo: Path, commands: list[str], *,
     manager shim) is not refused -- such commands are legitimate -- but is
     recorded in ``clean_tree.probe.json`` and listed in report.json
     ``provenance.waivers`` as not probed."""
-    from orchestrator.optimize.runner import target_env
+    from orchestrator.optimize.runner import fresh_pycache
 
     repo_r = str(Path(repo).resolve())
-    env = target_env()
     record = {"probed": [], "not_probed": []}
     for cmd in commands:
         found, reasons = _interpreters(cmd, dest)
@@ -566,8 +565,10 @@ def probe_imports(dest: Path, repo: Path, commands: list[str], *,
             record["not_probed"].append({"command": cmd, "reason": r})
         for exe, flags in found:
             try:
-                proc = subprocess.run([exe, *flags, "-c", _PROBE], cwd=str(dest), env=env,
-                                      capture_output=True, text=True, timeout=120)
+                with fresh_pycache() as env:
+                    proc = subprocess.run([exe, *flags, "-c", _PROBE], cwd=str(dest),
+                                          env=env, capture_output=True, text=True,
+                                          timeout=120)
             except (OSError, subprocess.SubprocessError) as exc:
                 raise CleanTreeError(f"the import probe for `{cmd[:60]}` could not run "
                                      f"({exc}); the clean tree cannot be shown to import "

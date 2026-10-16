@@ -1097,28 +1097,60 @@ def _as_text(stream) -> str:
     return stream if isinstance(stream, str) else ""
 
 
-_PYCACHE_PREFIX: str | None = None
+def target_env(pycache_prefix: str | None = None) -> dict:
+    """The environment a target command (test_command, run_command) runs with:
+    the caller's, minus every Nous path (``NOUS_CAMPAIGN_PARENT``,
+    ``NOUS_STATE_HOME``, ``NOUS_GATE*``), plus ``PYTHONPYCACHEPREFIX``.
 
-
-def target_env() -> dict:
-    """The environment every target command (test_command, run_command) runs
-    with: the caller's, plus ``PYTHONPYCACHEPREFIX`` pointing at a Nous-owned
-    temporary directory, so Python reads and writes bytecode only there and a
-    stale or PLANTED ``__pycache__`` in any tree is never imported. (Other
-    runtimes' caches -- Go's build cache, node_modules -- are not redirected.)
-    The gate key and Nous's own secrets never enter it."""
-    global _PYCACHE_PREFIX
+    The prefix is a FRESH directory per command (``fresh_pycache``), removed
+    when the command returns: bytecode one target command writes can never be
+    read by another, and a stale or planted ``__pycache__`` in any tree is never
+    imported. (Other runtimes' caches -- Go's build cache, node_modules -- are
+    not redirected.)"""
     import os
-    import tempfile
 
-    if _PYCACHE_PREFIX is None or not Path(_PYCACHE_PREFIX).is_dir():
-        _PYCACHE_PREFIX = tempfile.mkdtemp(prefix="nous-pycache-")
-    # No path to Nous's records or keys: NOUS_CAMPAIGN_PARENT and the state home
-    # locate the work_dir and the seal key (round 3, B1).
     hidden = ("NOUS_GATE", "NOUS_CAMPAIGN_PARENT", "NOUS_STATE_HOME")
     env = {k: v for k, v in os.environ.items() if not k.startswith(hidden)}
-    env["PYTHONPYCACHEPREFIX"] = _PYCACHE_PREFIX
+    if pycache_prefix is None:
+        import tempfile
+
+        pycache_prefix = tempfile.mkdtemp(prefix="nous-pycache-")
+        _ORPHAN_PREFIXES.append(pycache_prefix)
+    env["PYTHONPYCACHEPREFIX"] = pycache_prefix
     return env
+
+
+#: Prefixes created by a bare ``target_env()`` call (no owner to remove them);
+#: removed at interpreter exit.
+_ORPHAN_PREFIXES: list[str] = []
+
+
+def _cleanup_orphans() -> None:
+    import shutil
+
+    for p in _ORPHAN_PREFIXES:
+        shutil.rmtree(p, ignore_errors=True)
+
+
+import atexit as _atexit  # noqa: E402
+
+_atexit.register(_cleanup_orphans)
+
+
+class fresh_pycache:
+    """``with fresh_pycache() as env:`` -- a target environment whose bytecode
+    cache is private to this command and removed afterwards."""
+
+    def __enter__(self) -> dict:
+        import tempfile
+
+        self.dir = tempfile.mkdtemp(prefix="nous-pycache-")
+        return target_env(self.dir)
+
+    def __exit__(self, *exc) -> None:
+        import shutil
+
+        shutil.rmtree(self.dir, ignore_errors=True)
 
 
 def run_test_command(
@@ -1185,10 +1217,11 @@ def run_test_command(
     try:
         # In its own session; the group is reaped when the command returns
         # (reaper.run_in_process_group), and leftovers are recorded (C2).
-        proc = reaper.run_in_process_group(
-            shlex.split(command), cwd=str(cwd), capture_output=True,
-            text=True, timeout=timeout, env=target_env(),
-        )
+        with fresh_pycache() as _env:
+            proc = reaper.run_in_process_group(
+                shlex.split(command), cwd=str(cwd), capture_output=True,
+                text=True, timeout=timeout, env=_env,
+            )
     except subprocess.TimeoutExpired as exc:
         # A timeout still carries the partial output, and that is often the
         # most informative artifact of all (which test hung).
@@ -1720,6 +1753,11 @@ def make_config_runner(
                         logger.warning("could not keep run dir %s: %s", rd, exc)
                     finally:
                         shutil.rmtree(rd, ignore_errors=True)
+            # The per-runner root holds only row dirs; drop it once empty.
+            try:
+                run_root.rmdir()
+            except OSError:
+                pass
 
     def _run_command(row, cmd, *, cwd, env_extra, timeout, log_dir):
         try:
@@ -1736,11 +1774,12 @@ def make_config_runner(
             # Same signature, same return type, same `TimeoutExpired`, so every
             # caller below is unchanged: what differs is that the child is
             # spawned in a new session and the whole process GROUP is signalled.
-            proc = reaper.run_in_process_group(
-                cmd, cwd=str(cwd), capture_output=True, text=True,
-                timeout=timeout,
-                env={**target_env(), **{k: str(v) for k, v in env_extra.items()}},
-            )
+            with fresh_pycache() as _env:
+                proc = reaper.run_in_process_group(
+                    cmd, cwd=str(cwd), capture_output=True, text=True,
+                    timeout=timeout,
+                    env={**_env, **{k: str(v) for k, v in env_extra.items()}},
+                )
         except (subprocess.TimeoutExpired, OSError) as exc:
             _dump_failed_run(log_dir, row, cmd, cwd, exc=exc)
             # The two are caught together (both mean "the invocation never
