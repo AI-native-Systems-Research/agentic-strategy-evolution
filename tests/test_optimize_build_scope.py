@@ -99,3 +99,53 @@ def test_files_dirty_before_the_build_and_tool_caches_do_not_count(tmp_path, mon
                 pre_dirty={"notes.txt": "the author's scratch file\n"})
     rec = _record(wd)
     assert rec["ok"] is True and rec["written"] == ["mech.py"], rec
+
+
+# ─── the human gate after a build (audit Q10: HumanGate was never consulted) ─
+
+
+def _verify(tmp_path, monkeypatch, gate):
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import SURFACES, make_synthetic_runner
+
+    wd = _build(tmp_path, monkeypatch, {"mech.py": "X = 2\n"}, name="review")
+    s = SURFACES["additive"]()
+    _, c = _build_campaign(tmp_path, Path(tmp_path) / "target")
+    run_stage(c, wd, iteration=2, stage="verify",
+              config_runner=make_synthetic_runner(s, seed=1),
+              test_results={t: True for t in _declared_ids(c)}, gate=gate)
+    return wd
+
+
+def test_a_rejected_build_review_spends_nothing(tmp_path, monkeypatch):
+    from orchestrator.gates import HumanGate
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+
+    with pytest.raises(OptimizationAborted, match="not approved"):
+        _verify(tmp_path, monkeypatch, HumanGate(auto_response="reject"))
+    wd = tmp_path / "review"
+    assert not (wd / "policy.json").exists()
+    rec = json.loads((wd / "build_review.json").read_text())
+    assert rec["decision"] == "reject"
+    assert any(f.endswith("mechanism.patch") for f in rec["files"])
+
+
+def test_an_auto_approved_build_review_is_recorded_as_unreviewed(tmp_path, monkeypatch):
+    from orchestrator.gates import HumanGate
+    from orchestrator.optimize.provenance import waivers
+
+    wd = _verify(tmp_path, monkeypatch, HumanGate(auto_response="approve"))
+    assert (wd / "policy.json").exists()
+    rec = json.loads((wd / "build_review.json").read_text())
+    assert rec["decision"] == "approve" and rec["auto"] is True
+    assert {"gate": "build_review", "reason": "auto-approved",
+            "note": "no human reviewed the built mechanism"} in waivers(wd, {})
+
+
+def test_an_interactive_reviewer_is_asked_and_the_answer_recorded(tmp_path, monkeypatch):
+    from orchestrator.gates import HumanGate
+
+    monkeypatch.setattr("builtins.input", lambda *_a: "approve")
+    wd = _verify(tmp_path, monkeypatch, HumanGate())
+    rec = json.loads((wd / "build_review.json").read_text())
+    assert rec == {**rec, "decision": "approve", "auto": False}

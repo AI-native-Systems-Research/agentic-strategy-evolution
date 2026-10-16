@@ -1512,6 +1512,42 @@ def _baseline_unarmed(campaign: dict, path: Path, rec: dict, why: str) -> None:
     )
 
 
+def _review_build(gate, work_dir: Path) -> None:
+    """THE HUMAN GATE FOR A BUILT MECHANISM (audit Q10).
+
+    After a build, and after every automatic build oracle passed, but BEFORE the
+    policy is compiled and any benchmark budget is spent, a human is shown the
+    authored diff and the oracle records and asked to approve. This is the
+    HUMAN_DESIGN_GATE the phase machine names for this kind. Under
+    ``--auto-approve`` (this kind's default) the gate answers itself; the record
+    says so (``build_review.json`` ``auto: true``) and report.json lists it under
+    ``provenance.waivers``, so an unreviewed mechanism never reads as reviewed.
+    A reject or abort ends the campaign. Not consulted when no build ran.
+    """
+    wd = Path(work_dir)
+    if not (wd / "pre_build_tests.json").exists():
+        return
+    files = [str(wd / n) for n in ("mechanism.patch", "build_scope.json",
+                                   "authored_tests.json", "baseline_equivalence.json",
+                                   "pre_build_tests.json")
+             if (wd / n).exists()]
+    decision, reason = gate.prompt(
+        "The build authored the mechanism and its tests, and every automatic "
+        "oracle passed. Approve it before the epoch spends benchmark runs?",
+        artifact_path=str(wd / "mechanism.patch") if (wd / "mechanism.patch").exists() else None,
+        files=files,
+    )
+    auto = getattr(gate, "_response", None) is not None
+    _write_json(wd / "build_review.json", {
+        "decision": decision, "reason": reason, "auto": auto, "files": files})
+    if decision != "approve":
+        raise OptimizationGateFailed(
+            f"the built mechanism was not approved at the build review gate "
+            f"({decision}{': ' + reason if reason else ''}); no policy was "
+            f"compiled and no benchmark run was spent. See build_review.json.",
+        )
+
+
 def _reuse_enabled(opt: dict) -> bool:
     """Whether row reuse is on for this campaign. On by default.
 
@@ -2825,6 +2861,7 @@ def run_stage(
         # experiment on disk for a later resume to pick up.
         _check_tests_failed_before_build(campaign, work_dir, factors, test_results)
         _check_baseline_equivalence(campaign, work_dir, factors, config_runner)
+        _review_build(gate, work_dir)
         # The apparatus is certified, so pre-register the epoch's policy: a
         # JSON document hashed BEFORE the first benchmark run is what makes
         # the path a pre-registration rather than a story told afterwards.
