@@ -261,6 +261,7 @@ def run_in_process_group(cmd, *, cwd=None, env=None, timeout=None,
         start_new_session=_supports_process_groups(),
     )
     track(proc)
+    watcher = _DescendantWatcher(proc.pid)
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -282,13 +283,47 @@ def run_in_process_group(cmd, *, cwd=None, env=None, timeout=None,
         raise
     finally:
         untrack(proc)
-    # The command RETURNED; anything still in its process group outlived it (a
-    # backgrounded server, a stray watcher). Kill the group and record it: a
-    # target process that outlives its command can change the tree or the
-    # results after every check (round 3, C2).
+        seen = watcher.stop()
+    # The command RETURNED; anything still in its process group, or any
+    # DESCENDANT seen while it ran (one that called setsid() and left the
+    # group), outlived it. Kill and record them: a target process that outlives
+    # its command can change the tree or the results after every check.
     if _supports_process_groups():
-        _reap_leftover_group(proc.pid, cmd)
+        _reap_leftover_group(proc.pid, cmd, seen)
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+class _DescendantWatcher:
+    """Polls the process table while a target command runs and remembers every
+    descendant (pid -> pgid). A child that calls ``setsid()`` leaves the
+    command's group but not, while it is being created, its ancestry, so the
+    poller sees it. A double-fork that detaches within one polling interval can
+    still escape; that limit is documented."""
+
+    INTERVAL = 0.1
+
+    def __init__(self, root: int):
+        self.root, self.seen = root, {}
+        self.errors: list[str] = []
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
+
+    def _run(self):
+        from orchestrator.optimize import isolation
+
+        while not self._stop.is_set():
+            try:
+                for pid, pg in isolation.descendants(self.root).items():
+                    self.seen.setdefault(pid, pg)
+            except Exception as exc:  # noqa: BLE001 -- recorded with the survivors
+                self.errors.append(str(exc))
+            self._stop.wait(self.INTERVAL)
+
+    def stop(self) -> dict:
+        self._stop.set()
+        self._t.join(timeout=5)
+        return dict(self.seen), list(self.errors)
 
 
 #: Every target command whose process group still had members after it
@@ -297,20 +332,39 @@ SURVIVORS: list[dict] = []
 _SURVIVORS_LOCK = threading.Lock()
 
 
-def _reap_leftover_group(pgid: int, cmd) -> None:
+def _reap_leftover_group(pgid: int, cmd, seen=None) -> None:
+    from orchestrator.optimize import isolation
+
+    descendants, errors = seen if seen is not None else ({}, [])
+    alive_group = True
     try:
         os.killpg(pgid, 0)
     except ProcessLookupError:
-        return
+        alive_group = False
     except PermissionError:
         pass
-    try:
-        os.killpg(pgid, signal.SIGKILL)
-    except (ProcessLookupError, PermissionError):
-        pass
+    escaped = sorted(p for p, pg in descendants.items()
+                     if pg != pgid and isolation._alive(p))
+    if not alive_group and not escaped and not errors:
+        return
+    if alive_group:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    for p in escaped:
+        pg = descendants[p]
+        try:
+            if pg != os.getpgid(0):
+                os.killpg(pg, signal.SIGKILL)
+            else:
+                os.kill(p, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
     with _SURVIVORS_LOCK:
         SURVIVORS.append({"cmd": " ".join(map(str, cmd)) if isinstance(cmd, (list, tuple))
-                          else str(cmd), "pgid": pgid})
+                          else str(cmd), "pgid": pgid, "escaped_session": escaped,
+                          "observation_errors": errors[:3]})
 
 
 def take_survivors() -> list[dict]:

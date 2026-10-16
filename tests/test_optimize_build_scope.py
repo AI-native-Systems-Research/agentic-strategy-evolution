@@ -676,3 +676,30 @@ def test_a_build_with_no_repo_is_refused_with_a_clear_message(tmp_path, monkeypa
                   config_runner=make_synthetic_runner(s, seed=1),
                   test_results={t: False for t in _declared_ids(c)},
                   sdk_runner=_fake_build({}))
+
+
+def test_a_target_child_that_calls_setsid_is_still_reaped_and_recorded(tmp_path):
+    """Round 4, item 4: leaving the command's process group does not escape."""
+    import os
+    import sys
+    import time
+
+    from orchestrator.optimize import reaper, runner
+
+    reaper.take_survivors()
+    pidf = tmp_path / "pid"
+    cmd = (f"{sys.executable} -c \"import subprocess,sys,time; "
+           f"p=subprocess.Popen([sys.executable,'-c','import time; time.sleep(60)'],"
+           f"start_new_session=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL); "
+           f"open({str(pidf)!r},'w').write(str(p.pid)); time.sleep(0.5)\"")
+    runner.run_test_command(cmd, cwd=tmp_path)
+    left = reaper.take_survivors()
+    pid = int(pidf.read_text())
+    assert left and pid in left[0]["escaped_session"], left
+    time.sleep(0.2)
+    try:
+        os.waitpid(pid, os.WNOHANG)
+    except ChildProcessError:
+        pass
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
