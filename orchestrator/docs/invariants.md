@@ -182,7 +182,7 @@ about the presence of a cause.
 | ID | Statement | Level | Evidence | Checked | Defect? |
 |---|---|---|---|---|---|
 | `INV-SEM01` | `residual_regret_model` and `residual_regret_terminal` are separate fields in `report.json` and are never collapsed into one number. `Pr(wrong global decision) ≤ δ_s + δ_t` is only meaningful while they stay apart. | artifact | `certificate.py` module docstring; spec §3.5; CLAUDE.md | `always` | — |
-| `INV-SEM02` | A `null` bound means "not estimable". An unknown is never reported as a zero. | artifact | `certificate.py` ("an unknown is not a zero"); spec §3.5 | `always` for the model bound; **VIOLATED** for the terminal bound | **yes** — see `INV-SEM02`'s note below |
+| `INV-SEM02` | A `null` bound means "not estimable". An unknown is never reported as a zero. | artifact | `certificate.py` ("an unknown is not a zero"); spec §3.5 | `always` for both bounds — `tests/test_optimize_invariants.py::test_zero_variance_bound_must_not_certify` | **yes** — closed; see `INV-SEM02`'s note below |
 | `INV-SEM03` | `δ_s` and `δ_t` are reported with their own bounds and are never summed into a single reported δ. | artifact | spec §3.5 | `always` | — |
 | `INV-SEM04` | A semantic exception removes ONLY the `model` rung of the ladder. Rungs 1/2 (terminal) and 4/5 (measured/baseline) are unaffected, and the report still names an action. | artifact | `stage_runner._run_report`'s `epoch_ended` comment; CLAUDE.md | `always` | — |
 | `INV-SEM05` | Every conditional transition names an `accounting` rule. An adaptive branch with no named inferential accounting rule does not ship. | artifact | `policy.check_policy`; spec §5 non-goals | `always` | — |
@@ -200,7 +200,7 @@ about the presence of a cause.
 | `INV-SEM17` | No global certificate rests on a model the data rejected: when the latest fitting stage reported `model_adequate: false`, `certified` is false and `certification_withheld` names `model_inadequate`. The within-shortlist bound is still reported. | artifact | `stage_runner._finish_confirm`; spec §3.6 rung 3, §3.3 | `always` — `tests/test_optimize_curvature_branch.py` (every surface) | **yes** — same campaign: screen and refine both rejected for lack of fit, confirm certified anyway |
 | `INV-SEM18` | A multi-objective certificate rests on the front: when `certified`, the preferred point is on the measured front, `confidently_nondominated` at `δ_t / max_rounds`, and the preference scalarisation's regret bound is known and within `epsilon_scalar`; the report recommends that point. | artifact | `stage_runner._finish_confirm_pareto`; spec 2026-10-15 step 7 | `test` — `tests/test_optimize_pareto.py` (every oracle campaign) + `check_pareto_certificate` | — |
 
-**`INV-SEM02` — the violation.** `certificate.model_regret_bound` returns
+**`INV-SEM02` — the violation, now CLOSED.** As first recorded: `certificate.model_regret_bound` returns
 `RegretBound(None, ..., method="none")` when `pure_error_df <= 0`, correctly
 refusing to certify from no variance estimate.
 `certificate.terminal_regret_bound` does **not** have the equivalent guard: on
@@ -214,21 +214,27 @@ than two replicates: a single measurement gives no variance estimate, and an
 unknown is not a zero" — four identical measurements give no variance estimate
 either. See `INV-STAT05`.
 
+*Closed:* `terminal_regret_bound` now returns `value=None, method="none"` with a
+detail naming the challengers whose contrast has zero spread (including the
+constant-offset case, which a replicate count cannot catch), and the ladder
+reports `terminal_best` (`certificate.py`, the `not_estimable` branch). Verified
+by `tests/test_optimize_invariants.py::test_zero_variance_bound_must_not_certify`.
+
 ## 5. Statistical (`INV-STAT`)
 
 | ID | Statement | Level | Evidence | Checked | Defect? |
 |---|---|---|---|---|---|
 | `INV-STAT01` | One fitted coefficient per ALIAS CLASS, not per two-factor interaction. A resolution-IV design must not make `XᵀX` singular. | function | spec §4 D1 | `always` at the fit; `test` over the textbook and constructed resolution-III/IV designs (k up to 16) | **yes** — D1 |
-| `INV-STAT02` | No fitted coefficient is NaN. A single NaN response must not poison every coefficient while returning a schema-valid `Fit`. | function | spec §4 D2 | `always` at the `stage_runner` caller; **module boundary still poisons** | **yes** — D2, partially open |
+| `INV-STAT02` | No fitted coefficient is NaN. A single NaN response must not poison every coefficient while returning a schema-valid `Fit`. | function | spec §4 D2 | `always` at the `stage_runner` caller AND at the module boundary (`fit_effects` raises on a NaN response) — `tests/test_optimize_invariants.py::test_nan_poison_checker_catches_spec_d2` | **yes** — D2, closed |
 | `INV-STAT03` | A residual-regret bound is never negative. The gap to the true optimum cannot be below zero. | function | `certificate.model_regret_bound` / `terminal_regret_bound` ("floors at 0.0") | `always` | — |
 | `INV-STAT04` | A bound is non-decreasing as δ shrinks. A stronger confidence requirement cannot produce a narrower certificate. | function | implied by the t-quantile; spec §3.5 | `test` (property, `hypothesis`) | — |
-| `INV-STAT05` | A bound computed from a zero-variance sample is `None`, not `0.0` — the deterministic-target case of spec §3.5. | function | spec §3.5 ("`pure_error = 0` and every interval came back `None`") | **VIOLATED** for the terminal bound; checker present and failing | **yes** |
+| `INV-STAT05` | A bound computed from a zero-variance sample is `None`, not `0.0` — the deterministic-target case of spec §3.5. | function | spec §3.5 ("`pure_error = 0` and every interval came back `None`") | `always` — `check_bound_unknown_is_not_zero`; `tests/test_optimize_invariants.py::test_zero_variance_bound_must_not_certify` | **yes** — closed with `INV-SEM02` |
 | `INV-STAT06` | More replicates never widen a bound; fewer rows never narrow it. Dropping information can only widen uncertainty. | function | spec §2.5 minimum information loss | `test` (property) | — |
 | `INV-STAT08` | Row exclusions from the fit are independent of factor levels. A level-correlated exclusion set is a confounded design, not a reduced one. | iteration | historical defect 6 (two timeouts on the same corner, perfect 2×2 separation, nothing detected) | `always` — delegated to `orchestrator.optimize.exclusions` (Agent A) | **yes** — defect 6 |
 | `INV-STAT09` | Every excluded row is recorded in `fit_exclusions.json` with its index and reason. No infeasible row is dropped without record. | iteration | spec §2.5; `stage_runner` fit-exclusion block | `always` | **yes** — D2 |
 | `INV-STAT10` | A fit is refused rather than attempted when fewer than 2 rows survive exclusion. | function | `stage_runner`'s `len(keep) < 2` abort | `always` | — |
 | `INV-STAT11` | Sign symmetry: negating every response and flipping `direction` yields the identical bound. | function | metamorphic property over `certificate` | `test` (property) | — |
-| `INV-STAT12` | The terminal bound never RAISES on an admissible sample: a variance it cannot estimate is `None`, not an exception. | function | `certificate.terminal_regret_bound`'s Welch df denominator | `test` | **yes** |
+| `INV-STAT12` | The terminal bound never RAISES on an admissible sample: a variance it cannot estimate is `None`, not an exception. | function | `certificate.terminal_regret_bound`'s Welch df denominator | `test` — `tests/test_optimize_invariants.py::test_welch_df_underflows_on_subnormal_variance` | **yes** — closed |
 | `INV-STAT13` | A fitted constraint model excludes a candidate only when the constraint's one-sided bound at `delta_screen` lies entirely on the violating side; a candidate whose bound admits feasibility is never removed from the argmax or `top_candidates`. | function | `constraint_models` docstring; `decide._scored`; field campaign that spent a confirm round on interior points of a measured-infeasible corner | `test` (property) — `tests/test_optimize_constraint_models.py::test_exclusion_never_removes_a_candidate_whose_bound_admits_feasibility` | **yes** |
 | `INV-STAT14` | The fit's design matrix is the coded ACTUAL levels: every fitted row is coded from the levels that ran (`factors.code_actual`), never from the design's nominal coordinates — a clamped axial point at the range edge it ran at, a choice factor's centre row at the level it ran (−1). `design_matrix.json` still records the plan; `effects.json["fit_coordinates"]` records both. | artifact | `matrix.coded_as_run`; `stage_runner` fit block; `constraint_models`; nominal coding failed lack of fit on a truly linear clamped CCD ~100% of seeds and rejected a real campaign's exactly-linear p99 model at p=2.7e-05 | `test` — `tests/test_optimize_coded_as_run.py` (oracle properties + `check_fit_coordinates_are_actual`) | **yes** |
 | `INV-STAT15` | `infeasible` rows (a `response.constraints` violation) inform the PRIMARY fit; `rejected` and `failed` rows never do. Admissibility is enforced where a configuration can be RETURNED (measured-infeasible exclusion, best-observed reads `complete` only, confirm strikes an infeasible finalist), not by truncating the fit at the constraint boundary. | artifact | `stage_runner._PRIMARY_FIT_STATUSES`; `fit_coordinates.rows_by_status`; a real sqlite-utils campaign fitted refine on 3 of 12 rows; 4/16 constrained-bowl oracle campaigns aborted | `test` — metamorphic oracle pair + `check_fitted_statuses` | **yes** |
@@ -236,7 +242,7 @@ either. See `INV-STAT05`.
 | `INV-STAT17` | The measured front is consistent: no front point is ε-dominated in point estimate by another, a `confidently_nondominated` point names no possible dominator and a `possibly_dominated` one names one, the front is sorted by the first objective, and the normalised hypervolume lies in [0, 1] -- or is `null` with a reason, exactly when no point is confident. | artifact | `pareto.measured_front`; `pareto_stage.front_record` | `test` — `tests/test_optimize_pareto.py` (every oracle campaign) + `check_pareto_front`; the oracle properties (confident points within ε of the TRUE front, hypervolume floors) give the statuses their meaning | — |
 | `INV-STAT18` | `recommendation.json` carries `candidate_space` exactly when the candidate space (the product of the fitted factors' axis sizes) exceeds `decide.CANDIDATE_CAP` and was SEARCHED rather than enumerated; it then records `exhaustive: false`, the search method and seed, the full `size`, the `evaluated` count and `constraint_models_applied` (which every modelled `constraint_models[].applied` agrees with); `residual_regret_model.detail` says the max ran over the evaluated set only, `alias_consequential_basis: "searched"` says an empty alias list means none was FOUND, and a predicted front carries `predicted_front_basis: "evaluated_points"` (its statuses are among evaluated points). At or below the cap the space is enumerated and none of these keys exist, so those artifacts are unchanged. | artifact | `decide._scored`; `stage_runner` recommendation write; enumeration measured at 3.19M `predict` calls / 74 s on a 6-knob campaign, 7 knobs did not finish | `test` — `tests/test_optimize_candidate_search.py` (forced-search oracle campaigns) + `check_candidate_space` | — |
 
-**`INV-STAT12` — a crash on the certification path, found by the property test.**
+**`INV-STAT12` — a crash on the certification path, found by the property test (now CLOSED: the guard tests the denominator, `certificate.py`).**
 The Welch degrees-of-freedom denominator is `(vk**2)/(nk-1) + (vb**2)/(nb-1)`,
 guarded only by `if (vk + vb) > 0`. For subnormal-magnitude variances that guard
 passes while `vk**2` **underflows to exactly `0.0`**, so the denominator is zero
@@ -251,16 +257,15 @@ same input, which localises the defect. The guard should test the
 **denominator**, not the sum of the variances. Found by the hypothesis property,
 not by construction — which is the argument for the property tests.
 
-**`INV-STAT02` — how far the fix reaches.** Spec §4 D2 is fixed *at the
-`stage_runner` call site*: rows carrying NaN are dropped and named in
-`fit_exclusions.json`. `effects.fit_effects` itself is unchanged — handed a
-NaN response directly it still returns a `Fit` whose every coefficient is NaN,
-with no raise and no warning. Verified: `[1.0, 0.5, 0.0]` becomes all-NaN.
-That is defensible as a division of labour (the caller owns admissibility),
-but it means the invariant is enforced at exactly one of the module's callers,
-and the *next* caller inherits the defect. `check_fit_has_no_nan` in the
-registry makes the module-boundary version checkable, classified `always` at
-any site that fits.
+**`INV-STAT02` — how far the fix reaches: both levels, now.** Spec §4 D2 was
+first fixed *at the `stage_runner` call site* only: rows carrying NaN are dropped
+and named in `fit_exclusions.json`, while `effects.fit_effects` handed a NaN
+response still returned an all-NaN `Fit`. That gap is closed: `fit_effects` now
+raises `ValueError` naming the NaN indices and the caller's obligation
+(`effects.py`, the `nan_at` guard), so the invariant holds of the FUNCTION, not
+of one caller. `check_fit_has_no_nan` stays registered because an all-NaN `Fit`
+is still constructible by a future fitting path. Verified by
+`tests/test_optimize_invariants.py::test_nan_poison_checker_catches_spec_d2`.
 
 ## 6. Temporal / ordering (`INV-TMP`)
 
@@ -273,7 +278,7 @@ any site that fits.
 | `INV-TMP05` | Freshness compares against the IMMEDIATELY PRECEDING row that produced a usable measurement, never against the whole history. | epoch | `adapter_contract.check_freshness` | `always` | — |
 | `INV-TMP06` | `confirm`'s `round` observation is 1-based and counts rounds SPENT INCLUDING THE CURRENT ONE; `screen`/`refine` report `round: 0` because they cannot self-loop. | iteration | `stage_runner`'s OBSERVATION CONVENTIONS block | `test` | — |
 | `INV-TMP07` | An epoch that ended on a semantic exception recompiles on the next resume and starts at `initial` — it never resumes at the terminal `exception`. | campaign | `_load_or_compile_policy`; `policy.current_state` | `always` | — |
-| `INV-TMP08` | A transition row is appended for every state the epoch actually entered, INCLUDING one that aborted before its fit. An epoch that died must leave a record of why. | epoch | historical defect 7 | **VIOLATED** — abort paths raise before `_close_iteration` | **yes** — defect 7 |
+| `INV-TMP08` | A transition row is appended for every state the epoch actually entered, INCLUDING one that aborted before its fit. An epoch that died must leave a record of why. | epoch | historical defect 7 | `audit` — closed for lost rows (partial-design fitting completes the iteration and records its transition); a campaign ABORT (held-out leak, contract drift) still unwinds before `_close_iteration` | **yes** — defect 7, closed for its reproduced trigger |
 
 **`INV-TMP08` — the 14-hour silence, and its trigger is lower than it looks.**
 Defect 7 was `transitions.jsonl` completely empty after 14 hours, because every
@@ -290,7 +295,8 @@ runs spent**, `transitions.jsonl` never created, no `epoch_end-*.json`, no
 `report.json`. A single transient benchmark crash per iteration is enough to
 produce the whole 14-hour silence — which makes this far likelier to be hit in
 practice than the `len(keep) < 2` framing implies. The audit trail therefore records nothing about the one category of
-failure a reader most needs it for. This is listed as VIOLATED rather than
+failure a reader most needs it for. (Since closed for that trigger by partial-design
+fitting -- see §9. What follows is the original record.) This was listed as VIOLATED rather than
 fixed here because the fix is a change to `stage_runner`'s abort paths, which
 this work does not own (Agent A owns the fit region); the registry provides
 `check_transitions_nonempty_for_entered_states` as an `audit`-class checker so
@@ -300,9 +306,9 @@ the condition is at least detectable from a finished work-dir.
 
 | ID | Statement | Level | Evidence | Checked | Defect? |
 |---|---|---|---|---|---|
-| `INV-PROV01` | `policy.json` must **have** a `policy.sha256` sidecar **and agree** with it. Absence is as fatal as disagreement. | artifact | `_load_or_compile_policy`; CLAUDE.md | `always` on every stage | **yes** |
+| `INV-PROV01` | `policy.json` must **have** a `policy.sha256` sidecar **and agree** with it. Absence is as fatal as disagreement. | artifact | `_load_or_compile_policy`; CLAUDE.md | `always` on every stage — `tests/test_optimize_invariants.py::test_the_shipped_guard_refuses_a_policy_whose_sidecar_was_deleted` | **yes** — closed (absence and disagreement both abort) |
 | `INV-PROV02` | `mechanism.sha256` and `policy.json`'s `compiled_from.mechanism_patch_hash` agree. Two records of one commitment must not be individually well-formed and jointly meaningless. | artifact | `stage_runner`'s "Two records of ONE commitment" comment | `always` | — |
-| `INV-PROV03` | `adapter_contract.json` must have a sidecar and agree with it. Inherits `INV-PROV01`'s conditional hole — `read_contract` guards with the same `sidecar.exists() and`. | artifact | `adapter_contract.read_contract` | `always` | — |
+| `INV-PROV03` | `adapter_contract.json` must have a sidecar and agree with it. It inherited `INV-PROV01`'s conditional hole (`sidecar.exists() and`); closed with it — absence and disagreement abort alike. | artifact | `adapter_contract.read_contract` | `always` | — |
 | `INV-PROV04` | Every `transitions.jsonl` row carries the `policy_hash` it ran under, so "which policy scheduled this design?" is answerable for every epoch, not only the current one. | artifact | `_close_iteration`; `_load_or_compile_policy` | `always` | — |
 | `INV-PROV05` | A fingerprint's hash equality does not depend on dict insertion order. | function | `adapter_contract.build_cache_key` comment | `test` (property) | — |
 | `INV-PROV06` | The mechanism hash never covers Nous's own outputs: `.nous/`, `.nous-experiments/`, and the campaign work_dir when it resolves inside the target are excluded from BOTH halves (tracked diff and untracked listing), with or without `mechanism_paths`. Nous's own writes during an epoch must not read as mechanism drift. | function | `build._mechanism_text`; `build.NOUS_OWNED_PATHS` | `test` | **yes** — fixed: in the default layout the snapshot hashed the work_dir it then wrote `mechanism.patch` into, so iter-2 always aborted |
@@ -316,7 +322,7 @@ the condition is at least detectable from a finished work-dir.
 | `INV-ECO02` | `compile_policy` is a pure function of the campaign: zero tokens, no measurement read, same input → same hash. | function | spec §3.1; `policy.compile_policy` | `always` | — |
 | `INV-ECO03` | `budget_remaining` absent a declared `max_runs` means "unbounded", never "exhausted". A missing cap must never route a campaign to `report`. | iteration | `stage_runner`'s OBSERVATION CONVENTIONS | `test` | — |
 
-**`INV-PROV01` — an undocumented conditional hole, verified end to end.** The
+**`INV-PROV01` — an undocumented conditional hole, verified end to end (now CLOSED: `_load_or_compile_policy` fails closed on a missing sidecar).** The
 shipped guard is `if recorded.exists() and recorded.read_text().strip() != ...`,
 so **deleting `policy.sha256` disables the check entirely** rather than failing
 closed. Nothing downstream regenerates it or notices:

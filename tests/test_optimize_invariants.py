@@ -1615,3 +1615,22 @@ def test_candidate_space_checker_accepts_a_searched_record_and_rejects_dishonest
         "modelled, but NOT applied: no point the models admit was FOUND among 4730 "
         "evaluated configurations (searched, not enumerated)")
     assert inv.check_candidate_space(bad) == []
+
+
+def test_no_table_row_claims_a_violation_the_registry_records_as_closed():
+    """The doc's status column must agree with ``open_violation`` both ways.
+
+    The stage-0 audit found INV-SEM02, STAT05, STAT12, STAT02 and PROV01 still
+    marked VIOLATED (or "still poisons") in the table after every one was
+    fixed and the registry flag cleared: a reader of the checklist got a wrong
+    picture of which guarantees hold."""
+    text = DOC.read_text()
+    wrong = []
+    for m in re.finditer(r"^\|\s*`(INV-[A-Z]+\d+)`\s*\|(.*)$", text, re.M):
+        iid, row = m.group(1), m.group(2)
+        says_open = ("**VIOLATED**" in row or "still poisons" in row
+                     or "partially open" in row)
+        reg = inv.REGISTRY.get(iid)
+        if reg is not None and says_open != bool(reg.open_violation):
+            wrong.append((iid, "doc says open" if says_open else "doc says closed"))
+    assert not wrong, wrong
