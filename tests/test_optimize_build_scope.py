@@ -531,3 +531,49 @@ def test_the_build_prompt_states_the_scope_the_protected_set_and_the_git_rules(t
     for rule in ("Never commit, stash, check out", ".git/info/exclude", "skip-worktree",
                  "never\nleave a process running"):
         assert rule in text, rule
+
+
+
+# ─── round 2, C1 / C3 ────────────────────────────────────────────────────────
+
+
+def test_an_unreadable_git_tree_before_the_build_is_not_recorded_as_non_git(tmp_path):
+    from orchestrator.optimize import build_scope as bs
+
+    repo = _git_repo(tmp_path)
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    (repo / ".git" / "index").write_bytes(b"corrupt")
+    before = bs.snapshot(repo, wd)
+    assert before["is_git"] is True and before["git"] is False
+    with pytest.raises(bs.BuildScopeViolation, match="could not be read BEFORE"):
+        bs.check({"optimization": {"build_checks": {"mechanism_paths": ["mech.py"]}}},
+                 repo, wd, before)
+
+
+def test_an_unparseable_run_command_cannot_leave_the_harness_unprotected(tmp_path):
+    from orchestrator.optimize import build_scope as bs
+
+    repo = _git_repo(tmp_path)
+    camp = {"optimization": {"run_command": "python 'unclosed"}}
+    with pytest.raises(bs.BuildScopeViolation, match="cannot be parsed"):
+        bs.protected_paths(repo, camp, [])
+
+
+@pytest.mark.parametrize("bc", [{}, {"mechanism_paths": ["."]}, {"mechanism_paths": ["**"]}])
+def test_a_build_with_no_or_whole_repo_scope_is_refused_at_run_time(tmp_path, monkeypatch, bc):
+    """The runtime guard (review C4): validation only sees explicit stages."""
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path)
+    s, c = _build_campaign(tmp_path, repo)
+    c["optimization"]["build_checks"] = bc
+    wd = setup_work_dir("scope", repo_path=str(repo), campaign=c)
+    with pytest.raises(OptimizationAborted, match="mechanism_paths"):
+        run_stage(c, wd, iteration=1, stage="build",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: False for t in _declared_ids(c)},
+                  sdk_runner=_fake_build({"mech.py": "X = 2\n"}))

@@ -191,6 +191,7 @@ def test_an_unclassified_pre_build_failure_is_not_evidence_when_output_existed(t
     with pytest.raises(ValueError, match="no mutant could be run"):
         _check_direct(tmp_path, pre)
     pre["output_recorded"] = False          # injected verdicts: the test seam
+    pre["verdicts_injected"] = True
     rec = _check_direct(tmp_path, pre)
     assert rec["tests"][TEST_ID]["evidence"] == "pre_build_failure_unclassified"
 
@@ -340,3 +341,15 @@ def test_an_existence_only_test_that_dodges_the_revert_mutant_is_caught(
         })
     rec = json.loads((tmp_path / "vac" / "authored_tests.json").read_text())
     assert "calc.py:fast" in rec["mutant"]["stubbed"]
+
+
+
+# ─── round 2, C2: a real run with no readable output fails closed ────────────
+
+
+@pytest.mark.parametrize("extra", [{"verdicts_injected": False}, {}])
+def test_a_real_pre_build_run_with_no_readable_output_fails_closed(tmp_path, extra):
+    pre = {"ran": [TEST_ID], "passed": [], "failure_kinds": {TEST_ID: "unknown"},
+           "output_recorded": False, **extra}
+    with pytest.raises(ValueError, match="output was not recorded"):
+        _check_direct(tmp_path, pre)

@@ -2686,6 +2686,9 @@ def run_stage(
             # when verdicts were injected): 2(d) accepts an unclassified
             # pre-build failure only without output.
             "output_recorded": test_vacuity.read_log(test_run) is not None,
+            # True only when no test command ran here at all (the verdicts were
+            # injected by a caller): review C2.
+            "verdicts_injected": test_run is None,
         })
         # ── oracle 2(c), first half: the control, measured before the build ──
         #

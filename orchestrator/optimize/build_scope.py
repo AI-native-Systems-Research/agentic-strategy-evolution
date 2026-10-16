@@ -170,7 +170,11 @@ def snapshot(repo: Path, work_dir: Path | None) -> dict:
     repo = Path(repo)
     snap: dict = {"git": False, "gate_records": {
         n: record_digest(work_dir, n) for n in GATE_RECORDS} if work_dir else {}}
-    if not is_git_tree(repo):
+    # IS it a git tree, separately from CAN it be read: a stale index.lock or a
+    # corrupt index makes git fail on a real repository, and that must not be
+    # recorded as "not git" (which is a pass) -- review C1.
+    snap["is_git"] = (repo / ".git").exists() or is_git_tree(repo)
+    if not snap["is_git"]:
         snap["error"] = "not a git work tree"
         return snap
     try:
@@ -254,12 +258,16 @@ def protected_paths(repo: Path, campaign: dict, pre_ran: list[str]) -> set[str]:
     (the module's file or package, the Makefile); plus every pre-existing
     declared test file."""
     opt = (campaign or {}).get("optimization") or {}
-    tracked = set((_git(Path(repo), "ls-files", check=False) or "").splitlines())
+    # Fail closed (review C3): an unreadable file list or an unparseable
+    # run_command would otherwise yield an EMPTY protected set.
+    tracked = set(_git(Path(repo), "ls-files").splitlines())
     out: set[str] = set()
     try:
         tokens = shlex.split(str(opt.get("run_command") or ""))
-    except ValueError:
-        tokens = []
+    except ValueError as exc:
+        raise BuildScopeViolation(
+            f"the run_command cannot be parsed ({exc}), so the files it reaches "
+            f"cannot be protected") from exc
 
     def _add(cand: str):
         cand = cand.removeprefix("./").rstrip("/")
@@ -307,7 +315,11 @@ def check(campaign: dict, repo: Path, work_dir: Path, before: dict,
     if changed_records:
         integrity.append(f"Nous's gate record(s) {changed_records} changed during the "
                          f"build: the evidence verify reads was edited")
-    if not before.get("git"):
+    if before.get("is_git") and not before.get("git"):
+        integrity.append(f"the repository could not be read BEFORE the build "
+                         f"({before.get('error')}); an unreadable git tree is not a "
+                         f"non-git one")
+    elif not before.get("git"):
         record["why_not"] = (f"no diff to check: {before.get('error')}"
                              if before.get("error") else "no diff to check")
     elif not after.get("git"):
@@ -335,7 +347,12 @@ def check(campaign: dict, repo: Path, work_dir: Path, before: dict,
                          | set(_diff(before["gitlinks"], after["gitlinks"])))
     bc = ((campaign.get("optimization") or {}).get("build_checks")) or {}
     scope = [str(p) for p in (bc.get("mechanism_paths") or []) if str(p).strip()]
-    protected = protected_paths(repo, campaign, list(pre_ran or ())) if after.get("git") else set()
+    try:
+        protected = (protected_paths(repo, campaign, list(pre_ran or ()))
+                     if after.get("git") else set())
+    except GitError as exc:
+        protected = set()
+        integrity.append(f"the protected set could not be computed ({exc})")
     outside = [p for p in written if scope and not _in_allowlist(p, scope)]
     touched_protected = [p for p in written if p in protected
                          and not any(str(e).strip("/") == p for e in scope)]

@@ -381,6 +381,14 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
            else json.loads((wd / "pre_build_tests.json").read_text()))
     ran, passed = set(pre.get("ran") or ()), set(pre.get("passed") or ())
     kinds = dict(pre.get("failure_kinds") or {})
+    # Review C2: a missing key means NOT injected (fail closed). A real run whose
+    # output is missing or unreadable cannot be classified at all.
+    injected = pre.get("verdicts_injected") is True
+    if not injected and not pre.get("output_recorded") and (pre.get("ran") or []):
+        raise ValueError(
+            "oracle 2(d): the pre-build test command ran but its output was not "
+            "recorded or is unreadable, so no pre-build failure can be classified. "
+            "Re-run the build stage.")
     tests = sorted({r["native_test"] for f in factors
                     if not built_ids or f.id in built_ids
                     for r in (f.relations or ())
@@ -399,7 +407,7 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
         elif t in ran and t not in passed and kinds.get(t) == "behavioral":
             evidence[t] = {"evidence": "pre_build_behavioral_failure"}
         elif (t in ran and t not in passed and kinds.get(t, "unknown") == "unknown"
-              and not pre.get("output_recorded")):
+              and injected):
             # No test output exists to classify: the verdicts were INJECTED
             # (the unit-test seam), not produced by running the test command.
             # Accepted as 2(b) accepts it, and listed in provenance.waivers so
