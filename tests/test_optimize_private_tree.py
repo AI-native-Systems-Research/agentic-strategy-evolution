@@ -140,3 +140,61 @@ def test_target_commands_get_no_path_to_the_work_dir_or_the_key(monkeypatch):
     monkeypatch.setenv("NOUS_STATE_HOME", "/state")
     env = runner.target_env()
     assert "NOUS_CAMPAIGN_PARENT" not in env and "NOUS_STATE_HOME" not in env
+
+
+# ─── round 3, D1/D2: editable installs refused; extras copied ────────────────
+
+
+def _probe_setup(tmp_path, *, extras=None, pth_to_repo=False):
+    import sys
+
+    repo = tmp_path / "repo"
+    (repo / "mech").mkdir(parents=True)
+    for a in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        _git(repo, *a)
+    (repo / "harness.py").write_text("print('honest')\n")
+    (repo / "mech" / "m.py").write_text("X = 1\n")
+    (repo / ".gitignore").write_text("data/\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "init")
+    (repo / "data").mkdir()
+    (repo / "data" / "corpus.txt").write_text("rows\n")
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    venv = tmp_path / "venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+    if pth_to_repo:
+        site = next(venv.glob("lib/python*/site-packages"))
+        (site / "agent_editable.pth").write_text(str(repo) + "\n")
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    camp = {"optimization": {"build_checks": {"mechanism_paths": ["mech"]},
+                             "run_command": f"{venv}/bin/python harness.py"},
+            "target_system": {"worktree_extras": extras or []}}
+    ct.capture(camp, repo, wd, base, protected=set(), base_tree_sha=ct.base_tree(repo, base))
+    return repo, wd
+
+
+def test_an_interpreter_that_imports_from_the_agents_repo_is_refused(tmp_path):
+    repo, wd = _probe_setup(tmp_path, pth_to_repo=True)
+    with pytest.raises(ct.CleanTreeError, match="would import from the build agent's repository"):
+        ct.ensure(repo, wd, fresh=True)
+
+
+def test_an_interpreter_with_no_path_into_the_repo_is_accepted(tmp_path):
+    repo, wd = _probe_setup(tmp_path)
+    ct.ensure(repo, wd, fresh=True)
+
+
+def test_worktree_extras_are_copied_not_symlinked_and_recorded(tmp_path):
+    repo, wd = _probe_setup(tmp_path, extras=["data"])
+    d = ct.ensure(repo, wd, fresh=True)
+    assert (d / "data" / "corpus.txt").read_text() == "rows\n"
+    assert not (d / "data").is_symlink()
+    rec = json.loads((wd / ct.EXTRAS).read_text())
+    assert "data/corpus.txt" in rec
+    # A later change in the agent's copy does not reach the clean tree, and a
+    # rebuild from the changed copy is refused.
+    (repo / "data" / "corpus.txt").write_text("forged\n")
+    assert (d / "data" / "corpus.txt").read_text() == "rows\n"
+    with pytest.raises(ct.CleanTreeError, match="worktree_extras"):
+        ct.ensure(repo, wd, fresh=True)

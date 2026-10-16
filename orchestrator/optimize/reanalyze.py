@@ -64,7 +64,7 @@ NOT_DERIVED = frozenset({
     "authored_tests.json", "build_scope.json", "adapter_contract.json",
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
-    "clean_tree.manifest.json",
+    "clean_tree.manifest.json", "clean_tree.extras.json",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
@@ -72,7 +72,8 @@ NOT_DERIVED = frozenset({
 CARRIED_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json",
                    "authored_tests.json", "build_scope.json", "build_review.json",
                    "clean_tree.json", "mechanism.clean.patch", "gate_records.seal",
-                   "build_isolation.json", "clean_tree.manifest.json")
+                   "build_isolation.json", "clean_tree.manifest.json",
+                   "clean_tree.extras.json")
 
 #: Bookkeeping files outside the analysis (engine state, ledgers, logs).
 IGNORED = frozenset({

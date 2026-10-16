@@ -57,6 +57,7 @@ from pathlib import Path
 RECORD = "clean_tree.json"
 PATCH = "mechanism.clean.patch"
 MANIFEST = "clean_tree.manifest.json"
+EXTRAS = "clean_tree.extras.json"
 TREE = "tree"
 CODE_SUFFIXES = frozenset({".py", ".pth", ".pyc", ".go", ".rs", ".js", ".mjs", ".cjs",
                            ".ts", ".java", ".rb", ".sh", ".so", ".dylib", ".dll"})
@@ -169,7 +170,10 @@ def capture(campaign: dict, repo: Path, work_dir: Path, base: str,
             f"harness or a pre-existing declared test). List each one by exact path in "
             f"build_checks.mechanism_paths if editing it is part of the mechanism.")
     (Path(work_dir) / PATCH).write_bytes(patch)
+    opt = (campaign.get("optimization") or {})
     rec = {"base_sha": base, "base_tree": base_tree_sha,
+           "extras": list((campaign.get("target_system") or {}).get("worktree_extras") or []),
+           "probe_commands": [c for c in (opt.get("run_command"), opt.get("test_command")) if c],
            "patch_sha256": hashlib.sha256(patch).hexdigest(),
            "paths": paths, "touched": names}
     (Path(work_dir) / RECORD).write_text(json.dumps(rec, indent=2))
@@ -313,10 +317,52 @@ def _manifest(dest: Path) -> dict[str, str]:
     return out
 
 
+def copy_extras(repo: Path, dest: Path, extras: list[str]) -> dict[str, str]:
+    """Copy ``target_system.worktree_extras`` (ignored assets: data, built
+    binaries, a virtualenv) from the agent's repo into the clean tree. COPIED,
+    never symlinked -- a symlink would let the measured tree read the agent's
+    tree again (round 3, D2). Symlinks INSIDE an extra are copied as links.
+    Returns ``{path: sha256}`` of every copied file, for the record."""
+    out: dict[str, str] = {}
+    for rel in extras:
+        rel = str(rel).strip().strip("/")
+        if not rel or rel.startswith("..") or os.path.isabs(rel):
+            raise CleanTreeError(f"worktree_extras entry {rel!r} must be a path inside the repo")
+        src = Path(repo) / rel
+        if not os.path.lexists(src):
+            raise CleanTreeError(f"worktree_extras entry {rel!r} does not exist in the repo")
+        t = dest / rel
+        if os.path.lexists(t):
+            raise CleanTreeError(f"worktree_extras entry {rel!r} is tracked or in the "
+                                 f"mechanism: extras are for ignored assets only")
+        if src.is_dir() and not src.is_symlink():
+            shutil.copytree(src, t, symlinks=True)
+        else:
+            t.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, t, follow_symlinks=False)
+        for q in ([t] if not t.is_dir() or t.is_symlink() else sorted(t.rglob("*"))):
+            r = q.relative_to(dest).as_posix()
+            if q.is_symlink():
+                out[r] = "link:" + os.readlink(q)
+            elif q.is_file():
+                out[r] = hashlib.sha256(q.read_bytes()).hexdigest()
+    return out
+
+
 def _create(repo: Path, work_dir: Path, rec: dict) -> Path:
     dest = tree_root(work_dir) / TREE
     materialize(Path(repo), rec["base_sha"], dest, patch=Path(work_dir) / PATCH,
                 expect_tree=rec.get("base_tree"))
+    extras = copy_extras(Path(repo), dest, rec.get("extras") or [])
+    ep = Path(work_dir) / EXTRAS
+    if ep.exists():
+        if json.loads(ep.read_text()) != extras:
+            raise CleanTreeError(
+                "the worktree_extras copied into the rebuilt clean tree differ from the "
+                "ones first copied (the agent's repo changed them since)")
+    else:
+        ep.write_text(json.dumps(extras, indent=1, sort_keys=True))
+    probe_imports(dest, Path(repo), rec.get("probe_commands") or [])
     mf = _manifest(dest)
     mp = Path(work_dir) / MANIFEST
     if mp.exists():
@@ -328,6 +374,88 @@ def _create(repo: Path, work_dir: Path, rec: dict) -> Path:
     else:
         mp.write_text(json.dumps(mf, indent=1, sort_keys=True))
     return dest
+
+
+#: Probe run with each Python interpreter a target command names: prints every
+#: import root the interpreter would read from (sys.path entries and the
+#: locations of editable-install finders / .pth-mapped packages).
+_PROBE = r"""
+import json, sys, site, importlib.metadata as md
+roots = [p for p in sys.path if p]
+for d in md.distributions():
+    try:
+        du = d.read_text("direct_url.json")
+    except Exception:
+        du = None
+    if du:
+        try:
+            u = json.loads(du).get("url", "")
+            if u.startswith("file://"):
+                roots.append(u[7:])
+        except Exception:
+            pass
+    for f in (d.files or []):
+        if str(f).endswith(".pth"):
+            try:
+                for ln in (d.locate_file(f).read_text().splitlines()):
+                    if ln and not ln.startswith(("#", "import")):
+                        roots.append(ln.strip())
+            except Exception:
+                pass
+print(json.dumps(roots))
+"""
+
+
+def _interpreters(cmd: str, cwd: Path) -> list[str]:
+    import shlex
+
+    try:
+        toks = shlex.split(cmd)
+    except ValueError:
+        return []
+    out = []
+    for t in toks[:2]:
+        name = Path(t).name
+        if name.startswith("python") or name in ("pytest", "py.test"):
+            exe = t if os.path.isabs(t) else (str(cwd / t) if "/" in t else shutil.which(t))
+            if exe and name in ("pytest", "py.test"):
+                try:
+                    first = Path(exe).read_text().splitlines()[0]
+                    exe = first[2:].strip().split()[0] if first.startswith("#!") else None
+                except (OSError, IndexError):
+                    exe = None
+            if exe:
+                out.append(exe)
+    return out
+
+
+def probe_imports(dest: Path, repo: Path, commands: list[str]) -> None:
+    """Refuse a clean tree whose Python would import from the AGENT's repo: an
+    editable install, a ``.pth`` file or a PYTHONPATH entry pointing there
+    measures the agent's tree silently (round 3, D1)."""
+    from orchestrator.optimize.runner import target_env
+
+    repo_r = str(Path(repo).resolve())
+    env = target_env()
+    for cmd in commands:
+        for exe in _interpreters(cmd, dest):
+            try:
+                proc = subprocess.run([exe, "-c", _PROBE], cwd=str(dest), env=env,
+                                      capture_output=True, text=True, timeout=120)
+                roots = json.loads(proc.stdout) if proc.returncode == 0 else []
+            except (OSError, subprocess.SubprocessError, ValueError):
+                continue
+            bad = sorted({r for r in roots
+                          if str(Path(r).resolve()) == repo_r
+                          or str(Path(r).resolve()).startswith(repo_r + os.sep)})
+            if bad:
+                raise CleanTreeError(
+                    f"the interpreter {exe} that `{cmd[:60]}` runs would import from the "
+                    f"build agent's repository ({bad[:3]}): an editable install, a .pth "
+                    f"file or a PYTHONPATH entry pointing at {repo}. The clean checkout "
+                    f"would then measure the agent's tree, not the recorded mechanism. "
+                    f"Install the package non-editably, or from the clean tree, and use "
+                    f"target_system.worktree_extras for ignored assets.")
 
 
 def integrity_problems(work_dir: Path, rec: dict | None = None) -> list[str]:

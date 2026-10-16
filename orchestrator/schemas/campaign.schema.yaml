@@ -146,7 +146,11 @@ properties:
         uniqueItems: true
         description: >
           Paths (relative to repo_path) to symlink into each experiment
-          worktree on creation (#229). Use this for gitignored assets
+          worktree on creation (#229). For a ``kind: optimization`` campaign
+          with a ``build`` stage they are COPIED (never symlinked) into the
+          clean checkout the epoch is measured in, with every copied file
+          hashed into clean_tree.extras.json; extras must be ignored assets,
+          not tracked files or mechanism paths. Use this for gitignored assets
           the executor needs from main — virtualenvs, pre-fetched data
           dirs, prior-iteration outputs, build artifacts. Without this
           mechanism, executors discover that the worktree is missing
