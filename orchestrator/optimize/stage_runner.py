@@ -1339,6 +1339,39 @@ def _check_tests_failed_before_build(
     )
 
 
+def _check_authored_tests_discriminate(campaign: dict, work_dir: Path, factors,
+                                       iteration: int) -> None:
+    """Oracle 2(d) (``test_vacuity.py``): every declared correctness test of a
+    built factor must be shown to observe the mechanism, not merely the
+    existence of a name. No-op when no build ran."""
+    from orchestrator.optimize import test_vacuity
+
+    pre_path = Path(work_dir) / "pre_build_tests.json"
+    if not pre_path.exists():
+        return
+    try:
+        pre = json.loads(pre_path.read_text())
+    except (OSError, ValueError):
+        return  # 2(b) already failed closed on an unreadable record
+    opt = _opt_block(campaign) or {}
+    repo = (campaign.get("target_system") or {}).get("repo_path")
+    run_tests = None
+    if opt.get("test_command") and repo:
+        log = Path(work_dir) / "runs" / f"iter-{iteration}" / "mutant_test_output.log"
+
+        def run_tests(cwd: Path):
+            raw = runner.run_test_command(opt["test_command"], cwd=Path(cwd),
+                                          timeout=resolve_test_timeout(opt), log_path=log)
+            return runner.match_declared_tests(factors, raw), test_vacuity.read_log(raw)
+    try:
+        test_vacuity.check(
+            campaign, work_dir, factors, repo=Path(repo) if repo else None,
+            run_tests=run_tests,
+            built_ids=built_factor_ids(factors, set(pre.get("ran") or ())))
+    except ValueError as exc:
+        raise OptimizationGateFailed(str(exc)) from exc
+
+
 def _check_baseline_equivalence(
     campaign: dict, work_dir: Path, factors, config_runner: Callable | None,
 ) -> None:
@@ -2572,9 +2605,15 @@ def run_stage(
         # verify rejects, and `ran` is what distinguishes "the test existed and
         # failed" (the shape a build is supposed to have) from "the test command
         # never mentioned it", which is the fail-closed case verify already owns.
+        from orchestrator.optimize import test_vacuity
+
         _write_json(Path(work_dir) / "pre_build_tests.json", {
             "passed": sorted(t for t, ok in (test_results or {}).items() if ok),
             "ran": sorted(test_results or {}),
+            # WHY each failing test failed (oracle 2(d)): a failure only on a
+            # missing symbol is not evidence the test observes the mechanism.
+            "failure_kinds": test_vacuity.kinds_for(
+                test_results or {}, test_vacuity.read_log(test_run)),
         })
         # ── oracle 2(c), first half: the control, measured before the build ──
         #
@@ -2878,6 +2917,7 @@ def run_stage(
         # describes (2(c)) would leave a signed commitment to a broken
         # experiment on disk for a later resume to pick up.
         _check_tests_failed_before_build(campaign, work_dir, factors, test_results)
+        _check_authored_tests_discriminate(campaign, work_dir, factors, iteration)
         _check_baseline_equivalence(campaign, work_dir, factors, config_runner)
         _review_build(gate, work_dir)
         # The apparatus is certified, so pre-register the epoch's policy: a
