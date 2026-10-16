@@ -80,25 +80,46 @@ def test_Q2_lost_plus_inadmissible_covering_a_factor_does_not_empty_the_space(tm
     assert inv.check_recommendation_avoids_lost_levels(rec) == []
 
 
-def test_Q3_admissibility_loops_read_the_bar_once(tmp_path, monkeypatch):
-    from orchestrator.optimize import stage_runner as sr
-    from tests.test_optimize_categorical_oracles import middle_level_best
+def _q3_work_dir(tmp_path, n_iter=50, n_rows=40):
+    """50 iterations x 40 complete rows, each iteration with a
+    recommendation.json that loses POL=arc: 2000 rows, 1000 distinct
+    configurations (A in 1..500 x POL in {lru, lfu}), none at arc."""
+    for it in range(1, n_iter + 1):
+        d = tmp_path / "runs" / f"iter-{it}"
+        d.mkdir(parents=True)
+        rows = []
+        for r in range(n_rows):
+            k = (it - 1) * n_rows + r
+            lv = {"A": k % 500 + 1, "POL": ("lru", "lfu")[k // 500 % 2]}
+            rows.append(json.dumps({"row_index": r, "status": "complete",
+                                    "role": "corner", "levels": lv,
+                                    "response": {"m": float(k)}}))
+        (d / "runs.jsonl").write_text("\n".join(rows) + "\n")
+        (d / "recommendation.json").write_text(json.dumps({
+            "stage": "screen", "iteration": it, "levels": {"A": 1, "POL": "lfu"},
+            "lost_levels": {"POL": ["arc"]}}))
+    return tmp_path
 
-    res = run_synthetic_campaign(middle_level_best(), seed=1, parent_dir=tmp_path,
-                                 campaign_overrides={"stages": ["verify", "screen"]})
-    calls = {"n": 0}
-    real = sr._barred_levels
 
-    def counted(wd):
-        calls["n"] += 1
-        return real(wd)
+def test_Q3_admissibility_loops_are_work_bounded(tmp_path):
+    """Behavioural, work-bound (stage-1d Q3): the measured selectors over a
+    2000-row, 50-iteration epoch return all 1000 admissible configurations,
+    none at the lost level, in well under a second of CPU. Reading the bar
+    once per ROW (re-reading 50 recommendation.json files 2000 times) is far
+    over the bound."""
+    import time
 
-    monkeypatch.setattr(sr, "_barred_levels", counted)
-    top = sr._top_measured(res.work_dir, "m", k=50)
-    assert len(top) > 5 and calls["n"] == 1
-    calls["n"] = 0
-    sr._admissible_configurations(res.work_dir)
-    assert calls["n"] == 1
+    from orchestrator.optimize.stage_runner import _admissible_configurations, _top_measured
+
+    wd = _q3_work_dir(tmp_path)
+    t0 = time.process_time()
+    top = _top_measured(wd, "m", k=5000)
+    adm = _admissible_configurations(wd)
+    elapsed = time.process_time() - t0
+    assert len(top) == 1000 and len(adm) == 1000
+    assert not any(c["levels"]["POL"] == "arc" for c in top)
+    assert not any(c["POL"] == "arc" for c in adm)
+    assert elapsed < 1.0, f"{elapsed:.2f}s CPU for 2 x 2000 rows"
 
 
 def test_Q4_the_known_valid_baseline_is_exempt_and_the_exemption_is_recorded(tmp_path):
@@ -120,6 +141,7 @@ def test_Q4_the_known_valid_baseline_is_exempt_and_the_exemption_is_recorded(tmp
     base = pol["known_valid_baseline"]
     it = tmp_path / "runs" / "iter-2"
     it.mkdir(parents=True)
+    (it / "runs.jsonl").write_text("")    # an iteration of THIS epoch
     arc = {"A": 16, "POL": "arc"}
     (it / "recommendation.json").write_text(json.dumps({
         "stage": "screen", "iteration": 2, "levels": arc, "predicted": 1.0,
@@ -159,3 +181,45 @@ def test_Q6_report_schema_text_on_inadmissible_levels():
     d = json.loads((Path(__file__).resolve().parents[1] / "orchestrator" / "schemas"
                     / "report.schema.json").read_text())["properties"]["inadmissible_levels"]
     assert "all_levels_inadmissible" in d["description"]
+
+
+def test_R1_the_bar_is_epoch_scoped(tmp_path):
+    """Epoch 1's refine lost POL=arc. Epoch 2 (a recompiled policy, a new
+    policy_hash) has written no recommendation yet: arc must NOT be barred --
+    the new epoch has not measured it."""
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.policy import compile_policy, policy_hash, write_policy
+    from orchestrator.optimize.stage_runner import _barred_levels, _config_admissible
+
+    s = Surface(name="r1", fn=lambda lv: 0.0,
+                factors=(_numeric("A"), _choice("POL", levels=("lru", "lfu", "arc"))))
+    pol1 = compile_policy(synthetic_campaign(s))
+    it = tmp_path / "runs" / "iter-3"
+    it.mkdir(parents=True)
+    (it / "runs.jsonl").write_text("")
+    (it / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol1)}))
+    (it / "recommendation.json").write_text(json.dumps({
+        "stage": "refine", "iteration": 3, "levels": {"A": 9, "POL": "lfu"},
+        "lost_levels": {"POL": ["arc"]}}))
+    write_policy(tmp_path, pol1)
+    assert _barred_levels(tmp_path) == {"POL": ["arc"]}       # epoch 1: barred
+    pol2 = dict(pol1, epoch=2)
+    assert policy_hash(pol2) != policy_hash(pol1)
+    write_policy(tmp_path, pol2)
+    assert _barred_levels(tmp_path) == {}
+    assert _config_admissible(tmp_path, {"A": 9, "POL": "arc"})
+
+
+def test_R2_report_md_names_a_recommended_baseline_at_a_barred_level(tmp_path):
+    from orchestrator.optimize.report_md import render_report_markdown
+    from orchestrator.optimize.synthetic import SURFACES
+
+    res = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path,
+                                 campaign_overrides={"stages": ["verify", "screen"]})
+    rp = res.work_dir / "report.json"
+    rep = json.loads(rp.read_text())
+    rep["recommendation_names_barred_level"] = {"POL": "arc"}
+    rp.write_text(json.dumps(rep))
+    md = render_report_markdown(res.work_dir)
+    assert ("Recommended baseline names lost/inadmissible level(s):** POL=arc "
+            "(the declared known_valid_baseline is exempt)") in md

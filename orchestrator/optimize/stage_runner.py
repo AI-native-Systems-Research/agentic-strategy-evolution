@@ -2435,7 +2435,10 @@ def _barred_levels(work_dir) -> dict:
     lost levels are). ``{}`` for every campaign without them, which leaves
     every selector unchanged."""
     recs = _epoch_recommendations(work_dir)
-    rec = _read_recommendation(work_dir) or (recs[-1] if recs else {})
+    # EPOCH-SCOPED (stage-1d round-5 item 1): only this epoch's records. A
+    # previous epoch's recommendation (``_read_recommendation`` is not
+    # epoch-scoped) must not bar a level before this epoch has measured it.
+    rec = recs[-1] if recs else {}
     every = set(rec.get("all_levels_inadmissible") or ())
     return _union_levels(
         {k: v for k, v in (rec.get("inadmissible_levels") or {}).items()

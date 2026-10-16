@@ -612,18 +612,27 @@ def render_report_markdown(work_dir: Path) -> str:
                      "lack-of-fit test (or an objective model's) rejected the model")
     every = set(report.get("all_levels_inadmissible") or ())
     for key, label in (("curvature_untested_levels", "Curvature never checked under"),
-                       ("lost_levels", "Levels lost (no retained run; never recommended)"),
+                       ("lost_levels", "Levels lost (no retained run; never "
+                                       "recommended except via the exempt "
+                                       "known_valid_baseline)"),
                        ("inadmissible_levels",
-                        "Levels inadmissible wherever measured (never recommended)")):
+                        "Levels inadmissible wherever measured (never recommended "
+                        "except via the exempt known_valid_baseline)")):
         rows = {fid: lvs for fid, lvs in (report.get(key) or {}).items()
                 if not (key == "inadmissible_levels" and fid in every)}
         if rows:
             lines.append(f"- **{label}:** " + "; ".join(
                 f"{fid}: {', '.join(map(str, lvs))}" for fid, lvs in rows.items()))
     if every:
-        lines.append(f"- **Every level inadmissible wherever measured:** "
-                     f"{', '.join(sorted(every))} — none excluded; the "
-                     f"recommendation necessarily names one")
+        lines.append(f"- **Lost and inadmissible levels cover every level of:** "
+                     f"{', '.join(sorted(every))} — only the LOST levels are "
+                     f"excluded; the inadmissible ones stay candidates, so the "
+                     f"recommendation may name one")
+    if report.get("recommendation_names_barred_level"):
+        lines.append("- **Recommended baseline names lost/inadmissible level(s):** "
+                     + ", ".join(f"{k}={v}" for k, v in
+                                 report["recommendation_names_barred_level"].items())
+                     + " (the declared known_valid_baseline is exempt)")
     if report.get("aliases_not_assessed"):
         lines.append("- **Aliases not assessed** (2fi in the span of kept columns; "
                      "alias_consequential cannot re-attribute them): "

@@ -421,7 +421,17 @@ nousko fecd076.
   `report.json["recommendation_names_barred_level"]` record it; the
   no-finalist abort names the bar and states the baseline truthfully.
 - Q5: an exact lack-of-fit rejection sets the LACK_OF_FIT trigger, so the
-  policy's lack_of_fit observation agrees with model_adequate.
+  policy's lack_of_fit observation agrees with model_adequate. BEHAVIOUR
+  CHANGE: a deterministic target whose misfit is established exactly (zero
+  pure error, nonzero residuals, lack-of-fit df > 0) now routes on the
+  registered lack-of-fit (curvature) branch to refine, where before it went
+  straight to confirm.
+- Round-5 follow-ups: the bar is EPOCH-scoped (the latest record is the
+  latest of THIS epoch, never a previous epoch's); report.md names a
+  recommended baseline that sits at a barred level, and its wording for fully
+  barred factors and the "never recommended" lines states the baseline and
+  lost-level exceptions; the Q3 performance test is work-bound (2000 rows in
+  < 1 s CPU; 0.04 s measured, 10.1 s with per-row bar reads).
 - Q6: schema text: inadmissible levels of a fully barred factor stay candidates.
 
 ## What this design cannot answer (open questions)

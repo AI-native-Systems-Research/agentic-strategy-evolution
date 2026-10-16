@@ -92,8 +92,9 @@ def test_P3_every_level_inadmissible_reaches_the_report_on_its_own_line(tmp_path
             "constraints": [{"metric": "lat_ms", "op": "<=", "value": 5.0}]}})
     assert res.report["all_levels_inadmissible"] == ["C"]
     md = render_report_markdown(res.work_dir)
-    assert "Every level inadmissible wherever measured:** C" in md
-    assert "Levels inadmissible wherever measured (never recommended)" not in md
+    assert "Lost and inadmissible levels cover every level of:** C" in md
+    assert "only the LOST levels are excluded" in md
+    assert "Levels inadmissible wherever measured (never recommended" not in md
 
 
 def test_P4_a_rejected_model_is_in_the_report_without_confirm(tmp_path):
