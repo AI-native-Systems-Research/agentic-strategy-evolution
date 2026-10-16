@@ -2614,6 +2614,11 @@ def run_stage(
                     dict(_pre_baseline), _n, f"{_mean(_pre):.6g}",
                     _metric or "<unset>",
                 )
+        from orchestrator.optimize import build_scope
+
+        # The write-scope gate: what the agent changed is the diff between the
+        # tree just before and just after its call (build_scope.py).
+        _scope_before = build_scope.tree_state(Path(repo), work_dir) if repo else None
         build_mod.run_build(
             campaign, work_dir,
             iteration=iteration,
@@ -2622,6 +2627,12 @@ def run_stage(
             max_turns=_build_max_turns(campaign),
             sdk_runner=sdk_runner,
         )
+        if repo:
+            try:
+                build_scope.check(campaign, Path(repo), work_dir, _scope_before,
+                                  pre_ran=sorted(test_results or {}))
+            except build_scope.BuildScopeViolation as exc:
+                raise OptimizationGateFailed(str(exc)) from exc
         # Pre-register WHICH CODE the epoch will measure. `verify` compiles the
         # policy one iteration later and stamps this hash into it; every epoch
         # iteration re-checks it (below). Snapshot here rather than at verify
