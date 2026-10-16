@@ -484,3 +484,56 @@ def test_a_searched_alias_test_uses_the_stage_baseline():
     assert blind == []          # the failure mode the baseline exists for
     assert decide.alias_consequential(fit, fs, cap=0, sample=0, baseline=stage_rec,
                                       **kw) == exact
+
+
+# ─── stage-0 review: jointly binding constraints (A1) ───────────────────────
+
+
+def _three_binding_pairs(k: int = 6):
+    """Primary ``-sum x`` against three constraints ``x_a + x_b >= 1.95`` on
+    disjoint pairs, each with a tiny SE: confidently feasible only where all
+    six factors are at their HIGH end (the next axis point gives 1.75). A
+    single-coordinate move raises one constraint's margin but never the
+    MINIMUM over three, so an ascent on the worst margin stalls."""
+    ids = _ids(k)
+    fit = Fit(0.0, tuple(Effect(i, (i,), -1.0) for i in ids), 30)
+    cms = []
+    for a, b in zip(ids[0::2], ids[1::2]):
+        cfit = Fit(0.0, (Effect(a, (a,), 1.0, se=1e-4), Effect(b, (b,), 1.0, se=1e-4)),
+                   30, pure_error_var=1e-8, pure_error_df=10)
+        cms.append(ConstraintModel(f"s_{a}{b}", ">=", 1.95, cfit, ""))
+    return ids, fit, cms
+
+
+def test_search_finds_a_feasible_point_when_several_constraints_bind_jointly():
+    """Reviewer repro (k=6, 531,441 > cap). The only point no model
+    confidently excludes is all-17, so the search must find it and keep the
+    models -- not drop them and recommend all-1, which every constraint
+    confidently rejects."""
+    ids, fit, cms = _three_binding_pairs()
+    fs = _factors(len(ids))
+    r = decide.ranked(fit, fs, direction="maximize", fitted_ids=ids, held_fixed={},
+                      top=None, constraint_models=cms, constraint_delta=0.05)
+    assert not r.space.exhaustive
+    assert r.space.constraint_models_applied is True
+    assert set(r[0].levels.values()) == {17}
+    assert all(confidently_infeasible(cms, c.coded, delta=0.05) == [] for c in r)
+
+
+def test_the_feasibility_ascent_respects_measured_exclusions():
+    """``sum x >= 4.7`` over five factors: feasible at all-17 and at the five
+    points one axis step below it. With all-17 MEASURED infeasible, the
+    ascent must not climb into it and stop there: another feasible point
+    exists, so the models stay applied and the answer is one of those five.
+    ``sample=0`` so the ascent, not a lucky uniform draw, has to find it."""
+    ids, fit, cm = _narrow_feasible()
+    cm = [dataclasses.replace(cm[0], value=4.7)]
+    fs = _factors(len(ids))
+    corner = {i: 17 for i in ids}
+    r = decide.ranked(fit, fs, direction="maximize", fitted_ids=ids, held_fixed={},
+                      top=None, constraint_models=cm, constraint_delta=0.05,
+                      exclude_levels=[corner], sample=0)
+    assert r.space.constraint_models_applied is True
+    assert r[0].levels != corner
+    assert sorted(r[0].levels.values()) == [15, 17, 17, 17, 17]
+    assert all(c.levels != corner for c in r)

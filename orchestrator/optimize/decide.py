@@ -443,45 +443,66 @@ def _search(fit: Fit, ids, axes, by_id, *, direction: str, objectives,
     return sorted(seen)
 
 
-def _feasibility_ascent(pool, axes, margin, *, starts: int) -> list[tuple]:
-    """Coordinate ascent on the WORST constraint margin, from the ``starts``
-    pooled points with the largest one; every tuple it scored, ascending.
+def _feasibility_ascent(pool, axes, margins, *, starts: int, ok,
+                        allowed=lambda idx: True) -> list[tuple]:
+    """Coordinate DESCENT on the total constraint VIOLATION, from the
+    ``starts`` pooled points with the least of it; every tuple it scored,
+    ascending.
 
-    ``margin(idx)`` is the minimum over the modelled constraints of how far the
+    ``margins(idx)`` is one number per modelled constraint: how far the
     violating-side bound is from confidently excluding the point (positive:
-    not confidently infeasible). Used only when the objective search found no
-    admissible point, to tell "the feasible region is narrow and the pool
-    missed it" from "nothing is feasible" -- the case in which the enumerated
-    path drops the models. An ascent stops as soon as it reaches a point with
-    a positive margin: from there the objective search takes over.
+    that constraint does not exclude it). The violation is the hinge sum
+    ``sum_c max(0, -margin_c)``. Climbing the MINIMUM margin instead stalls
+    when several constraints bind jointly: a single-coordinate move raises
+    one constraint's margin, never the minimum over the others (three
+    constraints on disjoint factor pairs is the reviewed repro). The hinge
+    sum falls with every such move, and a constraint already satisfied adds
+    nothing, so moves that help one constraint without hurting another are
+    taken.
+
+    Used only when the objective search found no admissible point, to tell
+    "the feasible region is narrow and the pool missed it" from "nothing is
+    feasible" -- the case in which the enumerated path drops the models. A
+    move never enters a point ``allowed`` refuses (a configuration measured
+    inadmissible), and each descent stops at the FIRST point ``ok`` accepts
+    (admissible: no model confidently excludes it and it is not measured
+    inadmissible), checked after every move; from there the objective
+    search takes over.
     """
     sizes = [len(a) for a in axes]
     n = len(axes)
     cache: dict[tuple, float] = {}
 
-    def m(idx):
+    def viol(idx):
         v = cache.get(idx)
         if v is None:
-            v = cache[idx] = margin(idx)
+            v = cache[idx] = sum(max(0.0, -m) for m in margins(idx))
         return v
 
-    for cur in sorted(pool, key=lambda idx: -m(idx))[:starts]:
-        cur_m = m(cur)
-        improved = cur_m <= 0
-        while improved and cur_m <= 0:
+    for cur in sorted(pool, key=lambda idx: (viol(idx), idx))[:starts]:
+        if ok(cur):
+            continue
+        cur_v = viol(cur)
+        improved = True
+        while improved and not ok(cur):
             improved = False
             for j in range(n):
-                best_v, best_m = cur[j], cur_m
+                best_v, best_s = cur[j], cur_v
                 for v in range(sizes[j]):
-                    if v != cur[j]:
-                        cand = cur[:j] + (v,) + cur[j + 1:]
-                        mv = m(cand)
-                        if mv > best_m:
-                            best_v, best_m = v, mv
+                    if v == cur[j]:
+                        continue
+                    cand = cur[:j] + (v,) + cur[j + 1:]
+                    if not allowed(cand):
+                        continue
+                    sv = viol(cand)
+                    if sv < best_s:
+                        best_v, best_s = v, sv
                 if best_v != cur[j]:
                     cur = cur[:j] + (best_v,) + cur[j + 1:]
-                    cur_m = best_m
+                    cur_v = best_s
                     improved = True
+                    if ok(cur):
+                        break
     return sorted(cache)
 
 
@@ -565,30 +586,33 @@ def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
     if modelled and not kept:
         # No EVALUATED point is admissible -- which is not "none exists". The
         # enumerated path drops the models only when the whole space is
-        # confidently infeasible, so look for a feasible point first: an
-        # ascent on the worst constraint margin, then the objective search
-        # again with whatever it found in its pool.
+        # confidently infeasible, so look for a feasible point first: a
+        # descent on the total constraint violation, then the objective
+        # search again with whatever it found in its pool.
         from orchestrator.optimize.constraint_models import bound, per_constraint_delta
 
         d = per_constraint_delta(constraint_models, constraint_delta)
         live = [m for m in constraint_models if m.modelled]
 
-        def margin(idx) -> float:
+        def margins(idx) -> tuple:
             coded = build(idx).coded
-            out_ = math.inf
+            out_ = []
             for m in live:
                 b = bound(m, coded, delta=d)
-                if m.op in ("<", "<="):
-                    out_ = min(out_, float(m.value) - b["lower"])
-                else:
-                    out_ = min(out_, b["upper"] - float(m.value))
-            return out_
+                out_.append(float(m.value) - b["lower"] if m.op in ("<", "<=")
+                            else b["upper"] - float(m.value))
+            return tuple(out_)
 
-        starts = sorted(visited, key=lambda idx: -margin(idx))[:SEARCH_STARTS]
-        feas_seen = _feasibility_ascent(starts, axes, margin, starts=SEARCH_STARTS)
-        found = [i for i in feas_seen if not _excluded(build(i).levels, exclude_levels)
-                 and not confidently_infeasible(constraint_models, build(i).coded,
-                                                delta=constraint_delta)]
+        def allowed(idx) -> bool:
+            return not _excluded(build(idx).levels, exclude_levels)
+
+        def feasible(idx) -> bool:
+            return allowed(idx) and not confidently_infeasible(
+                constraint_models, build(idx).coded, delta=constraint_delta)
+
+        feas_seen = _feasibility_ascent(visited, axes, margins, starts=SEARCH_STARTS,
+                                        ok=feasible, allowed=allowed)
+        found = [i for i in feas_seen if feasible(i)]
         if found:
             v2, kept = run(True, extra_pool=found)
             visited = sorted(set(visited) | set(feas_seen) | set(v2))
