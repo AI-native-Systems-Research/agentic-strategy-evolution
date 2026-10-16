@@ -1692,14 +1692,33 @@ campaign that is missing any of these:
    problem anywhere. A failure fails that iteration. A missing tree is recreated
    byte-identically from the recorded commit and patch.
 5. **Imports from the agent's repo are refused.** Each Python interpreter the
-   run or test command names is probed. If its import path (`sys.path`, an
-   editable install's `direct_url.json`, a `.pth` file) reaches the agent's
-   repository, the clean tree is refused, because it would silently measure the
-   agent's tree. Install the package non-editably.
+   run or test command names is probed, with the command's own interpreter
+   flags (so `python -S` is probed as `-S`). The clean tree is refused when:
+   - the import path (`sys.path`, an editable install's `direct_url.json`, a
+     `.pth` file) reaches the agent's repository, because it would silently
+     measure the agent's tree;
+   - the probe cannot run, fails, or prints something unparseable.
+
+   A command whose interpreter cannot be read off the command line (`uv run`,
+   `conda run`, `poetry run`, `make`, `sh -c`, a pyenv or asdf shim) is not
+   refused. It is recorded in `clean_tree.probe.json` and listed in
+   `provenance.waivers` as not probed. Install the package non-editably, and
+   prefer a run command that names its interpreter.
 6. **Ignored assets.** A data set, built binaries or a virtualenv go in
    `target_system.worktree_extras`. Each is COPIED (never symlinked) into the
-   clean tree, every copied file is hashed into `clean_tree.extras.json`, and a
-   rebuilt tree must match.
+   clean tree, and every copied file is hashed into `clean_tree.extras.json`.
+   - The copy must equal what existed BEFORE the build, so a `conftest.py` or a
+     patched module planted in an asset directory is refused.
+   - A symlink inside an extra that resolves into the agent's repository is
+     refused.
+   - A tracked file, or a path outside the repo, is refused.
+7. **Hard links.** A file in the clean tree with an extra hard link (writable
+   through a path the check never looks at) fails the integrity check.
+8. **The tree's reference is sealed and kept in memory.** The manifest, the
+   extras record and the probe record are sealed the moment the tree is
+   created, before the first measurement. Later checks in the same process
+   compare with the in-memory reference; a resumed process uses the
+   seal-verified file.
 
 **Gate records are kept out of reach and sealed.**
 
@@ -1712,7 +1731,11 @@ campaign that is missing any of these:
   It is not in the work dir or the clean tree, so no relative path from either
   reaches it.
 - Target commands get no environment variable naming the work dir or the state
-  home.
+  home. `NOUS_RUN_DIR` is a private temporary directory outside the work dir; a
+  run dir the adapter wrote into is copied back to `runs/iter-N/run_dirs/`
+  afterwards.
+- Once the first seal exists, a missing key is an error. A new key is never
+  minted to replace a deleted one.
 - Verify loads and checks the seals once, before any target code runs, and the
   oracles use those in-memory copies. It reseals only after confirming that
   what the build wrote is unchanged.
@@ -1725,9 +1748,10 @@ campaign that is missing any of these:
   the call returns is killed, together with its process group, and the build
   fails (`build_isolation.json`). If the process table cannot be read, the build
   fails rather than passing.
-- Every test and run command runs in its own session. Whatever is left in its
-  process group when it returns is killed and recorded (`target_survivors.json`),
-  and that stage fails.
+- Every test and run command runs in its own session, and a poller watches
+  its descendants while it runs. When it returns, whatever is left in its
+  process group, and any descendant that left the group (`setsid`), is killed
+  and recorded (`target_survivors.json`), and that stage fails.
 
 **No planted bytecode.** Every target command runs with `PYTHONPYCACHEPREFIX`
 set to a Nous-owned directory. Other runtimes' caches are not redirected.
@@ -1762,7 +1786,8 @@ protected file into the patch.
   look in `~/.nous/keys/` can read the key and forge a seal. Moving the key
   removed every relative path to it; it did not remove the absolute one.
 - **Changes undone within one measurement batch.** Target code can modify the
-  clean tree during a batch and restore it before the check that follows.
+  clean tree during a batch and restore it before the check that follows. The
+  check runs before and after each batch, so the window is the batch itself.
 - **Anything outside the clean tree**, such as the home directory or system
   libraries.
 - **A process that double-forks and detaches within one polling interval.**
