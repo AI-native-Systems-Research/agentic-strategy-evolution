@@ -107,7 +107,8 @@ says which step catches it. **[static]** = `nous validate campaign`,
 - **Integer levels need `grid: 1`**, or refine and the centre points can ask
   for `2.5`. [static warns]
 - **A `choice` factor may list any number of levels**: all are screened
-  (method of replacement; L levels cost `2^ceil(log2 L)` slots), fitted with
+  (the level-space factorial when smaller, else the method of replacement,
+  where L levels use `2^ceil(log2 L) - 1` contrast df), fitted with
   `L-1` df and recommendable. `screen_levels` on such a factor is an error.
   [static prices it]
 - **A knob that runs only at listed values needs `levels_only: true`**

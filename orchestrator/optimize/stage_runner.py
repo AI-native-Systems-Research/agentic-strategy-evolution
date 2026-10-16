@@ -162,8 +162,12 @@ from orchestrator.optimize import design as design_mod
 from orchestrator.optimize import locked as locked_mod
 from orchestrator.optimize import pareto_stage
 from orchestrator.optimize import policy as policy_mod
-from orchestrator.optimize.effects import fit_effects, solve_stationary_point
-from orchestrator.optimize.factors import is_refinable, parse_factors
+from orchestrator.optimize.effects import (
+    fit_effects,
+    planned_aliases_separated,
+    solve_stationary_point,
+)
+from orchestrator.optimize.factors import decode_coded, is_refinable, parse_factors
 from orchestrator.optimize.stage import (
     Stage,
     Trigger,
@@ -2858,11 +2862,14 @@ def run_stage(
             tuple(p) for p in
             (_read_recommendation(work_dir) or {}).get("alias_consequential") or ()
         ]
-        on = _fold_on(factors, design_cfg, pairs)
+        on, fold_basis = _fold_on_basis(factors, design_cfg, pairs)
         screen_design = _build_design(factors, design_cfg, Stage.SCREEN.value)
         design = _build_design(
             factors, design_cfg, stage_name, fold_on=on,
         )
+        # What the two blocks TOGETHER still alias, read off the combined
+        # matrix (stage-1 M3) -- never assumed from the fold rule.
+        _left = design_mod.alias_pairs(design_mod.combine(screen_design, design))
         payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
         rows = matrix.expand(design, factors)
         # Provenance the combined fit rests on: WHICH column was negated, and
@@ -2870,6 +2877,13 @@ def run_stage(
         # reader who cannot answer both cannot reproduce the effects.json this
         # iteration writes.
         payload["folded_on"] = on
+        if screen_design.groups or fold_basis == "full_fallback":
+            # Mixed-level screens, and the fallback on any screen: say how the
+            # block was chosen and what it leaves aliased (stage-1 M3, M12).
+            payload["foldover_basis"] = fold_basis
+            payload["aliases_after_combination"] = [list(p) for p in _left]
+            if fold_basis == "full_fallback":
+                payload["unparsed_alias_pairs"] = [list(p) for p in pairs]
         payload["screen_iteration"] = screen_iter
         payload["alias_consequential"] = [list(p) for p in pairs]
         logger.info(
@@ -2947,12 +2961,14 @@ def run_stage(
         # +1.0 everywhere, refine held C at "off", and the campaign certified a
         # point 1.0 below the optimum.
         #
-        # The corners are the part of the design that curvature cannot bias: on
+        # The corners are the part of the design that a level-INDEPENDENT
+        # curvature does not bias: on
         # a 2-level fraction every pure quadratic column equals the intercept
         # there, and the fraction is balanced, so each held factor's marginal
         # mean over the complete CORNER rows estimates its main effect free of
         # curvature -- which is also the right criterion at the refine design's
         # centre, where every interaction with a refined factor vanishes.
+        centre_confounded: dict = {}
         basis = {f.id: ("screen_recommendation"
                         if prev_levels and f.id in prev_levels else "first_level")
                  for f in held}
@@ -2965,7 +2981,8 @@ def run_stage(
                 logger.info(
                     "refine: the screen's model was inadequate (lack of fit), so "
                     "held factor(s) take their best CORNER marginal level, which "
-                    "curvature cannot bias, instead of the screen argmax: %s",
+                    "a level-INDEPENDENT curvature does not bias, instead of the "
+                    "screen argmax: %s",
                     corner_best,
                 )
                 prev_levels = {**(prev_levels or {}), **corner_best}
@@ -2978,22 +2995,55 @@ def run_stage(
             # `curvature_under_second_level`: C=on is a bowl reading 11.1 at the
             # corners and 16 at the centre, C=off is flat at 15) -- the corners
             # make the curved level look WORSE, and refine would be spent on the
-            # flat branch. The centre-point mean at each level is an unbiased
-            # estimate of the response AT REFINE'S DESIGN CENTRE under that level
-            # (the point the CCD is built around), so it is the right criterion
-            # whenever every level was measured there; otherwise the corner rule
-            # stands and the basis says so.
-            centre_best = _centre_mean_best(
-                work_dir, prev_rec.get("iteration"),
-                [f for f in held if f.type == "choice"], primary, direction,
-            )
+            # flat branch. The centre-point mean at each level estimates the
+            # response AT REFINE'S DESIGN CENTRE under that level
+            # (the point the CCD is built around) -- but ONLY when nothing else
+            # moves with it (stage-1 M2):
+            #   * with two or more choice factors held, the diagonal centre
+            #     assignment moves their levels TOGETHER ((off,off), (on,on)),
+            #     so one factor's centre mean carries the other's effect;
+            #   * a held NUMERIC that refine runs away from its centre (a
+            #     two-level numeric held at an edge) changes the response the
+            #     centre means were measured at, through any interaction.
+            # In either case the corner rule stands, and the confounding
+            # factors are recorded (held_fixed_basis, centre_mean_confounded_with).
+            held_choice = [f for f in held if f.type == "choice"]
+            off_centre = []
+            for f in held:
+                if f.type == "choice":
+                    continue
+                lv = (prev_levels or {}).get(f.id, f.levels[0])
+                try:
+                    mid = decode_coded(f, 0.0)
+                except (TypeError, ValueError):
+                    mid = None
+                if mid is None or lv != mid:
+                    off_centre.append(f.id)
+            confounded = ([f.id for f in held_choice[1:]] if len(held_choice) > 1
+                          else []) + off_centre
+            if held_choice and confounded:
+                centre_confounded = {f.id: sorted(
+                    [g.id for g in held_choice if g.id != f.id] + off_centre)
+                    for f in held_choice}
+                logger.info(
+                    "refine: the centre-mean rule is NOT used for held choice "
+                    "factor(s) %s -- their centre means are confounded with %s "
+                    "(other held choice factors move with them in the diagonal "
+                    "assignment, or a held numeric runs off-centre); the corner "
+                    "rule stands.", [f.id for f in held_choice], confounded)
+                centre_best = {}
+            else:
+                centre_best = _centre_mean_best(
+                    work_dir, prev_rec.get("iteration"), held_choice,
+                    primary, direction,
+                )
             if centre_best:
                 logger.info(
-                    "refine: every level of held choice factor(s) %s was measured "
-                    "at the screen's centre, so each is held at its best "
-                    "CENTRE-POINT mean (the response at refine's design centre "
-                    "under that level), which level-dependent curvature cannot "
-                    "bias: %s", sorted(centre_best), centre_best,
+                    "refine: every level of the held choice factor %s was measured "
+                    "at the screen's centre and nothing else held moves with it, "
+                    "so it is held at its best CENTRE-POINT mean (the response at "
+                    "refine's design centre under that level): %s",
+                    sorted(centre_best), centre_best,
                 )
                 prev_levels = {**(prev_levels or {}), **centre_best}
                 basis.update({fid: "centre_mean" for fid in centre_best})
@@ -3030,6 +3080,8 @@ def run_stage(
             # campaign with only numeric held factors is byte-identical.
             if any(f.type == "choice" for f in held if f.id in fixed):
                 payload["held_fixed_basis"] = {fid: basis[fid] for fid in fixed}
+                if centre_confounded:
+                    payload["centre_mean_confounded_with"] = centre_confounded
             payload["rows"] = [
                 {**row, "levels": {**fixed, **dict(row.get("levels") or {})}}
                 for row in payload.get("rows", [])
@@ -3733,6 +3785,21 @@ def run_stage(
     # Checked for every fit, not only one with exclusions: fitted on the coded
     # ACTUAL levels (INV-STAT14) the matrix is the one that ran, and nothing
     # guarantees a hand-built or recoded design is full rank.
+    # A multi-level categorical that LOST a level (every row at it failed or
+    # was excluded) keeps the contrasts its retained levels support, and the
+    # lost level is excluded from the recommendation (stage-1 M5) -- as a
+    # two-level choice that keeps both levels stays fitted, rather than the
+    # campaign aborting on a rank-deficient model.
+    lost_levels: dict = {}
+    if dropped and design_for_fit.groups:
+        design_for_fit, lost_levels = exclusions.lost_categorical_levels(
+            design_for_fit, factors, [levels_by_pos[i] for i in keep])
+        if lost_levels:
+            logger.warning(
+                "%s: categorical level(s) %s have no retained row; the factor(s) "
+                "are fitted on their remaining levels and the lost levels are "
+                "never recommended (fit_exclusions.json lost_levels).",
+                stage_name, lost_levels)
     omitted_terms = exclusions.non_estimable_terms(design_for_fit)
     if omitted_terms:
         logger.warning(
@@ -3797,6 +3864,13 @@ def run_stage(
         omit_terms=omitted_terms,
     )
     _fit_pos = keep if dropped else list(range(len(ys)))
+    # Curvature COVERAGE from the centre rows actually fitted (stage-1 M8): a
+    # choice level with no fitted centre row is one the lack-of-fit test never
+    # looked under, so "adequate" cannot be claimed for it.
+    untested = _curvature_untested_levels(
+        factors, fitted_ids, [design_for_fit.points[k].role
+                              for k in range(len(design_for_fit.points))],
+        [levels_by_pos[i] for i in _fit_pos])
     _fit_records = _fit_row_records(work_dir, outcomes, stage_name, screen_iter,
                                     n_total=len(ys), n_fold=fold_n)
     if design_for_fit.groups:
@@ -3837,6 +3911,10 @@ def run_stage(
         ),
         omitted_terms=omitted_terms,
         interactions_dropped=interactions_dropped,
+        curvature_untested_levels=untested,
+        planned_aliases_separated=(
+            planned_aliases_separated(design_mod.alias_pairs(design), fit)
+            if design.groups else None),
     )
     if dropped:
         _write_json(iter_dir / "fit_exclusions.json", {
@@ -3857,6 +3935,8 @@ def run_stage(
                 for r in sorted({excluded_reasons[i] for i in dropped})
             },
             "non_identifiable_factors": sorted(non_identifiable_held),
+            **({"lost_levels": {k: list(v) for k, v in lost_levels.items()}}
+               if lost_levels else {}),
             "interactions_dropped": interactions_dropped,
             "omitted_terms": [list(t) for t in omitted_terms],
             "fitted_ids": list(fitted_ids),
@@ -3918,6 +3998,14 @@ def run_stage(
     # so the pin is visible next to the narrowed `fitted_ids`.
     held_now.update(non_identifiable_held)
     excluded = _measured_infeasible(work_dir)
+    # Levels the fit cannot speak for: LOST (no retained row, M5) or measured
+    # INADMISSIBLE on every row that ran them. Both are excluded from the
+    # recommendation outright; ``_excluded`` matches on shared keys, so
+    # ``{C: level}`` removes every candidate at that level.
+    inadmissible_levels = _inadmissible_categorical_levels(work_dir, factors)
+    for fid, lvs in {**inadmissible_levels, **lost_levels}.items():
+        for lv in lvs:
+            excluded = list(excluded) + [{fid: lv}]
     # ── the constraint models (constrained response-surface practice) ──────
     #
     # The primary fit knows nothing about `response.constraints`, so without
@@ -4180,9 +4268,17 @@ def run_stage(
         # inadequacy from effects.json would put the lack-of-fit test in two
         # places. `observations_from_decision` already computes it for the policy;
         # this is the same fact written where the consumer can read it.
-        "model_adequate": (Trigger.LACK_OF_FIT not in set(decision.triggers)
-                           and not mo_rejected),
+        # UNKNOWN (None), not True, when lack of fit did not reject but some
+        # choice level was never measured at the centre (stage-1 M8).
+        "model_adequate": (False if (Trigger.LACK_OF_FIT in set(decision.triggers)
+                                     or mo_rejected)
+                           else None if untested else True),
+        **({"curvature_untested_levels": untested} if untested else {}),
         "excluded_measured_infeasible": excluded,
+        **({"lost_levels": {k: list(v) for k, v in lost_levels.items()}}
+           if lost_levels else {}),
+        **({"inadmissible_levels": {k: list(v) for k, v in inadmissible_levels.items()}}
+           if inadmissible_levels else {}),
         # Per declared constraint: was it modelled (and if not, why not), how
         # many candidates its model removed as CONFIDENTLY infeasible, and its
         # verdict at the recommendation itself. An auditor can reconcile
@@ -4266,6 +4362,7 @@ def run_stage(
     findings = artifacts.project_findings(
         fit, factors=factors, stage=stage_name, decision=decision_summary,
         iteration=iteration, bundle_ref=f"runs/iter-{iteration}/design_matrix.json",
+        direction=direction,
     )
     _write_json(iter_dir / "findings.json", findings)
     # principle_updates.json is a BARE LIST on disk (verified against real
@@ -4275,7 +4372,7 @@ def run_stage(
     # shape of the merged principles.json store, not of this per-iteration
     # file — so unwrap it here.
     updates = artifacts.project_principle_updates(
-        fit, factors=factors, stage=stage_name,
+        fit, factors=factors, stage=stage_name, direction=direction,
     )
     _write_json(
         iter_dir / "principle_updates.json",
@@ -4624,9 +4721,26 @@ def _fold_on(factors, design_cfg: dict, pairs) -> str | None:
     multi-character ids (``KV``, ``BATCH``), and a one-char split would silently
     pick a factor that does not exist.
     """
+    return _fold_on_basis(factors, design_cfg, pairs)[0]
+
+
+def _fold_on_basis(factors, design_cfg: dict, pairs) -> tuple[str | None, str]:
+    """``(column, basis)`` for the fold block: ``basis`` is ``"full"`` (a
+    resolution-III screen: every column negated), ``"single_column"`` (a
+    column read out of the consequential pair) or ``"full_fallback"`` (no
+    column could be read out of the pairs, so a full foldover -- recorded in
+    design_matrix.json with the unparsed pairs, stage-1 M12).
+
+    MIXED-LEVEL CAVEAT (stage-1 M3): a full foldover negates every
+    pseudo-column, and a categorical's contrast ``C[12]`` is the product of two
+    of them, so a word like ``C[12]AE`` SURVIVES the negation. The validator
+    refuses resolution III with a multi-level categorical while the foldover
+    is registered (rule 30), and the foldover state always recomputes and
+    records the aliasing left on the COMBINED design.
+    """
     resolution = int((design_cfg.get("screen") or {}).get("resolution", 5))
     if resolution <= 3:
-        return None
+        return None, "full"
     ids = [f.id for f in factors]
     from orchestrator.optimize.factors import is_categorical, model_columns
 
@@ -4651,16 +4765,16 @@ def _fold_on(factors, design_cfg: dict, pairs) -> str | None:
                     rest = rest[len(m):]
                 two = [t for t in parsed if t in ids and t not in cats]
                 if two:
-                    return two[0]
+                    return two[0], "single_column"
                 for t in parsed:
                     if "[" in t:
                         base, digits = t[:-1].split("[", 1)
                         if base in cats and digits:
-                            return f"{base}[{min(digits)}]"
+                            return f"{base}[{min(digits)}]", "single_column"
         logger.warning(
             "foldover: no column could be read out of the consequential pairs %s; "
             "falling back to a FULL foldover.", list(pairs or ()))
-        return None
+        return None, "full_fallback"
     for kept, _alt in pairs or ():
         rest = str(kept)
         while rest:
@@ -4671,7 +4785,7 @@ def _fold_on(factors, design_cfg: dict, pairs) -> str | None:
             )
             if match is None:
                 break
-            return match
+            return match, "single_column"
     # Reaching here means either the pairs list was empty or no label matched a
     # declared id. Neither should be possible: the policy only routes to this
     # state after the screen observed `alias_consequential`, and every label
@@ -4688,7 +4802,7 @@ def _fold_on(factors, design_cfg: dict, pairs) -> str | None:
         "campaign's factor set disagree — check whether the factor list changed "
         "under a resumed work_dir.", list(pairs or ()), ids,
     )
-    return None
+    return None, "full_fallback"
 
 
 def _screen_responses(work_dir: Path, screen_iter: int, primary: str,
@@ -5449,7 +5563,7 @@ def _build_design(factors, design_cfg: dict, stage_name: str, *,
     if any(is_categorical(f) for f in factors):
         # A multi-level categorical: the METHOD OF REPLACEMENT (spec
         # 2026-10-16 feature 1) -- m = ceil(log2 L) pseudo-factor columns with
-        # the generalized resolution guaranteed by construction. Every pure
+        # the factor-counted resolution guaranteed by construction. Every pure
         # two-level campaign keeps the textbook path below, byte-identical.
         from orchestrator.optimize.design import mixed_screen
 
@@ -6604,6 +6718,58 @@ def _corner_marginal_best(work_dir, iteration, factor_ids, primary: str,
             continue
         best = max(by_level.values(), key=lambda a: sign * a[1] / a[2])
         out[fid] = best[0]
+    return out
+
+
+def _curvature_untested_levels(factors, fitted_ids, roles, levels_rows) -> dict:
+    """``{choice factor: [levels]}`` with NO fitted centre row: the lack-of-fit
+    curvature check never looked under them. Empty when the fit has no centre
+    rows at all (then nothing claims curvature was checked), or no choice
+    factor is fitted."""
+    from orchestrator.optimize.matrix import centre_choice_levels
+
+    centre = [lv for r, lv in zip(roles, levels_rows) if r == "center" and lv]
+    if not centre:
+        return {}
+    out: dict = {}
+    fitted = set(fitted_ids)
+    for f in factors:
+        if f.type != "choice" or f.id not in fitted:
+            continue
+        seen = {json.dumps(lv.get(f.id)) for lv in centre}
+        miss = [lv for lv in centre_choice_levels(f) if json.dumps(lv) not in seen]
+        if miss:
+            out[f.id] = miss
+    return out
+
+
+def _inadmissible_categorical_levels(work_dir, factors) -> dict:
+    """Multi-level categorical levels every MEASURED row of which (this epoch)
+    was infeasible or rejected: ``{factor: [level, ...]}``. A heuristic stated
+    as such -- "inadmissible wherever it was measured", not proven inadmissible
+    everywhere -- recorded in recommendation.json, and the recommendation never
+    names such a level (stage-1 M5)."""
+    from orchestrator.optimize.factors import is_categorical
+
+    cats = [f for f in factors if is_categorical(f)]
+    if not cats:
+        return {}
+    seen: dict = {f.id: {} for f in cats}
+    for rp in _this_epoch_runs(work_dir):
+        for row in artifacts.read_runs(rp.parent):
+            st, lv = row.get("status"), row.get("levels") or {}
+            if st not in ("complete", "infeasible", "rejected"):
+                continue
+            for f in cats:
+                if f.id in lv:
+                    a = seen[f.id].setdefault(json.dumps(lv[f.id]), [lv[f.id], 0, 0])
+                    a[1] += 1
+                    a[2] += st != "complete"
+    out: dict = {}
+    for f in cats:
+        bad = [v[0] for v in seen[f.id].values() if v[1] and v[1] == v[2]]
+        if bad and len(bad) < len(f.levels):
+            out[f.id] = bad
     return out
 
 

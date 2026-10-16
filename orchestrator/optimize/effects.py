@@ -132,9 +132,10 @@ class Fit:
     #: Mixed-level fits only (a design with a multi-column categorical):
     #: ``(column, factor)`` per main-effect column, the exact unscaled
     #: covariance ``(X'X)^-1`` over ``term_labels`` (intercept first, then the
-    #: fitted terms in model order), each term's variance inflation
+    #: fitted terms in model order), each term's UNCENTRED relative variance
     #: ``(X'X)^-1_jj * sum_i x_ij^2`` (1.0 for a column orthogonal to all
-    #: others), and the categoricals' L-1 df F tests. Empty on every two-level
+    #: others; not the textbook centred VIF), and the categoricals' L-1 df F
+    #: tests. Empty on every two-level
     #: fit, which keeps the per-column arithmetic (exact for its orthogonal
     #: columns) and its artifacts byte-identical.
     groups: tuple[tuple[str, str], ...] = ()
@@ -143,6 +144,13 @@ class Fit:
     covariance: tuple[tuple[float, ...], ...] | None = None
     variance_inflation: tuple[tuple[str, float], ...] = ()
     factor_tests: tuple[FactorTest, ...] = ()
+    #: Mixed-level fits only: 2fi terms NOT fitted because on the corner rows
+    #: their column lies in the span of the kept columns (stage-1 M1), each
+    #: with the labels of the columns spanning it.
+    span_aliased: tuple[tuple[tuple[str, ...], tuple[str, ...]], ...] = ()
+    #: Mixed-level fits only: whether the coefficients were estimated with one
+    #: indicator per centre configuration (from the corner rows alone).
+    centre_isolated: bool = False
 
 
 def pure_error(center_responses) -> tuple[float | None, int]:
@@ -191,7 +199,7 @@ def _solve_normal_equations(cols: list[list[float]], ys: list[float]) -> list[fl
 
 
 def model_matrix(design: Design, factor_ids, *, include_interactions: bool = True,
-                 omit_terms=()):
+                 omit_terms=(), span_aliases: list | None = None):
     """The columns ``fit_effects`` solves: ``(labels, terms, cols, quad_start,
     alias_classes)``.
 
@@ -275,6 +283,37 @@ def model_matrix(design: Design, factor_ids, *, include_interactions: bool = Tru
     # axial part of the design; centre rows are there for pure error.
     akeys = alias_rows(pts)
     alias_classes: dict[str, tuple[tuple[tuple[str, ...], float], ...]] = {}
+    # MIXED-LEVEL designs (a categorical owns several columns): a collapsed
+    # categorical's contrasts are not individual pseudo-factor columns, so a
+    # 2fi can lie in the SPAN of the intercept and kept columns on the corner
+    # rows without duplicating any single one (spec 2026-10-16, stage-1 M1:
+    # in a collapsed resolution-III screen AB = P1 is a combination of C's
+    # contrasts and the intercept on the corners). Such a 2fi is estimable
+    # ONLY through the centre rows -- i.e. from the curvature contrast -- so
+    # it is not fitted; it is recorded in ``span_aliases``. Judged on the
+    # corner (alias) rows, like the exact-duplicate test above. Two-level
+    # designs keep the exact-duplicate test alone (byte-identical).
+    basis: list[list[float]] = []
+
+    def _resid(v):
+        r = list(v)
+        for q in basis:
+            d = sum(a * b for a, b in zip(r, q))
+            r = [a - d * b for a, b in zip(r, q)]
+        return r
+
+    def _add_basis(v) -> bool:
+        r = _resid(v)
+        nrm = math.sqrt(sum(a * a for a in r))
+        scale = math.sqrt(sum(a * a for a in v)) or 1.0
+        if nrm <= 1e-9 * scale:
+            return False
+        basis.append([a / nrm for a in r])
+        return True
+
+    if grp:
+        for c in cols:
+            _add_basis([c[r] for r in akeys])
     if include_interactions and k >= 2:
         seen: dict[tuple[float, ...], int] = {}
         for j2, fid in enumerate(ids):          # main-effect columns already added
@@ -298,6 +337,11 @@ def model_matrix(design: Design, factor_ids, *, include_interactions: bool = Tru
                 alias_classes[rep] = alias_classes.get(rep, ()) + (
                     ((ids[i], ids[j]), sign),
                 )
+                continue
+            if grp and not _add_basis(list(key)):
+                if span_aliases is not None:
+                    span_aliases.append(((ids[i], ids[j]), _spanning(
+                        list(key), [[c[r] for r in akeys] for c in cols], labels)))
                 continue
             seen[key] = len(cols)
             labels.append(f"{ids[i]}{ids[j]}")
@@ -327,6 +371,16 @@ def model_matrix(design: Design, factor_ids, *, include_interactions: bool = Tru
         quad_start = n_lin
 
     return labels, terms, cols, quad_start, alias_classes
+
+
+def _spanning(v, cols, labels) -> tuple[str, ...]:
+    """The labels of the kept columns a corner-dependent column is a
+    combination of (least squares over the corner rows; |coefficient| > 1e-9)."""
+    try:
+        coef = _solve_normal_equations(cols, v)
+    except ValueError:
+        return tuple(labels)
+    return tuple(lab for lab, c in zip(labels, coef) if abs(c) > 1e-9)
 
 
 def fit_effects(design: Design, responses, *, factor_ids,
@@ -374,13 +428,29 @@ def fit_effects(design: Design, responses, *, factor_ids,
             f"it dropped in fit_exclusions.json.",
         )
 
+    span: list = []
     labels, terms, cols, quad_start, alias_classes = model_matrix(
         design, ids, include_interactions=include_interactions,
-        omit_terms=omit_terms,
+        omit_terms=omit_terms, span_aliases=span,
     )
     pts = design.points
 
     coefs = _solve_normal_equations(cols, ys)
+    mixed = bool(design.groups) and len(set(design.groups)) < len(design.groups)
+    coefs_lof = coefs
+    centre_ind = _centre_indicators(pts, cols) if mixed else []
+    if centre_ind:
+        # CURVATURE ISOLATION (mixed fits; stage-1 M1). A collapsed
+        # categorical's contrasts are correlated with the intercept on the
+        # corners, so with centre rows in a first-order fit the centre-vs-corner
+        # contrast -- curvature -- leaks into the categorical and every column
+        # correlated with it. One indicator per centre CONFIGURATION absorbs the
+        # centres, so every reported coefficient is estimated from the factorial
+        # (corner) rows alone, the textbook reading of a 2-level screen with
+        # centre points (Montgomery, DAE 8e §6.8). The lack-of-fit test is still
+        # computed from the model WITHOUT the indicators (``coefs_lof``), so
+        # under H0 it is exactly F-distributed and curvature still triggers it.
+        coefs = _solve_normal_equations(cols + centre_ind, ys)[:len(cols)]
 
     # Pure error from the centre rows, POOLED WITHIN IDENTICAL COORDINATES.
     # Pure error is only pure if every row in a group is a replicate of ONE
@@ -466,17 +536,30 @@ def fit_effects(design: Design, responses, *, factor_ids,
                      aliased_with=alias_classes.get(labels[idx], ()))
         (quads if idx >= quad_start else built).append(eff)
 
-    mixed = bool(design.groups) and len(set(design.groups)) < len(design.groups)
     extra: dict = {}
+    aliases = None
     if mixed:
         built, quads, extra = _exact_inference(
             design, labels, terms, cols, coefs, built, quads, quad_start,
-            alias_classes, pe_var, pe_df, tcrit, have_se, alpha)
+            alias_classes, pe_var, pe_df, tcrit, have_se, alpha,
+            extra_cols=centre_ind)
+        extra["centre_isolated"] = bool(centre_ind)
+        # The aliasing THIS matrix has, read off the model it solved (stage-1
+        # M6): exact duplicates collapsed into a kept column, and 2fi columns
+        # in the span of kept columns on the corner rows. ``alias_pairs`` reads
+        # a PLANNED design's pseudo-factor columns; on a fit design (contrast
+        # columns) it would treat subsets of contrasts as pseudo-factors and
+        # fabricate pairs.
+        aliases = sorted(
+            [("".join(alt), rep) for rep, alts in alias_classes.items()
+             for alt, _s in alts]
+            + [("".join(t), "span(" + ",".join(sp) + ")") for t, sp in span])
+        extra["span_aliased"] = tuple((tuple(t), tuple(sp)) for t, sp in span)
 
     lof_f = lof_p = None
     if pe_var is not None and pe_var > 0 and pe_df > 0:
         resid = [
-            ys[r] - sum(coefs[c] * cols[c][r] for c in range(len(cols)))
+            ys[r] - sum(coefs_lof[c] * cols[c][r] for c in range(len(cols)))
             for r in range(n)
         ]
         ss_resid = sum(v * v for v in resid)
@@ -492,7 +575,8 @@ def fit_effects(design: Design, responses, *, factor_ids,
         intercept=coefs[0], effects=tuple(built), n_runs=n,
         pure_error_var=pe_var, pure_error_df=pe_df,
         lack_of_fit_f=lof_f, lack_of_fit_p=lof_p,
-        aliases=tuple(alias_pairs(design)), quadratic=tuple(quads),
+        aliases=tuple(alias_pairs(design) if aliases is None else aliases),
+        quadratic=tuple(quads),
         **extra,
     )
 
@@ -515,9 +599,31 @@ def _invert(a: list[list[float]]) -> list[list[float]]:
     return [row[p:] for row in m]
 
 
+def _centre_indicators(pts, cols) -> list[list[float]]:
+    """One 0/1 column per distinct centre configuration, when the design has
+    corner rows on which the model is of full column rank (otherwise the
+    indicators would make it singular, and none are added)."""
+    akeys = [r for r, p in enumerate(pts) if p.role != "center"]
+    if len(akeys) == len(pts) or not akeys:
+        return []
+    sub = [[c[r] for r in akeys] for c in cols]
+    from orchestrator.optimize.factors import _rank
+
+    if _rank(list(zip(*sub))) < len(cols):
+        return []
+    groups: dict[tuple, list[int]] = {}
+    for r, p in enumerate(pts):
+        if p.role == "center":
+            groups.setdefault(tuple(p.coded), []).append(r)
+    return [[1.0 if r in set(idx) else 0.0 for r in range(len(pts))]
+            for idx in groups.values()]
+
+
 def _exact_inference(design, labels, terms, cols, coefs, built, quads, quad_start,
-                     alias_classes, pe_var, pe_df, tcrit, have_se, alpha):
-    """Exact SEs, covariance and the categoricals' F tests for a MIXED fit.
+                     alias_classes, pe_var, pe_df, tcrit, have_se, alpha,
+                     extra_cols=()):
+    """SEs from the exact ``(X'X)^-1`` covariance, that covariance, and the
+    categoricals' F tests for a MIXED fit.
 
     A mixed-level design is non-orthogonal by construction -- a collapsed
     categorical's contrasts are correlated with each other and the intercept,
@@ -528,9 +634,12 @@ def _exact_inference(design, labels, terms, cols, coefs, built, quads, quad_star
     """
     n = len(cols[0])
     p = len(cols)
-    xtx = [[sum(cols[i][r] * cols[j][r] for r in range(n)) for j in range(p)]
-           for i in range(p)]
-    cov = _invert(xtx)
+    allc = list(cols) + list(extra_cols)
+    xtx = [[sum(allc[i][r] * allc[j][r] for r in range(n)) for j in range(len(allc))]
+           for i in range(len(allc))]
+    # The model coefficients' covariance is the leading p x p block of the
+    # inverse (the centre indicators, when present, are nuisance parameters).
+    cov = [row[:p] for row in _invert(xtx)[:p]]
     effs = list(built) + list(quads)
     new: list[Effect] = []
     for idx, e in zip(range(1, p), effs):
@@ -583,10 +692,13 @@ def factor_test(fit: Fit, factor_id: str) -> FactorTest | None:
 
 
 def prediction_variance(fit: Fit, xa: dict, xb: dict | None = None) -> float | None:
-    """EXACT ``s_pe^2 d'(X'X)^-1 d`` for ``d = x(xa) - x(xb)`` (``xb=None``: the
-    prediction at ``xa`` itself, intercept included), or ``None`` when the fit
-    carries no covariance (every two-level fit, whose consumers keep their
-    per-term arithmetic)."""
+    """``s_pe^2 d'(X'X)^-1 d`` for ``d = x(xa) - x(xb)`` from the fit's exact
+    ``(X'X)^-1`` covariance (``xb=None``: the variance of the estimated MEAN
+    response at ``xa``, intercept included -- a CONFIDENCE, not a prediction,
+    interval quantity: no new-observation variance is added), or ``None`` when
+    the fit carries no covariance (every two-level fit, whose consumers keep
+    their per-term arithmetic, exact only for columns orthogonal to all
+    others)."""
     if fit.covariance is None or not fit.pure_error_var:
         return None
     def row(x):
@@ -665,3 +777,31 @@ def solve_stationary_point(fit: Fit, factor_ids) -> dict[str, float] | None:
         return {ids[i]: rhs[i] / a[i][i] for i in range(k)}
     except ZeroDivisionError:
         return None
+
+
+
+def planned_aliases_separated(planned_pairs, fit: Fit) -> list[dict]:
+    """Planned (pseudo-factor space) alias pairs that this fit nevertheless
+    ESTIMATED SEPARATELY (stage-1 M7).
+
+    In a collapsed design the fit codes the level that ran, so a collapsed row
+    no longer reproduces the planned pseudo-sign identity that made two
+    columns equal; least squares then separates the pair through those rows
+    alone. That is legitimate but expensive and fragile -- the variance
+    inflation says how expensive -- so every such pair is reported beside the
+    planned aliasing instead of the two lists silently disagreeing.
+    """
+    fitted = {e.label for e in fit.effects}
+    vif = dict(fit.variance_inflation)
+    out = []
+    for a, b in planned_pairs or ():
+        if a in fitted and b in fitted:
+            out.append({
+                "planned": [a, b],
+                "variance_inflation": {a: vif.get(a), b: vif.get(b)},
+                "reason": ("aliased in the planned pseudo-factor columns, but the "
+                           "fit codes the level that RAN, and the collapsed "
+                           "combination(s) break the planned identity, so the "
+                           "pair is separated through those rows only"),
+            })
+    return out

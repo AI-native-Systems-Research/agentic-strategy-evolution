@@ -73,6 +73,10 @@ class DesignPreview:
     warnings: list[str] = field(default_factory=list)
     #: ``(factor_id, note)`` for each ``levels_only`` factor.
     discrete: list[tuple[str, str]] = field(default_factory=list)
+    #: ``(factor_id, L, se_multiplier)``: a categorical level comparison's SE
+    #: is ``sd * sqrt(2 L / N)`` (two level means of ~N/L corners each), NOT
+    #: the two-level MDE line's ``2 sd / sqrt(N)``.
+    categorical_se: list[tuple[str, int, float]] = field(default_factory=list)
 
 
 def screen_mde(n_corners: int, df: int, sd: float) -> tuple[float, float | None]:
@@ -148,8 +152,16 @@ def build_preview(
     )
 
     k = len(screen.factor_ids)
-    if screen.kind in ("mixed_fraction", "mixed_full"):
-        from orchestrator.optimize.design import mixed_lower_bound
+    if screen.kind == "mixed_level_full":
+        from orchestrator.optimize.design import mixed_screen_options
+
+        opts = mixed_screen_options(factors, int((design_cfg.get("screen") or {})
+                                                 .get("resolution", 5)))
+        shape = (f"the LEVEL-SPACE full factorial ({opts['level_full']} runs, "
+                 f"aliases nothing), chosen because the method-of-replacement "
+                 f"fraction would need {opts['replacement']}")
+    elif screen.kind in ("mixed_fraction", "mixed_full"):
+        from orchestrator.optimize.design import level_full_runs, mixed_lower_bound
         from orchestrator.optimize.factors import is_categorical, n_pseudo
 
         res = int(screen.resolution or 0)
@@ -161,10 +173,11 @@ def build_preview(
                     f"twice (collapsed)" if len(f.levels) < 2 ** n_pseudo(f) else "")
                  for f in factors if is_categorical(f)]
         shape = (f"method of replacement: {len(factors)} factors -> {k} two-level "
-                 f"columns ({'; '.join(parts)}), generalized resolution {roman}, "
+                 f"columns ({'; '.join(parts)}), resolution {roman} (factor-counted), "
                  + ("the full factorial in the pseudo-factors"
                     if screen.kind == "mixed_full" else "a regular fraction")
-                 + f"; df lower bound {bound} runs")
+                 + f"; df lower bound {bound} runs; the level-space full "
+                   f"factorial would need {level_full_runs(factors)}")
     elif screen.kind == "fractional":
         res = int(screen.resolution or 0)
         known = _smallest_known_runs(k, res)
@@ -341,12 +354,30 @@ def build_preview(
 
     # (e) a levels_only factor's runnable set: every point the design and the
     # recommendation use is one of these (spec 2026-10-16 feature 2).
+    from orchestrator.optimize.factors import runnable_levels
+
     for f in factors:
         if getattr(f, "levels_only", False):
+            run = runnable_levels(f)
+            out_ = [lv for lv in f.levels if lv not in run]
             pv.discrete.append((f.id, (
-                f"levels_only -- runnable set {list(f.levels)}; refine's centre "
-                f"and axial points, the candidates and confirm snap to the nearest "
-                f"declared level in {f.scale} space")))
+                f"levels_only -- runnable set {run} (the declared levels inside "
+                f"the screen pair {list(f.screen_levels)}); refine's centre and "
+                f"axial points, the candidates and confirm snap to the nearest of "
+                f"these in {f.scale} space"
+                + (f"; NEVER run: {out_} (outside the screen pair)" if out_ else ""))))
+            if out_:
+                pv.warnings.append(
+                    f"factor {f.id}: levels_only levels {out_} lie outside "
+                    f"screen_levels {list(f.screen_levels)} and are never run or "
+                    f"recommended.")
+
+    from orchestrator.optimize.factors import is_categorical as _is_cat
+
+    for f in factors:
+        if _is_cat(f) and pv.screen_corners:
+            pv.categorical_se.append((f.id, len(f.levels),
+                                      math.sqrt(2.0 * len(f.levels) / pv.screen_corners)))
 
     # (d) do numeric levels bracket the base point?
     base = baseline if baseline is not None else (opt.get("known_valid_baseline") or {})
@@ -439,6 +470,12 @@ def format_preview(pv: DesignPreview) -> list[str]:
         out.append(f"    levels of {fid}: {verdict}")
     for fid, note in pv.discrete:
         out.append(f"    levels of {fid}: {note}")
+    for fid, L, mult in pv.categorical_se:
+        sd = f" = {mult * pv.noise_sd:.6g}" if pv.noise_sd is not None else ""
+        out.append(
+            f"    {fid} ({L} levels): the MDE line above is for two-level "
+            f"contrasts; comparing two of {fid}'s levels has SE about sd x "
+            f"sqrt(2 x {L} / {pv.screen_corners}) = {mult:.3g} sd{sd}")
     for w in pv.warnings:
         out.append(f"    WARNING: {w}")
     return out

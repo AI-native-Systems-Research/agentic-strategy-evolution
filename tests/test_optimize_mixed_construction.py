@@ -1,7 +1,8 @@
 """The mixed-level screen by the METHOD OF REPLACEMENT, checked off the matrix
 (spec 2026-10-16-mixed-level-factors-design.md, feature 1).
 
-Two independent readings of "generalized resolution R":
+Two independent readings of "resolution R" with word length counted in
+FACTORS (Wu & Zhang 1993, extended to 2^m-level pseudo-factor subspaces):
 
 * WORDS, off the PSEUDO-COLUMN matrix (Wu & Zhang 1993's word length, the
   four-level factor counted once): for every set T of at most R-1 distinct
@@ -90,9 +91,18 @@ def _strength_ok(rows, factors, t):
 
 @pytest.mark.parametrize("k, res", [(4, 4), (5, 5), (7, 3), (6, 4)])
 def test_two_level_factors_never_take_the_mixed_path(k, res):
+    """The screen _build_design builds for an all-two-level campaign IS the
+    textbook fraction: same kind, columns, generators and rows."""
+    from orchestrator.optimize.design import with_center_points
+    from orchestrator.optimize.stage_runner import _build_design
+
     fs = _factors([2] * k)
-    assert not any(is_categorical(f) for f in fs)
-    assert all(model_columns(f) == (f.id,) for f in fs)
+    built = _build_design(fs, {"screen": {"resolution": res, "center_points": 2}}, "screen")
+    ids = tuple(f.id for f in fs)
+    ref = with_center_points(fractional_factorial(ids, res), 2)
+    assert (built.kind, built.factor_ids, built.generators, built.groups) == \
+        (ref.kind, ref.factor_ids, ref.generators, ())
+    assert [p.coded for p in built.points] == [p.coded for p in ref.points]
 
 
 # ── coding ───────────────────────────────────────────────────────────────────
@@ -124,7 +134,7 @@ def test_a_power_of_two_categorical_is_coded_orthogonally():
     assert np.allclose(X.sum(axis=0), 0)
 
 
-# ── generalized resolution, read off the matrix ─────────────────────────────
+# ── factor-counted resolution, read off the matrix ─────────────────────────────
 
 
 @pytest.mark.parametrize("Ls, res", [
@@ -133,7 +143,7 @@ def test_a_power_of_two_categorical_is_coded_orthogonally():
 ])
 def test_named_mixes_reach_their_resolution(Ls, res):
     fs = _factors(Ls)
-    d = mixed_screen(fs, resolution=res, center_points=0)
+    d = mixed_screen(fs, resolution=res, center_points=0, allow_level_full=False)
     assert _min_word_length(d, fs, res - 1) is None
     assert _strength_ok(expand(d, fs), fs, res - 1)
     assert d.resolution == res
@@ -150,7 +160,7 @@ def test_random_mixes_reach_their_resolution_off_the_matrix():
         if not any(L > 2 for L in Ls):
             continue
         fs = _factors(Ls)
-        d = mixed_screen(fs, resolution=R, center_points=0)
+        d = mixed_screen(fs, resolution=R, center_points=0, allow_level_full=False)
         assert _min_word_length(d, fs, R - 1) is None, (Ls, R)
         assert _strength_ok(expand(d, fs), fs, R - 1), (Ls, R)
         checked += 1
@@ -166,7 +176,7 @@ def test_every_level_of_every_categorical_runs_in_the_screen():
 def test_collapsing_replicates_the_first_levels_twice():
     """L = 5 in 2^3 slots: b = 5, 6, 7 collapse onto levels 0, 1, 2."""
     fs = _factors([5, 2])
-    rows = expand(mixed_screen(fs, resolution=3, center_points=0), fs)
+    rows = expand(mixed_screen(fs, resolution=3, center_points=0, allow_level_full=False), fs)
     c = Counter(r.levels["F0"] for r in rows)
     assert c["l0"] == c["l1"] == c["l2"] == 2 * c["l3"] == 2 * c["l4"]
 
@@ -182,12 +192,13 @@ def test_the_construction_is_deterministic_and_meets_the_df_bound():
 
 def test_mixed_alias_pairs_are_empty_at_resolution_five():
     fs = _factors([3, 2, 2])
-    assert alias_pairs(mixed_screen(fs, resolution=5, center_points=0)) == []
+    assert alias_pairs(mixed_screen(fs, resolution=5, center_points=0,
+                                    allow_level_full=False)) == []
 
 
 def test_mixed_alias_pairs_name_contrast_components_at_resolution_four():
     fs = _factors([4, 2, 2, 2, 2])
-    d = mixed_screen(fs, resolution=4, center_points=0)
+    d = mixed_screen(fs, resolution=4, center_points=0, allow_level_full=False)
     pairs = alias_pairs(d)
     # Every reported pair is 2fi ~ 2fi (resolution IV: no 2fi on a main).
     mains = {lab for f in fs for lab in model_columns(f)}

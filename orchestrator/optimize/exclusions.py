@@ -604,3 +604,59 @@ def identifiable_factors(kept_levels: list[dict], factor_ids) -> Identifiability
         estimable=est, dropped=drop,
         levels_retained={fid: tuple(sorted(seen[fid])) for fid in ids},
     )
+
+
+
+def lost_categorical_levels(design, factors, kept_levels) -> tuple:
+    """``(design_reduced, lost)`` for a FIT design holding multi-level
+    categoricals: a level no retained row ran is LOST (stage-1 M5).
+
+    A categorical keeps its estimable contrasts -- a maximal subset of its
+    contrast columns linearly independent of the intercept and of its own
+    earlier columns over the retained rows (L_retained - 1 of them) -- and the
+    rest are dropped from the design, exactly as a two-level factor that keeps
+    two levels stays fitted. ``lost`` maps factor id -> the lost levels; a
+    factor that keeps fewer than two levels is left to
+    ``identifiable_factors`` (it is not identifiable at all). Two-level
+    designs (no groups) are returned unchanged.
+    """
+    import dataclasses
+
+    from orchestrator.optimize.factors import _rank, is_categorical
+
+    if not design.groups:
+        return design, {}
+    by_id = {f.id: f for f in factors}
+    lost: dict = {}
+    for fid in dict.fromkeys(design.groups):
+        f = by_id.get(fid)
+        if f is None or not is_categorical(f):
+            continue
+        seen = {_key(lv[fid]) for lv in kept_levels if fid in lv}
+        gone = [lv for lv in f.levels if _key(lv) not in seen]
+        if gone and len(seen) >= 2:
+            lost[fid] = gone
+    if not lost:
+        return design, {}
+    keep_cols: list[int] = []
+    for fid in dict.fromkeys(design.groups):
+        idx = [j for j, g in enumerate(design.groups) if g == fid]
+        if fid not in lost:
+            keep_cols += idx
+            continue
+        rows = [[1.0] for _ in design.points]
+        chosen = 0
+        for j in idx:
+            cand = [r + [p.coded[j]] for r, p in zip(rows, design.points)]
+            if _rank(cand) == chosen + 2:
+                rows, chosen = cand, chosen + 1
+                keep_cols.append(j)
+    keep_cols.sort()
+    reduced = dataclasses.replace(
+        design,
+        factor_ids=tuple(design.factor_ids[j] for j in keep_cols),
+        groups=tuple(design.groups[j] for j in keep_cols),
+        points=tuple(dataclasses.replace(p, coded=tuple(p.coded[j] for j in keep_cols))
+                     for p in design.points),
+    )
+    return reduced, lost

@@ -48,15 +48,17 @@ deterministic rule). Candidate axes are exactly the declared levels inside the
 screen range (no 9-point interpolation). The fit codes what ran
 (`code_actual`), so a snapped axial point is regressed where it ran.
 
-**Literature.** Rounding the continuous optimum to the nearest feasible point
-is the standard treatment of discrete-valued factors in response-surface work
-(Myers, Montgomery & Anderson-Cook, *Response Surface Methodology*, 4e, ch. 7
-on non-standard regions); regressing on the levels actually used rather than
-the nominal coordinates is the errors-in-variables argument of Box (1963,
-"The effects of errors in the factor levels...", *Technometrics* 5) already
-behind INV-STAT14. A CCD whose axial points cannot leave the cube is the
-face-centred CCD (Montgomery, *DAE*, 8e, §11.4.2), which remains a valid
-second-order design when at least three distinct levels per factor run.
+**Literature and its limits.** The snap is a design rule, not a cited
+estimator: the candidate axis scores every declared level, so the
+recommendation is the fitted argmax over the runnable set. Regressing on the
+levels actually used rather than the nominal coordinates (INV-STAT14) is the
+fixed-but-recorded case; Box (1963, *Technometrics* 5) treats RANDOM errors in
+the factor levels, a different problem -- here the snapped level is known
+exactly, so there is no errors-in-variables bias once it is coded. A snapped
+central composite is NOT in general a face-centred CCD (its axial and centre
+points land where the declared levels are); three distinct runnable levels per
+factor are necessary for the quadratic, not sufficient for a well-conditioned
+one.
 
 **Assumptions** (stated where used). The response is smooth in the axis
 coordinate (so a second-order model in `log(level)` or `level` is adequate
@@ -131,20 +133,23 @@ coordinates). Consumers that computed `n_c - 1` independently are fixed to
 the same count: `preview` (screen MDE df). Lack of fit uses
 `df_lof = df_resid - df_pe` from the fit, unchanged.
 
-**The curvature contrast stays unbiased.** Each centre row is coded at the
-level it ran, so the fitted linear model (main effects and two-factor
-interactions, estimated from the corners) predicts the centre under that
-level; choice x numeric interactions vanish at the numeric midpoint. The
-residual at a centre of level l therefore estimates that level's pure
-curvature (sum of pure quadratic coefficients under l). The pooled
-lack-of-fit F tests H0: every level's curvature is zero (and no other misfit).
-Assumption, stated in `matrix.expand`: the linear part is correctly estimated
-from the corners -- true at resolution >= V, or when the aliased terms are
-zero.
+**What the lack-of-fit test means.** Each centre row is coded at the level
+it ran, so the fitted first-order model predicts the centre under that level;
+choice x numeric interactions vanish at the numeric centre. Under H0 (the
+model is correct and there is no curvature under any covered level) the
+pooled lack-of-fit F is exactly F-distributed; curvature under a covered level
+-- including under one level only -- gives it power. It is a test, not an
+unbiased estimate of each level's curvature, and it says nothing about levels
+no centre ran (`curvature_untested_levels`, model adequacy then UNKNOWN).
+Assumption: the first-order part is correctly specified (resolution >= V, or
+the aliased terms are zero). A `levels_only` numeric's centre is its snapped
+centre level, not the arithmetic midpoint. In MIXED fits the coefficients are
+estimated with one indicator per centre configuration (from the corners
+alone; stage-1 M1) while the lack-of-fit F is computed without them.
 
 **centre_points vs level count.** If g < L_j for some choice factor, its
 levels `g .. L_j-1` get no centre point: curvature is not checked under them
-(raise n_c to `2 * lcm_j(L_j)` to cover every level twice). Whenever g > 1,
+(`n_c >= 2 * max_j L_j` covers every level of every choice factor twice). Whenever g > 1,
 df_pe is `n_c - g` rather than `n_c - 1`. Both are recorded: `design_matrix.json["centre_points"]` (the per-level centre counts,
 the number of distinct centre configurations, df_pe and the warnings), a
 validator WARNING, and the preview. No silent change of n_c.
@@ -152,12 +157,18 @@ validator WARNING, and the preview. No silent change of n_c.
 **Refine under curvature.** The held level of a choice factor on the
 lack-of-fit branch was the best CORNER marginal mean -- which is biased in
 exactly the gap-3 case (curvature under one level makes that level look bad at
-the corners). When every level of a held choice factor has at least one
-complete centre row, the held level is the argmax of the CENTRE-POINT MEANS
-per level: an unbiased estimate of the response at refine's design centre
-under each level, which is the point refine's CCD is built around. Otherwise
-the corner-marginal rule is kept. The basis is recorded in
-`design_matrix.json["held_fixed_basis"]`.
+the corners). When EXACTLY ONE choice factor is held, every level of it has at
+least one complete centre row, and no other held factor runs off-centre, the
+held level is the argmax of its CENTRE-POINT MEANS -- the response at refine's
+design centre under each level. With two or more held choice factors the
+diagonal assignment moves their centre levels together, so a per-factor centre
+mean carries the other factors' effects (stage-1 M2: P=on worth +1, Q=on -3,
+centres (off,off)=20 and (on,on)=18 would hold P at off); a held numeric that
+refine runs off-centre changes the response through any interaction. In both
+cases the corner rule is kept and `centre_mean_confounded_with` records why.
+This confounding is the PRICE of the diagonal assignment, a deliberate
+departure from Montgomery (DAE §6.8), who runs centres at every combination
+of the qualitative factors.
 
 **Oracle.** `curvature_under_second_level`: A, B numeric, C in {off, on};
 C=off is flat at 15; C=on is a bowl peaking at 16 at the design centre and
@@ -174,11 +185,12 @@ and the campaign recommends (9, 9, on).
 factorial experiments", *Technometrics* 4:21-46: collapsing of levels and the
 proportional-frequency condition); Addelman (1962b, "Symmetrical and
 asymmetrical fractional factorial plans", *Technometrics* 4:47-58); Wu &
-Hamada, *Experiments*, 2e, ch. 7 (method of replacement, 2^m4^n designs,
+Hamada, *Experiments*, 2e, chs. 7-8 (method of replacement, 2^m4^n designs,
 collapsing); Wu & Zhang (1993, *Biometrika* 80:203-209: word length in
 two- and four-level designs counts the four-level factor ONCE); Mukerjee &
 Wu, *A Modern Theory of Factorial Designs* (2006), mixed-level regular
-designs; Rao (1947) and Hedayat, Sloane & Stufken, *Orthogonal Arrays* (1999):
+designs; Rao (1947, "Factorial experiments derivable from combinatorial
+arrangements of arrays", *JRSS Suppl.* 9:128-139) and Hedayat, Sloane & Stufken, *Orthogonal Arrays* (1999):
 resolution R <=> strength R-1. Searle, Speed & Milliken (1980, *Am. Stat.*
 34:216-221) for least-squares (population marginal) means.
 
@@ -197,7 +209,8 @@ orthogonality -- the factor's L-1 contrasts are no longer mutually orthogonal
 nor orthogonal to the intercept; (iii) by Addelman's theorem, orthogonality
 WITH OTHER FACTORS' main effects (proportional frequencies) is preserved.
 
-**Generalized resolution.** Each factor f owns a subspace S_f of the GF(2)
+**Resolution, word length counted in factors.** (Not Deng & Tang's 1999
+generalized resolution, which is for non-regular designs.) Each factor f owns a subspace S_f of the GF(2)
 column space (dimension m_f; m_f = 1 for a two-level factor). A defining word
 is a set of nonzero elements s_f in S_f, one per factor in a set T, summing to
 zero; its LENGTH is |T| (Wu & Zhang). Resolution R means every word has length
@@ -227,7 +240,7 @@ has L-1 df in either case and its predictions are basis-invariant. Two-factor
 interactions between a categorical and another factor are all products of
 their columns; products of a categorical's own columns are never formed.
 
-**Exact inference.** Whenever a fit contains a multi-column categorical the
+**Exact (X'X)^-1 covariance.** Whenever a fit contains a multi-column categorical the
 design is non-orthogonal by construction (collapsing; centre rows coded at
 their level), so `fit_effects` computes `(X'X)^-1` and every SE, every
 prediction interval (constraint and objective models), and the model regret
@@ -269,7 +282,7 @@ flips with the level); (c) 5-level categorical whose best-primary level
 violates a noisy constraint; (d) a categorical + a levels_only discrete knob +
 a continuous knob with an interior optimum, every one of which matters.
 Property tests: for random mixes of L in {2..8} and R in {3, 4, 5}, the
-generalized resolution read off the PSEUDO-COLUMN matrix (no word shorter than
+factor-counted resolution read off the PSEUDO-COLUMN matrix (no word shorter than
 R) and the strength R-1 proportional-frequency property read off the LEVEL
 matrix (Addelman / Rao).
 
@@ -293,16 +306,54 @@ matrix (Addelman / Rao).
   two levels needed larger budgets (finetune-hyperparams: 128 corners at
   resolution V; the guide's alert-threshold example: 64).
 
+## Stage-1 review fixes (nous-e2e/audit/stage1-mixed-review-fixes.md)
+
+- M1: mixed fits estimate coefficients with one indicator per centre
+  configuration (corners only) and judge 2fi estimability on the corner rows;
+  a 2fi in the span of kept columns there is not fitted (`aliased_in_span`).
+- M2: the centre-mean held level only for a lone held choice factor with
+  nothing off-centre (above).
+- M3: rule 30 refuses resolution III with a multi-level categorical while the
+  foldover is on; every fold block of a mixed screen records
+  `foldover_basis` and `aliases_after_combination`.
+- M4: the level-space full factorial when no larger than the replacement
+  fraction (`kind: mixed_level_full`).
+- M5: a categorical that loses a level is refitted on the remaining levels;
+  lost and inadmissible-wherever-measured levels are recorded and never
+  recommended.
+- M6/M7: a mixed fit's aliases are read off the solved model; planned aliases
+  the fit separated are reported with their (uncentred) variance inflation.
+- M8: curvature-untested choice levels recorded; model adequacy then unknown.
+- M9: best level follows the campaign's direction. M10: the validator catches
+  only parse errors around the mixed screen. M11: levels_only's runnable set
+  is the declared levels inside the screen pair. M12: a fold that falls back
+  to full records `full_fallback` and the unparsed pairs.
+- `variance_inflation` is the UNCENTRED relative variance
+  `(X'X)^-1_jj * sum_i x_ij^2`, not the textbook (centred) VIF; a level's
+  main-effect contribution is defined only up to a constant (the contrasts'
+  basis); the preview's MDE line applies to two-level contrasts, and a
+  categorical level comparison has SE about `sd * sqrt(2L/N)`.
+
 ## What this design cannot answer (open questions)
 
 - Non-regular mixed-level designs (e.g. the 18-run OA(18, 2^1 3^7), 36-run
   designs, Xu's (2002) algorithmic mixed-level designs) can be far smaller
-  than the replacement method for many 3-level factors; a 3-level factor here
-  always costs four slots.
+  than the replacement method for many 3-level factors; they are NOT
+  implemented. A 3-level factor uses 3 contrast df of pseudo-factor space
+  (7 for 5..8 levels); the level-space full factorial is used instead whenever
+  it is no larger (stage-1 M4).
 - Curvature *interacting* with a categorical is detected (feature 3) but
   refine models it only at the held level; a CCD crossed with the categorical
   (or a sequential refine per level) is not offered.
 - After collapsing, interactions aliased in the pseudo space become PARTIALLY
   aliased in the level space; they are fitted by least squares with exact
-  (inflated) variances rather than reported as alias pairs, so
-  `alias_consequential` does not see them.
+  (inflated) variances and listed in `planned_aliases_separated`, but
+  `alias_consequential` (exact re-attribution) does not reason about them.
+- A 2fi in the span of kept columns on the corners is dropped, not resolved:
+  no registered follow-up block targets it.
+- The diagonal centre assignment trades coverage of level COMBINATIONS for
+  pure-error df; there is no optimal-allocation argument for the choice.
+- Curvature isolation (one indicator per centre configuration) is applied to
+  mixed fits only; two-level fits keep the original model for byte-identity,
+  where mains are orthogonal to the intercept on the corners and the leak
+  reaches the intercept alone.

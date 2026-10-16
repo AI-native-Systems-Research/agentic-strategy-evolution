@@ -1,6 +1,6 @@
 {
   "name": "nous",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Hypothesis-driven experimentation and measured optimization for software systems. Wraps the `nous` CLI as Claude Code skills: author, validate, run, monitor and interpret reflective and kind: optimization campaigns.",
   "author": {
     "name": "AI-native Systems Research"

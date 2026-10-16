@@ -555,21 +555,31 @@ else has a default.
   A numeric factor is screened at the pair from `screen_levels` (default:
   `levels[0]` and `levels[-1]`); its interior levels are explored only in
   `refine`. A `choice` factor with **more than two levels** is screened at
-  **every** level, by the *method of replacement* (Addelman 1962; Wu & Hamada,
-  *Experiments*, ch. 7): `m = ceil(log2 L)` two-level pseudo-factor columns,
-  with every one of its `2^m - 1` contrast components treated as a main-effect
-  column when the fraction's resolution is guaranteed (generalized resolution:
-  at V, no component of any factor's main effect or 2fi is aliased with
-  another). When `L < 2^m` the surplus combinations collapse onto the
-  first-declared levels, which then run twice as often (recorded in
-  `design_matrix.json["categoricals"]`). The fit gives it an `L-1` df main
-  effect, tested by an F test (`effects.json["categoricals"]`, with each
-  level's least-squares mean); candidates, the search, constraint models, the
-  predicted front, refine's held level and confirm all cover every level. A
-  3-level factor costs 4 slots, a 5-level one 8 — `nous validate` (rule 29)
-  and the `--liveness` preview print the expanded column count and run cost.
-  Measured: `[lru, lfu, arc]` with `lfu` best is now found on 8/8 seeds; before,
-  `lfu` was never run.
+  **every** level. When the level-space full factorial (the product of the
+  categoricals' level counts times 2 per other factor) is no larger, that is
+  what runs — it aliases nothing. Otherwise the screen is built by the
+  *method of replacement* (Addelman 1962; Wu & Hamada, *Experiments*, chs.
+  7–8): `m = ceil(log2 L)` two-level pseudo-factor columns, with every one of
+  the `2^m - 1` contrast components of their span treated as a main-effect
+  column, and the resolution read with word length counted in FACTORS (Wu &
+  Zhang 1993 for four-level factors, extended to 2^m-level pseudo-factor
+  subspaces; Mukerjee & Wu 2006) — "resolution V (factor-counted)": no
+  component of any factor's main effect or 2fi is aliased with another. When
+  `L < 2^m` the surplus combinations collapse onto the first-declared levels,
+  which then run twice as often; the collapsed array keeps orthogonality with
+  the other factors only in Addelman's proportional-frequency sense (recorded
+  in `design_matrix.json["categoricals"]`). The fit gives it an `L-1` df main
+  effect, tested by a Wald F test on pure error (`effects.json["categoricals"]`,
+  with each level's least-squares mean and its main-effect contribution, which
+  is defined only up to a constant); candidates, the search, constraint models,
+  the predicted front, refine's held level and confirm all cover every level.
+  A 3- or 4-level factor uses 3 contrast df of pseudo-factor space, a 5- to
+  8-level one 7 — `nous validate` (rule 29) and the `--liveness` preview print
+  the expanded column count, which screen is built and why. Not implemented:
+  non-regular mixed-level orthogonal arrays (OA(18), Xu 2002), which can be
+  smaller. Measured in `tests/test_optimize_categorical_oracles.py`:
+  `[lru, lfu, arc]` with `lfu` best is found on seeds 1–8; before, `lfu` was
+  never run.
 - **`scale`** (numeric only; `linear` default, or `log`) — the space the
   design's ±1 coding is linear in. Declare `log` for a geometric knob — a
   cache/buffer size, a batch size, an interval spanning orders of magnitude.
@@ -592,7 +602,12 @@ else has a default.
   is coded at the level that actually ran. The candidate axis is exactly the
   declared levels, so on `16..1024` with the optimum at 256 the campaign
   recommends 256 — where `grid: 1` interpolates nine points (16, 27, 45, 76,
-  128, 215, 362, 609, 1024) and recommends 215, a value the knob may not take.
+  128, 215, 362, 609, 1024) and, measured on seeds 1–4 of the oracle in
+  `tests/test_optimize_levels_only.py`, recommends 215, a value the knob may
+  not take. Only the declared levels INSIDE the screen pair are runnable
+  (the preview lists any outside it). Refine's snapped central composite is
+  not in general a face-centred CCD; three runnable levels are necessary for
+  a quadratic, not sufficient for a good one.
   Not with `grid` (both declare the runnable set and can disagree: a hard
   error) and not on `choice` (already runs only its levels); on a two-level
   factor it changes nothing (a warning). A levels_only factor with 3 or more
@@ -678,19 +693,30 @@ not chosen freely.
   giving the pure-error estimate the lack-of-fit test needs. A `choice`
   factor has no centre, so the centre runs **cycle it through its levels**
   — otherwise curvature under any level but the first is invisible (measured
-  on the `curvature_under_second_level` oracle: a bowl under `C=on` with all
-  centres at `C=off` went unrefined and certified an answer 1.0 below the
-  optimum on 8/8 seeds; cycled, it refines and finds it on 8/8). The rule is
-  *replication first, then coverage*: the centres form
+  on the `curvature_under_second_level` oracle, seeds 1–8,
+  `tests/test_optimize_centre_levels.py`: a bowl under `C=on` with all centres
+  at `C=off` went unrefined and certified an answer 1.0 below the optimum;
+  cycled, it refines and finds it). The rule is *replication first, then
+  coverage*: the centres form
   `g = max(1, min(lcm of the choice level counts, floor(center_points / 2)))`
   configurations, replicate `i` at configuration `i mod g` (the diagonal cyclic
   assignment — several choice factors advance together, so their centres stay
-  replicated), each replicated at least twice. Pure error is pooled within
-  configurations, so its df is `center_points - g`; the fit codes each centre
-  row at the level it ran. A level no centre covers is recorded in
-  `design_matrix.json["centre_points"]` and `nous validate` warns (rule 28):
-  with one two-level choice factor, 3 centres leave `on` uncovered and 4 cover
-  both. Pure error with 2 df is very noisy; a lack-of-fit verdict resting on
+  replicated), each replicated at least twice when `center_points >= 2`.
+  Balance is per CONFIGURATION, not per level: with levels (2, 3) and 6
+  centres the two-level factor's levels run 3 and 3 but its pairing with the
+  3-level factor is fixed. This is a deliberate departure from Montgomery (DAE
+  §6.8), who runs centres at every combination of the qualitative factors; its
+  price is that two choice factors' centre levels move together, so their
+  centre means are confounded (refine then holds them by the corner rule).
+  Pure error is pooled within configurations, so its df is
+  `center_points - g`; the fit codes each centre row at the level it ran.
+  Under H0 the lack-of-fit F is exactly F; curvature under a covered level
+  gives it power. A level no centre covers is recorded
+  (`design_matrix.json["centre_points"]`, and `curvature_untested_levels` in
+  `effects.json` and `recommendation.json`, whose `model_adequate` is then
+  unknown, `null`) and `nous validate` warns (rule 28): `center_points >=
+  2 x the largest choice level count` covers every level twice — with one
+  two-level choice factor, 3 centres leave `on` uncovered and 4 cover both. Pure error with 2 df is very noisy; a lack-of-fit verdict resting on
   it is weak either way, so prefer 4–6 centre points when the constraint
   models matter.
 - **`refine`** — `{kind: central_composite, center_points}`. Runs only
@@ -2090,12 +2116,16 @@ The registered branches worth understanding as an author:
      with, so refine's central composite spans **every** refinable factor (it
      always has), and non-refinable factors are held at their best **corner**
      marginal level — the screen's own argmax would credit the curvature to
-     whichever levels the centres ran. A **`choice`** factor every level of
-     which was measured at the centre is held at its best **centre-point
-     mean** instead: when curvature differs by level, the corners make the
-     curved level look worse, while the centre mean estimates the response at
-     refine's own design centre under each level
-     (`design_matrix.json["held_fixed_basis"]` records which rule applied).
+     whichever levels the centres ran. When EXACTLY ONE `choice` factor is
+     held, every level of it was measured at the centre and no other held
+     factor runs off-centre, it is held at its best **centre-point mean**
+     instead: when curvature differs by level, the corners make the curved
+     level look worse, while the centre mean estimates the response at
+     refine's own design centre under each level. With two or more held choice
+     factors the diagonal assignment moves their centre levels together, so
+     their centre means are confounded and the corner rule applies
+     (`design_matrix.json["held_fixed_basis"]` and
+     `centre_mean_confounded_with` record which rule applied and why).
      Accounting: `policy.CURVATURE_ACCOUNTING` (INV-SEM16).
 
   All-`choice` or all-binary campaigns register neither rule, which is why
@@ -2695,7 +2725,7 @@ optimization:
     screen:  {resolution: 5, center_points: 4}
     refine:  {kind: central_composite, center_points: 4}
     confirm: {replicates: 3}
-    # F4 has five levels: all are screened (method of replacement, 8 slots),
+    # F4 has five levels: all are screened (method of replacement, 7 contrast df),
     # so the resolution-V screen is 64 corners + 4 centres.
     max_runs: 120
 
@@ -3654,8 +3684,9 @@ optimization:
            , native_test: "tests/test_train_props.py::test_master_weights_are_fp32"}
 
   design:
-    # OPT, SCH and PREC have three levels each: every level is screened (method
-    # of replacement, 4 slots apiece), so resolution V takes 128 corners; six
+    # OPT, SCH and PREC have three levels each and every level is screened: the
+    # level-space full factorial (3 x 3 x 3 x 2 = 54 runs, nothing aliased) is
+    # smaller than the 128-run replacement fraction, so it is used; six
     # centres cycle the choice levels in three configurations of two.
     screen: {resolution: 5, center_points: 6}
     # No `refine`: BS is the only numeric factor with more than two levels, and
@@ -3663,7 +3694,7 @@ optimization:
     # The validator hard-fails a `refine` block here rather than running one
     # that could only fit a line -- see the note after this block.
     confirm: {replicates: 4, shortlist_size: 3}
-    max_runs: 160
+    max_runs: 100
 
   stages: [verify, screen, confirm]
 
@@ -3713,10 +3744,10 @@ claim still does not rest on the fitted surface. Compare §3.2, which reaches th
 same schedule from an all-`choice` factor set.
 
 **Expect warnings from `nous validate campaign` on this campaign, and read
-them.** Rule 29 states what each three-level choice factor costs (two
-pseudo-factor columns, the first level run twice). And a 6600-second per-row
-ceiling against `max_runs: 160` is ~293 hours of worst-case wall clock, and the
-validator says so. That warning is correct and
+them.** Rule 29 states what each three-level choice factor costs and which
+screen Nous builds (here the 54-run level-space factorial). And a 6600-second
+per-row ceiling against `max_runs: 100` is ~183 hours of worst-case wall clock,
+and the validator says so. That warning is correct and
 this campaign keeps the ceiling anyway, because the measurement really is
 compound (a full fine-tuning run) and shortening it would change the
 experiment rather than the schedule. The warning exists so that decision is

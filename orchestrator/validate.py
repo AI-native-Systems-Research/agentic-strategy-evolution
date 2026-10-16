@@ -844,7 +844,7 @@ def _rule7_low_resolution_screen_warning(
         else:
             design_obj = fractional_factorial(ids, resolution)
             pairs = design_obj.generators and _alias_pairs_safe(design_obj)
-    except Exception:
+    except ValueError:
         pairs = None
     if pairs:
         pair_text = ", ".join(f"{a}~{b}" for a, b in pairs)
@@ -938,7 +938,8 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
             f"({corners} corners + {cp} centre points), but design.max_runs="
             f"{max_runs} is lower. Options: (1) raise max_runs to >= {required}; "
             f"(2) accept a lower resolution; (3) declare fewer levels on a "
-            f"categorical (L levels cost 2^ceil(log2 L) slots); (4) screen fewer "
+            f"categorical (L levels use 2^ceil(log2 L) - 1 contrast df: 3 for L = "
+            f"3 or 4, 7 for L = 5..8); (4) screen fewer "
             f"factors this epoch. Nous will not silently downgrade resolution to "
             f"fit the budget."]
     try:
@@ -987,7 +988,10 @@ def _mixed_screen_runs(design: dict, factors: list[dict], resolution: int):
 
         d = mixed_screen(parse_factors(factors), resolution=int(resolution),
                          center_points=0)
-    except Exception:  # noqa: BLE001 -- unparseable factors are other rules' job
+    except ValueError:
+        # Only an UNPARSEABLE factor block is another rule's job (stage-1
+        # M10); any other failure of the construction propagates rather than
+        # silently under-reporting the screen's run count.
         return None
     return len(d.points), len(d.factor_ids)
 
@@ -1010,6 +1014,15 @@ def _rule29_categorical_expansion(design: dict, factors: list[dict]) -> list[str
     if mixed is None:
         return []
     runs, cols = mixed
+    from orchestrator.optimize.design import mixed_screen_options
+    from orchestrator.optimize.factors import parse_factors
+
+    opts = mixed_screen_options(parse_factors(factors), res)
+    which = (f"the level-space full factorial ({opts['level_full']} runs; the "
+             f"replacement fraction would need {opts['replacement']})"
+             if opts["chosen"] == "level_full" else
+             f"the replacement fraction ({opts['replacement']} runs; the "
+             f"level-space full factorial would need {opts['level_full']})")
     out = []
     for f in cats:
         L = len(f["levels"])
@@ -1020,10 +1033,37 @@ def _rule29_categorical_expansion(design: dict, factors: list[dict]) -> list[str
         out.append(
             f"WARN: factor {f.get('id')!r} ({L} levels) is screened at every level "
             f"by the method of replacement: {m} pseudo-factor column(s), {L - 1} "
-            f"df main effect{coll}. The screen has {cols} two-level column(s) and "
-            f"costs {runs} runs at generalized resolution {res} (plus centre "
-            f"points).")
+            f"df main effect{coll}. The screen has {cols} two-level column(s); "
+            f"Nous builds {which} (plus centre points).")
     return out
+
+
+def _rule30_mixed_resolution_three_foldover(opt: dict, design: dict,
+                                            factors: list[dict]) -> list[str]:
+    """Rule 30: no resolution-III screen with a multi-level categorical while
+    the registered foldover is on (stage-1 M3).
+
+    A foldover of a resolution-III TWO-level screen negates every column and
+    clears every 2fi~main alias (odd-length words die). With a multi-level
+    categorical it does not: its contrast components are products of
+    pseudo-columns, so a word such as ``C[12]AE`` (four columns) survives the
+    negation and the "resolved" campaign still carries 2fi~main aliasing.
+    Screen at resolution IV (every main-effect component clear of every 2fi),
+    or switch the foldover off with ``policy.foldover: false``.
+    """
+    res = ((design or {}).get("screen") or {}).get("resolution")
+    if res != 3 or not any(isinstance(f, dict) and f.get("type") == "choice"
+                           and len(f.get("levels") or []) > 2 for f in factors):
+        return []
+    if not bool(((opt or {}).get("policy") or {}).get("foldover", True)):
+        return []
+    return [
+        "design.screen.resolution=3 with a multi-level choice factor and the "
+        "registered foldover on: a full foldover of a mixed-level screen does "
+        "not clear two-factor-interaction~main-effect aliasing (a categorical's "
+        "contrast is a product of its pseudo-factor columns, so words through "
+        "it survive the negation). Use resolution 4, or set policy.foldover: "
+        "false to accept resolution-III aliasing without a fold."]
 
 
 def _rule9_no_complexity_tier_under_optimization(
@@ -1959,6 +1999,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule27_levels_only(factors))
     errors.extend(_rule28_centre_points_cover_choice_levels(design, factors))
     errors.extend(_rule29_categorical_expansion(design, factors))
+    errors.extend(_rule30_mixed_resolution_three_foldover(opt, design, factors))
     errors.extend(_rule26_objectives(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
@@ -2258,6 +2299,17 @@ def _rule27_levels_only(factors: list[dict]) -> list[str]:
                 f"factor {fid!r}: levels_only needs distinct numeric levels (got "
                 f"{levels}); the nearest declared level must be unique.")
             continue
+        sl = f.get("screen_levels")
+        if isinstance(sl, list) and len(sl) == 2 and all(
+                isinstance(v, (int, float)) for v in sl):
+            lo, hi = min(sl), max(sl)
+            outside = [v for v in levels if not lo <= v <= hi]
+            if outside:
+                out.append(
+                    f"WARN: factor {fid!r}: levels_only levels {outside} lie outside "
+                    f"screen_levels {sl}, so they are never run or recommended (the "
+                    f"runnable set is the declared levels inside the screen pair). "
+                    f"Widen screen_levels or drop those levels.")
         if len(levels) <= 2:
             out.append(
                 f"WARN: factor {fid!r} declares levels_only over {len(levels)} "
@@ -2291,7 +2343,9 @@ def _rule28_centre_points_cover_choice_levels(design: dict, factors: list[dict])
         parsed = parse_factors(factors)
         screen = _build_design(parsed, design, Stage.SCREEN.value)
         rec = centre_points_record(screen, parsed)
-    except Exception:  # noqa: BLE001 -- other rules report an unparseable block
+    except ValueError:
+        # Only an unparseable block (reported by other rules) is skipped
+        # (stage-1 M10); a construction failure propagates.
         return []
     if rec is None:
         return []

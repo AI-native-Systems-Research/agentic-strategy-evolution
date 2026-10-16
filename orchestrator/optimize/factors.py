@@ -403,9 +403,8 @@ def snap_to_levels(f: Factor, axis_value: float) -> Any:
     declared level by axis distance. TIES GO TO THE LOWER LEVEL: deterministic,
     and on a geometric knob the cheaper setting. Nearest in AXIS space is the
     right metric because the fitted surface is a polynomial in the axis
-    coordinate, so axis distance is what the model's interpolation is linear in
-    (Myers, Montgomery & Anderson-Cook, RSM: rounding a continuous optimum to
-    the nearest feasible point). The snap only chooses which level RUNS; the
+    coordinate, so axis distance is what the model's interpolation is linear
+    in. The snap only chooses which level RUNS; the
     candidate axis (``decide._axis``) scores EVERY declared level, so the
     recommendation is the fitted argmax over the runnable set, not a rounded
     stationary point.

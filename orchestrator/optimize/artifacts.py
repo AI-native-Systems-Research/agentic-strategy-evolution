@@ -182,7 +182,9 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
                    noise_pct: float | None = None,
                    fit_coordinates: dict | None = None,
                    omitted_terms=None,
-                   interactions_dropped: bool = False) -> Path:
+                   interactions_dropped: bool = False,
+                   planned_aliases_separated=None,
+                   curvature_untested_levels=None) -> Path:
     """Write the fitted model: effects, pure error, lack-of-fit, aliases,
     dropped factors. ``factors`` supplies the factor-id universe that
     ``dropped_factors`` checks against -- the factors this fit was run
@@ -248,6 +250,15 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
     # read from; present only when it happened (earlier payloads unchanged).
     if interactions_dropped:
         payload["interactions_dropped"] = True
+    if curvature_untested_levels:
+        # Choice levels no fitted centre row ran: lack of fit (the curvature
+        # check) says nothing about them (stage-1 M8).
+        payload["curvature_untested_levels"] = dict(curvature_untested_levels)
+    if planned_aliases_separated:
+        payload["planned_aliases_separated"] = list(planned_aliases_separated)
+    if fit.span_aliased:
+        payload["aliased_in_span"] = [
+            {"term": list(t), "spanned_by": list(sp)} for t, sp in fit.span_aliased]
 
     # Hold the `plan` stage to its own prediction, on the artifact that carries
     # the coefficient the prediction was about. Same reasoning as
@@ -279,7 +290,9 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
 def categorical_record(fit: Fit, factors) -> list[dict]:
     """``effects.json["categoricals"]``: per multi-level categorical, its L-1 df
     F test and, per level, the coded vector, the main-effect contribution
-    ``sum_j b_j c_j(level)`` and the LEAST-SQUARES MEAN (Searle, Speed &
+    ``sum_j b_j c_j(level)`` (defined only up to a constant -- it depends on
+    the contrast basis; DIFFERENCES between levels do not) and the
+    LEAST-SQUARES MEAN (Searle, Speed &
     Milliken 1980, population marginal means): the predicted response at that
     level with every numeric and two-level factor at its coded centre and every
     other categorical averaged over its levels. With main effects and 2fi only
@@ -417,6 +430,7 @@ def _main_effect_status(e: Effect, statement: str) -> tuple[str, str | None]:
 def project_findings(fit: Fit, *, factors: list[Factor], stage: str,
                       decision: str, iteration: int, bundle_ref: str,
                       relation_verdicts: list[RelationVerdict] | None = None,
+                      direction: str = "maximize",
                       ) -> dict:
     """Build a ``findings.schema.json``-conformant dict from a fitted model.
 
@@ -505,7 +519,8 @@ def project_findings(fit: Fit, *, factors: list[Factor], stage: str,
         })
 
     for c in (categorical_record(fit, factors) if fit.factor_tests else ()):
-        arms.append(_categorical_arm(c, by_id.get(c["factor"]), stage, decision, fit))
+        arms.append(_categorical_arm(c, by_id.get(c["factor"]), stage, decision, fit,
+                                     direction=direction))
 
     if not arms:
         # findings.schema.json requires arms to be non-empty (minItems: 1).
@@ -571,7 +586,7 @@ def _confidence_from_ci(e: Effect) -> str:
 
 
 def project_principle_updates(fit: Fit, *, factors: list[Factor],
-                               stage: str) -> dict:
+                               stage: str, direction: str = "maximize") -> dict:
     """Build a ``principles.schema.json``-conformant dict from a fitted
     model. One principle per main effect (surviving or dropped); each
     entry's ``evidence`` is a list of numeric-citation strings that pass
@@ -579,6 +594,7 @@ def project_principle_updates(fit: Fit, *, factors: list[Factor],
     """
     by_id = {f.id: f for f in factors}
     main_effects = _single_column_mains(fit)
+    objective_direction = direction  # the loop below reuses the name
 
     principles: list[dict] = []
     for e in _sorted_effects(tuple(main_effects)):
@@ -641,7 +657,8 @@ def project_principle_updates(fit: Fit, *, factors: list[Factor],
         })
 
     for c in (categorical_record(fit, factors) if fit.factor_tests else ()):
-        principles.append(_categorical_principle(c, by_id.get(c["factor"]), stage, fit))
+        principles.append(_categorical_principle(c, by_id.get(c["factor"]), stage, fit,
+                                                 direction=objective_direction))
 
     return {"principles": principles}
 
@@ -664,9 +681,20 @@ def _cat_observed(c: dict, fit: Fit) -> str:
             f"LS means {means}; n_runs={fit.n_runs}")
 
 
-def _categorical_arm(c: dict, factor, stage: str, decision: str, fit: Fit) -> dict:
+def _best_ls(c: dict, direction: str):
+    """The level with the BEST least-squares mean for the campaign's direction
+    (lowest when minimizing; stage-1 M9), or ``None``."""
+    if not c["levels"]:
+        return None
+    sign = -1.0 if direction == "minimize" else 1.0
+    return max(c["levels"], key=lambda lv: sign * lv["ls_mean"])
+
+
+def _categorical_arm(c: dict, factor, stage: str, decision: str, fit: Fit, *,
+                     direction: str = "maximize") -> dict:
     statement = _factor_statement(factor)
-    best = max(c["levels"], key=lambda lv: lv["ls_mean"])["level"] if c["levels"] else None
+    b = _best_ls(c, direction)
+    best = b["level"] if b else None
     if c["significant"] is False:
         arm_type, status, err = "h-control-negative", "REFUTED", "magnitude"
         note = (f"categorical {c['factor']} dropped as within-noise at stage={stage}: "
@@ -686,20 +714,23 @@ def _categorical_arm(c: dict, factor, stage: str, decision: str, fit: Fit) -> di
         "metadata": {"label": c["factor"], "terms": list(c["columns"]),
                      "f": c["f"], "p": c["p"], "df": c["df"],
                      "significant": c["significant"], "best_level": best,
+                     "direction": direction,
                      "levels": c["levels"], "stage": stage, "decision": decision,
                      "aliases": [list(pair) for pair in fit.aliases]},
     }
 
 
-def _categorical_principle(c: dict, factor, stage: str, fit: Fit) -> dict:
+def _categorical_principle(c: dict, factor, stage: str, fit: Fit, *,
+                           direction: str = "maximize") -> dict:
     fid = c["factor"]
     name = factor.name if factor is not None else fid
-    best = max(c["levels"], key=lambda lv: lv["ls_mean"]) if c["levels"] else None
+    best = _best_ls(c, direction)
     if c["significant"] is False:
         statement = f"{name} ({fid}) has no measurable effect on the response"
     elif c["significant"] is True and best is not None:
-        statement = (f"{name} ({fid}) matters; {best['level']!r} has the highest "
-                     f"least-squares mean response")
+        statement = (f"{name} ({fid}) matters; {best['level']!r} has the best "
+                     f"least-squares mean response ({'lowest' if direction == 'minimize' else 'highest'}, "
+                     f"for direction {direction})")
     else:
         statement = (f"{name} ({fid})'s effect on the response is not yet "
                      f"determined (significance unknown)")

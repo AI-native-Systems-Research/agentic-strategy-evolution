@@ -189,15 +189,17 @@ def centre_points_record(design: Design, factors) -> dict | None:
         for f in choice:
             per_level[f.id][str(_decode_factor(f, p, cols_of[f.id], n_configs=g))] += 1
     warnings = []
+    max_l = max(len(centre_choice_levels(f)) for f in choice)
     for f in choice:
         missing = [lv for lv, n in per_level[f.id].items() if n == 0]
         if missing:
+            rep = (", each replicated at least twice" if len(centres) >= 2 else "")
             warnings.append(
                 f"choice factor {f.id!r}: level(s) {', '.join(repr(m) for m in missing)} "
                 f"get no centre point ({len(centres)} centre point(s) over {g} "
-                f"configuration(s), each replicated at least twice), so curvature "
-                f"is not checked under them. center_points >= "
-                f"{2 * len(centre_choice_levels(f))} covers every level twice.")
+                f"configuration(s){rep}), so curvature is not checked under them. "
+                f"center_points >= {2 * max_l} (twice the largest choice level "
+                f"count) covers every level of every choice factor twice.")
     return {
         "assignment": "diagonal_cyclic",
         "rule": "g = max(1, min(lcm(L_j), floor(n_centre/2))); replicate i runs "
@@ -246,15 +248,17 @@ def coded_as_run(design: Design, factors, levels_by_pos) -> tuple[Design, list[i
             of the choice column with the intercept -- an honest
             non-orthogonality the general least-squares solve handles.
 
-        WHY THE CURVATURE CONTRAST STAYS UNBIASED with cycled centres: each
-        centre row is coded at the level it ran, so the fitted linear model
-        (main effects and 2fi, estimated from the corners) predicts it under
-        that level, and every choice x numeric interaction vanishes at the
-        numeric midpoint. The residual at a centre of level ``l`` therefore
-        estimates level ``l``'s pure curvature; the pooled lack-of-fit F
-        tests that every covered level's curvature is zero. ASSUMPTION: the
-        linear part is correctly estimated from the corners (resolution >= V,
-        or the aliased terms are zero).
+        WHAT THE LACK-OF-FIT TEST MEANS with cycled centres: each centre row
+        is coded at the level it ran, so the fitted first-order model
+        predicts it under that level, and every choice x numeric interaction
+        vanishes at the numeric centre. Under H0 (the model is correct: no
+        curvature under any covered level) the lack-of-fit F is exactly
+        F-distributed; curvature under a covered level -- including under one
+        level only -- gives it power. It says nothing about levels no centre
+        ran (``effects.json["curvature_untested_levels"]``). ASSUMPTION: the
+        first-order part is correctly specified (resolution >= V, or the
+        aliased terms are zero). A ``levels_only`` numeric's centre is its
+        SNAPPED centre level, not the arithmetic midpoint.
 
         So the principle is one rule for both defects: code what ran.
 
@@ -341,7 +345,10 @@ def fit_coordinates_record(planned: Design, fitted: Design,
     out = {"basis": "coded_actual_levels", "factor_ids": list(fitted.factor_ids),
            **({"planned_factor_ids": list(planned.factor_ids),
                "factor_of_column": list(fitted.groups)}
-              if tuple(planned.factor_ids) != tuple(fitted.factor_ids) else {}),
+              # Whenever the fit has groups -- even if the planned and fitted
+              # column NAMES coincide (L = 4, or a level-space factorial), the
+              # columns are contrasts of a factor, not factors.
+              if fitted.groups else {}),
            "rows": rows}
     if statuses is not None:
         counts: dict[str, int] = {}
@@ -519,6 +526,7 @@ def categoricals_record(design: Design, factors, rows) -> list[dict]:
             continue
         m = n_pseudo(f)
         L = len(f.levels)
+        level_full = design.kind == "mixed_level_full"
         reps = {str(lv): 0 for lv in f.levels}
         for r in rows:
             if r.role == "corner":
@@ -529,10 +537,14 @@ def categoricals_record(design: Design, factors, rows) -> list[dict]:
             "pseudo_factors": [design.factor_ids[j] for j in idxs],
             "contrast_columns": list(model_columns(f)),
             "main_effect_df": L - 1,
-            "level_of_combination": {str(b): level_of_bits(f, b) for b in range(1 << m)},
-            "collapsed": L < (1 << m),
+            "level_of_combination": {str(b): level_of_bits(f, b)
+                                     for b in range(L if level_full else 1 << m)},
+            "collapsed": (L < (1 << m)) and not level_full,
             "corner_replication": reps,
             "consequences": (
+                "level-space full factorial (no larger than the replacement "
+                "fraction): every level combination once, nothing collapsed, "
+                "nothing aliased" if level_full else
                 f"{(1 << m) - L} surplus pseudo-factor combination(s) collapse onto "
                 f"the first-declared level(s), which run twice as often; the "
                 f"factor's {L - 1} contrasts are then correlated with each other "

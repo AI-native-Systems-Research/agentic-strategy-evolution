@@ -76,9 +76,12 @@
       "description": "Coded-space stationary point of the fitted quadratic, or null when the fit has no curvature terms (a plane has no interior optimum). When it lies OUTSIDE the declared level hull the policy's registered stationary_in_hull guard routes to a semantic exception, and epoch_end-<epoch>.json points a reader back at this field to learn which axis to widen."
     },
     "model_adequate": {
-      "type": "boolean",
-      "description": "False when the lack-of-fit test rejected the registered response class, i.e. the argmax above is an artefact of a model the measurements rejected. PERSISTED rather than recomputed at the terminal state, which reads it to build its shortlist from MEASURED valid rows instead of anchoring on the model's pick (design spec 3.6 rung 3). The policy still routes to the terminal state on lack of fit -- fresh measurement IS the registered augmentation for model inadequacy."
+      "type": ["boolean", "null"],
+      "description": "null (UNKNOWN) when lack of fit did not reject but some choice level was never measured at the centre (curvature_untested_levels). False when the lack-of-fit test rejected the registered response class, i.e. the argmax above is an artefact of a model the measurements rejected. PERSISTED rather than recomputed at the terminal state, which reads it to build its shortlist from MEASURED valid rows instead of anchoring on the model's pick (design spec 3.6 rung 3). The policy still routes to the terminal state on lack of fit -- fresh measurement IS the registered augmentation for model inadequacy."
     },
+    "curvature_untested_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Choice-factor levels with NO fitted centre row: the lack-of-fit curvature check never looked under them, so model adequacy is unknown there (stage-1 M8). Raise center_points to 2 x the largest choice level count to cover every level twice."},
+    "lost_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Multi-level categorical levels with NO retained row in this fit (every run at them failed or was excluded): the factor is fitted on its remaining levels and these are never recommended (stage-1 M5)."},
+    "inadmissible_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Multi-level categorical levels every measured row of which was infeasible or rejected this epoch -- inadmissible wherever measured, not proven inadmissible everywhere; excluded from the recommendation (stage-1 M5)."},
     "excluded_measured_infeasible": {
       "type": "array",
       "items": { "type": "object" },

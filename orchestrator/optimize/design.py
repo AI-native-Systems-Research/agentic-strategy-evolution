@@ -482,6 +482,8 @@ def alias_pairs(design: Design) -> list[tuple[str, str]]:
     corners = design.corners
     if not corners:
         return []
+    if design.kind == "mixed_level_full":
+        return []          # a full factorial aliases nothing
     if is_mixed(design):
         return _mixed_alias_pairs(design)
     k = len(design.factor_ids)
@@ -600,11 +602,16 @@ def combine(a: Design, b: Design) -> Design:
 # ── mixed-level screens: the method of replacement ──────────────────────────
 #
 # Spec 2026-10-16-mixed-level-factors-design.md, feature 1. Literature:
-# Addelman (1962a, b); Wu & Hamada, Experiments, ch. 7 (method of
-# replacement, 2^m 4^n designs); Wu & Zhang (1993) for word length with a
-# four-level factor counted ONCE; Mukerjee & Wu (2006) for mixed-level
-# regular designs; Rao (1947) / Hedayat, Sloane & Stufken (1999) for
-# resolution R <=> orthogonal-array strength R-1.
+# Addelman (1962a, b); Wu & Hamada, Experiments, chs. 7-8 (method of
+# replacement, 2^m 4^n designs); Wu & Zhang (1993, Biometrika 80) for word
+# length with a four-level factor counted ONCE, here extended to 2^m-level
+# pseudo-factor subspaces (Mukerjee & Wu 2006, mixed-level regular designs).
+# "Resolution" below is that FACTOR-COUNTED word length -- not Deng & Tang's
+# (1999, Statistica Sinica 9) generalized resolution for non-regular designs.
+# Rao (1947, "Factorial experiments derivable from combinatorial arrangements
+# of arrays", JRSS Suppl. 9:128-139) / Hedayat, Sloane & Stufken (1999):
+# resolution R <=> orthogonal-array strength R-1; after collapsing, strength
+# holds in Addelman's proportional-frequency sense.
 
 
 def is_mixed(design: Design) -> bool:
@@ -652,7 +659,7 @@ def _greedy_blocks(n: int, blocks, resolution: int, order) -> list[tuple[int, ..
     vector ``v`` is accepted iff every NEW element of the block's span is
     nonzero, not already in the block, and in no ``sums[j]`` -- i.e. it closes
     no defining word of length <= R-1 with the factors already placed. So the
-    generalized resolution holds BY CONSTRUCTION; no table, no later check.
+    factor-counted resolution holds BY CONSTRUCTION; no table, no later check.
     Returns one tuple of vectors per factor, in ``blocks`` order.
     """
     depth = max(1, resolution - 2)
@@ -691,8 +698,9 @@ def mixed_fraction(blocks: tuple[int, ...], resolution: int):
     factor's subspace -- has length >= ``resolution``.
 
     The base size starts at ``_mixed_runs_lower_bound`` and grows by one bit
-    until the greedy (candidates in (weight, value) order, then 64 seeded
-    shuffles, as ``_construct``) succeeds. It always terminates: at
+    until the greedy (candidates in (weight, value) order, then ``_RESTARTS``
+    seeded shuffles -- applied at EVERY resolution here, unlike ``_construct``,
+    which restarts only at V and above) succeeds. It always terminates: at
     n = sum(blocks) the unit vectors give the full factorial in the
     pseudo-factors, which has no defining word. Deterministic and cached.
     """
@@ -722,13 +730,14 @@ def mixed_fraction(blocks: tuple[int, ...], resolution: int):
     return total, tuple(units)
 
 
-def mixed_screen(factors, *, resolution: int, center_points: int) -> Design:
+def mixed_screen(factors, *, resolution: int, center_points: int,
+                 allow_level_full: bool = True) -> Design:
     """The mixed-level screen: every factor's pseudo-factor columns
     (``factors.pseudo_ids``) over the 2^n full factorial in the base bits,
     each column the product of the base bits in its word, plus centre points.
 
     ``kind`` is ``"mixed_fraction"`` (``"mixed_full"`` when no generator was
-    needed); ``resolution`` is the GENERALIZED resolution the construction
+    needed); ``resolution`` is the FACTOR-COUNTED resolution the construction
     guarantees; ``groups`` maps each column to its factor and ``words``
     records each column's base word.
     """
@@ -737,6 +746,16 @@ def mixed_screen(factors, *, resolution: int, center_points: int) -> Design:
     fs = list(factors)
     blocks = tuple(n_pseudo(f) for f in fs)
     n, vecs = mixed_fraction(blocks, int(resolution))
+    if allow_level_full and level_full_runs(fs) <= 1 << n:
+        # The LEVEL-SPACE full factorial is no larger than the replacement
+        # fraction (stage-1 M4: three 3-level factors and a 2-level one are
+        # 54 runs as a factorial, 128 as a resolution-V replacement fraction,
+        # because a 3-level factor occupies a 4-slot pseudo-factor subspace).
+        # It aliases NOTHING and replicates every level equally, so it is
+        # used instead. Non-regular mixed-level orthogonal arrays (OA(18),
+        # Xu 2002's algorithmic designs) can be smaller still; they are NOT
+        # implemented.
+        return with_center_points(_level_full(fs), int(center_points))
     ids: list[str] = []
     groups: list[str] = []
     words: list[tuple[int, ...]] = []
@@ -780,7 +799,7 @@ def _subspace_elements(design: Design, cols: list[int], fid: str):
 
 
 def _mixed_alias_pairs(design: Design) -> list[tuple[str, str]]:
-    """``alias_pairs`` in the GENERALIZED sense: every element of a factor's
+    """``alias_pairs`` with word length counted in FACTORS: every element of a factor's
     contrast subspace is a main-effect column, every product of elements of
     two DISTINCT factors a 2fi column. Reports 2fi ~ main and 2fi ~ 2fi
     coincidences (up to sign), with the same transitive-echo rule."""
@@ -805,3 +824,46 @@ def _mixed_alias_pairs(design: Design) -> list[tuple[str, str]]:
                 and l2 not in to_main:
             out.append((l1, l2))
     return sorted(out)
+
+
+def level_full_runs(factors) -> int:
+    """Runs of the full factorial in LEVEL space: prod_categorical L_i x
+    2^(number of two-level-screened factors)."""
+    from orchestrator.optimize.factors import is_categorical
+
+    return math.prod(len(f.levels) if is_categorical(f) else 2 for f in factors)
+
+
+def _level_full(factors) -> Design:
+    """Every level combination, each categorical level at its CANONICAL
+    pseudo-sign code (no collapsed combination is ever run). Same columns and
+    groups as ``mixed_screen``; ``kind="mixed_level_full"``; no resolution
+    (a full factorial aliases nothing)."""
+    from orchestrator.optimize.factors import is_categorical, n_pseudo, pseudo_ids
+
+    ids, groups, axes = [], [], []
+    for f in factors:
+        m = n_pseudo(f)
+        for cid in pseudo_ids(f):
+            ids.append(cid)
+            groups.append(f.id)
+        if is_categorical(f):
+            axes.append([tuple(1.0 if (b >> i) & 1 else -1.0 for i in range(m))
+                         for b in range(len(f.levels))])
+        else:
+            axes.append([(-1.0,), (1.0,)])
+    pts = tuple(DesignPoint(coded=tuple(v for part in combo for v in part))
+                for combo in itertools.product(*axes))
+    return Design(points=pts, factor_ids=tuple(ids), kind="mixed_level_full",
+                  resolution=None, groups=tuple(groups))
+
+
+def mixed_screen_options(factors, resolution: int) -> dict:
+    """Both candidate screens' corner runs and which ``mixed_screen`` builds:
+    ``{"replacement": N, "level_full": M, "chosen": ...}`` (preview, rule 29)."""
+    from orchestrator.optimize.factors import n_pseudo
+
+    n, _ = mixed_fraction(tuple(n_pseudo(f) for f in factors), int(resolution))
+    rep, full = 1 << n, level_full_runs(factors)
+    return {"replacement": rep, "level_full": full,
+            "chosen": "level_full" if full <= rep else "replacement"}

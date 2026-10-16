@@ -121,10 +121,21 @@
       "const": true,
       "description": "Present only when the fitted rows could not support any two-factor interaction (the full model was rank-deficient), so the fit is MAIN EFFECTS ONLY."
     },
+    "planned_aliases_separated": {
+      "type": "array",
+      "description": "Mixed-level fits only: planned (pseudo-factor) alias pairs that the fit nevertheless estimated separately -- through collapsed rows, whose coded level breaks the planned identity -- with each term's variance inflation (stage-1 M7).",
+      "items": {"type": "object", "required": ["planned", "variance_inflation", "reason"]}
+    },
+    "aliased_in_span": {
+      "type": "array",
+      "description": "Mixed-level fits only: two-factor interactions NOT fitted because, on the corner rows, their column lies in the span of the kept columns (estimable only through the centre-vs-corner contrast, i.e. curvature), with the columns spanning each (stage-1 M1).",
+      "items": {"type": "object", "required": ["term", "spanned_by"]}
+    },
+    "curvature_untested_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Choice-factor levels with NO fitted centre row: the lack-of-fit curvature check never looked under them, so model adequacy is unknown there (stage-1 M8). Raise center_points to 2 x the largest choice level count to cover every level twice."},
     "variance_inflation": {
       "type": "object",
       "additionalProperties": { "type": "number" },
-      "description": "Mixed-level fits only: per term, (X'X)^-1_jj * sum_i x_ij^2 -- 1.0 for a column orthogonal to every other, above 1 where collapsing or cycled centres correlate it with others. The reported SEs are the exact ones."
+      "description": "Mixed-level fits only: per term, the UNCENTRED relative variance (X'X)^-1_jj * sum_i x_ij^2 -- 1.0 for a column orthogonal to every other (intercept included), above 1 where collapsing or cycled centres correlate it with others. Not the textbook (centred) VIF. The reported SEs come from the exact (X'X)^-1."
     },
     "exclusion_balance": {
       "type": "object",

@@ -164,8 +164,12 @@ def test_effects_json_reports_the_F_test_and_per_level_estimates(tmp_path):
 
 
 def test_design_matrix_records_the_pseudo_factors_and_the_collapse(tmp_path):
-    res = run_synthetic_campaign(middle_level_best(), seed=1, parent_dir=tmp_path)
+    res = run_synthetic_campaign(five_knobs_with_a_categorical(), seed=1,
+                                 parent_dir=tmp_path,
+                                 campaign_overrides={"stages": ["verify", "screen", "confirm"]})
+    assert res.recommendation.get("POL") == "lfu"
     dm = json.loads((res.work_dir / "runs" / "iter-2" / "design_matrix.json").read_text())
+    assert dm["kind"] in ("mixed_fraction", "mixed_full")
     [cat] = dm["categoricals"]
     assert cat["factor"] == "POL" and cat["pseudo_factors"] == ["POL[1]", "POL[2]"]
     assert cat["collapsed"] is True
@@ -229,10 +233,22 @@ def test_the_front_covers_every_categorical_level(tmp_path, seed):
 # ── validator and preview ───────────────────────────────────────────────────
 
 
+def five_knobs_with_a_categorical() -> Surface:
+    """POL (3 levels) + four two-level numerics: the replacement fraction (32
+    corners at resolution V) is SMALLER than the level-space full factorial
+    (3 x 16 = 48), so the method of replacement is what runs."""
+    return Surface(
+        name="five_knobs_with_a_categorical", noise_sd=0.05,
+        factors=tuple(_numeric(x, levels=(2, 16)) for x in "ABDE")
+        + (_choice("POL", levels=("lru", "lfu", "arc")),),
+        fn=lambda lv: 10.0 + 0.1 * lv["A"] + {"lru": 0.0, "lfu": 2.0, "arc": 1.0}[lv["POL"]],
+    )
+
+
 def _camp(**design):
     from orchestrator.optimize.harness import synthetic_campaign
 
-    c = synthetic_campaign(middle_level_best())
+    c = synthetic_campaign(five_knobs_with_a_categorical())
     c["optimization"]["design"]["screen"].update(design)
     return c
 
@@ -241,7 +257,7 @@ def test_validator_rejects_screen_levels_on_a_multi_level_choice():
     from orchestrator.validate import validate_optimization_campaign
 
     c = _camp()
-    c["optimization"]["factors"][2]["screen_levels"] = ["lru", "arc"]
+    c["optimization"]["factors"][4]["screen_levels"] = ["lru", "arc"]
     errs = validate_optimization_campaign(c)
     assert any(not e.startswith("WARN") and "'POL'" in e and "every level" in e
                for e in errs), errs
@@ -253,16 +269,16 @@ def test_validator_names_the_expanded_columns_and_run_cost():
     errs = validate_optimization_campaign(_camp())
     msg = [e for e in errs if "'POL'" in e and "pseudo-factor" in e]
     assert msg and msg[0].startswith("WARN") and "2 pseudo-factor" in msg[0]
-    assert "16 runs" in msg[0] and "collaps" in msg[0]
+    assert "replacement fraction (32 runs" in msg[0] and "collaps" in msg[0]
 
 
 def test_rule8_prices_the_mixed_screen_not_the_two_level_one():
     from orchestrator.validate import validate_optimization_campaign
 
     c = _camp()
-    c["optimization"]["design"]["max_runs"] = 12   # mixed screen needs 16 corners
+    c["optimization"]["design"]["max_runs"] = 30   # mixed screen needs 32 corners
     errs = validate_optimization_campaign(c)
-    assert any("16 corners" in e and "method of replacement" in e for e in errs), errs
+    assert any("32 corners" in e and "method of replacement" in e for e in errs), errs
 
 
 def test_preview_shows_the_mixed_screen_its_columns_and_its_bound():
@@ -271,7 +287,7 @@ def test_preview_shows_the_mixed_screen_its_columns_and_its_bound():
     pv = build_preview(_camp(), noise_sd=0.05, mean=12.0, run_secs=[1.0])
     text = "\n".join(format_preview(pv))
     assert "method of replacement" in text and "POL" in text
-    assert "2 pseudo-factor" in text and "generalized resolution V" in text
+    assert "2 pseudo-factor" in text and "resolution V (factor-counted)" in text
 
 
 @pytest.mark.parametrize("make", [middle_level_best, five_levels_with_constraint,

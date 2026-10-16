@@ -108,7 +108,8 @@ def test_candidate_axis_is_exactly_the_declared_levels():
     f = parse_factors([_raw(levels_only=True, scale="log")])[0]
     axis = _axis(f)
     assert [lv for _c, lv in axis] == list(POW2)
-    assert [c for c, _lv in axis] == pytest.approx([code_actual(f, lv) for lv in POW2])
+    # log2 16..1024 = 4..10, centre 7, half-width 3: coded (k - 7) / 3.
+    assert [c for c, _lv in axis] == pytest.approx([-1, -2 / 3, -1 / 3, 0, 1 / 3, 2 / 3, 1])
 
 
 def test_refine_design_runs_only_declared_levels_and_codes_what_ran():
@@ -155,12 +156,12 @@ def test_without_levels_only_the_recommendation_is_off_set(tmp_path):
     """The gap this feature closes, measured: the interpolated axis cannot
     contain 256, so an ordinary gridded numeric recommends a value the knob
     does not take on every seed."""
-    off = 0
-    for seed in range(1, 5):
+    for seed in (1, 2, 3, 4):
         res = run_synthetic_campaign(_surface(levels_only=False), seed=seed,
                                      parent_dir=tmp_path / str(seed))
-        off += res.recommendation.get("N") not in POW2
-    assert off >= 1
+        # Measured: 215 (2^7.75, the nearest interpolated axis point) on every
+        # seed -- a value the knob does not take.
+        assert res.recommendation.get("N") == 215, (seed, res.recommendation)
 
 
 # ── schema, validator, preview ──────────────────────────────────────────────
