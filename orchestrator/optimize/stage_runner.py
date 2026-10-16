@@ -3845,6 +3845,35 @@ def run_stage(
             fitted_ids=fitted_ids, held_levels=non_identifiable_held,
             levels_by_pos=levels_by_pos,
         )
+    # ── the candidate space: enumerated, or searched above the cap ─────────
+    #
+    # Above `decide.CANDIDATE_CAP` the space is searched, not enumerated
+    # (`decide._scored`), and the search is seeded with every configuration
+    # this epoch measured -- the fitted rows and every other row on disk -- so
+    # the best MEASURED region is always a start. Multi-objective campaigns
+    # fit their objective models first so the search also climbs every
+    # objective and a spread of their weighted sums: the predicted front taken
+    # over `scored` then reaches its extremes and interior. Under the cap none
+    # of this changes a byte (`seed_levels`/`objectives` are unused there).
+    _seed_levels = [dict(lv) for lv in levels_by_pos if lv]
+    for _rp in _this_epoch_runs(work_dir):
+        _seed_levels += [dict(r["levels"]) for r in artifacts.read_runs(_rp.parent)
+                         if r.get("levels")]
+    _omodels = None
+    _search_objectives = ()
+    if pareto_stage.objectives(pol):
+        _omodels = cmodels.fit_objective_models(
+            [{"metric": o.metric, "direction": o.direction}
+             for o in pareto_stage.objectives(pol)],
+            design_run, _fit_records, fitted_ids=fitted_ids,
+            held_levels=non_identifiable_held, levels_by_pos=levels_by_pos,
+        )
+        _search_objectives = tuple(
+            (_omodels[o.metric].fit, o.direction)
+            for o in pareto_stage.objectives(pol)
+            if _omodels.get(o.metric) is not None
+            and _omodels[o.metric].fit is not None)
+    _search = {"seed_levels": _seed_levels}
     # `top=None` means "no truncation", so one call gives both the shortlist
     # and the size of the space it was chosen from. Ordering stays in `decide`
     # — re-deriving the argmax here would put the tie-break and the direction
@@ -3853,7 +3882,17 @@ def run_stage(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded, top=None,
         constraint_models=cmods, constraint_delta=delta_s,
+        objectives=_search_objectives, **_search,
     )
+    candidate_space = scored.space
+    if not candidate_space.exhaustive:
+        logger.warning(
+            "%s: the candidate space has %s configurations (> CANDIDATE_CAP=%d), "
+            "so it was SEARCHED, not enumerated: %d evaluated by %s (seed %s). "
+            "The recommendation is the best EVALUATED candidate, not a proven "
+            "argmax over X_valid.", stage_name, candidate_space.size,
+            decide.CANDIDATE_CAP, candidate_space.evaluated,
+            candidate_space.method, candidate_space.seed)
     # `top_candidates` is not only a human-readable "how close was the
     # runner-up" — it is the POOL `_confirm_rows` draws the terminal shortlist
     # from, including the round-r top-up after finalists are excluded. Capping
@@ -3892,12 +3931,6 @@ def run_stage(
     mo_lof: list[str] = []
     mo_survivors: set[str] = set()
     if pareto_stage.objectives(pol):
-        _omodels = cmodels.fit_objective_models(
-            [{"metric": o.metric, "direction": o.direction}
-             for o in pareto_stage.objectives(pol)],
-            design_run, _fit_records, fitted_ids=fitted_ids,
-            held_levels=non_identifiable_held, levels_by_pos=levels_by_pos,
-        )
         _pref_cand, mo_record = pareto_stage.fit_record(
             pol, scored=scored, omodels=_omodels, delta_s=delta_s,
             stage_name=stage_name, held_now=held_now,
@@ -3957,6 +3990,15 @@ def run_stage(
         fit, scored, rec, delta=pol["objective"]["delta_screen"],
         direction=direction,
     )
+    if not candidate_space.exhaustive:
+        # Above the cap the max in eq. (2) ran over the EVALUATED set only, so
+        # the number bounds the regret against those challengers -- not
+        # against every z in X_valid. Said where the number is, not elsewhere.
+        rb = dataclasses.replace(rb, detail=(
+            f"{rb.detail}; NOT over all of X_valid: max over the "
+            f"{len(scored)} evaluated valid candidate(s) of a "
+            f"{candidate_space.size}-configuration space searched by "
+            f"{candidate_space.method} (recommendation.json candidate_space)"))
     epsilon = certificate.resolve_epsilon(pol["objective"]["epsilon"], rec.predicted)
 
     # ── is the aliasing CONSEQUENTIAL? (spec §3.4, paper §Illustrative) ────
@@ -3977,13 +4019,13 @@ def run_stage(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded,
         epsilon_pct=float((pol["objective"]["epsilon"] or {}).get("pct", 2.0)),
-        constraint_models=cmods, constraint_delta=delta_s,
+        constraint_models=cmods, constraint_delta=delta_s, **_search,
     )
     constraint_record = _constraint_models_record(
         cmods,
         decide.ranked(
             fit, factors, direction=direction, fitted_ids=fitted_ids,
-            held_fixed=held_now, exclude_levels=excluded, top=None,
+            held_fixed=held_now, exclude_levels=excluded, top=None, **_search,
         ) if any(m.modelled for m in cmods) else [],
         rec, delta=delta_s,
     )
@@ -4057,6 +4099,12 @@ def run_stage(
         # by then, exactly as `model_adequate` is persisted for the same reason.
         **({"exclusion_balance": balance.as_dict()} if dropped else {}),
         **(mo_record or {}),
+        # Present only when the space was SEARCHED rather than enumerated
+        # (above `decide.CANDIDATE_CAP`): absence means the argmax, the
+        # shortlist, the regret bound and the predicted front were all taken
+        # over the whole valid space, exactly as before the search existed.
+        **({"candidate_space": candidate_space.as_dict()}
+           if not candidate_space.exhaustive else {}),
     })
     if alias_pairs_consequential:
         logger.info(
@@ -4076,7 +4124,9 @@ def run_stage(
         )
     logger.info(
         "%s: recommendation %s (predicted %s=%.6g) — argmax over %d valid "
-        "candidate(s), %d measured-infeasible configuration(s) excluded; "
+        "candidate(s)" + ("" if candidate_space.exhaustive else
+                          " (SEARCHED, not exhaustive)") + ", %d "
+        "measured-infeasible configuration(s) excluded; "
         "residual regret R_%.3g=%s vs epsilon=%.6g (%s)",
         stage_name, rec.levels, primary or "response", rec.predicted,
         len(scored), len(excluded), rb.delta,

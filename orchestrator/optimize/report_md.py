@@ -116,6 +116,41 @@ def _read_json(path: Path):
         return None
 
 
+def _candidate_space_note(work_dir: Path) -> list[str]:
+    """A note for every fitting stage whose candidate space was SEARCHED.
+
+    ``recommendation.json["candidate_space"]`` is written only above
+    ``decide.CANDIDATE_CAP``; an enumerated campaign gets no note (and its
+    report is unchanged). The fitted argmax, shortlist, model regret bound and
+    predicted front of such a stage are over the evaluated set only.
+    """
+    out = []
+    for p in sorted((work_dir / "runs").glob("iter-*/recommendation.json"),
+                    key=lambda q: int(q.parent.name.split("-")[1])):
+        cs = (_read_json(p) or {}).get("candidate_space")
+        if not isinstance(cs, dict) or cs.get("exhaustive", True):
+            continue
+        rec = _read_json(p) or {}
+        out.append(
+            f"- `{rec.get('stage', '?')}` ({p.parent.name}): {cs.get('evaluated')} of "
+            f"{cs.get('size')} configurations evaluated by `{cs.get('method')}` "
+            f"(seed {cs.get('seed')})")
+    if not out:
+        return []
+    return [
+        "> **Candidate space searched, not enumerated.** The fitted factors' "
+        "axes multiply to more candidates than `decide.CANDIDATE_CAP`, so the "
+        "model's argmax, its runners-up, the model regret bound and any "
+        "predicted front were taken over the configurations a seeded search "
+        "evaluated, not over every valid configuration. A better configuration "
+        "the search did not reach is possible; measured results (confirm, the "
+        "terminal bound) are unaffected.",
+        "",
+        *out,
+        "",
+    ]
+
+
 def _fmt(value) -> str:
     if isinstance(value, float):
         return f"{value:.6g}"
@@ -532,6 +567,7 @@ def render_report_markdown(work_dir: Path) -> str:
             f"`{r}` ({WITHHELD_MEANING.get(r, 'unrecognised reason')})"
             for r in withheld))
     lines.append("")
+    lines += _candidate_space_note(work_dir)
     if isinstance(report.get("pareto"), dict):
         lines += _front_section(work_dir, report)
         if not report.get("epoch_ended"):
