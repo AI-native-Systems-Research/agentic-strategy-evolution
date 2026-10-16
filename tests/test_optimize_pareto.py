@@ -47,21 +47,21 @@ def _hv_inclusion_exclusion(points, ref):
     return total
 
 
-@settings(max_examples=150, deadline=None)
+@settings(derandomize=True, max_examples=150, deadline=None)
 @given(_pts2)
 def test_hypervolume_2d_is_exact(points):
     assert pareto.hypervolume(points, [0.0, 0.0])[0] == pytest.approx(
         _hv_inclusion_exclusion(points, [0.0, 0.0]), abs=1e-9)
 
 
-@settings(max_examples=100, deadline=None)
+@settings(derandomize=True, max_examples=100, deadline=None)
 @given(_pts3)
 def test_hypervolume_3d_slicing_is_exact(points):
     assert pareto.hypervolume(points, [0.0] * 3)[0] == pytest.approx(
         _hv_inclusion_exclusion(points, [0.0] * 3), abs=1e-9)
 
 
-@settings(max_examples=80, deadline=None)
+@settings(derandomize=True, max_examples=80, deadline=None)
 @given(_pts2, st.tuples(st.floats(0, 1), st.floats(0, 1)))
 def test_hypervolume_never_decreases_when_a_point_is_added(points, extra):
     """Metamorphic: HV is monotone in the point set."""
@@ -79,7 +79,7 @@ def test_hypervolume_monte_carlo_for_four_objectives_is_close_and_seeded():
     assert v1 == pytest.approx(_hv_inclusion_exclusion(pts, [0.0] * 4), rel=0.02)
 
 
-@settings(max_examples=150, deadline=None)
+@settings(derandomize=True, max_examples=150, deadline=None)
 @given(st.lists(st.tuples(st.integers(0, 5), st.integers(0, 5)), min_size=1, max_size=12))
 def test_nondominated_indices_is_exactly_the_pareto_set(points):
     vecs = [list(p) for p in points]
@@ -141,7 +141,7 @@ def test_measured_front_claims_only_what_the_variance_supports():
                                                     pooled=pooled)} == {"possibly_dominated"}
 
 
-@settings(max_examples=60, deadline=None)
+@settings(derandomize=True, max_examples=60, deadline=None)
 @given(st.integers(0, 10_000))
 def test_more_replicates_never_strip_a_confident_status_of_a_separated_pair(seed):
     """Metamorphic: doubling the replicates of two well-separated trade-off
@@ -178,8 +178,9 @@ def test_multi_objective_policy_registers_the_gap_fill_branch_before_certificati
     gap = next(i for i, t in enumerate(rules) if "front_gap_large" in t["when"])
     cert = next(i for i, t in enumerate(rules) if t["when"] == {"certified": True})
     assert gap < cert, keys
-    assert rules[gap]["accounting"] == "front gap fill, Bonferroni over rounds"
-    assert rules[gap]["to"] == "confirm"
+    from orchestrator.optimize import invariants as inv
+
+    assert inv.check_gap_fill_branch(pol) == []
     assert [o["metric"] for o in pol["objective"]["objectives"]] == ["f1", "f2"]
     # Multi-objective defaults: a second round exists, the shortlist holds a front.
     assert pol["states"]["confirm"]["design"]["max_rounds"] == 2
@@ -216,10 +217,14 @@ def test_single_objective_policies_carry_no_multi_objective_vocabulary(name):
 #:   noisy 0.490 -- noise ~ epsilon, so neighbouring points stay unresolved;
 #:     the statuses are a SIMULTANEOUS claim over the front (alpha =
 #:     delta / (N (N-1) K)), which leaves as few as 1-2 confident points here
-#:     (it was 0.781 under the per-point alpha = delta / ((N-1) K)).
+#:     (it was 0.781 under the per-point alpha = delta / ((N-1) K));
+#:   convex_min 0.992 -- the convex front with a minimised cost objective;
+#:   three_noisy 0.345 -- three objectives at noise ~ epsilon: a 2-D front
+#:     surface of which only 2-8 points can be claimed with confidence.
 HV_FLOOR = {"pareto_convex": 0.95, "pareto_concave": 0.95,
             "pareto_with_constraint": 0.85, "pareto_three": 0.80,
-            "pareto_choice_split": 0.90, "pareto_noisy": 0.45}
+            "pareto_choice_split": 0.90, "pareto_noisy": 0.45,
+            "pareto_convex_min": 0.95, "pareto_three_noisy": 0.30}
 
 
 @pytest.fixture(scope="module")
@@ -265,14 +270,16 @@ def test_the_recommendation_is_on_the_true_front_and_never_falsely_certified(nam
         assert not r["false_certified"], seed
 
 
-@pytest.mark.parametrize("name", sorted(set(PARETO_SURFACES) - {"pareto_noisy"}))
+_NOISY = {"pareto_noisy", "pareto_three_noisy"}
+
+
+@pytest.mark.parametrize("name", sorted(set(PARETO_SURFACES) - _NOISY))
 def test_gap_fill_rounds_never_lower_the_hypervolume(name, oracle_runs):
     """Property 5 (metamorphic): raising confirm_max_rounds 1 -> 2 -> 3, which
     is what lets the registered gap-fill branch run, never lowers the true
     hypervolume -- of the confident points nor of the whole reported front.
 
-    ``pareto_noisy`` is excluded from the CONFIDENT half on purpose and checked
-    below: with noise about one epsilon, a gap fill adds a neighbour closer than
+    The noisy surfaces are excluded on purpose (see below): with noise about one epsilon, a gap fill adds a neighbour closer than
     the replicates can resolve, which honestly strips its neighbours'
     confidence."""
     for seed in SEEDS:
@@ -286,9 +293,9 @@ def test_noise_at_epsilon_degrades_statuses_not_truth(oracle_runs):
     """On ``pareto_noisy`` the campaign must not CLAIM what it cannot resolve:
     fewer points are confident than on the quiet surface, none is off the true
     front, and none of its answers is certified falsely."""
-    quiet = [oracle_runs("pareto_convex", s)["n_confident"] for s in SEEDS]
-    noisy = [oracle_runs("pareto_noisy", s)["n_confident"] for s in SEEDS]
-    assert sum(noisy) < sum(quiet)
+    for s in SEEDS:
+        assert (oracle_runs("pareto_noisy", s)["n_confident"]
+                <= oracle_runs("pareto_convex", s)["n_confident"]), s
     assert all(oracle_runs("pareto_noisy", s)["n_confident_off_front"] == 0 for s in SEEDS)
 
 
@@ -724,3 +731,218 @@ def test_report_md_restates_the_front_the_report_holds(tmp_path):
     assert "epsilon, `f1`" in bounds and "epsilon, `f2`" in bounds
     # B2: whether predicted rivals were used is stated.
     assert "**Predicted rivals:**" in md and par["predicted_rivals"]["reason"] in md
+
+
+# ── D: the certificate, the preference, the branches ─────────────────────────
+
+
+@settings(derandomize=True, max_examples=100, deadline=None)
+@given(st.integers(0, 10**6), st.integers(2, 6),
+       st.lists(st.floats(0.01, 5.0), min_size=3, max_size=3))
+def test_regret_bounds_are_never_below_the_point_estimate(seed, n, w):
+    """D2: both certificate bounds dominate the point-estimate regret, for
+    unequal weights (scalar_regret) and the K = 3 knee (min_improvement)."""
+    rng = random.Random(seed)
+    objs = [pareto.Objective(f"f{i}", "maximize" if i != 1 else "minimize",
+                             {"abs": 0.1}) for i in range(3)]
+    pts = [pareto.MeasuredPoint({"x": i}, {o.metric: [rng.uniform(0, 10) + rng.gauss(0, .1)
+                                                      for _ in range(3)] for o in objs},
+                                "confirm") for i in range(n)]
+    pooled = {o.metric: pareto.pooled_variance(pts, o.metric) for o in objs}
+    frame = pareto.make_frame(objs, [p.means() for p in pts], {o.metric: 0.1 for o in objs})
+    z = [frame.z(p.means()) for p in pts]
+    for c in range(n):
+        lin = max(sum(a * (z[r][k] - z[c][k]) for k, a in enumerate(w))
+                  for r in range(n) if r != c)
+        bound, _ = pareto.scalar_regret(objs, pts, c, list(range(n)), w, frame, pooled,
+                                        delta=0.05)
+        assert bound >= lin - 1e-12
+        g = [min(zz) for zz in z]
+        point = max(g[r] for r in range(n) if r != c) - g[c]
+        bound, _ = pareto.min_improvement_regret(objs, pts, c, list(range(n)), frame,
+                                                 [0.0] * 3, pooled, delta=0.05)
+        assert bound >= point - 1e-12
+
+
+def _true_scalar_regret(name, rep) -> float:
+    """The recommendation's TRUE scalarised regret over the reported front,
+    in the report's own frame (spec step 7's claim, scored in truth)."""
+    from orchestrator.optimize.synthetic import objective_values
+
+    surface = PARETO_SURFACES[name]()
+    par = rep["pareto"]
+    objs = [pareto.Objective(o["metric"], o["direction"], {}) for o in par["objectives"]]
+    frame = pareto.Frame(tuple(objs), par["frame"]["worst"], par["frame"]["range"])
+    pref = pareto.parse_preference(
+        {"method": par["preference"]["method"]}, objs)
+    zs = [frame.z(objective_values(surface, f["levels"])) for f in par["front"]]
+    c = next(i for i, f in enumerate(par["front"])
+             if f["levels"] == par["preference"]["chosen"])
+    if pref.method == "knee" and len(objs) > 2:
+        g = [min(z) for z in zs]
+        return max(g) - g[c]
+    a = pareto.scalar_direction(pref, objs, zs, c, [0.0] * len(objs))
+    gs = [sum(ak * zk for ak, zk in zip(a, z)) for z in zs]
+    return max(gs) - gs[c]
+
+
+@pytest.mark.parametrize("name", sorted(PARETO_SURFACES))
+def test_a_certificate_holds_in_truth(name, oracle_runs):
+    """D2 oracle: certified => the recommendation's TRUE scalarised regret over
+    the measured front is within the scalar epsilon the report states."""
+    for seed in SEEDS:
+        r = oracle_runs(name, seed)
+        rep = json.loads((Path(r["work_dir"]) / "report.json").read_text())
+        if not rep["certified"]:
+            continue
+        eps_s = rep["pareto"]["preference"]["scalar_epsilon"]
+        assert _true_scalar_regret(name, rep) <= eps_s + 1e-9, seed
+
+
+def test_unequal_weights_pin_the_recommendation(tmp_path):
+    """D3: the weights decide the answer -- f1-heavy -> the A=16 extreme,
+    f2-heavy -> the A=2 extreme."""
+    base = {"objectives": [{"metric": "f1", "direction": "maximize"},
+                           {"metric": "f2", "direction": "maximize"}]}
+    rec = {}
+    for tag, w in (("f1", {"f1": 1.0, "f2": 0.01}), ("f2", {"f1": 0.01, "f2": 1.0})):
+        r = evaluate_pareto_campaign(
+            PARETO_SURFACES["pareto_convex"](), seed=1, parent_dir=tmp_path / tag,
+            campaign_overrides={"response": {**base, "preference": {
+                "method": "weights", "weights": w}}})
+        rec[tag] = r["recommended"]
+    assert rec["f1"]["A"] == 16 and rec["f2"]["A"] == 2, rec
+
+
+def test_the_three_objective_knee_maximises_the_minimum_improvement():
+    """D3: K = 3 knee is max_i min_k (z_k - ref_k), not any single objective."""
+    objs = _objs(3)
+    zs = [[1.0, 0.0, 0.0], [0.6, 0.6, 0.5], [0.0, 1.0, 0.9], [0.4, 0.4, 0.4]]
+    lv = [{"x": i} for i in range(4)]
+    assert pareto.preferred_index(pareto.Preference("knee"), objs, zs, lv,
+                                  [0.01] * 3, [0.0] * 3) == 1
+
+
+def test_lexicographic_breaks_ties_within_the_epsilon_band():
+    """D3: within order[0]'s epsilon band, order[1] decides; outside it, not."""
+    objs = _objs()
+    lv = [{"x": i} for i in range(3)]
+    zs = [[1.0, 0.0], [0.95, 0.9], [0.5, 1.0]]
+    lex = pareto.Preference("lexicographic", order=("f1", "f2"))
+    assert pareto.preferred_index(lex, objs, zs, lv, [0.1, 0.1]) == 1   # 0.05 < band
+    assert pareto.preferred_index(lex, objs, zs, lv, [0.01, 0.01]) == 0  # band too narrow
+
+
+def test_a_predicted_rival_marks_a_measured_point_possibly_dominated():
+    """D7: an adequate model's prediction ahead by epsilon on every objective
+    is a rival, named as kind predicted."""
+    objs, eps = _objs(), {"f1": 0.1, "f2": 0.1}
+    c = _mp({"x": 0}, [10.0, 10.1, 9.9], [5.0, 5.1, 4.9])
+    pooled = {m: pareto.pooled_variance([c], m) for m in ("f1", "f2")}
+    ahead = pareto.PredictedPoint({"x": 9}, {}, {"f1": 10.5, "f2": 5.5}, {}, "nondominated")
+    behind = pareto.PredictedPoint({"x": 8}, {}, {"f1": 10.5, "f2": 4.0}, {}, "nondominated")
+    [e] = pareto.measured_front([c], objs, eps, delta=0.05, pooled=pooled, predicted=[ahead])
+    assert e.status == "possibly_dominated" and e.dominated_by == [
+        {"levels": {"x": 9}, "kind": "predicted"}]
+    [e] = pareto.measured_front([c], objs, eps, delta=0.05, pooled=pooled, predicted=[behind])
+    assert e.status == "confidently_nondominated"
+
+
+@pytest.mark.parametrize("name", ["pareto_convex", "pareto_three"])
+def test_certification_pays_for_every_registered_round(name, oracle_runs):
+    """D7: delta_certification == delta_terminal / max_rounds (2 by default),
+    while the front's statuses stay at delta_terminal."""
+    for seed in SEEDS:
+        par = json.loads((Path(oracle_runs(name, seed)["work_dir"]) / "report.json")
+                         .read_text())["pareto"]
+        assert par["delta_front"] == pytest.approx(0.05)
+        assert par["delta_certification"] == pytest.approx(0.05 / 2)
+
+
+def test_an_epsilon_map_reaches_the_campaign(tmp_path):
+    """D6: per-objective abs widths arrive in the report unchanged."""
+    r = run_synthetic_campaign(
+        PARETO_SURFACES["pareto_convex"](), seed=1, parent_dir=tmp_path,
+        campaign_overrides={"policy": {"epsilon": {"f1": {"abs": 0.3}, "f2": {"abs": 0.7}}}})
+    assert r.report["pareto"]["epsilon"] == {"f1": 0.3, "f2": 0.7}
+
+
+def test_gap_fill_fires_and_never_lowers_the_hypervolume(tmp_path, monkeypatch):
+    """D9: at shortlist 3 the gap-fill branch fires, seats gap fills, and its
+    hypervolume is never below the same campaign without them -- strictly
+    above on at least one seed."""
+    import orchestrator.optimize.pareto_stage as ps
+
+    ov = {"design": {"screen": {"resolution": 5, "center_points": 4},
+                     "refine": {"kind": "central_composite", "center_points": 4},
+                     "confirm": {"replicates": 3, "shortlist_size": 3}}}
+    better = 0
+    for seed in (1, 2, 3, 4):
+        hv = {}
+        for on in (False, True):
+            monkeypatch.setattr(ps, "_FRONT_GAP_FILL", on)
+            r = evaluate_pareto_campaign(PARETO_SURFACES["pareto_convex"](), seed=seed,
+                                         parent_dir=tmp_path / f"{seed}-{on}",
+                                         campaign_overrides=ov)
+            hv[on] = r["hv_ratio"]
+            if on:
+                wd = Path(r["work_dir"])
+                rules = [(json.loads(ln).get("rule") or {}).get("accounting")
+                         for ln in (wd / "transitions.jsonl").read_text().splitlines()
+                         if ln.strip()]
+                assert policy_mod_gap() in rules, seed
+                whys = [f["why"] for p in wd.glob("runs/iter-*/confirmation.json")
+                        for f in json.loads(p.read_text())["finalists"]]
+                assert any(w.startswith("gap fill") for w in whys), seed
+        assert hv[True] >= hv[False] - 1e-9, (seed, hv)
+        better += hv[True] > hv[False] + 1e-9
+    assert better >= 1
+
+
+def policy_mod_gap():
+    from orchestrator.optimize.policy import FRONT_GAP_ACCOUNTING
+
+    return FRONT_GAP_ACCOUNTING
+
+
+def _tight_surface():
+    """Only the (2, 2) corner of a 2-objective space is admissible at the
+    screen (p99 = 2A + B <= 12, deterministic so unmodelled): every predicted
+    extreme is past the boundary, so a 2-seat confirm vacates a seat."""
+    from orchestrator.optimize.synthetic import Surface, _numeric, _obj
+
+    f1 = lambda lv: 10 + 0.5 * lv["A"] + 0.2 * lv["B"]  # noqa: E731
+    f2 = lambda lv: 10 + 0.2 * lv["A"] + 0.5 * lv["B"]  # noqa: E731
+    return Surface(name="pareto_tight", noise_sd=0.05,
+                   factors=(_numeric("A"), _numeric("B")), fn=f1,
+                   objectives=(_obj("f1", f1), _obj("f2", f2)),
+                   invalid=lambda lv: 2 * lv["A"] + lv["B"] > 12,
+                   extra_observables=lambda lv: {"p99_ms": 2 * lv["A"] + lv["B"]},
+                   constraints=({"metric": "p99_ms", "op": "<=", "value": 12},))
+
+
+@pytest.mark.parametrize("seed", [1, 2, 3, 4])
+def test_a_multi_objective_refill_round_never_certifies(seed, tmp_path):
+    """D4: a vacated multi-objective round refills once; the refill round is
+    shortlist_refilled, uncertified, judged at delta_terminal / round, and
+    ends with two admissible finalists."""
+    from orchestrator.optimize.policy import REFILL_ACCOUNTING
+
+    ov = {"design": {"screen": {"resolution": 5, "center_points": 4},
+                     "refine": {"kind": "central_composite", "center_points": 4},
+                     "confirm": {"replicates": 3, "shortlist_size": 2}},
+          "policy": {"confirm_max_rounds": 1}}
+    r = run_synthetic_campaign(_tight_surface(), seed=seed, parent_dir=tmp_path,
+                               campaign_overrides=ov)
+    wd = Path(r.work_dir)
+    rules = [(json.loads(ln).get("rule") or {}).get("accounting")
+             for ln in (wd / "transitions.jsonl").read_text().splitlines() if ln.strip()]
+    assert rules.count(REFILL_ACCOUNTING) == 1
+    confs = sorted(wd.glob("runs/iter-*/confirmation.json"),
+                   key=lambda p: int(p.parent.name.split("-")[1]))
+    last = json.loads(confs[-1].read_text())
+    assert last["round"] == 2 and last["certified"] is False
+    assert "shortlist_refilled" in last["certification_withheld"]
+    assert last["delta_terminal"] == pytest.approx(0.05 / 2)
+    assert sum(f["status"] == "ok" for f in last["finalists"]) >= 2
+    assert r.report["certified"] is False

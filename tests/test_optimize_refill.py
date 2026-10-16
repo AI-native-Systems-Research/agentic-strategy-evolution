@@ -84,11 +84,53 @@ def test_the_refill_never_certifies_falsely_on_a_stochastic_boundary(tmp_path, m
 
 
 def test_the_refill_is_capped_at_one_round_whatever_the_round_cap(tmp_path, monkeypatch):
-    ov = {**SLA, "policy": {"confirm_max_rounds": 3}}
-    for seed in (1, 4):
-        res = _run("sla", seed, ov, tmp_path, refill=True, monkeypatch=monkeypatch)
-        assert _refills(res.work_dir) <= 1
-        assert len(_confirmations(res.work_dir)) <= 4
+    """D5: on ``stochastic_constraint_boundary`` the refill round ITSELF
+    vacates seats again on most seeds, so a cap that is not enforced would
+    refill again. Exactly one refill wherever it fires, at round cap 1 and 3."""
+    for rounds in (1, 3):
+        ov = {**STOCH, "policy": {"confirm_max_rounds": rounds}}
+        fired = 0
+        for seed in SEEDS:
+            res = _run("stochastic_constraint_boundary", seed, ov, tmp_path / str(rounds),
+                       refill=True, monkeypatch=monkeypatch)
+            n = _refills(res.work_dir)
+            assert n <= 1, (rounds, seed, n)
+            fired += n
+        assert fired >= 4, (rounds, fired)
+
+
+def test_the_refill_round_never_certifies_and_halves_delta(tmp_path, monkeypatch):
+    """D4 (single-objective): on sla seeds 1-8 the refill round is withheld as
+    shortlist_refilled, and its terminal delta is delta_terminal / round."""
+    for seed in SEEDS:
+        res = _run("sla", seed, SLA, tmp_path, refill=True, monkeypatch=monkeypatch)
+        last = _confirmations(res.work_dir)[-1]
+        assert last["round"] == 2 and last["certified"] is False, seed
+        assert "shortlist_refilled" in last["certification_withheld"], seed
+        assert last["delta_terminal"] == pytest.approx(0.05 / 2), seed
+
+
+def test_the_refill_pool_never_offers_a_measured_inadmissible_configuration(
+        tmp_path, monkeypatch):
+    """D10, on the candidate list itself (``_add`` would also refuse them, so a
+    seat-level check cannot see a pool that offers them -- but
+    refill_available would then fire a refill with nothing new to measure)."""
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import (
+        _measured_infeasible,
+        _measured_infeasible_contains,
+        _refill_candidates,
+    )
+
+    for seed in (1, 2, 3):
+        res = _run("stochastic_constraint_boundary", seed, STOCH, tmp_path,
+                   refill=True, monkeypatch=monkeypatch)
+        factors = parse_factors(list(SURFACES["stochastic_constraint_boundary"]().factors))
+        cands = _refill_candidates(res.work_dir, factors)
+        invalid = _measured_infeasible(res.work_dir)
+        assert invalid
+        assert not any(_measured_infeasible_contains(res.work_dir, c, invalid=invalid)
+                       for c in cands), seed
 
 
 def _strip(o):

@@ -757,7 +757,7 @@ _SUPPORTED_FEASIBLE_SEAT = True
 _INFEASIBLE_FINALIST_CAVEAT = False
 
 #: How deep into the constraint-filtered ranking the refill pool reaches.
-_REFILL_POOL = 64
+_REFILL_POOL = 256
 
 #: Row statuses whose PRIMARY metric enters the primary fit (INV-STAT15).
 #:

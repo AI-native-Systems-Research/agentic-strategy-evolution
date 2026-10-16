@@ -479,6 +479,11 @@ SURFACES: dict[str, Callable[[], Surface]] = {
 #     branches (C=off owns the high-f2 half, C=on the high-f1 half). Refine holds
 #     C at one level, so a campaign that forgets the other branch reports half a
 #     front; catches exactly that.
+#   * ``pareto_convex_min`` -- the convex front with a MINIMISED cost
+#     objective: catches a sign or a normalisation frame that assumes
+#     maximisation.
+#   * ``pareto_three_noisy`` -- three objectives at noise ~ epsilon: the K > 2
+#     certificate (min-improvement regret) under real uncertainty.
 #   * ``pareto_noisy`` -- the convex front at noise 0.25, i.e. about one
 #     epsilon: neighbouring front points are NOT separable by a few replicates,
 #     so a point-estimate front would misreport dominance. Catches confidence
@@ -527,14 +532,29 @@ def _pareto_with_constraint() -> Surface:
                    noisy_observables=lambda lv, rng: {"load": load(lv) + rng.gauss(0.0, 0.3)})
 
 
-def _pareto_three() -> Surface:
+def _pareto_three(name: str = "pareto_three", noise_sd: float = 0.05) -> Surface:
     f1 = lambda lv: 10.0 + 3.0 * _unit(lv, "A") + 0.5 * _unit(lv, "C")  # noqa: E731
     f2 = lambda lv: 10.0 + 3.0 * _unit(lv, "B") + 0.5 * _unit(lv, "C")  # noqa: E731
     f3 = lambda lv: (14.0 - 2.0 * _unit(lv, "A") ** 2 - 2.0 * _unit(lv, "B") ** 2  # noqa: E731
                      + 0.5 * _unit(lv, "C"))
-    return Surface(name="pareto_three", noise_sd=0.05,
+    return Surface(name=name, noise_sd=noise_sd,
                    factors=(_numeric("A"), _numeric("B"), _numeric("C")), fn=f1,
-                   objectives=(_obj("f1", f1), _obj("f2", f2), _obj("f3", f3)))
+                   objectives=(_obj("f1", f1, noise_sd=noise_sd),
+                               _obj("f2", f2, noise_sd=noise_sd),
+                               _obj("f3", f3, noise_sd=noise_sd)))
+
+
+def _pareto_convex_min() -> Surface:
+    """``pareto_convex`` with its second objective turned into a COST to
+    minimise (``cost = 30 - f2``): the same front, mirrored. Every oracle runs
+    over it, so a sign or frame error on a minimised objective fails them."""
+    base = _pareto_convex(name="pareto_convex_min")
+    f1, f2 = base.objectives
+    fn2 = f2["fn"]
+    cost = {**f2, "metric": "cost", "direction": "minimize",
+            "fn": lambda lv: 30.0 - fn2(lv)}
+    return Surface(name="pareto_convex_min", noise_sd=base.noise_sd,
+                   factors=base.factors, fn=base.fn, objectives=(f1, cost))
 
 
 def _pareto_choice_split() -> Surface:
@@ -556,6 +576,8 @@ PARETO_SURFACES: dict[str, Callable[[], Surface]] = {
     "pareto_three": _pareto_three,
     "pareto_choice_split": _pareto_choice_split,
     "pareto_noisy": lambda: _pareto_convex(name="pareto_noisy", noise_sd=0.25),
+    "pareto_convex_min": lambda: _pareto_convex_min(),
+    "pareto_three_noisy": lambda: _pareto_three(name="pareto_three_noisy", noise_sd=0.25),
 }
 
 
