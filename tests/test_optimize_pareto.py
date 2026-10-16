@@ -968,3 +968,73 @@ def test_scalar_direction_is_the_declared_weights():
     assert pareto.scalar_direction(pref, objs, [[0, 0, 0]], 0) == [2.0, 0.5, 0.1]
     assert pareto.scalar_epsilon(pref, objs, [0.1, 0.2, 0.3]) == pytest.approx(
         2.0 * 0.1 + 0.5 * 0.2 + 0.1 * 0.3)
+
+
+# ── re-review fixes (second pass) ────────────────────────────────────────────
+
+def _mo_campaign(**response_extra):
+    from orchestrator.optimize.harness import synthetic_campaign
+
+    base = {"objectives": [{"metric": "f1", "direction": "maximize"},
+                           {"metric": "f2", "direction": "maximize"}]}
+    return synthetic_campaign(PARETO_SURFACES["pareto_convex"](),
+                              response={**base, **response_extra})
+
+
+@pytest.mark.parametrize("response_extra,policy", [
+    ({"preference": {"method": "weights", "weights": {"f1": 1, "F1": 5, "f2": 1}}}, None),
+    ({}, {"epsilon": {"f1": {"abs": 0.5}, " F1": {"abs": 9.0}, "f2": {"abs": 1.0}}}),
+    ({"noise_estimate_pct": {"f1": 2.0, "F1 ": 3.0, "f2": 2.0}}, None),
+])
+def test_two_spellings_of_one_objective_are_rejected_not_resolved(response_extra, policy):
+    from orchestrator.validate import validate_optimization_campaign
+
+    camp = _mo_campaign(**response_extra)
+    if policy:
+        camp["optimization"]["policy"] = policy
+    errors = validate_optimization_campaign(camp)
+    assert any("names one objective more than once" in e for e in errors), errors
+
+
+def _confirm_rows(levels, values):
+    return [json.dumps({"levels": levels, "status": "complete", "role": "confirm",
+                        "response": v}) for v in values]
+
+
+def test_one_bad_replicate_does_not_unmeasure_a_configuration(tmp_path):
+    """A bad confirm row is recorded; the configuration is still measured on
+    its clean replicates, and only a configuration with NO usable row on some
+    objective is dropped (and would block certification)."""
+    from orchestrator.optimize import pareto
+    from orchestrator.optimize.pareto_stage import measured_points_and_incomplete
+
+    objs = [pareto.Objective("f1", "maximize", {"abs": 0.1}),
+            pareto.Objective("f2", "maximize", {"abs": 0.1})]
+    it = tmp_path / "runs" / "iter-3"
+    it.mkdir(parents=True)
+    ok, bad = {"A": 1}, {"A": 2}
+    rows = (_confirm_rows(ok, [{"f1": 1.0, "f2": float("inf")},
+                               {"f1": 1.1, "f2": 2.0}, {"f1": 0.9, "f2": 2.2}])
+            + _confirm_rows(bad, [{"f1": 3.0, "f2": float("inf")}] * 2))
+    (it / "runs.jsonl").write_text("\n".join(rows) + "\n")
+    pts, excluded = measured_points_and_incomplete(tmp_path, objs)
+    assert [p.levels for p in pts] == [ok] and pts[0].n("f2") == 2
+    by = {json.dumps(x["levels"]): x for x in excluded}
+    assert by[json.dumps(ok)]["dropped"] is False
+    assert by[json.dumps(bad)]["dropped"] is True and by[json.dumps(bad)]["missing"] == ["f2"]
+
+
+def test_the_confirm_summary_logs_when_the_hypervolume_is_undefined(tmp_path, caplog):
+    """B3 made the hypervolume null when nothing is confident; the round's
+    INFO summary must still be written, not raise inside logging."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="orchestrator.optimize.stage_runner"):
+        # pareto_three_noisy seed 5: its final round has no confident point,
+        # so the hypervolume is null (searched; seeds 5 and 8 do this).
+        r = run_synthetic_campaign(PARETO_SURFACES["pareto_three_noisy"](), seed=5,
+                                   parent_dir=tmp_path)
+    hvs = [json.loads(p.read_text())["pareto"]["hypervolume"]["value"]
+           for p in Path(r.work_dir).glob("runs/iter-*/confirmation.json")]
+    assert None in hvs, "precondition: some round's hypervolume is undefined"
+    assert any("measured front of" in rec.getMessage() for rec in caplog.records)

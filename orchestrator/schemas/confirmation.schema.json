@@ -504,10 +504,14 @@
               },
               "source": {
                 "type": "string"
+              },
+              "dropped": {
+                "type": "boolean",
+                "description": "true: no usable row remains on some objective, so the configuration is left out of the front (a confirm finalist among these is unmeasured and blocks certification). false: only some rows were unusable; the configuration is measured on its usable rows."
               }
             }
           },
-          "description": "Measured admissible configurations left out of the front because a complete row lacked a usable value for some objective (missing, null, NaN or non-numeric). A confirm finalist among them is unmeasured and blocks certification."
+          "description": "Measured admissible configurations with a complete row that lacked a usable value for some objective (missing, null, NaN or non-numeric). See `dropped` for whether the configuration itself left the front."
         },
         "front_gap_large": {
           "type": "boolean"

@@ -2090,6 +2090,26 @@ def _rule26_objectives(opt: dict) -> list[str]:
                     f"optimization.response.noise_estimate_pct.{k}: {k!r} is "
                     f"not an objective metric ({', '.join(metrics)})."
                 )
+    # Two keys that fold to ONE objective: the runtime resolves keys to the
+    # declared names, so one of the two values would silently win (or, with
+    # no exact match, both would be dropped for the default).
+    for where, mapping in (("optimization.response.preference.weights",
+                            pref.get("weights") if isinstance(pref, dict) else None),
+                           ("optimization.policy.epsilon", eps if is_epsilon_map(eps) else None),
+                           ("optimization.response.noise_estimate_pct", noise)):
+        if not isinstance(mapping, dict):
+            continue
+        groups: dict = {}
+        for k in mapping:
+            groups.setdefault(_norm_metric(k), []).append(k)
+        for keys in groups.values():
+            if len(keys) > 1:
+                errors.append(
+                    f"{where} names one objective more than once "
+                    f"({', '.join(repr(k) for k in sorted(keys, key=str))}): keys "
+                    f"are matched ignoring case and surrounding spaces, so only "
+                    f"one value could apply. Keep exactly one."
+                )
     return errors
 
 

@@ -6013,7 +6013,7 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
     eps_unknown = bool(par.get("epsilon_unknown")) or eps_s is None
     # A finalist measured on objective 1 but not on another objective is
     # UNMEASURED here, like a timed-out one (pareto.excluded_incomplete).
-    incomplete = any(x.get("source") == "confirm"
+    incomplete = any(x.get("source") == "confirm" and x.get("dropped", True)
                      for x in par.get("excluded_incomplete") or [])
     certified = bool(pref["chosen"]) and chosen_ok and within and not unmeasured \
         and not infeasible_veto and not fit_bias and not model_inadequate \
@@ -6045,8 +6045,8 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
     logger.info(
         "confirm round %s: measured front of %d point(s) (%d confidently "
         "nondominated) over %d admissible configuration(s); preferred (%s) %s "
-        "[%s], scalar regret %s vs epsilon %s, hypervolume %.4g; largest gap "
-        "%s (threshold %.3g) -> %s", summary.get("round"), len(par["front"]),
+        "[%s], scalar regret %s vs epsilon %s, hypervolume %s; largest gap "
+        "%s (threshold %s) -> %s", summary.get("round"), len(par["front"]),
         sum(1 for f in par["front"] if f["status"] == "confidently_nondominated"),
         par["n_measured_configurations"], pref["method"], pref["chosen"],
         pref["chosen_status"], reg, eps_s, par["hypervolume"]["value"],

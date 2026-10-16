@@ -398,10 +398,16 @@ def _front_section(work_dir: Path, report: dict) -> list[str]:
         f"- **Confirm rounds:** {_fmt(par.get('rounds'))}.",
     ]
     excl = par.get("excluded_incomplete") or []
-    if excl:
+    gone = [x for x in excl if x.get("dropped", True)]
+    rows_only = [x for x in excl if not x.get("dropped", True)]
+    if gone:
         lines.append("- **Left out for an incomplete measurement:** " + "; ".join(
             f"{_fmt_levels(x.get('levels'))} (missing {', '.join(x.get('missing') or []) or 'a usable value'}"
-            f", {x.get('source', '')})" for x in excl) + ".")
+            f", {x.get('source', '')})" for x in gone) + ".")
+    if rows_only:
+        lines.append("- **Rows left out, configuration still measured:** " + "; ".join(
+            f"{_fmt_levels(x.get('levels'))} (a row missing "
+            f"{', '.join(x.get('missing') or []) or 'a usable value'})" for x in rows_only) + ".")
     gaps = par.get("gaps_remaining") or []
     if gaps and par.get("gap_threshold") is None:
         lines.append("- **Gaps:** no objective's epsilon is known, so no gap can be "
@@ -427,7 +433,7 @@ def _front_next_steps(work_dir: Path, report: dict) -> list[str]:
     if not front:
         # B5: nothing to refine -- say why nothing was admissible.
         n = par.get("n_measured_configurations")
-        excl = par.get("excluded_incomplete") or []
+        excl = [x for x in par.get("excluded_incomplete") or [] if x.get("dropped", True)]
         why = []
         if excl:
             why.append(f"{len(excl)} configuration(s) were left out because a row "

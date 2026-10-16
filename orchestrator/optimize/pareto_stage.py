@@ -149,14 +149,22 @@ def measured_points_and_incomplete(work_dir, objs) -> tuple[list[MeasuredPoint],
     out, excluded = [], []
     for key, p in pts.items():
         if p.source == "confirm":
-            if missing[key]["confirm"] or not all(fresh[key][o.metric] for o in objs):
+            # Judged on its USABLE confirm rows, like a fitting-stage point: a
+            # bad replicate is recorded, and later clean replicates still
+            # measure the configuration. Only a configuration with no usable
+            # confirm row on some objective is DROPPED (and, as a finalist,
+            # blocks certification).
+            usable = all(fresh[key][o.metric] for o in objs)
+            if missing[key]["confirm"] or not usable:
                 excluded.append({"levels": dict(p.levels), "source": "confirm",
-                                 "missing": sorted(missing[key]["confirm"])})
+                                 "missing": sorted(missing[key]["confirm"]),
+                                 "dropped": not usable})
+            if not usable:
                 continue
             p.samples = fresh[key]
         elif not all(p.samples[o.metric] for o in objs):
             excluded.append({"levels": dict(p.levels), "source": p.source,
-                             "missing": sorted(missing[key]["fit"])})
+                             "missing": sorted(missing[key]["fit"]), "dropped": True})
             continue
         out.append(p)
     return out, excluded

@@ -603,7 +603,7 @@ def measured_front(points: list[MeasuredPoint], objectives, eps: dict, *,
     other measured point ``d``, some objective's one-sided upper bound on
     ``d - c`` is below that objective's epsilon (so ``d`` is confidently NOT
     ahead of ``c`` by epsilon on every objective) -- at level
-    ``delta / ((N - 1) * K)`` (Bonferroni over rivals and objectives) -- AND no
+    ``delta / (N (N - 1) K)`` (Bonferroni over members, rivals and objectives) -- AND no
     ``predicted`` candidate's point prediction beats ``c``'s measured mean by at
     least epsilon on every objective. ``dominated_by`` names each rival that
     could not be ruled out.
