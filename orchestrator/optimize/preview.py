@@ -141,7 +141,11 @@ def build_preview(
                         else max(0, n_centre - 1))
     if centre_rec is not None:
         pv.warnings.extend(centre_rec["warnings"])
-    from orchestrator.optimize.design import _runs_lower_bound, min_runs_for
+    from orchestrator.optimize.design import (
+        _counting_bound_runs,
+        _smallest_known_runs,
+        min_runs_for,
+    )
 
     k = len(screen.factor_ids)
     if screen.kind in ("mixed_fraction", "mixed_full"):
@@ -163,12 +167,24 @@ def build_preview(
                  + f"; df lower bound {bound} runs")
     elif screen.kind == "fractional":
         res = int(screen.resolution or 0)
-        known = _runs_lower_bound(k, res)
+        known = _smallest_known_runs(k, res)
+        floor = _counting_bound_runs(k, res)
         roman = {3: "III", 4: "IV", 5: "V", 6: "VI", 7: "VII", 8: "VIII"}.get(res, str(res))
+        # Two different numbers, named as such: the smallest design KNOWN to
+        # exist (a catalogue / a construction that attains it), and the
+        # counting bound (a theoretical floor no design need attain).
+        if known is None:
+            versus = ("no catalogue bound for resolution VI+"
+                      if res >= 6 else "past the resolution-V catalogue (65 factors)")
+            versus += f"; the counting bound (a theoretical floor) is {floor}"
+        elif pv.screen_corners <= known:
+            versus = ("the smallest regular design (it meets the counting bound)"
+                      if res <= 4 else "the smallest known")
+        else:
+            versus = (f"smallest known is {known} (the best known construction; "
+                      f"counting bound {floor})")
         shape = (f"resolution-{roman} "
-                 f"fraction 2^({k}-{len(screen.generators)}) of {2 ** k} -- "
-                 + ("the smallest known" if pv.screen_corners <= known
-                    else f"smallest known is {known}"))
+                 f"fraction 2^({k}-{len(screen.generators)}) of {2 ** k} -- " + versus)
         # The cost of the neighbouring resolutions, so the author can trade
         # aliasing against runs knowingly: a higher resolution at the SAME
         # cost is free, and a screen-first IV is usually far cheaper than V.

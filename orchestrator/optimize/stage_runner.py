@@ -806,7 +806,8 @@ def _fit_row_records(work_dir: Path, outcomes, stage_name: str,
 
 
 def _constraint_models_record(models, scored_all, rec, *, delta: float,
-                              applied: bool | None = None) -> list[dict]:
+                              applied: bool | None = None,
+                              evaluated: int | None = None) -> list[dict]:
     """What the constraint models did, per constraint, for ``recommendation.json``.
 
     ``scored_all`` is the candidate space BEFORE the model-based exclusion, so
@@ -821,6 +822,10 @@ def _constraint_models_record(models, scored_all, rec, *, delta: float,
     when given, is what the ranking actually did
     (``CandidateSpace.constraint_models_applied``); when ``None`` it is derived
     from ``scored_all``, which is the same thing for an enumerated space.
+    ``evaluated`` is given exactly when the space was SEARCHED (the number of
+    configurations the search scored); a dropped model's ``reason`` then says
+    no admissible point was FOUND among them, never that EVERY candidate is
+    infeasible -- only enumeration can say that.
     """
     d = cmodels.per_constraint_delta(models, delta)
     if applied is None:
@@ -842,11 +847,18 @@ def _constraint_models_record(models, scored_all, rec, *, delta: float,
                 if cmodels.bound(m, c.coded, delta=d)["verdict"] == "infeasible"
             ) if applied else 0
             entry["at_recommendation"] = cmodels.bound(m, rec.coded, delta=d)
-            if not applied:
+            if not applied and evaluated is None:
                 entry["reason"] = (
                     "modelled, but NOT applied: the models predict every "
                     "candidate confidently infeasible, and an empty space can only "
                     "abort -- left to measurement instead"
+                )
+            elif not applied:
+                entry["reason"] = (
+                    f"modelled, but NOT applied: no point the models admit was "
+                    f"FOUND among {int(evaluated)} evaluated configurations "
+                    f"(searched, not enumerated), and an empty space can only "
+                    f"abort -- left to measurement instead"
                 )
         out.append(entry)
     return out
@@ -2224,6 +2236,12 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
             **({"value": value} if value is not None else {}),
         },
         "residual_regret_model": (rec.get("residual_regret_model") or {}).get("value"),
+        # The searched caveat travels with the bound copied above it: present
+        # exactly when that recommendation's candidate space was SEARCHED, so
+        # report.json alone says the model bound and argmax are over the
+        # evaluated set only. Absent (byte-identical) when enumerated.
+        **({"candidate_space": dict(rec["candidate_space"])}
+           if rec.get("candidate_space") else {}),
         "residual_regret_terminal": (
             conf.get("residual_regret_terminal") if conf else None
         ),
@@ -3924,9 +3942,12 @@ def run_stage(
     # ── the candidate space: enumerated, or searched above the cap ─────────
     #
     # Above `decide.CANDIDATE_CAP` the space is searched, not enumerated
-    # (`decide._scored`), and the search is seeded with every configuration
-    # this epoch measured -- the fitted rows and every other row on disk -- so
-    # the best MEASURED region is always a start. Multi-objective campaigns
+    # (`decide._scored`), and the search POOL is seeded with every
+    # configuration this epoch measured -- the fitted rows and every other row
+    # on disk. The ascent STARTS are the best-predicted pool points, so a
+    # measured configuration is a start only when the fit rates it among
+    # them; one that cannot be placed on the axes is counted in
+    # `candidate_space.seeds_dropped`. Multi-objective campaigns
     # fit their objective models first so the search also climbs every
     # objective and a spread of their weighted sums: the predicted front taken
     # over `scored` then reaches its extremes and interior. Under the cap none
@@ -3969,6 +3990,11 @@ def run_stage(
             "argmax over X_valid.", stage_name, candidate_space.size,
             decide.CANDIDATE_CAP, candidate_space.evaluated,
             candidate_space.method, candidate_space.seed)
+        if candidate_space.seeds_dropped:
+            logger.warning(
+                "%s: %d measured configuration(s) could not be placed on the "
+                "candidate axes and seeded nothing (candidate_space.seeds_dropped).",
+                stage_name, candidate_space.seeds_dropped)
     # `top_candidates` is not only a human-readable "how close was the
     # runner-up" — it is the POOL `_confirm_rows` draws the terminal shortlist
     # from, including the round-r top-up after finalists are excluded. Capping
@@ -4091,6 +4117,7 @@ def run_stage(
     # there; recording them is what makes that verifiable rather than assumed,
     # and the foldover state deliberately carries no second foldover branch, so
     # a non-empty list there is a finding for a reader rather than another run.
+    alias_record: dict = {}
     alias_pairs_consequential = decide.alias_consequential(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded,
@@ -4099,7 +4126,7 @@ def run_stage(
         # The stage's own primary argmax (`scored` is sorted by the primary):
         # above the cap it came from the search that also climbed every
         # objective, so it can beat what alias_consequential's own search finds.
-        baseline=scored[0] if scored else None, **_search,
+        baseline=scored[0] if scored else None, record=alias_record, **_search,
     )
     # Counted over the set the ranking ACTUALLY filtered (`scored.unfiltered`),
     # not a fresh ranking: above the cap a second search would evaluate a
@@ -4110,6 +4137,7 @@ def run_stage(
         rec, delta=delta_s,
         applied=(None if candidate_space.exhaustive
                  else bool(candidate_space.constraint_models_applied)),
+        evaluated=None if candidate_space.exhaustive else candidate_space.evaluated,
     )
     uncertain_at_rec = [
         e["metric"] for e in constraint_record
@@ -4189,6 +4217,10 @@ def run_stage(
             # Searched, not enumerated: an empty alias list means none was
             # FOUND, and front statuses are relative to the evaluated points.
             "alias_consequential_basis": "searched",
+            # Which alias readings the searched test actually assessed (a
+            # local search each, at most decide.ALIAS_READINGS_CAP of them,
+            # largest coefficient first) and which it did not.
+            **({"alias_assessment": alias_record} if alias_record else {}),
             **({"predicted_front_basis": "evaluated_points"}
                if (mo_record or {}).get("predicted_front") is not None else {})}
            if not candidate_space.exhaustive else {}),

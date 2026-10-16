@@ -324,6 +324,8 @@ def test_a_searched_campaign_records_candidate_space_and_still_finds_the_optimum
         assert 1 <= cs["evaluated"] and cs["seed"] == decide.SEARCH_SEED
         assert "NOT over all of X_valid" in doc["residual_regret_model"]["detail"]
         assert doc["alias_consequential_basis"] == "searched"
+        aa = doc["alias_assessment"]
+        assert aa["readings"] == aa["assessed"] + len(aa["unassessed"])
         assert "predicted_front_basis" not in doc
         assert check_candidate_space(doc) == []
     assert "Candidate space searched, not enumerated" in render_report_markdown(
@@ -469,8 +471,9 @@ def _alias_fit(k: int = 4) -> Fit:
 def test_a_searched_alias_test_uses_the_stage_baseline():
     """With a pool of just the axes' centre (``sample=0``) the ascent cannot
     leave the saddle of ``X00*X01`` -- no single-factor move improves on 0 -- so
-    alias_consequential's own search finds no winner worth defending and calls
-    the alias irrelevant. Given the stage's own argmax as ``baseline`` (here the
+    alias_consequential's own search finds no real winner to defend (before
+    the local per-reading searches it called the alias irrelevant). Given the
+    stage's own argmax as ``baseline`` (here the
     enumerated one), the searched test agrees with enumeration."""
     k = 4
     fs = _factors(k)
@@ -480,7 +483,222 @@ def test_a_searched_alias_test_uses_the_stage_baseline():
     assert exact == [("X00X01", "X02X03")]
     stage_rec = decide.recommend(fit, fs, **kw)
     assert stage_rec.predicted == 1.0
+    # Without the baseline the alias test's OWN primary search cannot leave
+    # the saddle. Since the per-reading searches became local ones (A7) the
+    # blind verdict agrees here too -- but for a DEGENERATE reason: the
+    # saddle winner predicts 0, so epsilon is 0 and any loss counts. Only
+    # the baseline makes the verdict rest on the real winner.
     blind = decide.alias_consequential(fit, fs, cap=0, sample=0, **kw)
-    assert blind == []          # the failure mode the baseline exists for
+    assert blind == exact
     assert decide.alias_consequential(fit, fs, cap=0, sample=0, baseline=stage_rec,
                                       **kw) == exact
+
+
+# ─── stage-0 review: jointly binding constraints (A1) ───────────────────────
+
+
+def _three_binding_pairs(k: int = 6):
+    """Primary ``-sum x`` against three constraints ``x_a + x_b >= 1.95`` on
+    disjoint pairs, each with a tiny SE: confidently feasible only where all
+    six factors are at their HIGH end (the next axis point gives 1.75). A
+    single-coordinate move raises one constraint's margin but never the
+    MINIMUM over three, so an ascent on the worst margin stalls."""
+    ids = _ids(k)
+    fit = Fit(0.0, tuple(Effect(i, (i,), -1.0) for i in ids), 30)
+    cms = []
+    for a, b in zip(ids[0::2], ids[1::2]):
+        cfit = Fit(0.0, (Effect(a, (a,), 1.0, se=1e-4), Effect(b, (b,), 1.0, se=1e-4)),
+                   30, pure_error_var=1e-8, pure_error_df=10)
+        cms.append(ConstraintModel(f"s_{a}{b}", ">=", 1.95, cfit, ""))
+    return ids, fit, cms
+
+
+def test_search_finds_a_feasible_point_when_several_constraints_bind_jointly():
+    """Reviewer repro (k=6, 531,441 > cap). The only point no model
+    confidently excludes is all-17, so the search must find it and keep the
+    models -- not drop them and recommend all-1, which every constraint
+    confidently rejects."""
+    ids, fit, cms = _three_binding_pairs()
+    fs = _factors(len(ids))
+    r = decide.ranked(fit, fs, direction="maximize", fitted_ids=ids, held_fixed={},
+                      top=None, constraint_models=cms, constraint_delta=0.05)
+    assert not r.space.exhaustive
+    assert r.space.constraint_models_applied is True
+    assert set(r[0].levels.values()) == {17}
+    assert all(confidently_infeasible(cms, c.coded, delta=0.05) == [] for c in r)
+
+
+def test_the_feasibility_ascent_respects_measured_exclusions():
+    """``sum x >= 4.7`` over five factors: feasible at all-17 and at the five
+    points one axis step below it. With all-17 MEASURED infeasible, the
+    ascent must not climb into it and stop there: another feasible point
+    exists, so the models stay applied and the answer is one of those five.
+    ``sample=0`` so the ascent, not a lucky uniform draw, has to find it."""
+    ids, fit, cm = _narrow_feasible()
+    cm = [dataclasses.replace(cm[0], value=4.7)]
+    fs = _factors(len(ids))
+    corner = {i: 17 for i in ids}
+    r = decide.ranked(fit, fs, direction="maximize", fitted_ids=ids, held_fixed={},
+                      top=None, constraint_models=cm, constraint_delta=0.05,
+                      exclude_levels=[corner], sample=0)
+    assert r.space.constraint_models_applied is True
+    assert r[0].levels != corner
+    assert sorted(r[0].levels.values()) == [15, 17, 17, 17, 17]
+    assert all(c.levels != corner for c in r)
+
+
+# ─── stage-0 review: a searched drop never claims "every candidate" (A2) ────
+
+
+def _dropped_constraint_rec(tmp_path, monkeypatch, cap):
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    if cap is not None:
+        monkeypatch.setattr(decide, "CANDIDATE_CAP", cap)
+    s = SURFACES["infeasible_corner_interior"]()
+    # p99 <= 1 ms: every configuration is confidently infeasible, so the
+    # models are dropped (spec 3.6: always act; confirm can still measure).
+    ov = {"response": {"primary": {"metric": "m", "direction": s.direction},
+                       "constraints": [{"metric": "p99_ms", "op": "<=", "value": 1}]},
+          "stages": ["verify", "screen", "confirm"]}
+    res = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path, campaign_overrides=ov,
+                                 max_iterations=12)
+    return json.loads((Path(res.work_dir) / "runs" / "iter-2" /
+                       "recommendation.json").read_text())
+
+
+def test_a_searched_space_that_drops_its_models_says_found_not_every(tmp_path, monkeypatch):
+    """Searched (cap forced to 1): the reason says what is known -- no
+    admissible point was FOUND among the evaluated configurations -- and the
+    INV-STAT18 checker passes it."""
+    rec = _dropped_constraint_rec(tmp_path, monkeypatch, 1)
+    (entry,) = rec["constraint_models"]
+    assert entry["modelled"] is True and entry["applied"] is False
+    n = rec["candidate_space"]["evaluated"]
+    assert (f"no point the models admit was FOUND among {n} evaluated configurations "
+            f"(searched, not enumerated)") in entry["reason"]
+    assert "every candidate" not in entry["reason"]
+    assert check_candidate_space(rec) == []
+
+
+def test_an_enumerated_space_that_drops_its_models_keeps_its_wording(tmp_path, monkeypatch):
+    """Enumerated: "every candidate" is exactly right, and byte-identical."""
+    rec = _dropped_constraint_rec(tmp_path, monkeypatch, None)
+    (entry,) = rec["constraint_models"]
+    assert "candidate_space" not in rec
+    assert entry["reason"] == (
+        "modelled, but NOT applied: the models predict every candidate confidently "
+        "infeasible, and an empty space can only abort -- left to measurement instead")
+
+
+# ─── stage-0 review: report.json carries the searched caveat (A4) ───────────
+
+
+def _latest_rec(work_dir):
+    recs = sorted(Path(work_dir).glob("runs/iter-*/recommendation.json"),
+                  key=lambda p: int(p.parent.name.split("-")[1]))
+    return json.loads(recs[-1].read_text())
+
+
+def test_report_json_carries_the_searched_candidate_space(tmp_path, monkeypatch):
+    """report.json copied only residual_regret_model.value, so a reader of the
+    report could not tell the bound was over an evaluated set. It now carries
+    the same candidate_space as the recommendation it copied the bound from."""
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    rschema = json.loads((Path(__file__).resolve().parents[1] / "orchestrator" / "schemas"
+                          / "report.schema.json").read_text())
+    monkeypatch.setattr(decide, "CANDIDATE_CAP", 1)
+    res = run_synthetic_campaign(SURFACES["bowl"](), seed=2, parent_dir=tmp_path)
+    report = json.loads((Path(res.work_dir) / "report.json").read_text())
+    rec = _latest_rec(res.work_dir)
+    jsonschema.validate(report, rschema)
+    assert report["candidate_space"] == rec["candidate_space"]
+    assert report["candidate_space"]["exhaustive"] is False
+    assert check_candidate_space(rec, report) == []
+    assert check_candidate_space(rec, {k: v for k, v in report.items()
+                                       if k != "candidate_space"})
+
+
+def test_an_enumerated_report_has_no_candidate_space(tmp_path):
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    res = run_synthetic_campaign(SURFACES["bowl"](), seed=2, parent_dir=tmp_path)
+    report = json.loads((Path(res.work_dir) / "report.json").read_text())
+    assert "candidate_space" not in report
+    assert check_candidate_space(_latest_rec(res.work_dir), report) == []
+
+
+# ─── stage-0 review: an unplaceable measured seed is counted (A9) ───────────
+
+
+def test_measured_seeds_that_cannot_be_placed_are_counted_not_dropped_silently():
+    """A seed missing a fitted factor, or with a level that cannot be coded,
+    seeds nothing; the record says how many."""
+    k = 12
+    fs = _factors(k)
+    fit = _random_quadratic(k, random.Random(4))
+    good = {fid: 9 for fid in _ids(k)}
+    missing = {fid: 9 for fid in _ids(k)[1:]}
+    bad_level = {**good, "X03": "not-a-number"}
+    kw = dict(direction="maximize", fitted_ids=_ids(k), held_fixed={}, top=None)
+    r = decide.ranked(fit, fs, seed_levels=[good, missing, bad_level], **kw)
+    assert r.space.seeds_dropped == 2
+    assert r.space.as_dict()["seeds_dropped"] == 2
+    assert decide.ranked(fit, fs, seed_levels=[good], **kw).space.seeds_dropped == 0
+
+
+# ─── stage-0 review: the searched alias test bounds its work (A7) ───────────
+
+
+def _res_iv_fit(k: int):
+    from orchestrator.optimize.design import fractional_factorial, with_center_points
+    from orchestrator.optimize.effects import fit_effects
+
+    ids = _ids(k)
+    d = with_center_points(fractional_factorial(ids, 4), 4)
+    rng = random.Random(1)
+    ys = [10 + 2 * p.coded[0] - p.coded[1] + 1.5 * p.coded[2] * p.coded[3]
+          + rng.gauss(0, 0.3) for p in d.points]
+    return ids, fit_effects(d, ys, factor_ids=ids)
+
+
+def test_the_searched_alias_test_bounds_its_work_at_24_knobs_resolution_iv():
+    """A resolution-IV screen of 24 knobs has 245 alias readings; one full
+    search each took 67 s of CPU. Now at most ALIAS_READINGS_CAP readings are
+    assessed, each by a local search, and the rest are RECORDED as unassessed
+    -- never skipped silently. Generous CPU bound (measured ~3 s)."""
+    k = 24
+    ids, fit = _res_iv_fit(k)
+    fs = _factors(k)
+    kw = dict(direction="maximize", fitted_ids=ids, held_fixed={})
+    base = decide.ranked(fit, fs, top=None, **kw)
+    n_readings = len(decide.alias_resolutions(fit))
+    assert n_readings == 245
+    rec: dict = {}
+    t = time.process_time()
+    out = decide.alias_consequential(fit, fs, baseline=base[0], record=rec, **kw)
+    cpu = time.process_time() - t
+    assert cpu < 20.0, cpu
+    assert rec["readings"] == n_readings
+    assert rec["assessed"] == decide.ALIAS_READINGS_CAP
+    assert len(rec["unassessed"]) == n_readings - decide.ALIAS_READINGS_CAP
+    assert rec["method"] == "local_coordinate_ascent"
+    unassessed = {tuple(p) for p in rec["unassessed"]}
+    assert not unassessed & set(out), "an unassessed reading cannot be a finding"
+    # The largest coefficient's readings are assessed first.
+    biggest = max(fit.effects, key=lambda e: abs(e.estimate) if e.aliased_with else -1)
+    assert not [p for p in unassessed if p[0] == biggest.label]
+
+
+def test_under_the_cap_every_alias_reading_is_enumerated():
+    k = 4
+    fs = _factors(k)
+    rec: dict = {}
+    out = decide.alias_consequential(_alias_fit(k), fs, direction="maximize",
+                                     fitted_ids=_ids(k), held_fixed={}, record=rec)
+    assert out == [("X00X01", "X02X03")]
+    assert rec == {"readings": 1, "assessed": 1, "method": "enumeration", "unassessed": []}

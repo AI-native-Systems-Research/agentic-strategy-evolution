@@ -869,20 +869,50 @@ def _alias_pairs_safe(design_obj) -> list[tuple[str, str]]:
     return alias_pairs(design_obj)
 
 
+_ROMAN = {3: "III", 4: "IV", 5: "V", 6: "VI", 7: "VII", 8: "VIII"}
+
+
+def _screen_center_points(design: dict) -> int:
+    """``design.screen.center_points`` as ``_build_design`` reads it (default 4)."""
+    screen = (design or {}).get("screen") if isinstance(design, dict) else None
+    cp = (screen or {}).get("center_points", 4) if isinstance(screen, dict) else 4
+    return cp if isinstance(cp, int) and not isinstance(cp, bool) and cp >= 0 else 4
+
+
+def _screen_rows(design: dict, k: int) -> tuple[int, str] | None:
+    """``(rows, basis)`` of the screen ``_build_design`` will build: the
+    resolution-R design's corners (``min_runs_for``; R defaults to 5) plus the
+    centre points. ``None`` when no design can be built (the construction
+    refuses the factor count -- rule 8 reports that)."""
+    screen = (design or {}).get("screen") if isinstance(design, dict) else None
+    res = (screen or {}).get("resolution", 5) if isinstance(screen, dict) else 5
+    if not isinstance(res, int) or isinstance(res, bool) or res < 3:
+        res = 5
+    try:
+        corners = min_runs_for(k, res)
+    except ValueError:
+        return None
+    cp = _screen_center_points(design)
+    return corners + cp, (f"the resolution-{_ROMAN.get(res, res)} screen of {k} "
+                          f"factors: {corners} corners + {cp} centre points")
+
+
 def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]:
-    """Rule 8: the screen's design must fit ``design.max_runs``.
+    """Rule 8: the screen's design must exist and fit ``design.max_runs``.
 
     ``min_runs_for`` is EXACT for every ``(k, resolution)``: the tabulated or
     constructed fractional design's run count, or ``2**k`` where the full
     factorial is already the smallest design of that resolution
-    (``design.generators_for``). So the comparison is honest for any factor
-    count; past the budget the error names the options, and Nous never
-    silently downgrades the resolution to fit.
+    (``design.generators_for``). The comparison COUNTS THE CENTRE POINTS:
+    ``max_runs`` is a run budget, and the runtime budget
+    (``policy``'s ``budget_remaining``) and the design preview both count
+    every row, centre points included. Past the budget the error names the
+    options -- only the lower resolutions that both fit and are strictly
+    cheaper than every higher one (a lower resolution at the same cost buys
+    more aliasing for nothing) -- and Nous never silently downgrades the
+    resolution to fit.
     """
     if not isinstance(design, dict):
-        return []
-    max_runs = design.get("max_runs")
-    if max_runs is None:
         return []
     screen = design.get("screen") or {}
     resolution = screen.get("resolution")
@@ -891,34 +921,57 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
     k = len(factors)
     if k == 0:
         return []
+    max_runs = design.get("max_runs")
     mixed = _mixed_screen_runs(design, factors, resolution)
     if mixed is not None:
-        required, cols = mixed
+        if max_runs is None:
+            return []
+        corners, cols = mixed
+        cp = _screen_center_points(design)
+        required = corners + cp
         if required <= max_runs:
             return []
         return [
             f"design.screen.resolution={resolution} over {k} factors -- {cols} "
             f"two-level columns once each multi-level choice factor takes its "
-            f"pseudo-factors (method of replacement) -- needs {required} runs, "
-            f"but design.max_runs={max_runs} is lower. Options: (1) raise "
-            f"max_runs to >= {required}; (2) accept a lower resolution; (3) "
-            f"declare fewer levels on a categorical (L levels cost "
-            f"2^ceil(log2 L) slots); (4) screen fewer factors this epoch. Nous "
-            f"will not silently downgrade resolution to fit the budget."]
-    required = min_runs_for(k, resolution)
+            f"pseudo-factors (method of replacement) -- needs {required} runs "
+            f"({corners} corners + {cp} centre points), but design.max_runs="
+            f"{max_runs} is lower. Options: (1) raise max_runs to >= {required}; "
+            f"(2) accept a lower resolution; (3) declare fewer levels on a "
+            f"categorical (L levels cost 2^ceil(log2 L) slots); (4) screen fewer "
+            f"factors this epoch. Nous will not silently downgrade resolution to "
+            f"fit the budget."]
+    try:
+        corners = min_runs_for(k, resolution)
+    except ValueError as exc:
+        # Reported with or without a budget: the screen cannot be built.
+        return [f"design.screen.resolution={resolution} over {k} factors cannot be "
+                f"built: {exc}"]
+    if max_runs is None:
+        return []
+    cp = _screen_center_points(design)
+    required = corners + cp
     if required <= max_runs:
         return []
-    cheaper = [(r, min_runs_for(k, r)) for r in range(resolution - 1, 2, -1)]
-    fits = [f"resolution {r} at {n} runs" for r, n in cheaper if n <= max_runs]
+    lower: list[tuple[int, int]] = []
+    cheapest = corners
+    for r in range(resolution - 1, 2, -1):
+        n = min_runs_for(k, r)
+        if n < cheapest:
+            lower.append((r, n))
+            cheapest = n
+    fits = [f"resolution {r} at {n + cp} runs" for r, n in lower if n + cp <= max_runs]
+    options = [f"raise max_runs to >= {required}"]
+    if fits:
+        options.append(f"accept a lower resolution and its named aliasing "
+                       f"({'; '.join(fits)} fits)")
+    options.append("screen fewer factors this epoch")
     return [
         f"design.screen.resolution={resolution} over {k} factors needs "
-        f"{required} runs, but design.max_runs={max_runs} is lower. Options: "
-        f"(1) raise max_runs to >= {required}; (2) "
-        + (f"accept a lower resolution and its named aliasing ({'; '.join(fits)} "
-           f"fits)" if fits else "accept a lower resolution (none fits this "
-           "budget either)")
-        + "; (3) screen fewer factors this epoch. Nous will not silently "
-        "downgrade resolution to fit the budget."
+        f"{required} runs ({corners} corners + {cp} centre points), but "
+        f"design.max_runs={max_runs} is lower. Options: "
+        + "; ".join(f"({i}) {o}" for i, o in enumerate(options, 1))
+        + ". Nous will not silently downgrade resolution to fit the budget."
     ]
 
 def _mixed_screen_runs(design: dict, factors: list[dict], resolution: int):
@@ -1348,12 +1401,11 @@ def _rule18_high_run_timeout_warning(opt: dict, factors: list[dict]) -> list[str
 
     The warning quantifies the exposure with the run budget the campaign
     declares. ``design.max_runs`` when present is the author's own stated
-    ceiling on rows; otherwise the ``2**k`` full factorial, which is what
-    ``_build_design`` falls back to and therefore an honest upper bound on the
-    rows a screen can spend (a fractional design spends fewer -- that direction
-    is safe for a warning about too MUCH time). Replicates and confirm rounds
-    push the true total higher still, so the figure quoted is a floor on the
-    exposure, not an estimate of it.
+    ceiling on rows; otherwise the rows of the screen ``_build_design`` will
+    build -- the resolution-R design's corners (``min_runs_for``, R defaulting
+    to 5) plus its centre points (``_screen_rows``). A foldover, refine and
+    confirm rounds push the true total higher still, so the figure quoted is
+    a floor on the exposure, not an estimate of it.
 
     3600 as the threshold rather than something derived: an hour is the point at
     which a campaign stops being something an author waits on and becomes
@@ -1370,9 +1422,10 @@ def _rule18_high_run_timeout_warning(opt: dict, factors: list[dict]) -> list[str
         runs, basis = max_runs, "design.max_runs"
     else:
         k = len(factors)
-        if k == 0:
+        rows = _screen_rows(design, k) if k else None
+        if rows is None:
             return []
-        runs, basis = 2 ** k, f"the {k}-factor full factorial"
+        runs, basis = rows
     hours = runs * raw / 3600.0
     return [
         f"WARN: optimization.run_timeout_sec={raw} is a per-ROW ceiling, so "
@@ -2361,8 +2414,9 @@ def _rule22_completion_budgets(opt: dict, factors: list) -> list[str]:
 
     ``max_wall_clock_hours`` is checked against the campaign's own declared
     exposure, reusing rule 18's run-count basis (``design.max_runs`` when the
-    author stated one, else the ``2**k`` full factorial that ``_build_design``
-    falls back to). The comparison is against the ONE-ROW ceiling rather than
+    author stated one, else the rows of the resolution-R screen
+    ``_build_design`` will build, centre points included). The comparison is
+    against the ONE-ROW ceiling rather than
     the whole design: a budget that cannot fit even a single row at
     ``run_timeout_sec`` is an ERROR, because no rung of the fallback ladder can
     be reached from zero measurements -- the report would rest on
@@ -2408,7 +2462,7 @@ def _rule22_completion_budgets(opt: dict, factors: list) -> list[str]:
                 runs, basis = max_runs, "design.max_runs"
             else:
                 k = len(factors)
-                runs, basis = (2 ** k, f"the {k}-factor full factorial") if k else (0, "")
+                runs, basis = (_screen_rows(design, k) if k else None) or (0, "")
             if runs:
                 worst_h = runs * one_row_h
                 if budget_h < worst_h:
