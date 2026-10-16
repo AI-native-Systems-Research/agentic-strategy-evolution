@@ -234,6 +234,7 @@ either. See `INV-STAT05`.
 | `INV-STAT15` | `infeasible` rows (a `response.constraints` violation) inform the PRIMARY fit; `rejected` and `failed` rows never do. Admissibility is enforced where a configuration can be RETURNED (measured-infeasible exclusion, best-observed reads `complete` only, confirm strikes an infeasible finalist), not by truncating the fit at the constraint boundary. | artifact | `stage_runner._PRIMARY_FIT_STATUSES`; `fit_coordinates.rows_by_status`; a real sqlite-utils campaign fitted refine on 3 of 12 rows; 4/16 constrained-bowl oracle campaigns aborted | `test` — metamorphic oracle pair + `check_fitted_statuses` | **yes** |
 | `INV-STAT16` | When `response.constraints` are declared and the confirm shortlist has ≥ 2 seats, a seat is reserved for the best-predicted SUPPORTED-FEASIBLE candidate when one exists: every modelled constraint confidently feasible at `delta_screen` (Bonferroni, as exclusion) and, for each unmodelled one, inside the per-factor span of measured-admissible configurations (a conservative interpolation heuristic, not a guarantee). The seat never duplicates a finalist and never displaces a measured one; with no constraints the shortlist is unchanged. | artifact | `constraint_models.supported_feasible`; `stage_runner._confirm_rows`; `recommendation.json["supported_feasible_candidate"]`; two field campaigns whose model-ranked finalists were all measured infeasible while a feasible improvement went untested | `test` — `tests/test_optimize_supported_feasible_seat.py` (oracle, metamorphic, property) + `check_supported_feasible_candidate` | **yes** |
 | `INV-STAT17` | The measured front is consistent: no front point is ε-dominated in point estimate by another, a `confidently_nondominated` point names no possible dominator and a `possibly_dominated` one names one, the front is sorted by the first objective, and the normalised hypervolume lies in [0, 1] -- or is `null` with a reason, exactly when no point is confident. | artifact | `pareto.measured_front`; `pareto_stage.front_record` | `test` — `tests/test_optimize_pareto.py` (every oracle campaign) + `check_pareto_front`; the oracle properties (confident points within ε of the TRUE front, hypervolume floors) give the statuses their meaning | — |
+| `INV-STAT18` | `recommendation.json` carries `candidate_space` exactly when the candidate space (the product of the fitted factors' axis sizes) exceeds `decide.CANDIDATE_CAP` and was SEARCHED rather than enumerated; it then records `exhaustive: false`, the search method and seed, the full `size` and the `evaluated` count, and `residual_regret_model.detail` says the max ran over the evaluated set only. At or below the cap the space is enumerated and the key is absent, so those artifacts are unchanged. | artifact | `decide._scored`; `stage_runner` recommendation write; enumeration measured at 3.19M `predict` calls / 74 s on a 6-knob campaign, 7 knobs did not finish | `test` — `tests/test_optimize_candidate_search.py` (forced-search oracle campaigns) + `check_candidate_space` | — |
 
 **`INV-STAT12` — a crash on the certification path, found by the property test.**
 The Welch degrees-of-freedom denominator is `(vk**2)/(nk-1) + (vb**2)/(nb-1)`,
@@ -486,15 +487,15 @@ they disagree.
 | Structural (`INV-ST`) | 11 | 10 | 0 | 1 | 0 |
 | Closed vocabulary (`INV-VOC`) | 10 | 7 | 0 | 3 | 0 |
 | Semantic (`INV-SEM`) | 18 | 16 | 0 | 2 | 0 |
-| Statistical (`INV-STAT`) | 16 | 7 | 0 | 9 | 0 |
+| Statistical (`INV-STAT`) | 17 | 7 | 0 | 10 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
 | Provenance (`INV-PROV`) | 6 | 4 | 0 | 2 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **78** | **55** | **0** | **21** | **2** |
+| **Total** | **79** | **55** | **0** | **22** | **2** |
 
-By level: `function` 26, `module` 6, `artifact` 32, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
-checker function exists): 53 of 78. The 25 without one are
+By level: `function` 26, `module` 6, `artifact` 33, `iteration` 5, `epoch` 6, `campaign` 3. Checkable (a
+checker function exists): 54 of 79. The 25 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check

@@ -2125,12 +2125,39 @@ Per iteration, under `runs/iter-N/`:
 | `design_matrix.json` | before execution | the pre-registered rows, generator, randomized run order, RNG seed, `workload_seeds` |
 | `runs.jsonl` | each run, append-only | levels, response metrics, replicate index, manipulation/constraint/**`self_check`** verdicts, status, duration |
 | `effects.json` | fitting states | fitted effects and interactions, pure error, lack-of-fit, **`aliases`** (the alias classes), dropped factors |
-| `recommendation.json` | fitting states | `levels`, `predicted`, `top_candidates`, `stationary_point`, `residual_regret_model`, `aliases`, **`alias_consequential`** |
+| `recommendation.json` | fitting states | `levels`, `predicted`, `top_candidates`, `stationary_point`, `residual_regret_model`, `aliases`, **`alias_consequential`**; **`candidate_space`** only when the space was searched (below) |
 | `fit_exclusions.json` | fitting states, only when rows were excluded | which row indices were left out of the fit, and why |
 | `confirmation.json` | `confirm` | the finalists, their fresh samples, the winner, `residual_regret_terminal`, `epsilon`, `certified` |
 | `shortlist.json` | `confirm` | `S` and why each member is in it, plus a pointer to `confirmation.json` |
 | `relations.json` | every stage | per-relation verdicts from the native test run |
 | `findings.json`, `principle_updates.json` | every stage | projected deterministically from the fit — zero tokens |
+
+**The candidate space: enumerated, or searched.** The recommendation is the
+best-predicted configuration over the *candidate space*: the product of the
+fitted factors' axes — up to 9 evenly spaced points (snapped to the grid,
+de-duplicated) per refinable numeric factor, the two screen levels per choice
+or two-level factor. That product is exponential in the number of knobs (9^6 =
+531k at six, 9^12 = 2.8e11 at twelve), so:
+
+- **At or below `decide.CANDIDATE_CAP` = 50,000 candidates** the space is
+  enumerated exactly: the argmax, `top_candidates`, the model regret bound and
+  the predicted front are over every valid configuration. Every oracle surface
+  and every campaign run so far is in this regime, and its artifacts are
+  byte-identical to before the search existed.
+- **Above it** the space is *searched*: a deterministic, seeded (`seed` 0)
+  multi-start coordinate ascent over the full axes, started from the best of
+  every configuration this epoch measured plus a seeded uniform sample, climbing
+  the primary objective and — for multi-objective campaigns — every objective
+  and a spread of their weighted sums. Measured-inadmissible and confidently
+  infeasible points are excluded at every evaluated point, exactly as in
+  enumeration. The answer is then the best *evaluated* candidate, not a proven
+  argmax: `recommendation.json["candidate_space"]` records `{exhaustive: false,
+  size, evaluated, method: "sampled_coordinate_ascent", seed}`, the model
+  regret bound's `detail` says it was taken over the evaluated set only, and
+  `report.md` carries a "Candidate space searched, not enumerated" note. For the
+  low-order polynomials this kind fits the search reaches a planted optimum
+  among 9^16 candidates in well under a second; what confirm *measures* is
+  unaffected either way.
 
 Two name notes, because the spec and the code differ and the code is what
 you will find on disk:

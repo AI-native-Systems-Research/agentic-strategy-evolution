@@ -380,8 +380,10 @@ the log, is the audit trail: `report.json`'s `path` is read back from it, and
 `refine`) — from one call site, so the shape is identical at all three and
 `stage` is the only field that tells them apart.
 
-`recommend()` is `argmax` over `X_valid` — enumeration for a small space,
-deterministic optimization for a structured one, and **no model judgment**.
+`recommend()` is `argmax` over `X_valid` — exact enumeration at or below
+`decide.CANDIDATE_CAP` (50,000) candidates, a deterministic seeded
+coordinate-ascent search above it (recorded in `candidate_space`), and **no
+model judgment**.
 It exists because a solved stationary point may be a saddle or a minimum, and
 because `choice` factors are excluded from a quadratic solve.
 
@@ -393,6 +395,7 @@ because `choice` factors are excluded from a quadratic solve.
 | `stationary_point` | The solved quadratic stationary point, when there is one — reported, never blindly trusted |
 | `residual_regret_model` | The **model bound** `R_δ^model(x̂)`: `value`, `challenger`, `delta`, `method`, `detail` |
 | `aliases` / `alias_consequential` | The alias classes, and which of them could actually change the winner — the spec's `alias_map.json` content, recorded at every fitting state |
+| `candidate_space` | Present only when the space was SEARCHED (above the cap): `{exhaustive: false, size, evaluated, method: "sampled_coordinate_ascent", seed}`. Absent means every valid candidate was enumerated |
 | `fitted_ids` / `held_fixed` | Which factors this fit covered, and what the rest were pinned at |
 | `model_adequate` | Whether the lack-of-fit test rejected the registered response class — read by `confirm` to decide whether the model's pick may be seated as a finalist |
 

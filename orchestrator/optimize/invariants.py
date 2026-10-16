@@ -973,6 +973,42 @@ def check_pareto_front(pareto_block: dict) -> list[str]:
     return out
 
 
+def check_candidate_space(rec: dict) -> list[str]:
+    """INV-STAT18: a searched candidate space is recorded honestly.
+
+    From ``recommendation.json`` alone. Vacuous when ``candidate_space`` is
+    absent (the space was enumerated). When present: ``exhaustive`` is false,
+    ``method`` is the search, the full ``size`` exceeds ``decide.CANDIDATE_CAP``
+    (a space under the cap must be enumerated), ``evaluated`` is at most
+    ``size`` and at least the number of ``top_candidates``, and the model
+    regret bound's ``detail`` says it was not taken over all of X_valid.
+    """
+    from orchestrator.optimize.decide import CANDIDATE_CAP
+
+    cs = (rec or {}).get("candidate_space")
+    if cs is None:
+        return []
+    out: list[str] = []
+    if cs.get("exhaustive") is not False:
+        out.append("candidate_space is present but does not say exhaustive: false")
+    if cs.get("method") != "sampled_coordinate_ascent":
+        out.append(f"candidate_space.method is {cs.get('method')!r}, not the search")
+    size, ev = cs.get("size"), cs.get("evaluated")
+    if not isinstance(size, int) or size <= CANDIDATE_CAP:
+        out.append(f"a space of size {size!r} (cap {CANDIDATE_CAP}) must be enumerated, "
+                   f"not searched")
+    if not isinstance(ev, int) or (isinstance(size, int) and ev > size):
+        out.append(f"evaluated={ev!r} exceeds the space size {size!r}")
+    elif ev < len(rec.get("top_candidates") or []):
+        out.append(f"evaluated={ev} is fewer than the {len(rec['top_candidates'])} "
+                   f"top_candidates")
+    detail = str((rec.get("residual_regret_model") or {}).get("detail") or "")
+    if "NOT over all of X_valid" not in detail:
+        out.append("residual_regret_model.detail does not say the bound was taken over "
+                   "the evaluated set only")
+    return out
+
+
 def check_pareto_certificate(certifying: dict) -> list[str]:
     """INV-SEM18: a multi-objective certificate rests on the front.
 
@@ -1763,6 +1799,18 @@ _ENTRIES: tuple[Invariant, ...] = (
                    "campaign's report.json; the oracle properties (every confident point "
                    "within epsilon of the TRUE front, hypervolume floors) are what make "
                    "the statuses mean something."),
+    Invariant("INV-STAT18", "recommendation.json carries candidate_space exactly when the "
+                            "candidate space (the product of the fitted factors' axis sizes) "
+                            "exceeds decide.CANDIDATE_CAP and was SEARCHED; it then says "
+                            "exhaustive: false, the search method and seed, the full size and "
+                            "the evaluated count, and the model regret bound's detail says the "
+                            "max ran over the evaluated set only. At or below the cap the space "
+                            "is enumerated and the key is absent.",
+              "STAT", "artifact", "decide._scored; stage_runner recommendation write",
+              TEST, check_candidate_space,
+              note="tests/test_optimize_candidate_search.py forces the search on oracle "
+                   "campaigns and runs the checker over every recommendation.json; "
+                   "tests/test_optimize_invariants.py gives it teeth."),
 
     # ── temporal ──────────────────────────────────────────────────────────
     Invariant("INV-TMP01", "policy.json + policy.sha256 are written BEFORE the first "

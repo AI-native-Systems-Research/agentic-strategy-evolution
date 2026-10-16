@@ -243,6 +243,7 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_supported_feasible_candidate",
         "check_pareto_front", "check_pareto_certificate", "check_gap_fill_branch",
         "check_single_objective_untouched", "check_refill_branch",
+        "check_candidate_space",
     }
     registered = {i.checker.__name__ for i in inv.checkable()}
     assert registered <= exercised, (
@@ -1563,3 +1564,30 @@ def test_refill_branch_checker_holds_and_has_teeth():
         if "finalists_vacated" in (t.get("when") or {}):
             t["when"].pop("refill_available")
     assert any("not guarded" in e for e in inv.check_refill_branch(bad))
+
+
+def test_candidate_space_checker_accepts_a_searched_record_and_rejects_dishonest_ones():
+    """INV-STAT18: teeth. A searched record passes; one that claims an
+    under-cap space was searched, claims exhaustive, evaluates more than the
+    space, or leaves the regret detail unqualified, fails."""
+    from orchestrator.optimize.decide import CANDIDATE_CAP
+
+    good = {"top_candidates": [{}] * 5,
+            "residual_regret_model": {"detail": "M=9; NOT over all of X_valid: ..."},
+            "candidate_space": {"exhaustive": False, "size": 9 ** 12, "evaluated": 4730,
+                                "method": "sampled_coordinate_ascent", "seed": 0}}
+    assert inv.check_candidate_space(good) == []
+    assert inv.check_candidate_space({"top_candidates": []}) == []
+
+    def mutate(**cs):
+        bad = json.loads(json.dumps(good))
+        bad["candidate_space"].update(cs)
+        return inv.check_candidate_space(bad)
+
+    assert any("must be enumerated" in e for e in mutate(size=CANDIDATE_CAP))
+    assert any("exhaustive" in e for e in mutate(exhaustive=True))
+    assert any("exceeds" in e for e in mutate(evaluated=9 ** 12 + 1))
+    assert any("fewer than" in e for e in mutate(evaluated=3))
+    bad = json.loads(json.dumps(good))
+    bad["residual_regret_model"]["detail"] = "M=9"
+    assert any("evaluated set only" in e for e in inv.check_candidate_space(bad))

@@ -39,6 +39,7 @@ from orchestrator.optimize.constraint_models import (
 )
 from orchestrator.optimize.effects import Effect, Fit
 from orchestrator.optimize.factors import parse_factors
+from orchestrator.optimize.invariants import check_candidate_space
 from orchestrator.optimize.synthetic import _numeric
 
 SCHEMA = json.loads((Path(__file__).resolve().parents[1] / "orchestrator" / "schemas"
@@ -322,6 +323,7 @@ def test_a_searched_campaign_records_candidate_space_and_still_finds_the_optimum
         assert cs["exhaustive"] is False and cs["method"] == "sampled_coordinate_ascent"
         assert 1 <= cs["evaluated"] and cs["seed"] == decide.SEARCH_SEED
         assert "NOT over all of X_valid" in doc["residual_regret_model"]["detail"]
+        assert check_candidate_space(doc) == []
     assert "Candidate space searched, not enumerated" in render_report_markdown(
         Path(res.work_dir))
     assert res.true_gap <= base.true_gap + 1e-9, (res.true_gap, base.true_gap)
@@ -345,6 +347,7 @@ def test_a_searched_multi_objective_campaign_keeps_its_front(tmp_path, monkeypat
         doc = json.loads(p.read_text())
         jsonschema.validate(doc, SCHEMA)
         assert doc["candidate_space"]["exhaustive"] is False
+        assert check_candidate_space(doc) == []
         assert doc["predicted_front"]
     assert res["coverage"] >= base["coverage"] - 1e-9, (res["coverage"], base["coverage"])
 
