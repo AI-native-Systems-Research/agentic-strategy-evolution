@@ -4,137 +4,213 @@ Zero LLM tokens: every campaign is the in-process synthetic harness
 (`orchestrator.optimize.harness`). Reproduce with
 `python -m benchmarks.optimization.run` (the suite) and
 `python -m benchmarks.optimization.run --audit-repro` (the stage-0 audit's
-setup); both accept `--cache-dir` so a killed run resumes. Every row is in
-`optimization-benchmark.json` / `optimization-benchmark-audit-repro.json`.
+setup). Run through the machine's heavy wrapper with at most 3 workers. Both
+accept `--cache-dir`, so a killed run resumes. Every row is in
+`optimization-benchmark.json` / `optimization-benchmark-audit-repro.json`, and
+records the code digest it was produced under (`code`). The digests are listed
+in each table's header: rows reused from the cache before digests were recorded
+show as `unrecorded`.
+
+**This is a descriptive comparison, not a statistical one.** The budget N comes
+from Nous's own stopping rule, so every baseline is compared at the one budget
+Nous chose. There are no anytime (regret-vs-budget) curves and no confidence
+intervals on the means: with 8 (suite) or 20 (audit) seeds per cell, a
+difference of a few hundredths is noise. Read the head-to-head counts, not
+small differences in the means.
 
 ## Protocol
 
-- **Budget.** For each (surface, noise multiplier, seed), Nous runs first and
-  its total measured rows (every `runs/iter-*/runs.jsonl` row, failed ones
-  included) is the budget N. Every baseline gets exactly N measurements of the
-  same surface, under the same noise model, over the same candidate axes the
-  oracle's truth is enumerated on (declared levels plus nine snapped points per
-  gridded numeric). A failed measurement still costs a run.
+- **Budget.** For each (surface, noise multiplier, seed), Nous runs first. The
+  budget N is its total measured rows (every `runs/iter-*/runs.jsonl` row,
+  failed ones included). Every baseline gets exactly N measurements of the same
+  surface, under the same noise model, over the same candidate axes the oracle's
+  truth is enumerated on (declared levels plus nine snapped points per gridded
+  numeric). A failed measurement still costs a run. A Nous campaign that
+  crashes is charged the worst admissible regret, and its baselines get the runs
+  it spent; none crashed in these runs.
 - **Metric.** TRUE regret of the recommendation on the NOISELESS surface,
   `f(true optimum) - f(recommendation)`. An infeasible recommendation (outside
   `X_valid`) or no recommendation is charged the regret of the worst admissible
   configuration.
-- **Recommendation rules, both reported.** `obs` = the measured configuration
-  with the best mean over its replicates (feasible only if every replicate passed
-  every constraint, the rule Nous uses). `GP mean` = the measured feasible
-  configuration with the best posterior mean of the GP below, fitted to the
-  method's own data. Measured points only, never an unmeasured argmax. The
-  PRIMARY rule (used in head-to-heads) is `obs` for RS/LHS and `GP mean` for
-  GP-BO, the standard noisy-BO recommendation.
-- **Surfaces.** Every single-objective surface in `synthetic.SURFACES` except
-  `bowl_out_of_hull` (optimum outside the hull by construction), with the
-  constraints each constrained surface was built for. Plus the audit's
-  non-quadratic `step_cliff`, `ridge_cubic` and `two_peaks`, and
-  `sparse_knobs(6/8/12)` (3 active knobs). Pareto surfaces are out of scope
-  (no baseline here is multi-objective).
-- **Size.** Suite: seeds 1-8, noise ×1 and ×4 of each surface's `noise_sd`
-  (336 Nous campaigns, 1344 baseline runs). Audit repro: the audit's 9
-  surfaces, seeds 1-20, noise ×1/×8 (360 + 1440). Three workers on a shared
-  machine, so wall times are inflated; CPU seconds are the comparable figure.
+- **Recommendation rules, both reported.**
+  - `obs`: the measured configuration with the best mean over its replicates.
+    It is feasible only if every replicate passed every constraint, the rule
+    Nous uses.
+  - `GP mean`: the measured feasible configuration with the best posterior mean
+    of the GP below, fitted to the method's own data. Measured points only,
+    never an unmeasured argmax.
+  - The PRIMARY rule, used in the head-to-heads, is `obs` for RS and LHS and
+    `GP mean` for GP-BO, the standard noisy-BO recommendation.
+  - Exception: `GP-BO-crude`'s GP-mean pick is the audit's, and it is NOT
+    restricted to feasible points. That is why it scores 8.2 on `sla`.
+- **Ties.** "Exact" ties need identical regret. The "within ε" columns treat a
+  difference of at most Nous's own resolved ε (a percentage of Nous's best value
+  in that campaign) as a tie. That is Nous's indifference width, not a neutral
+  one.
+- **Surfaces.**
+  - Every single-objective surface in `synthetic.SURFACES` except
+    `bowl_out_of_hull` (its optimum lies outside the hull by construction), with
+    the constraints each constrained surface was built for.
+  - The audit's non-quadratic `step_cliff`, `ridge_cubic` and `two_peaks`.
+  - `sparse_knobs(6/8/12)`, with 3 active knobs.
+  - Pareto surfaces are out of scope: no baseline here is multi-objective.
+- **Size.**
+  - Suite: seeds 1-8, noise ×1 and ×4 of each surface's `noise_sd`, giving 336
+    Nous campaigns and 1344 baseline runs.
+  - Audit repro: the audit's 9 surfaces, seeds 1-20, noise ×1 and ×8, giving
+    360 + 1440.
+  - CPU seconds are the comparable cost figure. Wall time is inflated on a
+    shared machine.
 
-## The GP-BO baseline (not a straw man)
+## The baselines
 
-- Matern-5/2 kernel with one lengthscale per input (ARD) plus Gaussian noise;
-  inputs coded to [0,1] (log coding for `scale: log` factors, one-hot for
-  choices with more than two levels); outputs standardized.
-- Hyperparameters by MAP with BoTorch's legacy `SingleTaskGP` priors
-  (lengthscale Gamma(3, 6), outputscale Gamma(2, 0.15), noise Gamma(1.1, 0.05)),
-  L-BFGS-B with analytic gradients (checked against finite differences in
-  `tests/test_optimization_benchmark_smoke.py`). Refitted after every
-  measurement while n <= 100 (warm start), every 10th beyond, with two random
-  restarts every 10th step.
-- Initial design: a Latin hypercube of `max(6, 2(d+1))` points, capped at N/3.
-- Acquisition: expected improvement over the latent posterior, incumbent = best
-  posterior mean among measured feasible points. With constraints: EI times the
-  product of each constraint GP's probability of satisfaction (Gardner et al.
-  2014). Optimized over the whole grid when it has at most 4096 points, otherwise
-  over 4096 random grid points plus every one-factor neighbour of the incumbent.
-- `GP-BO-crude` is the audit's probe kept for reproduction: fixed isotropic RBF
-  (lengthscale 0.3, nugget 0.01), 6 uniform random starts, EI, no constraint
-  handling.
+**GP-BO** (`benchmarks/optimization/gp.py`, `baselines.py`). Configured to
+resemble a standard default rather than tuned to this suite:
 
-## Reproducing the audit's 144 / 174 / 42
+- **Kernel.** Matern-5/2 with one lengthscale per input (ARD), times an
+  outputscale, plus homoscedastic Gaussian noise. Inputs are coded to [0,1]:
+  log coding for `scale: log` factors, one-hot for choices with more than two
+  levels (a plain one-hot, not BoTorch's `MixedSingleTaskGP` categorical
+  kernel). Outputs are standardized.
+- **Hyperparameters, by MAP.** Gamma priors in (shape, rate) form, after
+  BoTorch's legacy `SingleTaskGP` defaults (pre-0.12; BoTorch >= 0.12 uses
+  dimension-scaled LogNormal lengthscale priors instead):
+  - each lengthscale ~ Gamma(3, 6);
+  - the outputscale ~ Gamma(2, 0.15);
+  - the noise VARIANCE (on standardized outputs) ~ Gamma(1.1, 0.05).
+- **Fitting.** The priors are applied to log-parameters with the log-Jacobian
+  term, so the MAP point differs slightly from BoTorch's. The fit runs inside box
+  bounds (lengthscale [0.01, 20], outputscale [0.01, 50], noise variance
+  [1e-6, 4]) by L-BFGS-B with analytic gradients, which
+  `tests/test_optimization_benchmark_smoke.py` checks against finite differences.
+  Hyperparameters are refitted after every measurement while n <= 100 (warm
+  start), and every 10th measurement beyond that, with two random restarts every
+  10th step.
+- **Initial design.** A Latin hypercube of `max(2, min(max(6, 2(d+1)), floor(N/3)))`
+  points, where d is the coded input dimension.
+- **Acquisition.** Expected improvement (Jones, Schonlau & Welch 1998) on the
+  latent posterior. The incumbent is the best posterior mean among measured
+  feasible points.
+- **Constraints.** EI times each constraint GP's probability of satisfaction
+  (Gardner et al. 2014; Gelbart, Snoek & Adams 2014). When nothing measured is
+  feasible yet, the acquisition is the probability of feasibility alone.
+- **Search.** EI is maximized over the whole grid when it has at most 4096
+  points. Otherwise it searches 4096 random grid points plus every one-factor
+  neighbour of the incumbent.
+- **Failures.** A configuration that has only ever failed to measure is removed
+  from the pool. Without that rule, GP-BO spent 31 of 40 runs re-measuring one
+  failing configuration on `fails_at_one_level`.
 
-The audit reported Nous vs its crude GP-BO over 360 head-to-heads as **better
-42, tie 174, worse 144**. With the audit's setup (`--audit-repro`):
+**GP-BO-crude** is the audit's probe, kept for reproduction:
 
-| baseline (GP mean rule) | Nous better / tie / worse (exact) | within Nous's ε |
-|---|---|---|
-| GP-BO-crude (the audit's) | **53 / 171 / 136** | 12 / 236 / 112 |
-| GP-BO (fitted, this harness) | **21 / 186 / 153** | 4 / 235 / 121 |
+- a fixed isotropic RBF kernel (lengthscale 0.3, nugget 0.01);
+- 6 uniform random starts;
+- EI over the grid, or over 20,000 random grid points when the grid is larger;
+- no constraint handling, and the same never-re-pick-a-failure rule.
 
-**Reproduced.** Nous's own per-cell regrets match the audit's table to the
-third decimal on every cell checked (additive ×8 0.078, bowl ×8 0.037,
-bowl_centred ×8 0.090, geometric_knob 26.248 / 23.648, step_cliff 0.90 / 0.94,
-ridge_cubic 0.504 / 0.540, two_peaks 1.754 / 1.782). The crude GP's split
-differs by about 10 campaigns, which is its own seed stream. A properly fitted GP-BO
-is a STRONGER baseline than the audit's, not a weaker one: Nous loses 153 of
-360 against it and wins 21.
+**RS** samples each factor's axis uniformly. **LHS** stratifies each axis into
+N strata and permutes them independently.
 
-## Interpretation (honest)
+## Comparison with the audit's 144 / 174 / 42
+
+The audit reported Nous against its crude GP-BO over 360 head-to-heads as
+**better 42, tie 174, worse 144**. With the audit's setup (`--audit-repro`):
+
+| baseline | rule | Nous better / tie / worse (exact) | within Nous's ε |
+|---|---|---|---|
+| GP-BO-crude (the audit's) | GP mean | **53 / 171 / 136** | 12 / 236 / 112 |
+| GP-BO (fitted) | GP mean | **21 / 186 / 153** | 4 / 235 / 121 |
+| GP-BO (fitted) | obs | 42 / 174 / 144 | 12 / 231 / 117 |
+
+- **Nous's regrets match the audit's at the audit's precision** on every cell
+  checked: additive ×8 0.078, bowl ×8 0.037, bowl_centred ×8 0.090,
+  geometric_knob 26.25 / 23.65, step_cliff 0.90 / 0.94, ridge_cubic 0.50 /
+  0.54, two_peaks 1.75 / 1.78.
+- **The crude GP-BO reproduces only approximately.** The head-to-head is
+  53/171/136 against the audit's 42/174/144, and per-cell means differ by up to
+  0.7 (geometric_knob ×8: 5.64 against the audit's 6.35; two_peaks ×8: 1.60
+  against 1.18). It has its own seed stream and initial points, and this
+  harness's constrained and failing-measurement handling is not exercised on
+  these 9 surfaces.
+- **A coincidence worth checking.** The audit's exact triple, 42/174/144, is
+  what the FITTED GP-BO scores here under the `obs` rule. That may be chance, or
+  a label mix-up in the audit's table. It is noted, not resolved.
+- **Either way, a properly fitted GP-BO is a stronger opponent than the
+  audit's.** Under its standard GP-mean rule Nous loses 153 of 360 and wins 21.
+
+## Interpretation
 
 **Where Nous wins or ties.**
 
-- *Smooth, low-order, unconstrained surfaces at low noise*: additive, bowl,
-  bowl_centred, saddle, choice_x_numeric, interaction_only, drift,
-  geometric_knob_log. Nous's regret is 0 at ×1, and it is within ε of the best
-  baseline in almost every campaign. Against RS and LHS it wins clearly. Against
-  a fitted GP-BO it TIES (shipped family within ε: 24 better / 172 tied / 44
-  worse). Its regret is not smaller than GP-BO's; the tie is the result.
-- *Many knobs with effect sparsity* (`sparse_knobs` 6/8/12, 93-553 runs): Nous
-  0.002 mean regret, GP-BO 0.003, RS 0.32, LHS 0.48. Within ε Nous ties GP-BO in
-  48/48 campaigns and never loses to RS or LHS. It does this at about 1/30 of
-  GP-BO's CPU: 3 s vs 88 s median per campaign at 12 knobs and 553 runs.
-- *Drift*: blocked, randomized run order keeps Nous at 0 regret where every
-  sequential baseline picks up the trend (RS 0.38-0.46).
-- *Noisy constraints* (`stochastic_constraint_boundary`): Nous 0.875; every
-  baseline 6-7. The baselines' "best observed feasible" is usually feasible
-  only by luck, so it is truly infeasible. This is the replicate-and-confirm design
-  paying off, not the optimizer.
-- *What no baseline offers*: a certificate with stated deltas, a
-  pre-registered policy, an audit trail, and (with this work package)
-  provenance, `nous reanalyze` and a cross-epoch error budget. 162 of 336
-  suite campaigns certified.
+- **Smooth, low-order surfaces.** These are additive, interaction_only, bowl,
+  bowl_centred, saddle, choice_x_numeric, drift and geometric_knob_log: 128
+  campaigns.
+  - Against the fitted GP-BO, exact counts are 25 better / 100 tied / 3 worse;
+    within ε the result is 0 / 128 / 0.
+  - Nous is within ε of the BEST baseline in 128 of 128.
+  - Against RS and LHS it wins clearly.
+  - So against GP-BO this is a tie, not a win.
+- **Many knobs with effect sparsity** (`sparse_knobs` 6/8/12, 93-553 runs):
+  - Nous's mean regret is 0.002, against GP-BO 0.003, RS 0.32 and LHS 0.48.
+  - Within ε it ties GP-BO in 48 of 48 campaigns and never loses to RS or LHS.
+  - It does this at about 1/30 of GP-BO's analysis CPU: 2.6 s against 88 s per
+    campaign at 12 knobs and 553 runs. On a real target the runs, not the
+    analysis, dominate the cost.
+- **Drift** (`drift`, a trend of 0.05 per run). Nous scores 0 regret; the
+  sequential baselines score 0.38-0.46 (RS, LHS) and 0.03-0.07 (GP-BOs). This is
+  plausibly the blocked, randomized run order. No ablation here tests that
+  attribution.
+- **Noisy constraints** (`stochastic_constraint_boundary`). Nous scores 0.875;
+  every baseline 6-7. Part of this gap is a design asymmetry, not a better
+  optimizer: Nous replicates its finalists, while each baseline mostly measures a
+  configuration once, so its "feasible" pick is feasible by one lucky draw. A
+  baseline with replicated confirmation would narrow it.
+- **What no baseline offers:**
+  - a certificate with stated deltas (162 of 336 suite campaigns certified, of
+    which **26 are false**: true regret > ε);
+  - a pre-registered policy and an audit trail;
+  - provenance, `nous reanalyze`, and a cross-epoch error budget.
 
 **Where Nous loses, and it is not close.**
 
-- *Non-quadratic surfaces*: step_cliff (Nous 0.90 vs RS 0.20, GP-BO 0.23),
-  ridge_cubic (0.50 vs 0.003), two_peaks (1.75 vs RS 1.02). Against GP-BO in
-  this family Nous is better in 1, tied in 16 and worse in 31 of 48. The regret
-  does not shrink with seeds. Nous converges to the same wrong answer every
-  time, because the second-order model cannot represent a cliff, a cubic or
-  two peaks. **Worse, it CERTIFIES those answers**: 22 of 22 certificates in
-  the non-quadratic family are false (true regret > ε). The certificate is
-  conditional on the response class, and lack-of-fit at three levels per axis
-  has no power against these shapes (audit Q3, WP-A's scope).
-- *Geometric knobs coded linearly* (`geometric_knob`, no `scale: log`): Nous
-  26.2 regret against GP-BO 2.6-4.1 and LHS 0.5, with 4 of 8 FALSE certificates
-  at ×4 (6 of 20 at ×8 in the audit repro). The fix exists (`scale: log`, or
-  validation rule 25 warns), and with it Nous is the best method
-  (`geometric_knob_log`: 0 vs GP-BO 0.06-0.13). But an author who ignores the
-  warning gets a confidently wrong certificate.
-- *Deterministic constraints at the boundary* (`sla`): 0.40-0.46 vs GP-BO 0.
-  *A level that fails to measure* (`fails_at_one_level`): 0.64 vs 0.10-0.36.
+- **Non-quadratic surfaces, at both noise levels.**
+  - Regret on step_cliff: Nous 0.90 against RS 0.20 and GP-BO 0.23-0.30.
+  - On ridge_cubic: 0.50 against 0.003-0.03.
+  - On two_peaks: 1.75 against RS 1.02-1.06.
+  - Against GP-BO in this family Nous is better in 0, tied in 17 and worse in 31
+    of 48 (within ε).
+  - Nous's regret here is identical on every seed (standard deviation 0). It
+    converges to the same wrong answer because the second-order model cannot
+    represent a cliff, a cubic or two peaks.
+  - **And it certifies those answers.** The lack-of-fit test, at three levels per
+    axis, had too little power to withhold certification in 22 of these 48
+    campaigns, and all 22 certificates are false.
+  - The certificate is conditional on the response class (audit Q3; WP-A's
+    scope).
+- **Geometric knobs coded linearly** (`geometric_knob` without `scale: log`).
+  - Nous's regret is 26.2 at ×1 and ×4, against GP-BO 2.6-4.1 and LHS 0.5.
+  - 4 of 8 certificates at ×4 are false, and 6 of 20 at ×8 in the audit repro.
+  - With `scale: log` (validation rule 25 warns when it is missing), Nous is the
+    best method: 0 against GP-BO's 0.06-0.13.
+- **Deterministic constraint at the boundary** (`sla`). Nous 0.40 (×1) and
+  0.46 (×4); GP-BO 0.00 and 0.00.
+- **A level that fails to measure** (`fails_at_one_level`). Nous 0.64 at both
+  noise levels; GP-BO 0.08 and 0.08-0.13.
 
 **Practical guidance.**
 
 | Situation | Use |
 |---|---|
-| Few knobs, smooth monotone or single-bump response, runs are expensive, and a defensible, auditable answer is needed (a deploy decision, a paper) | **Nous** (declare `scale: log` for geometric knobs) |
-| Many knobs, few of which matter | **Nous**: it ties GP-BO at a fraction of the compute and certifies |
-| Noisy constraints, or drifting environments | **Nous** (replicated confirm, blocked run order) |
-| Response suspected multimodal, cliff-like or strongly non-polynomial | **GP-BO.** Do not trust a Nous certificate there without an independent check |
+| Few knobs, smooth monotone or single-bump response, expensive runs, and an auditable answer is needed (a deploy decision, a paper) | **Nous**, declaring `scale: log` for geometric knobs. Expect parity with GP-BO on regret; the certificate and the audit trail are the difference |
+| Many knobs, few of which matter | **Nous** ties GP-BO at a fraction of the analysis compute, and certifies |
+| A drifting environment | **Nous** (blocked, randomized order), although the attribution is untested |
+| Noisy constraints | Nous, or any method that replicates its finalists |
+| Response suspected multimodal, cliff-like or strongly non-polynomial | **GP-BO.** Treat a Nous certificate there as void without an independent check |
 | Pure exploration of an unknown surface, no certificate needed | GP-BO, or LHS as a cheap space-filling first pass |
-| Very cheap runs | Either works. Nous's analysis CPU is negligible next to a real target |
 
-A sensible hybrid, not implemented here: run a GP-BO or LHS exploration first.
-Use Nous when the explored region looks smooth, and treat a certificate on a
-surface the exploration showed to be non-smooth as void.
+A sensible hybrid, not implemented here: explore with GP-BO or LHS first. Use
+Nous when the explored region looks smooth, and distrust a certificate on a
+surface the exploration showed to be non-smooth.
 
 ## Results: suite (seeds 1-8, noise ×1/×4)
 
