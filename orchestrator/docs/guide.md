@@ -676,7 +676,7 @@ forces a full factorial. For 5–8 factors it uses the textbook generators
 |---|---|---|---|---|---|
 | III | saturated design | smallest 2^n > k (optimal) | 16 | 32 | 64 |
 | IV | even (folded-over) design: odd-weight columns only, so every defining word has even length | smallest 2^n >= 2k (optimal) | 32 | 32 | 64 |
-| V | columns no four of which multiply to the identity, searched greedily with seeded restarts | the smallest known regular design for k <= 30; at most one doubling beyond | 256 | 256 | 2048 |
+| V | columns no four of which multiply to the identity, searched greedily with seeded restarts | the smallest known regular design for k <= 30; beyond, one more doubling (to 64 knobs) or two (at 100); the preview states the gap | 256 | 256 | 2048 |
 
 Every resolution is guaranteed by construction and checked off the design
 matrix itself by `tests/test_optimize_design_construction.py`. The full

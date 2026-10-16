@@ -14,6 +14,7 @@ compute.
 """
 from __future__ import annotations
 
+import functools
 import itertools
 import math
 import random
@@ -145,6 +146,7 @@ def _greedy_columns(n: int, k: int, resolution: int, order) -> list[int] | None:
     return cols if len(cols) == k else None
 
 
+@functools.lru_cache(maxsize=None)
 def _construct(k: int, resolution: int) -> tuple[int, tuple[tuple[int, ...], ...]] | None:
     """A regular 2^(k-p) design of at least ``resolution`` for ANY ``k``.
 
@@ -159,9 +161,11 @@ def _construct(k: int, resolution: int) -> tuple[int, tuple[tuple[int, ...], ...
       * V and above -- a column set no ``resolution - 1`` of which XOR to
         zero, built by ``_greedy_columns`` in weight order and then over
         seeded restarts. It attains the smallest known regular design for
-        every k up to 29 (128 runs to 11 factors, 256 to 17, 512 to 23,
-        1024 to 29) and may need one more doubling beyond; the design
-        preview reports the run count against ``_runs_lower_bound``.
+        every k up to 30 (128 runs to 11 factors, 256 to 17, 512 to 23,
+        1024 to 30); beyond, it can need one more doubling (31..64 factors)
+        or two (measured at 100). The design preview reports the run count
+        against ``_runs_lower_bound``. Cached: k=100 at resolution V takes
+        seconds to construct, and the validator and preview ask repeatedly.
 
     Returns ``None`` when no generator is needed (the full factorial is
     already the smallest design of that resolution). Deterministic: the same

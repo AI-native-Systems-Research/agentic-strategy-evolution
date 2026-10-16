@@ -180,3 +180,18 @@ def test_the_preview_says_when_a_higher_resolution_is_free():
 def test_the_preview_says_when_the_construction_is_above_the_known_minimum():
     _, note = _preview_screen_note(31, 5)
     assert "smallest known is 1024" in note
+
+
+def test_resolution_five_at_a_hundred_knobs_is_within_two_doublings_and_cached():
+    import time
+
+    from orchestrator.optimize.design import _construct
+
+    _construct.cache_clear()
+    t = time.monotonic()
+    first = min_runs_for(100, 5)
+    cold = time.monotonic() - t
+    t = time.monotonic()
+    assert min_runs_for(100, 5) == first
+    assert time.monotonic() - t < max(0.05, cold / 10), "the second ask is cached"
+    assert first <= 4 * _runs_lower_bound(100, 5)
