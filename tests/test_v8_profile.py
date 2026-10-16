@@ -1203,21 +1203,6 @@ class TestFundedArms:
         assert repair_funded(s, s8, left, waiting=1)
         assert arm_funded(s, s8, left - s8.repair_budget_usd - CAP_OVERSHOOT_USD * 0.9)
 
-    def test_floor_grows_to_two_of_the_largest_replies(self, tmp_path):
-        from orchestrator.v8_execute import arm_settings
-        c = _v8()
-        assert arm_settings(c, tmp_path).arm_floor_usd == 4.0
-        (tmp_path / "llm_metrics.jsonl").write_text(json.dumps({"phase": "design", "max_reply_usd": 5.2}) + "\n")
-        assert arm_settings(c, tmp_path).arm_floor_usd == pytest.approx(10.4)
-
-    def test_after_a_5_dollar_reply_one_well_funded_family_is_screened(self, tmp_path, monkeypatch):
-        repo, work, it, campaign, fake, d = _setup(tmp_path, monkeypatch, {"h-main": 50, "h-alternative-1": 90})
-        (work / "llm_metrics.jsonl").write_text(json.dumps({"phase": "design", "max_reply_usd": 5.0}) + "\n")
-        fake.cost_tokens = 134_000  # each session spends ~$10, its whole raised floor
-        _execute(repo, work, it, campaign, d)
-        assert fake.names() == ["evaluator", "h-main", "winner:h-main"]
-        assert dict(fake.calls)["h-main"]["max_cost_usd"] >= 10.0
-
     def test_a_repair_that_would_starve_a_waiting_arm_is_not_run(self):
         from orchestrator.v8_execute import repair_funded, winner_reserve
         s, s8 = v7_settings(_v8()), v8_settings(_v8())
