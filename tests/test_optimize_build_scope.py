@@ -577,3 +577,26 @@ def test_a_build_with_no_or_whole_repo_scope_is_refused_at_run_time(tmp_path, mo
                   config_runner=make_synthetic_runner(s, seed=1),
                   test_results={t: False for t in _declared_ids(c)},
                   sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+
+
+# ─── round 3, A3: the agent repo's git control files ─────────────────────────
+
+
+@pytest.mark.parametrize("what", ["hook", "fsmonitor", "attributes"])
+def test_writing_the_agent_repos_git_control_files_aborts_the_build(tmp_path, monkeypatch, what):
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+
+    def act(repo, wd):
+        (repo / "mech.py").write_text("X = 2\n")
+        g = repo / ".git"
+        if what == "hook":
+            (g / "hooks" / "post-checkout").write_text("#!/bin/sh\necho pwn > bench.py\n")
+        elif what == "fsmonitor":
+            _git_in(repo, "config", "core.fsmonitor", "/tmp/x")
+        else:
+            (g / "info").mkdir(exist_ok=True)
+            (g / "info" / "attributes").write_text("* filter=x\n")
+
+    _, build, _ = _adversarial(tmp_path, monkeypatch, act)
+    with pytest.raises(OptimizationAborted, match="git control files"):
+        build()

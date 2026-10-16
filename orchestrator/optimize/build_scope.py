@@ -164,6 +164,30 @@ def record_digest(work_dir: Path, name: str) -> str | None:
     return hashlib.sha256(json.dumps(sub, sort_keys=True, default=str).encode()).hexdigest()
 
 
+def _git_control(repo: Path) -> dict[str, str]:
+    """``{name: digest}`` of the agent repo's git control files."""
+    gd = (_git(repo, "rev-parse", "--absolute-git-dir") or "").strip()
+    common = (_git(repo, "rev-parse", "--git-common-dir") or "").strip()
+    out: dict[str, str] = {}
+    for root in {gd, str((Path(repo) / common).resolve()) if common else gd}:
+        if not root:
+            continue
+        r = Path(root)
+        for rel in ("config", "config.worktree", "info/attributes", "info/exclude",
+                    "info/grafts", "commondir"):
+            out[f"{r.name}/{rel}"] = _sha_file(r / rel)
+        hooks = r / "hooks"
+        if hooks.is_dir():
+            for h in sorted(hooks.iterdir()):
+                out[f"{r.name}/hooks/{h.name}"] = _sha_file(h)
+        refs = r / "refs" / "replace"
+        if refs.is_dir():
+            for h in sorted(refs.rglob("*")):
+                if h.is_file():
+                    out[f"{r.name}/refs/replace/{h.name}"] = _sha_file(h)
+    return out
+
+
 def snapshot(repo: Path, work_dir: Path | None) -> dict:
     """Everything ``check`` compares. ``{"git": False, "error": ...}`` when the
     tree cannot be read as git."""
@@ -244,6 +268,9 @@ def snapshot(repo: Path, work_dir: Path | None) -> dict:
             "gitlinks": subs,
             "info_exclude": _sha_file(exp) if ex else None,
             "excludes_file": f"{xf}:{_sha_file(xfp) if xfp else ''}",
+            # The agent repo's own git control files (round 3, A3): config
+            # (core.hooksPath, core.fsmonitor, filters), hooks, attributes.
+            "git_control": _git_control(repo),
         })
     except (GitError, OSError) as exc:
         snap["git"] = False
@@ -342,6 +369,11 @@ def check(campaign: dict, repo: Path, work_dir: Path, before: dict,
                         ("excludes_file", "core.excludesFile")):
             if before.get(k) != after.get(k):
                 integrity.append(f"{what} changed during the build (it can hide new files)")
+        gc = _diff(before.get("git_control") or {}, after.get("git_control") or {})
+        if gc:
+            integrity.append(f"the repository's git control files changed during the "
+                             f"build ({gc}): config, hooks, attributes and replace refs "
+                             f"can run code or change what git shows")
         written = sorted(set(_diff(before["files"], after["files"]))
                          | set(_diff(before["index"], after["index"]))
                          | set(_diff(before["gitlinks"], after["gitlinks"])))
