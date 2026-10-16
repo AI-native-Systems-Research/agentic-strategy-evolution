@@ -965,6 +965,8 @@ def check_recommendation_avoids_lost_levels(recommendation: dict, report: dict |
     so an interior configuration at a lost level is caught too. Checked on the
     recommended levels and on every top candidate."""
     bad = {}
+    # Fully-barred factors (lost ∪ inadmissible = every level): only their
+    # LOST levels are barred (stage-1d Q2).
     every = set((recommendation or {}).get("all_levels_inadmissible") or ())
     for key in ("lost_levels", "inadmissible_levels"):
         for fid, lvs in ((recommendation or {}).get(key) or {}).items():
@@ -980,6 +982,10 @@ def check_recommendation_avoids_lost_levels(recommendation: dict, report: dict |
     # report's recommendation and every confirm finalist.
     rows += [((report or {}).get("recommendation") or {}).get("levels") or {}]
     rows += [f.get("levels") or {} for f in (confirmation or {}).get("finalists") or []]
+    # The author-declared known_valid_baseline is exempt (stage-1d Q4).
+    base = (report or {}).get("known_valid_baseline")
+    if base:
+        rows = [r for r in rows if r != base]
     for lv in rows:
         for fid, lvs in bad.items():
             if fid in lv and lv[fid] in lvs:

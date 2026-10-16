@@ -183,6 +183,16 @@ def _rationale_screen(surviving: tuple[str, ...], dropped: tuple[str, ...],
     return "; ".join(parts)
 
 
+def _lof_rejected(fit: Fit) -> bool:
+    """Lack of fit REJECTED: the F test at ``_LOF_ALPHA``, or an EXACT rejection
+    against zero pure error with lack-of-fit df (``Fit.lof_exact``; stage-1d
+    Q5), so transitions.jsonl never records lack_of_fit: false beside
+    model_adequate: false."""
+    if fit.lack_of_fit_p is not None and fit.lack_of_fit_p < _LOF_ALPHA:
+        return True
+    return getattr(fit, "lof_exact", None) == "rejected"
+
+
 def decide_after_screen(fit: Fit, factors: list[Factor], *,
                          alpha: float = 0.05,
                          behavioral_failures: tuple[RelationVerdict, ...] = ()) -> StageDecision:
@@ -267,7 +277,7 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
     if not surviving and dropped:
         blocking_triggers.append(Trigger.ALL_WITHIN_NOISE)
 
-    if fit.lack_of_fit_p is not None and fit.lack_of_fit_p < _LOF_ALPHA:
+    if _lof_rejected(fit):
         blocking_triggers.append(Trigger.LACK_OF_FIT)
 
     # Behavioral violations are reported but never block advancement: a
@@ -341,7 +351,7 @@ def decide_after_refine(fit: Fit, factors: list[Factor],
     surviving = tuple(f.id for f in factors)
 
     triggers: list[Trigger] = []
-    if fit.lack_of_fit_p is not None and fit.lack_of_fit_p < _LOF_ALPHA:
+    if _lof_rejected(fit):
         triggers.append(Trigger.LACK_OF_FIT)
     if behavioral_failures:
         triggers.append(Trigger.BEHAVIORAL_VIOLATION)

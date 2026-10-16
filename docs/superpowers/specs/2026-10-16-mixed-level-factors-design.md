@@ -405,6 +405,25 @@ rejected (14 of 24 surfaces, on the seeds where that happens); nothing else
 differs. The non-choice surfaces' other artifacts remain byte-identical to
 nousko fecd076.
 
+## Stage-1d (round 5) fixes (nous-e2e/audit/stage1d-mixed-round5-fixes.md)
+
+- Q1: lost levels are the per-factor UNION over every fitting stage of the
+  epoch (carried into each recommendation.json, read by `_barred_levels`);
+  refine's held level (corner-marginal, centre-mean or first-level fallback)
+  never picks a barred level.
+- Q2: a factor is FULLY barred when lost ∪ inadmissible covers every level;
+  then only its lost levels are excluded and it is listed in
+  `all_levels_inadmissible`; lost alone covering every level aborts naming
+  the lost levels.
+- Q3: `_config_admissible(..., barred=)` -- loops read the bar once.
+- Q4: the declared known_valid_baseline is exempt from the bar in confirm, as
+  in the report ladder; the seat's provenance and
+  `report.json["recommendation_names_barred_level"]` record it; the
+  no-finalist abort names the bar and states the baseline truthfully.
+- Q5: an exact lack-of-fit rejection sets the LACK_OF_FIT trigger, so the
+  policy's lack_of_fit observation agrees with model_adequate.
+- Q6: schema text: inadmissible levels of a fully barred factor stay candidates.
+
 ## What this design cannot answer (open questions)
 
 - Non-regular mixed-level designs (e.g. the 18-run OA(18, 2^1 3^7), 36-run

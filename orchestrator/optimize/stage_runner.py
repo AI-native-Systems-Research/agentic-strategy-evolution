@@ -881,6 +881,7 @@ def _admissible_configurations(work_dir) -> list[dict]:
     if runs is None or not runs.exists():
         return []
     invalid = _measured_infeasible(work_dir)
+    barred = _barred_levels(work_dir)  # read ONCE for the loop (Q3)
     seen: dict[str, dict] = {}
     for d in sorted(runs.glob("iter-*")):
         for row in artifacts.read_runs(d):
@@ -888,7 +889,7 @@ def _admissible_configurations(work_dir) -> list[dict]:
             if row.get("status") != "complete" or not lv:
                 continue
             key = json.dumps(lv, sort_keys=True, default=str)
-            if key not in seen and _config_admissible(work_dir, lv, invalid=invalid):
+            if key not in seen and _config_admissible(work_dir, lv, invalid=invalid, barred=barred):
                 seen[key] = dict(lv)
     return list(seen.values())
 
@@ -2284,6 +2285,12 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         ),
         "finalists": (conf.get("finalists") if conf else []) or [],
         "known_valid_baseline": pol.get("known_valid_baseline"),
+        # The declared baseline is EXEMPT from the lost/inadmissible-level bar
+        # (stage-1d Q4); when the report's answer names such a level, say so.
+        **({"recommendation_names_barred_level": {
+                fid: levels[fid] for fid, lvs in _barred_levels(work_dir).items()
+                if fid in levels and levels[fid] in lvs}}
+           if levels and _names_barred_level(levels, _barred_levels(work_dir)) else {}),
         "path": [t["from"] for t in trans] + ([trans[-1]["to"]] if trans else []),
         "epoch": pol["epoch"],
         # Present ONLY when a semantic exception ended the epoch, and then it is
@@ -2359,7 +2366,8 @@ def _same_levels(a: dict, b: dict) -> bool:
 
 
 def _config_admissible(work_dir, levels: dict, *,
-                       invalid: list[dict] | None = None) -> bool:
+                       invalid: list[dict] | None = None,
+                       barred: dict | None = None) -> bool:
     """FEASIBILITY IS A PROPERTY OF A CONFIGURATION, NOT OF A ROW.
 
     The ONE predicate every selector of a configuration to RETURN or to SEED
@@ -2380,9 +2388,10 @@ def _config_admissible(work_dir, levels: dict, *,
     inadmissibility and does not strike the configuration off.
 
     ``invalid`` lets a caller that tests many configurations read
-    ``_measured_infeasible`` once.
+    ``_measured_infeasible`` once; ``barred`` does the same for
+    ``_barred_levels`` (stage-1d Q3).
     """
-    if _names_barred_level(levels, _barred_levels(work_dir)):
+    if _names_barred_level(levels, _barred_levels(work_dir) if barred is None else barred):
         return False
     return not _measured_infeasible_contains(work_dir, levels, invalid=invalid)
 
@@ -2399,18 +2408,39 @@ def _union_levels(*maps) -> dict:
     return out
 
 
+def _epoch_recommendations(work_dir) -> list[dict]:
+    """Every fitting-stage recommendation.json of this epoch, in order."""
+    out = []
+    for rp in _this_epoch_runs(work_dir):
+        p = Path(rp).parent / "recommendation.json"
+        if p.exists():
+            try:
+                out.append(json.loads(p.read_text()))
+            except (OSError, ValueError):
+                continue
+    return out
+
+
+def _epoch_lost_levels(work_dir) -> dict:
+    """Per-factor UNION of lost_levels over the epoch's fitting stages (Q1)."""
+    return _union_levels(*[r.get("lost_levels") or {}
+                           for r in _epoch_recommendations(work_dir)])
+
+
 def _barred_levels(work_dir) -> dict:
     """ONE RULE (stage-1c P1): the categorical levels nothing may recommend --
-    lost (no retained row, incl. lost at the corners) and inadmissible
-    wherever measured (unless EVERY level of the factor is), per the latest
-    fitting stage's recommendation.json. ``{}`` for every campaign without
-    them, which leaves every selector unchanged."""
-    rec = _read_recommendation(work_dir) or {}
+    lost (no retained row, incl. lost at the corners) in ANY fitting stage of
+    the epoch (stage-1d Q1), and inadmissible wherever measured unless the
+    factor is fully barred (``all_levels_inadmissible``; Q2: then only its
+    lost levels are). ``{}`` for every campaign without them, which leaves
+    every selector unchanged."""
+    recs = _epoch_recommendations(work_dir)
+    rec = _read_recommendation(work_dir) or (recs[-1] if recs else {})
     every = set(rec.get("all_levels_inadmissible") or ())
     return _union_levels(
         {k: v for k, v in (rec.get("inadmissible_levels") or {}).items()
          if k not in every},
-        rec.get("lost_levels") or {})
+        *[r.get("lost_levels") or {} for r in recs + [rec]])
 
 
 def _names_barred_level(levels, barred: dict) -> bool:
@@ -3018,13 +3048,14 @@ def run_stage(
         # curvature -- which is also the right criterion at the refine design's
         # centre, where every interaction with a refined factor vanishes.
         centre_confounded: dict = {}
+        _held_barred = _barred_levels(work_dir)
         basis = {f.id: ("screen_recommendation"
                         if prev_levels and f.id in prev_levels else "first_level")
                  for f in held}
         if prev_rec and prev_rec.get("model_adequate") is False:
             corner_best = _corner_marginal_best(
                 work_dir, prev_rec.get("iteration"), [f.id for f in held],
-                primary, direction,
+                primary, direction, barred=_held_barred,
             )
             if corner_best:
                 logger.info(
@@ -3084,7 +3115,7 @@ def run_stage(
             else:
                 centre_best = _centre_mean_best(
                     work_dir, prev_rec.get("iteration"), held_choice,
-                    primary, direction,
+                    primary, direction, barred=_held_barred,
                 )
             if centre_best:
                 logger.info(
@@ -3099,7 +3130,10 @@ def run_stage(
         fixed = {
             f.id: (
                 prev_levels[f.id]
-                if prev_levels and f.id in prev_levels else f.levels[0]
+                if prev_levels and f.id in prev_levels
+                # first_level fallback: the first level the bar allows (Q1)
+                else next((lv for lv in f.levels
+                           if lv not in _held_barred.get(f.id, ())), f.levels[0])
             )
             for f in held if getattr(f, "levels", None)
         }
@@ -4095,14 +4129,30 @@ def run_stage(
     # recommendation outright; ``_excluded`` matches on shared keys, so
     # ``{C: level}`` removes every candidate at that level.
     inadmissible_levels = _inadmissible_categorical_levels(work_dir, factors)
+    # LOST levels persist across the epoch's fitting stages (stage-1d Q1): a
+    # refine holds a categorical fixed and loses nothing of its own, but a
+    # level the screen lost is still unrecommendable.
+    lost_levels = _union_levels(_epoch_lost_levels(work_dir), lost_levels)
     _by = {f.id: f for f in factors}
-    all_bad = sorted(fid for fid, lvs in inadmissible_levels.items()
+    # A factor is FULLY barred when lost ∪ inadmissible covers every level
+    # (stage-1d Q2). Then only the LOST levels (never measured) are excluded;
+    # the inadmissible ones (measured) stay candidates and are recorded under
+    # all_levels_inadmissible. Lost alone covering every level is an abort.
+    _barred_all = _union_levels(inadmissible_levels, lost_levels)
+    all_bad = sorted(fid for fid, lvs in _barred_all.items()
                      if fid in _by and len(lvs) >= len(_by[fid].levels))
+    for fid in all_bad:
+        if len(lost_levels.get(fid, ())) >= len(_by[fid].levels):
+            raise OptimizationAborted(
+                f"{stage_name}: every level of categorical {fid!r} is LOST "
+                f"({lost_levels[fid]}): no retained run at any of them, so no "
+                f"configuration of {fid} can be recommended. Re-run the failed "
+                f"configurations.")
     if all_bad:
         logger.warning(
-            "%s: EVERY level of %s was inadmissible wherever measured; recorded "
-            "(all_levels_inadmissible) but none is excluded, which would leave "
-            "no candidate.", stage_name, all_bad)
+            "%s: lost and inadmissible levels together cover EVERY level of %s; "
+            "only the lost ones are excluded, the inadmissible ones are recorded "
+            "(all_levels_inadmissible) and stay candidates.", stage_name, all_bad)
     # UNION per factor (stage-1c P2): a factor can have one lost AND one
     # inadmissible level; a dict merge would keep only one of the two lists.
     for fid, lvs in _union_levels({k: v for k, v in inadmissible_levels.items()
@@ -5201,13 +5251,24 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         if any(lv == f for f in finalists) or len(finalists) >= k:
             return
         if _names_barred_level(lv, barred):
-            # ONE RULE (stage-1c P1): a lost or inadmissible-wherever-measured
-            # categorical level is never seated -- not even the baseline --
-            # so it can never win confirm and the report never recommends it.
-            logger.info(
-                "confirm round %d: not seating %s (%s) -- it names a lost or "
-                "inadmissible categorical level %s.", rnd, lv, why, barred)
-            return
+            if allow_measured_invalid:
+                # The author-declared known_valid_baseline is EXEMPT (stage-1d
+                # Q4), as it is from the measured-invalid filter: always act --
+                # it is the one configuration the campaign may always return,
+                # and the report ladder's baseline rung returns it too. The
+                # exemption is recorded, never silent.
+                logger.warning(
+                    "confirm round %d: seating the known_valid_baseline %s although "
+                    "it names a lost or inadmissible categorical level %s (the "
+                    "declared baseline is exempt).", rnd, lv, barred)
+                why = f"{why} (names a lost/inadmissible level; baseline exempt)"
+            else:
+                # ONE RULE (stage-1c P1): never seated, so it can never win
+                # confirm and the report never recommends it.
+                logger.info(
+                    "confirm round %d: not seating %s (%s) -- it names a lost or "
+                    "inadmissible categorical level %s.", rnd, lv, why, barred)
+                return
         if not allow_measured_invalid and _measured_infeasible_contains(work_dir, lv):
             logger.info(
                 "confirm round %d: not seating %s (%s) — the campaign has "
@@ -5488,11 +5549,16 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             )
     if not finalists:
         n_invalid = len(_measured_infeasible(work_dir))
+        _why_base = ("no optimization.known_valid_baseline to fall back on"
+                     if not pol.get("known_valid_baseline") else
+                     "the known_valid_baseline was not seated (already a finalist "
+                     "or the list was full)")
         raise OptimizationAborted(
             f"confirm has no finalist to measure: nothing on the ladder survived "
-            f"— no recommendation.json on disk, no completed run to name a best "
-            f"measured configuration, and no optimization.known_valid_baseline "
-            f"to fall back on. "
+            f"— no seatable recommendation or ranked candidate, no completed run "
+            f"to name a best measured configuration, and {_why_base}. "
+            + (f"Candidates naming lost/inadmissible categorical levels {barred} "
+               f"are never seated. " if barred else "")
             + (
                 f"{n_invalid} configuration(s) WERE measured inadmissible and "
                 f"are therefore not re-seated; if the model's ranking holds "
@@ -6604,6 +6670,7 @@ def _refill_candidates(work_dir, factors, warnings: list | None = None) -> list[
         return out_
 
     invalid = _measured_infeasible(work_dir)
+    barred = _barred_levels(work_dir)  # read ONCE for the loop (Q3)
     measured = []
     for rp in _this_epoch_runs(work_dir):
         for row in artifacts.read_runs(rp.parent):
@@ -6611,7 +6678,7 @@ def _refill_candidates(work_dir, factors, warnings: list | None = None) -> list[
             if lv_ and row.get("status") in ("complete", "infeasible", "rejected"):
                 z_ = code(lv_)
                 if z_ is not None:
-                    measured.append((z_, _config_admissible(work_dir, lv_, invalid=invalid)))
+                    measured.append((z_, _config_admissible(work_dir, lv_, invalid=invalid, barred=barred)))
 
     def near_feasible(lv) -> bool:
         z = code(lv)
@@ -6835,7 +6902,7 @@ def _confirm_findings(summary: dict, iteration: int) -> dict:
 
 
 def _corner_marginal_best(work_dir, iteration, factor_ids, primary: str,
-                          direction: str) -> dict:
+                          direction: str, barred: dict | None = None) -> dict:
     """Each factor's best level by its marginal mean over the CORNER rows.
 
     Reads ``runs/iter-<iteration>/runs.jsonl``: ``complete`` rows whose
@@ -6872,9 +6939,12 @@ def _corner_marginal_best(work_dir, iteration, factor_ids, primary: str,
     sign = -1.0 if direction == "minimize" else 1.0
     out: dict = {}
     for fid, by_level in sums.items():
-        if len(by_level) < 2:
+        # A lost/inadmissible level is never a held level (stage-1d Q1).
+        cand = [a for a in by_level.values()
+                if a[0] not in (barred or {}).get(fid, ())]
+        if len(by_level) < 2 or not cand:
             continue
-        best = max(by_level.values(), key=lambda a: sign * a[1] / a[2])
+        best = max(cand, key=lambda a: sign * a[1] / a[2])
         out[fid] = best[0]
     return out
 
@@ -6963,7 +7033,7 @@ def _inadmissible_categorical_levels(work_dir, factors) -> dict:
 
 
 def _centre_mean_best(work_dir, iteration, factors, primary: str,
-                      direction: str) -> dict:
+                      direction: str, barred: dict | None = None) -> dict:
     """Each choice factor's best level by its mean over the CENTRE rows of
     ``runs/iter-<iteration>/runs.jsonl`` -- only for a factor EVERY one of
     whose centre-cycled levels (``matrix.centre_choice_levels``) has at least
@@ -7001,7 +7071,12 @@ def _centre_mean_best(work_dir, iteration, factors, primary: str,
     sign = -1.0 if direction == "minimize" else 1.0
     out: dict = {}
     for f in factors:
-        levels = list(centre_choice_levels(f))
+        # A lost/inadmissible level is not a candidate held level (stage-1d
+        # Q1): its centre rows may well have measured (lost AT THE CORNERS).
+        levels = [lv for lv in centre_choice_levels(f)
+                  if lv not in (barred or {}).get(f.id, ())]
+        if not levels:
+            continue
         means = {}
         for lv in levels:
             a = acc[f.id].get(json.dumps(lv))
@@ -7130,6 +7205,7 @@ def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
     sign = 1.0 if direction != "minimize" else -1.0
     seen: dict[str, tuple[dict, list[float]]] = {}
     invalid = _measured_infeasible(work_dir)
+    barred = _barred_levels(work_dir)  # read ONCE for the loop (Q3)
     for path in _this_epoch_runs(work_dir):
         for line in path.read_text().splitlines():
             if not line.strip():
@@ -7155,7 +7231,7 @@ def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
             # PER CONFIGURATION, not per row: a complete row at levels that
             # ANOTHER row measured infeasible is not a valid answer (see
             # `_config_admissible`).
-            if not _config_admissible(work_dir, levels, invalid=invalid):
+            if not _config_admissible(work_dir, levels, invalid=invalid, barred=barred):
                 continue
             key = json.dumps(levels, sort_keys=True, default=str)
             seen.setdefault(key, (levels, []))[1].append(numeric)

@@ -1,0 +1,161 @@
+"""Stage-1d (round 5) fixes for mixed-level factors (nous-e2e/audit/
+stage1d-mixed-round5-fixes.md). Each Q-test FAILS on a5470ec and passes after."""
+from __future__ import annotations
+
+import json
+
+from orchestrator.optimize import invariants as inv
+from orchestrator.optimize.harness import run_synthetic_campaign
+from orchestrator.optimize.synthetic import Surface, _choice, _numeric
+
+SCREEN_CONFIRM = {"stages": ["verify", "screen", "confirm"]}
+
+
+def _recs(res):
+    return [json.loads(p.read_text())
+            for p in sorted(res.work_dir.glob("runs/iter-*/recommendation.json"),
+                            key=lambda p: int(p.parent.name.split("-")[1]))]
+
+
+def _finalists(res):
+    out = []
+    for p in res.work_dir.glob("runs/iter-*/shortlist.json"):
+        out += json.loads(p.read_text())["finalists"]
+    return out
+
+
+def _centre_only_best():
+    return Surface(name="q1", noise_sd=0.05,
+                   factors=(_numeric("A"), _numeric("B"),
+                            _choice("POL", levels=("lru", "lfu", "arc"))),
+                   fn=lambda lv: (10 + 0.1 * lv["A"] - 0.05 * (lv["B"] - 9) ** 2
+                                  + {"lru": 0.0, "lfu": 2.0, "arc": 6.0}[lv["POL"]]),
+                   fails_at=lambda lv: lv["POL"] == "arc" and lv["A"] != 9)
+
+
+def test_Q1_the_bar_survives_refine(tmp_path):
+    """screen -> refine -> confirm: refine holds POL fixed and loses nothing
+    itself, but arc (lost at the screen's corners) is still never seated or
+    recommended, and refine's recommendation.json carries it forward."""
+    res = run_synthetic_campaign(
+        _centre_only_best(), seed=1, parent_dir=tmp_path,
+        campaign_overrides={"design": {"screen": {"resolution": 5, "center_points": 6},
+                                       "refine": {"kind": "central_composite",
+                                                  "center_points": 4},
+                                       "confirm": {"replicates": 3}}})
+    assert "refine" in res.path, res.path
+    recs = _recs(res)
+    assert all(r.get("lost_levels") == {"POL": ["arc"]} for r in recs), \
+        [r.get("lost_levels") for r in recs]
+    assert all(f["levels"]["POL"] != "arc" for f in _finalists(res))
+    assert res.report["recommendation"]["levels"]["POL"] != "arc"
+    conf = json.loads(sorted(res.work_dir.glob("runs/iter-*/confirmation.json"))[-1].read_text())
+    assert inv.check_recommendation_avoids_lost_levels(recs[-1], res.report, conf) == []
+
+
+def test_Q2_lost_plus_inadmissible_covering_a_factor_does_not_empty_the_space(tmp_path):
+    """C = {a, b, c}: a lost (every run fails), b and c inadmissible
+    everywhere. Before: all three excluded -> a false 'measured infeasible'
+    abort. After: only the lost a is excluded, b/c stay candidates, recorded
+    as all_levels_inadmissible."""
+    def lat(lv):
+        return (30.0 if lv["C"] in ("b", "c") else 10.0) + 0.1 * float(lv["A"])
+
+    s = Surface(name="q2", noise_sd=0.05,
+                factors=(_numeric("A"), _numeric("B"), _choice("C", levels=("a", "b", "c"))),
+                fn=lambda lv: 10 + 0.1 * lv["A"] + {"a": 0, "b": 1, "c": 2}[lv["C"]],
+                fails_at=lambda lv: lv["C"] == "a",
+                constraints=({"metric": "lat_ms", "op": "<=", "value": 20.0},),
+                noisy_observables=lambda lv, rng: {"lat_ms": lat(lv) + rng.gauss(0, 0.3)})
+    res = run_synthetic_campaign(
+        s, seed=1, parent_dir=tmp_path,
+        campaign_overrides={**SCREEN_CONFIRM, "response": {
+            "primary": {"metric": "m", "direction": "maximize"},
+            "constraints": [dict(c) for c in s.constraints]}})
+    assert not any(str(p).startswith("aborted") for p in res.path), res.path
+    rec = _recs(res)[0]
+    assert rec["lost_levels"] == {"C": ["a"]}
+    assert rec["all_levels_inadmissible"] == ["C"]
+    assert rec["levels"]["C"] in ("b", "c")
+    assert inv.check_recommendation_avoids_lost_levels(rec) == []
+
+
+def test_Q3_admissibility_loops_read_the_bar_once(tmp_path, monkeypatch):
+    from orchestrator.optimize import stage_runner as sr
+    from tests.test_optimize_categorical_oracles import middle_level_best
+
+    res = run_synthetic_campaign(middle_level_best(), seed=1, parent_dir=tmp_path,
+                                 campaign_overrides={"stages": ["verify", "screen"]})
+    calls = {"n": 0}
+    real = sr._barred_levels
+
+    def counted(wd):
+        calls["n"] += 1
+        return real(wd)
+
+    monkeypatch.setattr(sr, "_barred_levels", counted)
+    top = sr._top_measured(res.work_dir, "m", k=50)
+    assert len(top) > 5 and calls["n"] == 1
+    calls["n"] = 0
+    sr._admissible_configurations(res.work_dir)
+    assert calls["n"] == 1
+
+
+def test_Q4_the_known_valid_baseline_is_exempt_and_the_exemption_is_recorded(tmp_path):
+    """Every ranked candidate names the lost level arc, and so does the
+    declared baseline. Before: confirm refused the baseline too (no finalist,
+    and an abort saying there was no known_valid_baseline) although the report
+    ladder's baseline rung would return it. After: the baseline is seated,
+    exempt, and the exemption is in its provenance; INV-SEM19 exempts it."""
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.policy import compile_policy
+    from orchestrator.optimize.stage_runner import _confirm_rows
+
+    s = Surface(name="q4", fn=lambda lv: 0.0,
+                factors=(_numeric("A", levels=(2, 16)),
+                         _choice("POL", levels=("lru", "lfu", "arc"))))
+    c = synthetic_campaign(s, known_valid_baseline={"A": 2, "POL": "arc"})
+    pol = compile_policy(c)
+    base = pol["known_valid_baseline"]
+    it = tmp_path / "runs" / "iter-2"
+    it.mkdir(parents=True)
+    arc = {"A": 16, "POL": "arc"}
+    (it / "recommendation.json").write_text(json.dumps({
+        "stage": "screen", "iteration": 2, "levels": arc, "predicted": 1.0,
+        "top_candidates": [{"levels": arc, "predicted": 1.0}],
+        "model_adequate": True, "lost_levels": {"POL": ["arc"]}}))
+    _rows, payload = _confirm_rows(pol, tmp_path, parse_factors(c["optimization"]["factors"]),
+                                   "m", "maximize", 3)
+    seated = [f for f in payload["finalists"] if f["levels"] == base]
+    assert seated and "baseline exempt" in seated[0]["why"]
+    assert all(f["levels"] == base for f in payload["finalists"])
+    # (the hand-written recommendation above names arc on purpose; judge only
+    # the report and the finalists here)
+    report = {"recommendation": {"levels": base}, "known_valid_baseline": base}
+    assert inv.check_recommendation_avoids_lost_levels(
+        {"lost_levels": {"POL": ["arc"]}}, report, payload) == []
+
+
+def test_Q5_an_exact_rejection_sets_the_lack_of_fit_trigger():
+    from orchestrator.optimize.design import full_factorial, with_center_points
+    from orchestrator.optimize.effects import fit_effects
+    from orchestrator.optimize.stage import Trigger, decide_after_screen, observations_from_decision
+
+    d = with_center_points(full_factorial(["A", "B"]), 3)
+    ys = [1 + 2 * p.coded[0] - p.coded[1] + (1.0 if p.role == "center" else 0.0)
+          for p in d.points]
+    fit = fit_effects(d, ys, factor_ids=["A", "B"])
+    assert fit.lof_exact == "rejected"
+    dec = decide_after_screen(fit, [])
+    assert Trigger.LACK_OF_FIT in dec.triggers
+    obs = observations_from_decision(dec, fit)
+    assert obs["lack_of_fit"] is True and obs["model_adequate"] is False
+
+
+def test_Q6_report_schema_text_on_inadmissible_levels():
+    from pathlib import Path
+
+    d = json.loads((Path(__file__).resolve().parents[1] / "orchestrator" / "schemas"
+                    / "report.schema.json").read_text())["properties"]["inadmissible_levels"]
+    assert "all_levels_inadmissible" in d["description"]

@@ -108,6 +108,9 @@ def measured_points_and_incomplete(work_dir, objs) -> tuple[list[MeasuredPoint],
     if not runs.exists():
         return [], []
     invalid = _measured_infeasible(work_dir)
+    from orchestrator.optimize.stage_runner import _barred_levels
+
+    barred = _barred_levels(work_dir)  # read ONCE for the loop (Q3)
     pts: dict[str, MeasuredPoint] = {}
     fresh: dict[str, dict] = {}
     missing: dict[str, dict] = {}  # key -> {"fit": set, "confirm": set}
@@ -124,7 +127,7 @@ def measured_points_and_incomplete(work_dir, objs) -> tuple[list[MeasuredPoint],
             lv = row.get("levels")
             if row.get("status") != "complete" or not lv:
                 continue
-            if not _config_admissible(work_dir, lv, invalid=invalid):
+            if not _config_admissible(work_dir, lv, invalid=invalid, barred=barred):
                 continue
             key = json.dumps(lv, sort_keys=True, default=str)
             role = row.get("role")
@@ -544,8 +547,12 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
         )
 
         _invalid = _measured_infeasible(work_dir)
+        from orchestrator.optimize.stage_runner import _barred_levels
+
+        _bar = _barred_levels(work_dir)
         predicted = [pp for pp in predicted
-                     if _config_admissible(work_dir, pp.levels, invalid=_invalid)]
+                     if _config_admissible(work_dir, pp.levels, invalid=_invalid,
+                                           barred=_bar)]
     if adequate:
         predicted_rivals = {"considered": True, "n": len(predicted),
                             "reason": "every objective model adequate: predicted-front "
