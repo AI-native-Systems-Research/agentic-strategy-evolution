@@ -1835,8 +1835,11 @@ _ENTRIES: tuple[Invariant, ...] = (
                             "exhaustive: false, the search method and seed, the full size and "
                             "the evaluated count and whether the constraint models applied; the "
                             "model regret bound's detail says the max ran over the evaluated set "
-                            "only, alias_consequential_basis is 'searched', and a predicted "
-                            "front is marked predicted_front_basis: 'evaluated_points'. At or "
+                            "only, alias_consequential_basis is 'searched', alias_assessment "
+                            "accounts for every alias reading, no constraint reason claims "
+                            "'every candidate', and a predicted "
+                            "front is marked predicted_front_basis: 'evaluated_points'; "
+                            "report.json carries the same candidate_space. At or "
                             "below the cap the space is enumerated and none of these keys exist.",
               "STAT", "artifact", "decide._scored; stage_runner recommendation write",
               TEST, check_candidate_space,

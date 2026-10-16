@@ -659,41 +659,51 @@ not chosen freely.
 - **`confirm`** (required) — `{replicates}`. Replicates the predicted
   optimum (snapped to each factor's `grid`); the report then summarises
   the `held_out` metrics at the configurations it names.
-- **`max_runs`** — your run budget. The validator compares it with the
-  EXACT run count of the screen Nous will build and, when it does not fit,
-  names the options — raise the budget, accept a lower resolution (it says
-  which ones fit), or screen fewer factors this epoch — rather than silently
-  downgrading resolution to fit.
+- **`max_runs`** — your run budget, counted in ROWS: centre points
+  included, exactly as the runtime budget and the design preview count it.
+  The validator compares it with the exact row count of the screen Nous
+  will build (its corners plus `screen.center_points`) and, when it does not
+  fit, names the options — raise the budget, accept a lower resolution (only
+  those that fit AND cost less than every higher one), or screen fewer
+  factors this epoch — rather than silently downgrading resolution to fit.
 
 #### How many knobs: any number, at resolution III, IV or V
 
 The screen is a regular two-level fraction for ANY factor count; no count
-forces a full factorial. For 5–8 factors it uses the textbook generators
-(Box, Hunter & Hunter; Montgomery). Beyond that it **constructs** one
+forces a full factorial. It uses the textbook generators (Box, Hunter &
+Hunter; Montgomery) for 5–8 factors at resolution V, 4–8 at IV and 7 at III;
+for every other count it **constructs** one
 (`orchestrator/optimize/design.py`, `generators_for`):
 
 | resolution | construction | runs for k factors | 12 knobs | 16 knobs | 32 knobs |
 |---|---|---|---|---|---|
-| III | saturated design | smallest 2^n > k (optimal) | 16 | 32 | 64 |
-| IV | even (folded-over) design: odd-weight columns only, so every defining word has even length | smallest 2^n >= 2k (optimal) | 32 | 32 | 64 |
-| V | columns no four of which multiply to the identity, searched greedily with seeded restarts | the smallest known regular design for k <= 30; beyond, one more doubling (to 64 knobs) or two (at 100); the preview states the gap | 256 | 256 | 2048 |
+| III | saturated design | smallest 2^n > k (optimal among regular designs; a non-regular Plackett–Burman design can be smaller) | 16 | 32 | 64 |
+| IV | even (folded-over) design: odd-weight columns only, so every defining word has even length | smallest 2^n >= 2k (optimal: N >= 2k holds for any strength-3 orthogonal array) | 32 | 32 | 64 |
+| V | columns no three or four of which multiply to the identity, searched greedily with seeded restarts | the smallest known regular design for k <= 30; one doubling above the best known for 31–33, 40–47 and 53–65 knobs (equal at 34–39 and 48–52); past the catalogue 16384 runs for 69–88 knobs and 32768 for 89–100 (a BCH-code construction gives up to 127 in 16384; the counting bound at 100 is 8192); refused above 100 knobs; the preview states the gap | 256 | 256 | 2048 |
 
 Every resolution is guaranteed by construction and checked off the design
-matrix itself by `tests/test_optimize_design_construction.py`. The full
-factorial is used only where it is already the smallest design of the
-resolution (e.g. 3 or 4 factors at resolution V). Refine's composite design
-uses a resolution-V cube too once it has five or more factors (Box &
-Wilson's small composite), so refining ten survivors takes 128 corners,
-not 1,024.
+matrix itself by `tests/test_optimize_design_construction.py` (every
+shortest-word check for 3–24 factors, a GF(2) check to 64 factors at V and
+128 at III/IV). The full factorial is used only where it is already the
+smallest design of the resolution (e.g. 3 or 4 factors at resolution V).
+Refine's composite design uses a resolution-V cube once it has five or more
+factors — the central composite design of Box & Wilson (1951) and Box &
+Hunter (1957) with a fractional cube; resolution V is sufficient for the
+second-order model, not necessary (the smaller "small composite" designs of
+Hartley (1959) and Draper & Lin (1990) use a resolution-III* cube, which Nous
+does not build) — so refining ten survivors takes 128 corners, not 1,024.
 
-Choosing: resolution V costs about k²/2 runs and estimates every 2fi;
-resolution IV costs about 2k and keeps every main effect clear of 2fi (2fi
-alias in chains, which the registered foldover can untangle when an alias
-could change the answer). With many knobs, screen at IV first, keep the
+Choosing: resolution V needs at least 1 + k + k(k−1)/2 runs (≈ k²/2, the
+counting bound) and the designs Nous builds take 1.7–3.4× that for 8–30
+knobs (2.6–8× beyond); it estimates every 2fi. Resolution IV costs the
+smallest power of two ≥ 2k (between 2k and 4k) and keeps every main effect
+clear of 2fi (2fi alias in chains, which the registered foldover can
+untangle when an alias could change the answer). With many knobs, screen at IV first, keep the
 live ones, and refine them in the next epoch. The design preview (`nous
 validate campaign --liveness`) prints the design it chose, how it compares
-with the smallest known, when a higher resolution costs the same, and what a
-resolution-IV screen would cost.
+with the smallest known design (and, where no catalogue says, with the
+counting bound — a theoretical floor no design need attain), when a higher
+resolution costs the same, and what a resolution-IV screen would cost.
 
 #### What the fit regresses on: the levels that ran (INV-STAT14)
 
@@ -2278,18 +2288,27 @@ or two-level factor. That product is exponential in the number of knobs (9^6 =
   and a spread of their weighted sums. Measured-inadmissible and confidently
   infeasible points are excluded at every evaluated point, exactly as in
   enumeration; when no evaluated point is admissible, a feasibility-seeking
-  ascent (on the worst constraint margin) looks for one before the constraint
-  models are dropped, so a narrow feasible region the sample missed is still
-  found. The answer is then the best *evaluated* candidate, not a proven
+  descent (on the total constraint violation, so constraints that bind
+  jointly do not stall it) looks for one before the constraint models are
+  dropped, so a narrow feasible region the sample missed can still be found
+  (tested: one narrow constraint, three jointly binding ones). The answer is
+  then the best *evaluated* candidate, not a proven
   argmax: `recommendation.json["candidate_space"]` records `{exhaustive: false,
   size, evaluated, method: "sampled_coordinate_ascent", seed,
-  constraint_models_applied}`, the model regret bound's `detail` says it was
-  taken over the evaluated set only, `alias_consequential_basis: "searched"`
-  says an empty alias list means none was *found*, `predicted_front_basis:
-  "evaluated_points"` says front statuses are among evaluated points, and
-  `report.md` carries a "Candidate space searched, not enumerated" note. For the
-  low-order polynomials this kind fits the search reaches a planted optimum
-  among 9^16 candidates in well under a second; what confirm *measures* is
+  constraint_models_applied, seeds_dropped}` (`report.json` carries the same
+  record), the model regret bound's `detail` says it was taken over the
+  evaluated set only, `alias_consequential_basis: "searched"` says an empty
+  alias list means none was *found* — and `alias_assessment` lists the alias
+  readings it did NOT test (at most `decide.ALIAS_READINGS_CAP` = 64 are
+  assessed, largest coefficient first, each by a local search) —
+  `predicted_front_basis: "evaluated_points"` says front statuses are among
+  evaluated points, and `report.md` carries a "Candidate space searched, not
+  enumerated" note. There is no optimality guarantee. Measured: on random
+  INDEFINITE quadratics at 3–5 knobs (where enumeration can check it) the
+  search, given only a 50-point sample, named the exact argmax in 357 of 360
+  cases; on PLANTED concave
+  quadratics at 12 and 16 knobs it reached the planted optimum on every seed
+  tested, in under half a second of CPU. What confirm *measures* is
   unaffected either way.
 
 Two name notes, because the spec and the code differ and the code is what

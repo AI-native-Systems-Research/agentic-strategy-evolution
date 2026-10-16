@@ -395,7 +395,8 @@ because `choice` factors are excluded from a quadratic solve.
 | `stationary_point` | The solved quadratic stationary point, when there is one — reported, never blindly trusted |
 | `residual_regret_model` | The **model bound** `R_δ^model(x̂)`: `value`, `challenger`, `delta`, `method`, `detail` |
 | `aliases` / `alias_consequential` | The alias classes, and which of them could actually change the winner — the spec's `alias_map.json` content, recorded at every fitting state |
-| `candidate_space` | Present only when the space was SEARCHED (above the cap): `{exhaustive: false, size, evaluated, method: "sampled_coordinate_ascent", seed, constraint_models_applied}`. Absent means every valid candidate was enumerated. `constraint_models_applied` is `false` only when neither the search nor a feasibility ascent found a point the models admit (`null`: none modelled) |
+| `candidate_space` | Present only when the space was SEARCHED (above the cap): `{exhaustive: false, size, evaluated, method: "sampled_coordinate_ascent", seed, constraint_models_applied, seeds_dropped}`. Absent means every valid candidate was enumerated. `constraint_models_applied` is `false` only when neither the search nor a feasibility ascent found a point the models admit (`null`: none modelled) | `seeds_dropped` counts measured configurations that could not be placed on the axes. `report.json` carries the same record.
+| `alias_assessment` | With `candidate_space` only: `{readings, assessed, method: "local_coordinate_ascent", unassessed}` -- at most `decide.ALIAS_READINGS_CAP` alias readings are tested, largest coefficient first; the rest are listed, never skipped silently |
 | `alias_consequential_basis` / `predicted_front_basis` | With `candidate_space` only: `"searched"` (an empty `alias_consequential` means none was FOUND) and `"evaluated_points"` (predicted-front statuses and `front_size_predicted` are among evaluated points) |
 | `fitted_ids` / `held_fixed` | Which factors this fit covered, and what the rest were pinned at |
 | `model_adequate` | Whether the lack-of-fit test rejected the registered response class — read by `confirm` to decide whether the model's pick may be seated as a finalist |
@@ -602,7 +603,7 @@ one-factor-at-a-time search.
 | `factor_ids` | Which factors (by id) form the matrix's columns |
 | `kind` | Design family (e.g. fractional factorial, central composite) |
 | `resolution` | Achieved resolution (III/IV/V) for a fractional design |
-| `generators` | The published generator columns used to build the fraction |
+| `generators` | The generator columns used to build the fraction (textbook for 4-8 factors, constructed otherwise) |
 | `aliases` | Named aliased effect pairs, if any — the honest cost of resolution < V |
 | `rows` | The matrix rows themselves, in coded (±1) space |
 | `run_order` / `run_order_seed` | Randomized execution order plus the seed that reproduces it — immune to time-ordered drift a sequential grid can't rule out |
