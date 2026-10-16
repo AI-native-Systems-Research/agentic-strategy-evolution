@@ -730,3 +730,40 @@ def test_report_md_names_unassessed_alias_readings_and_dropped_seeds(tmp_path):
     text = "\n".join(_candidate_space_note(tmp_path))
     assert "181 of 245 alias readings NOT assessed" in text
     assert "2 measured configuration(s) could not seed the search" in text
+
+
+# ─── stage-0 review: the search is seeded with what was measured (B1) ───────
+
+
+def _two_peaks():
+    """``y = 10 + x_A x_B + 0.1 x_A - 0.3 x_B`` (coded): two corner peaks.
+    From the axes' centre a coordinate ascent moves A up first (its main
+    effect is +0.1), then B follows A up: (+1, +1) at 10.8. The higher peak is
+    (-1, -1) at 11.2 -- a corner the screen MEASURES."""
+    from orchestrator.optimize.synthetic import Surface
+
+    def fn(lv):
+        a, b = (lv["A"] - 9) / 7, (lv["B"] - 9) / 7
+        return 10 + a * b + 0.1 * a - 0.3 * b
+
+    return Surface(name="two_peaks", noise_sd=0.01, factors=(_numeric("A"), _numeric("B")),
+                   fn=fn)
+
+
+def test_a_searched_campaign_starts_from_its_measured_configurations(tmp_path, monkeypatch):
+    """With the search forced (cap 1) and no uniform sample, the only starts
+    are the axes' centre and the measured configurations. The screen measured
+    the (-1, -1) corner, so the recommendation is that higher peak; a search
+    not seeded with the measurements climbs from the centre to (+1, +1)."""
+    from orchestrator.optimize.harness import run_synthetic_campaign
+
+    monkeypatch.setattr(decide, "CANDIDATE_CAP", 1)
+    monkeypatch.setattr(decide, "SEARCH_SAMPLE", 0)
+    res = run_synthetic_campaign(_two_peaks(), seed=1, parent_dir=tmp_path,
+                                 campaign_overrides={"stages": ["verify", "screen", "confirm"]})
+    rec = json.loads((Path(res.work_dir) / "runs" / "iter-2" / "recommendation.json")
+                     .read_text())
+    assert rec["candidate_space"]["exhaustive"] is False
+    assert rec["levels"] == {"A": 2, "B": 2}, rec["levels"]
+    # ... and it is the higher peak, not merely a different corner.
+    assert rec["predicted"] == pytest.approx(11.2, abs=0.05)
