@@ -227,3 +227,25 @@ def test_a_work_dir_that_cannot_be_reanalysed_exits_2(tmp_path, monkeypatch, cap
     wd.mkdir()
     (wd / "state.json").write_text("{}")
     assert _cli(monkeypatch, str(wd)) == 2
+
+
+def test_a_missing_epoch_campaign_is_a_difference_not_a_substitution(tmp_path, monkeypatch):
+    from tests.test_optimize_provenance import _two_epochs
+
+    wd, _ = _two_epochs(tmp_path, monkeypatch)
+    (wd / "campaign.epoch-2.yaml").unlink()
+    res = reanalyze(wd)
+    assert not res.identical
+    assert any(d["file"] == "campaign.epoch-2.yaml" and "missing" in d["difference"]
+               for d in res.differences), res.differences
+
+
+def test_a_broken_build_record_seal_is_a_reanalysis_difference(tmp_path, monkeypatch):
+    from tests.test_optimize_waivers import _report
+
+    _report(tmp_path, monkeypatch)
+    wd = tmp_path / "waive"
+    p = wd / "authored_tests.json"
+    p.write_text(p.read_text() + " ")
+    res = reanalyze(wd)
+    assert {"file": "authored_tests.json", "difference": "build record seal broken"} in res.differences

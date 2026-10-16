@@ -63,7 +63,7 @@ NOT_DERIVED = frozenset({
     "pre_build_tests.json", "baseline_equivalence.json", "build_review.json",
     "authored_tests.json", "build_scope.json", "adapter_contract.json",
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
-    "mechanism.clean.patch", "gate_records.seal",
+    "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
@@ -71,7 +71,7 @@ NOT_DERIVED = frozenset({
 CARRIED_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json",
                    "authored_tests.json", "build_scope.json", "build_review.json",
                    "clean_tree.json", "mechanism.clean.patch", "gate_records.seal",
-                   ".nous_gate_key")
+                   ".nous_gate_key", "build_isolation.json")
 
 #: Bookkeeping files outside the analysis (engine state, ledgers, logs).
 IGNORED = frozenset({
@@ -337,6 +337,27 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         raise ValueError(f"{orig} has no campaign.epoch-*.yaml and no campaign was given")
     iters = _iter_numbers(orig)
     epoch_of = _iteration_epochs(orig, iters, max(campaigns))
+    # Every epoch the record refers to must have ITS registered campaign: a
+    # missing one is a difference, never a substitution by another epoch (C5).
+    referenced = set(epoch_of.values()) | {
+        int(p.stem.split("-")[-1]) for p in orig.glob("epoch_end-*.json")
+        if p.stem.split("-")[-1].isdigit()}
+    missing = sorted(e for e in referenced if e not in campaigns)
+    if missing:
+        result.differences.extend(
+            {"file": f"campaign.epoch-{e}.yaml",
+             "difference": "missing: the campaign this epoch registered is not on "
+                           "disk, so its analysis cannot be re-derived"} for e in missing)
+        return result
+    # The carried build records must still pass their seals (C5).
+    from orchestrator.optimize import gate_records as _gr
+
+    if (orig / _gr.SEAL_FILE).exists():
+        for name in (*_gr.BUILD_RECORDS, *_gr.VERIFY_RECORDS):
+            st = _gr.check(orig, name)
+            if st not in ("ok", "absent"):
+                result.differences.append(
+                    {"file": name, "difference": f"build record seal {st}"})
     run_id = (campaigns[min(campaigns)] or {}).get("run_id") or orig.name
 
     parent = Path(tempfile.mkdtemp(prefix="nous-reanalyze-"))
@@ -359,7 +380,7 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         last = iters[-1] if iters else 0
         for i in iters:
             e = epoch_of.get(i, max(campaigns))
-            c = _detached(campaigns.get(e) or campaigns[max(k for k in campaigns if k <= e)])
+            c = _detached(campaigns[e])
             pre = policy_mod.pre_epoch_stages(c)
             engine = Engine(new)
             if i <= len(pre) and pre[i - 1] in ("plan", "build") and e == min(campaigns):
