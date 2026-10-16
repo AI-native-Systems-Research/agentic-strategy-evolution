@@ -702,3 +702,23 @@ def test_under_the_cap_every_alias_reading_is_enumerated():
                                      fitted_ids=_ids(k), held_fixed={}, record=rec)
     assert out == [("X00X01", "X02X03")]
     assert rec == {"readings": 1, "assessed": 1, "method": "enumeration", "unassessed": []}
+
+
+def test_report_md_names_unassessed_alias_readings_and_dropped_seeds(tmp_path):
+    """A7 / A9: what the search did NOT do is said in report.md, not only in
+    recommendation.json."""
+    from orchestrator.optimize.report_md import _candidate_space_note
+
+    d = tmp_path / "runs" / "iter-2"
+    d.mkdir(parents=True)
+    (d / "recommendation.json").write_text(json.dumps({
+        "stage": "screen",
+        "candidate_space": {"exhaustive": False, "size": 9 ** 24, "evaluated": 900,
+                            "method": "sampled_coordinate_ascent", "seed": 0,
+                            "constraint_models_applied": None, "seeds_dropped": 2},
+        "alias_assessment": {"readings": 245, "assessed": 64,
+                             "method": "local_coordinate_ascent",
+                             "unassessed": [["AB", "CD"]] * 181}}))
+    text = "\n".join(_candidate_space_note(tmp_path))
+    assert "181 of 245 alias readings NOT assessed" in text
+    assert "2 measured configuration(s) could not seed the search" in text

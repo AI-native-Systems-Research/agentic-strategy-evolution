@@ -131,13 +131,19 @@ def _candidate_space_note(work_dir: Path) -> list[str]:
         if not isinstance(cs, dict) or cs.get("exhaustive", True):
             continue
         rec = _read_json(p) or {}
+        aa = rec.get("alias_assessment") or {}
         out.append(
             f"- `{rec.get('stage', '?')}` ({p.parent.name}): {cs.get('evaluated')} of "
             f"{cs.get('size')} configurations evaluated by `{cs.get('method')}` "
             f"(seed {cs.get('seed')})"
             + ("; constraint models NOT applied: neither the search nor a "
                "feasibility ascent found a point they admit"
-               if cs.get("constraint_models_applied") is False else ""))
+               if cs.get("constraint_models_applied") is False else "")
+            + (f"; {len(aa['unassessed'])} of {aa.get('readings')} alias readings "
+               f"NOT assessed (the {aa.get('assessed')} with the largest "
+               f"coefficients were)" if aa.get("unassessed") else "")
+            + (f"; {cs['seeds_dropped']} measured configuration(s) could not seed "
+               f"the search" if cs.get("seeds_dropped") else ""))
     if not out:
         return []
     return [
