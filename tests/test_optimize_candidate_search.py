@@ -122,7 +122,7 @@ def test_search_finds_the_enumerated_argmax_on_random_quadratics():
                 else:
                     shortfall.append(abs(ex.predicted - se.predicted)
                                      / max(abs(ex.predicted), 1e-9))
-    assert hits >= 0.97 * n, (hits, n)
+    assert hits >= 0.97 * n, (hits, n)  # measured: 50/50
     assert max(shortfall, default=0.0) < 0.05, sorted(shortfall)[-5:]
 
 
@@ -767,3 +767,39 @@ def test_a_searched_campaign_starts_from_its_measured_configurations(tmp_path, m
     assert rec["levels"] == {"A": 2, "B": 2}, rec["levels"]
     # ... and it is the higher peak, not merely a different corner.
     assert rec["predicted"] == pytest.approx(11.2, abs=0.05)
+
+
+# ─── stage-0 review: choice and held-fixed factors in the search (B6) ───────
+
+
+def test_search_with_a_choice_and_a_held_fixed_factor_matches_enumeration():
+    """Four refinable numerics plus a CHOICE factor (fitted, with interactions)
+    and a HELD-FIXED one (not fitted). Forced search vs exhaustive enumeration
+    over random indefinite quadratics, both directions: the same argmax in at
+    least 97% of cases, and the held level is carried into every candidate
+    either way, unchanged."""
+    from orchestrator.optimize.synthetic import _choice
+
+    fs = _factors(4) + parse_factors([_choice("C", levels=("lru", "fifo")),
+                                      _numeric("H", levels=(1, 2, 3))])
+    ids = _ids(4) + ["C"]
+    held = {"H": 2}
+    hits = n = 0
+    for s in range(25):
+        rng = random.Random(500 + s)
+        eff = [Effect(i, (i,), rng.gauss(0, 1)) for i in ids]
+        eff += [Effect(a + b, (a, b), rng.gauss(0, 0.7))
+                for a, b in itertools.combinations(ids, 2)]
+        quad = [Effect(i + i, (i, i), rng.gauss(0, 1)) for i in _ids(4)]
+        fit = Fit(rng.gauss(0, 1), tuple(eff), 30, quadratic=tuple(quad))
+        for d in ("maximize", "minimize"):
+            kw = dict(direction=d, fitted_ids=ids, held_fixed=held)
+            ex = decide.recommend(fit, fs, **kw)
+            r = decide.ranked(fit, fs, top=None, cap=0, sample=50, **kw)
+            assert not r.space.exhaustive
+            assert all(c.levels["H"] == 2 and "H" not in c.coded for c in r)
+            assert ex.levels["H"] == 2
+            assert {c.levels["C"] for c in r} == {"lru", "fifo"}
+            n += 1
+            hits += r[0].levels == ex.levels
+    assert hits >= 0.97 * n, (hits, n)  # measured: 50/50
