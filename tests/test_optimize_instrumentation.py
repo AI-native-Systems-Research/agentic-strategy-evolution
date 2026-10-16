@@ -859,7 +859,11 @@ def test_the_headroom_finding_says_what_it_cannot_guarantee(tmp_path: Path):
     """
     from orchestrator.cli import _smoke_check_optimization
 
-    campaign = _timeout_campaign(tmp_path, run_seconds=1.2, timeout_sec=2)
+    # 2.5s against 4s: the finding needs slowest > timeout / HEADROOM_FACTOR
+    # (2.0s), which a 2.5s sleep always is, and leaves 1.5s for interpreter
+    # start-up before a run times out. At 1.2s / 2s that margin was 0.8s, and
+    # the test failed under full-suite load (the run timed out instead).
+    campaign = _timeout_campaign(tmp_path, run_seconds=2.5, timeout_sec=4)
     findings = _smoke_check_optimization(
         campaign, liveness=True, liveness_repeats=2,
     )

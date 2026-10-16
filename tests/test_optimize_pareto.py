@@ -972,7 +972,7 @@ def test_scalar_direction_is_the_declared_weights():
 
 # ── re-review fixes (second pass) ────────────────────────────────────────────
 
-def _mo_campaign(**response_extra):
+def _convex_mo_campaign(**response_extra):
     from orchestrator.optimize.harness import synthetic_campaign
 
     base = {"objectives": [{"metric": "f1", "direction": "maximize"},
@@ -989,7 +989,7 @@ def _mo_campaign(**response_extra):
 def test_two_spellings_of_one_objective_are_rejected_not_resolved(response_extra, policy):
     from orchestrator.validate import validate_optimization_campaign
 
-    camp = _mo_campaign(**response_extra)
+    camp = _convex_mo_campaign(**response_extra)
     if policy:
         camp["optimization"]["policy"] = policy
     errors = validate_optimization_campaign(camp)
