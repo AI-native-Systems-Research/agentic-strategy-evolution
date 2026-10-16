@@ -156,7 +156,8 @@ def _diff_against(repo: Path, base: str, paths: list[str], scratch: Path,
 
 
 def capture(campaign: dict, repo: Path, work_dir: Path, base: str,
-            *, protected: set[str], base_tree_sha: str | None = None) -> dict:
+            *, protected: set[str], base_tree_sha: str | None = None,
+            extras_pre: dict | None = None) -> dict:
     """Record the mechanism patch; refuse one that touches a protected path."""
     from orchestrator.optimize.build_scope import mechanism_scope
 
@@ -174,6 +175,7 @@ def capture(campaign: dict, repo: Path, work_dir: Path, base: str,
     opt = (campaign.get("optimization") or {})
     rec = {"base_sha": base, "base_tree": base_tree_sha,
            "extras": list((campaign.get("target_system") or {}).get("worktree_extras") or []),
+           "extras_pre": extras_pre,
            "probe_commands": [c for c in (opt.get("run_command"), opt.get("test_command")) if c],
            "patch_sha256": hashlib.sha256(patch).hexdigest(),
            "paths": paths, "touched": names}
@@ -318,6 +320,33 @@ def _manifest(dest: Path) -> dict[str, str]:
     return out
 
 
+_EXTRA_SKIP = ("__pycache__",)
+
+
+def extras_digest(repo: Path, extras: list[str]) -> dict[str, str]:
+    """``{path: sha256 | "link:<target>"}`` of every file of the declared
+    ``worktree_extras`` IN THE AGENT'S REPO, bytecode caches excluded. Taken
+    BEFORE the build so a copy into the clean tree can be required to equal what
+    existed before the agent ran (round 4): a conftest.py or a patched module
+    the agent planted in an ignored asset directory is then refused."""
+    out: dict[str, str] = {}
+    for rel in extras:
+        rel = str(rel).strip().strip("/")
+        src = Path(repo) / rel
+        if not os.path.lexists(src):
+            continue
+        items = [src] if (src.is_symlink() or not src.is_dir()) else sorted(src.rglob("*"))
+        for q in items:
+            r = q.relative_to(repo).as_posix()
+            if set(Path(r).parts) & set(_EXTRA_SKIP) or q.suffix in (".pyc", ".pyo"):
+                continue
+            if q.is_symlink():
+                out[r] = "link:" + os.readlink(q)
+            elif q.is_file():
+                out[r] = hashlib.sha256(q.read_bytes()).hexdigest()
+    return out
+
+
 def copy_extras(repo: Path, dest: Path, extras: list[str]) -> dict[str, str]:
     """Copy ``target_system.worktree_extras`` (ignored assets: data, built
     binaries, a virtualenv) from the agent's repo into the clean tree. COPIED,
@@ -337,13 +366,24 @@ def copy_extras(repo: Path, dest: Path, extras: list[str]) -> dict[str, str]:
             raise CleanTreeError(f"worktree_extras entry {rel!r} is tracked or in the "
                                  f"mechanism: extras are for ignored assets only")
         if src.is_dir() and not src.is_symlink():
-            shutil.copytree(src, t, symlinks=True)
+            shutil.copytree(src, t, symlinks=True,
+                            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"))
         else:
             t.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, t, follow_symlinks=False)
+        repo_r = str(Path(repo).resolve())
         for q in ([t] if not t.is_dir() or t.is_symlink() else sorted(t.rglob("*"))):
             r = q.relative_to(dest).as_posix()
             if q.is_symlink():
+                # A link that resolves into the AGENT'S repo would let the
+                # measured tree read the agent's files again (round 4).
+                target = os.path.realpath(q)
+                if target == repo_r or target.startswith(repo_r + os.sep):
+                    raise CleanTreeError(
+                        f"worktree_extras {rel!r} contains a symlink {r} -> "
+                        f"{os.readlink(q)} that resolves into the build agent's "
+                        f"repository; extras are copied so the clean tree never reads "
+                        f"the agent's tree. Replace the link with the files.")
                 out[r] = "link:" + os.readlink(q)
             elif q.is_file():
                 out[r] = hashlib.sha256(q.read_bytes()).hexdigest()
@@ -355,6 +395,12 @@ def _create(repo: Path, work_dir: Path, rec: dict) -> Path:
     materialize(Path(repo), rec["base_sha"], dest, patch=Path(work_dir) / PATCH,
                 expect_tree=rec.get("base_tree"))
     extras = copy_extras(Path(repo), dest, rec.get("extras") or [])
+    pre = rec.get("extras_pre")
+    if pre is not None and pre != extras:
+        changed = sorted(k for k in set(pre) | set(extras) if pre.get(k) != extras.get(k))
+        raise CleanTreeError(
+            f"worktree_extras changed during the build ({changed[:10]}): what is copied "
+            f"into the clean tree must be what existed before the build agent ran.")
     ep = Path(work_dir) / EXTRAS
     if ep.exists():
         if _sealed_json(work_dir, EXTRAS) != extras:

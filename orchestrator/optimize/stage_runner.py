@@ -2762,6 +2762,11 @@ def _run_stage_body(
             # The pre-build TREE hash, recorded before the agent can touch the
             # repository's objects: every clean tree is checked against it.
             _clean_tree_sha = clean_tree.base_tree(Path(repo), _clean_base) if repo else None
+            # The ignored assets the clean tree will copy, as they are BEFORE
+            # the agent runs (clean_tree.extras_digest).
+            _extras_pre = clean_tree.extras_digest(
+                Path(repo), list((campaign.get("target_system") or {})
+                                 .get("worktree_extras") or []))
         except (_bs0.BuildScopeViolation, clean_tree.CleanTreeError) as exc:
             raise OptimizationGateFailed(str(exc)) from exc
         _write_json(Path(work_dir) / "pre_build_tests.json", {
@@ -2905,7 +2910,7 @@ def _run_stage_body(
                     campaign, Path(repo), work_dir, _clean_base,
                     protected=build_scope.protected_paths(
                         Path(repo), campaign, sorted(test_results or {})),
-                    base_tree_sha=_clean_tree_sha)
+                    base_tree_sha=_clean_tree_sha, extras_pre=_extras_pre)
             except (clean_tree.CleanTreeError, build_scope.GitError) as exc:
                 raise OptimizationGateFailed(str(exc)) from exc
         # Pre-register WHICH CODE the epoch will measure. `verify` compiles the

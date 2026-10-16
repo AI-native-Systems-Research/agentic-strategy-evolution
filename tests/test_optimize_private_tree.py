@@ -384,3 +384,77 @@ def test_the_probe_runs_with_the_commands_own_interpreter_flags(setup, tmp_path)
     ct.probe_imports(wd, repo, [f"{venv}/bin/python -S harness.py"], work_dir=wd)
     rec = json.loads((wd / ct.PROBE_RECORD).read_text())
     assert rec["probed"][0]["flags"] == ["-S"]
+
+
+# ─── round 4 self-probes: worktree_extras abuse, the key, the race ───────────
+
+
+def _extras_setup(tmp_path, ignored, extras, *, plant_after=None):
+    repo = tmp_path / "repo"
+    (repo / "mech").mkdir(parents=True)
+    for a in (["init", "-q"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]):
+        _git(repo, *a)
+    (repo / "harness.py").write_text("print('honest')\n")
+    (repo / "mech" / "m.py").write_text("X = 1\n")
+    (repo / ".gitignore").write_text("data/\nassets/\n")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "init")
+    for rel, val in ignored.items():
+        p = repo / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(val, tuple):
+            os.symlink(val[1], p)
+        else:
+            p.write_text(val)
+    base = _git(repo, "rev-parse", "HEAD").strip()
+    pre = ct.extras_digest(repo, extras)
+    for rel, val in (plant_after or {}).items():   # what the build agent does
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rel).write_text(val)
+    wd = tmp_path / "wd"
+    wd.mkdir()
+    camp = {"optimization": {"build_checks": {"mechanism_paths": ["mech"]}},
+            "target_system": {"worktree_extras": extras}}
+    ct.capture(camp, repo, wd, base, protected=set(), base_tree_sha=ct.base_tree(repo, base),
+               extras_pre=pre)
+    return repo, wd
+
+
+def test_code_planted_in_an_extras_directory_during_the_build_is_refused(tmp_path):
+    repo, wd = _extras_setup(tmp_path, {"assets/data.csv": "1\n"}, ["assets"],
+                             plant_after={"assets/conftest.py": "raise SystemExit('pwn')\n"})
+    with pytest.raises(ct.CleanTreeError, match="changed during the build"):
+        ct.ensure(repo, wd, fresh=True)
+
+
+def test_an_author_asset_present_before_the_build_is_copied(tmp_path):
+    repo, wd = _extras_setup(tmp_path, {"assets/data.csv": "1\n"}, ["assets"])
+    d = ct.ensure(repo, wd, fresh=True)
+    assert (d / "assets" / "data.csv").read_text() == "1\n"
+
+
+@pytest.mark.parametrize("ignored", [
+    {"data": ("link", "REPO/mech")},
+    {"data/x.txt": "1\n", "data/back": ("link", "REPO")},
+])
+def test_an_extras_symlink_into_the_agents_repo_is_refused(tmp_path, ignored):
+    repo = tmp_path / "repo"
+    fixed = {k: (("link", v[1].replace("REPO", str(repo))) if isinstance(v, tuple) else v)
+             for k, v in ignored.items()}
+    repo, wd = _extras_setup(tmp_path, fixed, ["data"])
+    with pytest.raises(ct.CleanTreeError, match="resolves into the build agent's repository"):
+        ct.ensure(repo, wd, fresh=True)
+
+
+def test_a_deleted_key_is_never_replaced_by_a_new_one(setup):
+    """Deleting ~/.nous/keys/<hash> must not let a later seal mint a fresh key
+    under which forged records would verify."""
+    from orchestrator.optimize import gate_records as gr
+
+    repo, wd = setup
+    ct.ensure(repo, wd, fresh=True)
+    gr.key_path(wd).unlink()
+    assert gr.check(wd, ct.MANIFEST) == "unsealed"
+    with pytest.raises(gr.GateRecordError, match="missing"):
+        gr.seal(wd, [ct.MANIFEST])
+    assert not gr.key_path(wd).exists()

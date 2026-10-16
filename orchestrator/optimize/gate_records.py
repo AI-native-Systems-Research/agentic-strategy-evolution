@@ -92,8 +92,11 @@ def _mac(key: bytes, name: str, data: bytes) -> str:
 def seal(work_dir: Path, names) -> dict:
     """(Re)seal ``names``; an absent record is sealed as absent."""
     wd = Path(work_dir)
-    key = _key(wd, create=True)
     sp = wd / SEAL_FILE
+    # A key is created only with the FIRST seal. Once seals exist, a missing
+    # key is an error, never a reason to mint a new one (round 4): a fresh key
+    # would let a later writer seal forged records that then verify.
+    key = _key(wd, create=not sp.exists())
     current = json.loads(sp.read_text()) if sp.exists() else {}
     for n in names:
         p = wd / n
