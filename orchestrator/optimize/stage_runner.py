@@ -2128,6 +2128,10 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     direction = primary.get("direction") or pol["objective"]["direction"]
     conf = _latest_confirmation(work_dir)
     rec = _read_recommendation(work_dir) or {}
+    # This epoch's latest fitting-stage record (``{}`` before the epoch wrote
+    # one): the source of the report's lost/inadmissible-level facts, which
+    # must agree with the epoch-scoped bar (``_barred_levels``).
+    _epoch_rec = (_epoch_recommendations(work_dir) or [{}])[-1]
     # ── MULTI-OBJECTIVE: the front is the answer; the ladder picks a point ──
     #
     # The latest confirm round's measured front when there is one; otherwise
@@ -2259,10 +2263,16 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
             "model_adequate_basis": rec.get("model_adequate_basis")}
            if "model_adequate" in rec and rec["model_adequate"] is None else {}),
         **({"model_adequate": False} if rec.get("model_adequate") is False else {}),
-        **({k: dict(rec[k]) for k in ("curvature_untested_levels", "lost_levels",
-                                      "inadmissible_levels") if rec.get(k)}),
-        **({k: list(rec[k]) for k in ("all_levels_inadmissible", "aliases_not_assessed")
-            if rec.get(k)}),
+        **({k: dict(rec[k]) for k in ("curvature_untested_levels",) if rec.get(k)}),
+        # The LEVEL facts the bar acts on come from THIS epoch's latest record
+        # only, exactly as ``_barred_levels`` reads them -- an epoch that ends
+        # before writing a recommendation must not report the previous epoch's
+        # lost/inadmissible levels while its measured rung recommends them.
+        **({k: dict(_epoch_rec[k]) for k in ("lost_levels", "inadmissible_levels")
+            if _epoch_rec.get(k)}),
+        **({k: list(_epoch_rec[k]) for k in ("all_levels_inadmissible",)
+            if _epoch_rec.get(k)}),
+        **({k: list(rec[k]) for k in ("aliases_not_assessed",) if rec.get(k)}),
         "residual_regret_terminal": (
             conf.get("residual_regret_terminal") if conf else None
         ),

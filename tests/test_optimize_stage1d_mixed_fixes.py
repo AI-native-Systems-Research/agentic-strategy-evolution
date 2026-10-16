@@ -223,3 +223,96 @@ def test_R2_report_md_names_a_recommended_baseline_at_a_barred_level(tmp_path):
     md = render_report_markdown(res.work_dir)
     assert ("Recommended baseline names lost/inadmissible level(s):** POL=arc "
             "(the declared known_valid_baseline is exempt)") in md
+
+
+def test_R4_report_level_facts_are_epoch_scoped(tmp_path):
+    """Epoch 1's screen lost POL=arc; the policy is recompiled (epoch 2) and
+    epoch 2 ends before writing any recommendation, with a measured run at
+    arc. Before: report.json still said 'lost: arc' (copied from the
+    non-epoch-scoped latest recommendation) while the measured rung could
+    recommend arc with no exemption line. After: no epoch-1 level facts, and
+    whatever is recommended is consistent with the (empty) epoch-2 bar."""
+    from types import SimpleNamespace
+
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.policy import compile_policy, policy_hash, write_policy
+    from orchestrator.optimize.stage_runner import _run_report
+
+    s = Surface(name="r4", fn=lambda lv: 0.0,
+                factors=(_numeric("A"), _choice("POL", levels=("lru", "lfu", "arc"))))
+    camp = synthetic_campaign(s)
+    pol1 = compile_policy(camp)
+    it1 = tmp_path / "runs" / "iter-2"
+    it1.mkdir(parents=True)
+    (it1 / "runs.jsonl").write_text("")
+    (it1 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol1)}))
+    (it1 / "recommendation.json").write_text(json.dumps({
+        "stage": "screen", "iteration": 2, "levels": {"A": 9, "POL": "lfu"},
+        "lost_levels": {"POL": ["arc"]}, "inadmissible_levels": {"POL": ["lru"]},
+        "all_levels_inadmissible": ["POL"]}))
+    pol2 = dict(pol1, epoch=2)
+    write_policy(tmp_path, pol2)
+    it3 = tmp_path / "runs" / "iter-3"
+    it3.mkdir(parents=True)
+    (it3 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol2)}))
+    (it3 / "runs.jsonl").write_text(json.dumps({
+        "row_index": 0, "status": "complete", "role": "corner",
+        "levels": {"A": 16, "POL": "arc"}, "response": {"m": 99.0}}) + "\n")
+
+    class _Eng(SimpleNamespace):
+        def transition(self, *_a, **_k):
+            pass
+
+    _run_report(_Eng(), camp, tmp_path, 3, pol2, recommendation_levels=None)
+    rep = json.loads((tmp_path / "report.json").read_text())
+    for k in ("lost_levels", "inadmissible_levels", "all_levels_inadmissible"):
+        assert k not in rep, (k, rep.get(k))
+    assert "recommendation_names_barred_level" not in rep
+    # The report never contradicts itself: whatever it recommends is
+    # consistent with the level facts it states.
+    assert inv.check_recommendation_avoids_lost_levels(
+        {k: rep[k] for k in ("lost_levels", "inadmissible_levels",
+                             "all_levels_inadmissible") if k in rep}, rep) == []
+
+
+def test_R4_the_measured_rung_can_recommend_the_level_without_a_stale_lost_line(tmp_path):
+    """The reviewer's exact path: epoch 2 has no recommendation and the
+    epoch-1 record is at the lost level itself, so the model rung declines
+    nothing and the MEASURED/model answer names arc; report.json must not
+    then claim arc is lost."""
+    from types import SimpleNamespace
+
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.policy import compile_policy, policy_hash, write_policy
+    from orchestrator.optimize.report_md import render_report_markdown
+    from orchestrator.optimize.stage_runner import _run_report
+
+    s = Surface(name="r4b", fn=lambda lv: 0.0,
+                factors=(_numeric("A"), _choice("POL", levels=("lru", "lfu", "arc"))))
+    camp = synthetic_campaign(s)
+    pol1 = compile_policy(camp)
+    it1 = tmp_path / "runs" / "iter-2"
+    it1.mkdir(parents=True)
+    (it1 / "runs.jsonl").write_text("")
+    (it1 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol1)}))
+    (it1 / "recommendation.json").write_text(json.dumps({
+        "stage": "screen", "iteration": 2, "levels": {"A": 16, "POL": "arc"},
+        "lost_levels": {"POL": ["arc"]}}))
+    pol2 = dict(pol1, epoch=2)
+    write_policy(tmp_path, pol2)
+    it3 = tmp_path / "runs" / "iter-3"
+    it3.mkdir(parents=True)
+    (it3 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol2)}))
+    (it3 / "runs.jsonl").write_text(json.dumps({
+        "row_index": 0, "status": "complete", "role": "corner",
+        "levels": {"A": 16, "POL": "arc"}, "response": {"m": 99.0}}) + "\n")
+
+    class _Eng(SimpleNamespace):
+        def transition(self, *_a, **_k):
+            pass
+
+    _run_report(_Eng(), camp, tmp_path, 3, pol2, recommendation_levels=None)
+    rep = json.loads((tmp_path / "report.json").read_text())
+    assert rep["recommendation"]["levels"]["POL"] == "arc"
+    assert "lost_levels" not in rep
+    assert "Levels lost" not in render_report_markdown(tmp_path)
