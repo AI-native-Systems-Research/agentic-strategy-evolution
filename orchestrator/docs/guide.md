@@ -2177,10 +2177,16 @@ or two-level factor. That product is exponential in the number of knobs (9^6 =
   the primary objective and — for multi-objective campaigns — every objective
   and a spread of their weighted sums. Measured-inadmissible and confidently
   infeasible points are excluded at every evaluated point, exactly as in
-  enumeration. The answer is then the best *evaluated* candidate, not a proven
+  enumeration; when no evaluated point is admissible, a feasibility-seeking
+  ascent (on the worst constraint margin) looks for one before the constraint
+  models are dropped, so a narrow feasible region the sample missed is still
+  found. The answer is then the best *evaluated* candidate, not a proven
   argmax: `recommendation.json["candidate_space"]` records `{exhaustive: false,
-  size, evaluated, method: "sampled_coordinate_ascent", seed}`, the model
-  regret bound's `detail` says it was taken over the evaluated set only, and
+  size, evaluated, method: "sampled_coordinate_ascent", seed,
+  constraint_models_applied}`, the model regret bound's `detail` says it was
+  taken over the evaluated set only, `alias_consequential_basis: "searched"`
+  says an empty alias list means none was *found*, `predicted_front_basis:
+  "evaluated_points"` says front statuses are among evaluated points, and
   `report.md` carries a "Candidate space searched, not enumerated" note. For the
   low-order polynomials this kind fits the search reaches a planted optimum
   among 9^16 candidates in well under a second; what confirm *measures* is
