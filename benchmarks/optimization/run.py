@@ -170,15 +170,32 @@ def _cached_map(fn, jobs, workers, cache: Path | None, key):
     return out
 
 
+def planned_budget(name: str, mult: float) -> int:
+    """The run count the campaign's registered design PLANS (design preview),
+    used when every seed of a cell crashed before measuring (round 3, E2)."""
+    try:
+        from orchestrator.optimize.harness import synthetic_campaign
+        from orchestrator.optimize.preview import build_preview
+
+        c = synthetic_campaign(S.get(name, mult), **(S.campaign_overrides(name) or {}))
+        pv = build_preview(c, noise_sd=None, mean=None, run_secs=None)
+        return int(pv.guaranteed_runs)
+    except Exception:  # noqa: BLE001 -- no plan: the cell is listed instead
+        return 0
+
+
 def _budget_for(r: dict, nous: list[dict]) -> int:
     """The budget a Nous row's baselines get. A campaign that crashed before
     measuring anything (budget 0) still counts in the head-to-heads (review C6):
-    its baselines get the median budget of the cell's other seeds."""
+    its baselines get the median budget of the cell's other seeds, or the
+    design's planned run count when every seed of the cell crashed (E2)."""
     if r.get("budget"):
         return int(r["budget"])
     cell = [x["budget"] for x in nous if x["surface"] == r["surface"]
             and x["mult"] == r["mult"] and x.get("budget")]
-    return int(statistics.median(cell)) if cell else 0
+    if cell:
+        return int(statistics.median(cell))
+    return planned_budget(r["surface"], r["mult"])
 
 
 def run_suite(names, mults, seeds, methods, workers, scratch, cache_dir: Path | None = None):
@@ -188,7 +205,7 @@ def run_suite(names, mults, seeds, methods, workers, scratch, cache_dir: Path | 
     jobs = [(n, m, s, scratch) for n in names for m in mults for s in seeds]
     nous = _cached_map(_nous_job, jobs, workers,
                        cache_dir / "nous.jsonl" if cache_dir else None,
-                       key=lambda j: f"{nd}|{j[0]}|{j[1]}|{j[2]}")
+                       key=lambda j: f"{nd}|{bd}|{j[0]}|{j[1]}|{j[2]}")
     bjobs = [(meth, r["surface"], r["mult"], r["seed"], _budget_for(r, nous))
              for r in nous if _budget_for(r, nous) for meth in methods]
     # Longest (GP-BO on the biggest budgets) first, for load balance.
@@ -269,8 +286,14 @@ def summarize(nous, base, methods):
     errors = [r for r in nous if "error" in r and "regret" in r]
     codes = {"nous": sorted({r.get("code", "unrecorded") for r in nous}),
              "baselines": sorted({b.get("code", "unrecorded") for b in base})}
+    # Cells with no baseline at all (every seed crashed and no planned budget):
+    # listed, never silently missing from the head-to-heads (E2).
+    with_base = {(b["surface"], b["mult"]) for b in base}
+    uncompared = sorted({(r["surface"], r["mult"]) for r in nous} - with_base)
+    dead = sum(int(b.get("dead_fallbacks") or 0) for b in base)
     return {"rows": rows, "head_to_head": h2h, "by_family": fam, "errors": errors,
-            "code_digests": codes}
+            "code_digests": codes, "uncompared_cells": uncompared,
+            "dead_fallbacks": dead}
 
 
 def _f(v, nd=3):
@@ -325,6 +348,12 @@ def render_markdown(summary, meta, methods) -> str:
     for r in summary["rows"]:
         out.append(f"| {r['surface']} | ×{r['mult']:g} | {_f(r['nous_cpu_s'], 2)} | "
                    + " | ".join(_f(r[f'{m}:cpu_s'], 2) for m in methods) + " |")
+    if summary.get("uncompared_cells"):
+        out += ["", "### Cells with no baseline (every seed crashed, no planned budget)", ""]
+        out += [f"- {n} ×{m:g}" for n, m in summary["uncompared_cells"]]
+    out += ["", f"_GP-BO had to re-pick an only-failed configuration "
+                f"{summary.get('dead_fallbacks', 0)} time(s) (every candidate had "
+                f"failed)._"]
     if summary["errors"]:
         out += ["", "### Nous campaigns that raised (charged the worst admissible regret)", ""]
         for e in summary["errors"]:

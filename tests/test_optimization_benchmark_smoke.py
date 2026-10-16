@@ -185,3 +185,38 @@ def test_a_cached_row_from_other_code_is_not_reused(tmp_path):
     nous, base = run_suite(["bowl"], [1.0], [1], ["RS"], 1, str(tmp_path), cache)
     assert nous[0]["regret"] != 999.0
     assert base and base[0]["dead_fallbacks"] == 0
+
+
+# ─── round 3, E1/E2 ──────────────────────────────────────────────────────────
+
+
+def test_a_cell_where_every_seed_crashed_still_gets_baselines_at_the_planned_budget():
+    from benchmarks.optimization.run import _budget_for, planned_budget
+
+    crashed = {"surface": "bowl", "mult": 1.0, "seed": 1, "budget": 0, "regret": 1.0,
+               "error": "TypeError: x"}
+    planned = planned_budget("bowl", 1.0)
+    assert planned > 0
+    assert _budget_for(crashed, [crashed]) == planned
+
+
+def test_uncompared_cells_and_dead_fallbacks_are_surfaced():
+    r = {"surface": "bowl", "mult": 1.0, "seed": 1, "budget": 0, "regret": 1.0,
+         "status": "error", "error": "x", "certified": False, "false_cert": False,
+         "wall_s": 0, "cpu_s": 0}
+    s = summarize([r], [], [])
+    assert s["uncompared_cells"] == [("bowl", 1.0)] and s["dead_fallbacks"] == 0
+
+
+def test_the_nous_cache_key_includes_the_benchmark_digest(tmp_path, monkeypatch):
+    from benchmarks.optimization import run as R
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    nd = R._nous_digest()
+    stale = {"_key": f"{nd}|bowl|1.0|1", "surface": "bowl", "mult": 1.0, "seed": 1,
+             "budget": 29, "regret": 999.0, "status": "ok", "certified": False,
+             "false_cert": False, "wall_s": 0, "cpu_s": 0}
+    (cache / "nous.jsonl").write_text(json.dumps(stale) + "\n")
+    nous, _ = R.run_suite(["bowl"], [1.0], [1], ["RS"], 1, str(tmp_path), cache)
+    assert nous[0]["regret"] != 999.0          # a key without the bench digest is not reused
