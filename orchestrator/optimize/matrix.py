@@ -35,8 +35,16 @@ import random
 from dataclasses import dataclass, field
 from typing import Any
 
-from orchestrator.optimize.design import Design, DesignPoint, alias_pairs
-from orchestrator.optimize.factors import Factor, code_actual, decode_coded
+from orchestrator.optimize.design import Design, DesignPoint, alias_pairs, factor_columns
+from orchestrator.optimize.factors import (
+    Factor,
+    code_actual,
+    code_vector,
+    decode_coded,
+    is_categorical,
+    level_of_bits,
+    model_columns,
+)
 from orchestrator.optimize.predicates import evaluate
 
 
@@ -53,8 +61,37 @@ class ConfigRow:
 
 def centre_choice_levels(f: Factor) -> tuple:
     """The levels a choice factor's centre rows cycle through: the levels the
-    screen runs it at (its screen pair for a two-level choice)."""
+    screen runs it at (its screen pair for a two-level choice, EVERY declared
+    level for a multi-level categorical)."""
+    if is_categorical(f):
+        return tuple(f.levels)
     return tuple(f.screen_levels)
+
+
+def _decode_factor(f: Factor, point: DesignPoint, idxs, *, n_configs: int = 1) -> Any:
+    """The level factor ``f`` runs at ``point``, from ALL of its columns.
+
+    A single-column factor is ``_decode_level``. A multi-level categorical
+    (method of replacement) reads its pseudo-factor signs at a corner --
+    ``b = sum_i [p_i = +1] 2^(i-1)`` -- and runs ``factors.level_of_bits``
+    (collapsing ``b >= L`` onto level ``b - L``); a centre row runs the
+    diagonal cyclic assignment over all L levels.
+    """
+    if not is_categorical(f):
+        return _decode_level(f, point, idxs[0], n_configs=n_configs)
+    if point.role == "center":
+        cyc = centre_choice_levels(f)
+        return cyc[(int(point.replicate) % max(1, int(n_configs))) % len(cyc)]
+    b = 0
+    for i, j in enumerate(idxs):
+        v = point.coded[j]
+        if v not in (-1.0, 1.0):
+            raise ValueError(
+                f"factor {f.id!r}: pseudo-factor column {j} is coded {v!r}; a "
+                f"categorical's pseudo-factors are two-level (+-1) only")
+        if v > 0:
+            b |= 1 << i
+    return level_of_bits(f, b)
 
 
 def centre_configurations(n_centre: int, level_counts) -> int:
@@ -117,7 +154,7 @@ def _design_centre_configs(design: Design, by_id: dict) -> int:
     """``centre_configurations`` for this design's centre rows and choice
     factors -- the one place ``expand`` and the payload record read it from."""
     n_c = sum(1 for p in design.points if p.role == "center")
-    counts = [len(centre_choice_levels(by_id[fid])) for fid in design.factor_ids
+    counts = [len(centre_choice_levels(by_id[fid])) for fid, _ in factor_columns(design)
               if fid in by_id and by_id[fid].type == "choice"]
     return centre_configurations(n_c, counts)
 
@@ -135,7 +172,8 @@ def centre_points_record(design: Design, factors) -> dict | None:
     point covers -- curvature is not checked under it.
     """
     by_id = {f.id: f for f in factors}
-    choice = [by_id[fid] for fid in design.factor_ids
+    cols_of = dict(factor_columns(design))
+    choice = [by_id[fid] for fid in cols_of
               if fid in by_id and by_id[fid].type == "choice"]
     centres = [p for p in design.points if p.role == "center"]
     if not centres or not choice:
@@ -149,8 +187,7 @@ def centre_points_record(design: Design, factors) -> dict | None:
         c = int(p.replicate) % g
         reps[c] = reps.get(c, 0) + 1
         for f in choice:
-            j = design.factor_ids.index(f.id)
-            per_level[f.id][str(_decode_level(f, p, j, n_configs=g))] += 1
+            per_level[f.id][str(_decode_factor(f, p, cols_of[f.id], n_configs=g))] += 1
     warnings = []
     for f in choice:
         missing = [lv for lv, n in per_level[f.id].items() if n == 0]
@@ -231,6 +268,9 @@ def coded_as_run(design: Design, factors, levels_by_pos) -> tuple[Design, list[i
     ``check_fidelity`` still compares planned levels to recorded levels.
     """
     by_id = {f.id: f for f in factors}
+    if any(fid in by_id and is_categorical(by_id[fid])
+           for fid, _ in factor_columns(design)):
+        return _coded_as_run_mixed(design, by_id, levels_by_pos)
     nominal: list[int] = []
     pts = []
     for i, p in enumerate(design.points):
@@ -244,6 +284,42 @@ def coded_as_run(design: Design, factors, levels_by_pos) -> tuple[Design, list[i
             role=p.role, replicate=p.replicate,
         ))
     return dataclasses.replace(design, points=tuple(pts)), nominal
+
+
+def _coded_as_run_mixed(design: Design, by_id: dict, levels_by_pos):
+    """``coded_as_run`` for a design holding a multi-level categorical.
+
+    The PLANNED design carries each categorical's m pseudo-factor columns;
+    the FIT design carries its L-1 contrast columns (``factors.model_columns``)
+    coded at the level that ran (``factors.code_vector``), so a collapsed row
+    and a canonical row of the same level are coded identically -- the
+    pseudo-factor combination is a device for PLACING levels, not a property
+    of what ran. ``groups`` maps each fit column to its factor. A position with
+    missing levels gets zeros in the fit width and is returned as nominal (the
+    caller drops it).
+    """
+    fids = [fid for fid, _ in factor_columns(design)]
+    cols: list[str] = []
+    groups: list[str] = []
+    for fid in fids:
+        for c in model_columns(by_id[fid]):
+            cols.append(c)
+            groups.append(fid)
+    nominal: list[int] = []
+    pts = []
+    for i, p in enumerate(design.points):
+        lv = levels_by_pos[i] if i < len(levels_by_pos) else None
+        if not lv or any(fid not in lv for fid in fids):
+            nominal.append(i)
+            pts.append(DesignPoint(coded=tuple(0.0 for _ in cols), role=p.role,
+                                   replicate=p.replicate))
+            continue
+        coded: list[float] = []
+        for fid in fids:
+            coded.extend(code_vector(by_id[fid], lv[fid]))
+        pts.append(DesignPoint(coded=tuple(coded), role=p.role, replicate=p.replicate))
+    return dataclasses.replace(design, points=tuple(pts), factor_ids=tuple(cols),
+                               groups=tuple(groups), words=()), nominal
 
 
 def fit_coordinates_record(planned: Design, fitted: Design,
@@ -263,6 +339,9 @@ def fit_coordinates_record(planned: Design, fitted: Design,
             row["status"] = str(statuses[i])
         rows.append(row)
     out = {"basis": "coded_actual_levels", "factor_ids": list(fitted.factor_ids),
+           **({"planned_factor_ids": list(planned.factor_ids),
+               "factor_of_column": list(fitted.groups)}
+              if tuple(planned.factor_ids) != tuple(fitted.factor_ids) else {}),
            "rows": rows}
     if statuses is not None:
         counts: dict[str, int] = {}
@@ -349,9 +428,9 @@ def expand(design: Design, factors: list[Factor]) -> list[ConfigRow]:
         patches: list[dict] = []
         pinned: dict[str, bool] = {}
 
-        for idx, fid in enumerate(design.factor_ids):
+        for fid, idxs in factor_columns(design):
             f = by_id[fid]
-            level = _decode_level(f, point, idx, n_configs=n_configs)
+            level = _decode_factor(f, point, idxs, n_configs=n_configs)
             levels[fid] = level
             rendered = _render_apply(f, level)
             cli_args.extend(rendered.get("cli_args", []))
@@ -396,6 +475,7 @@ def matrix_payload(design: Design, factors: list[Factor], *,
     rows = expand(design, factors)
     run_order = randomized_run_order(len(rows), run_order_seed)
     centre = centre_points_record(design, factors)
+    cats = categoricals_record(design, factors, rows)
     return {
         "factor_ids": list(design.factor_ids),
         "kind": design.kind,
@@ -415,7 +495,54 @@ def matrix_payload(design: Design, factors: list[Factor], *,
             for r in rows
         ],
         **({"centre_points": centre} if centre is not None else {}),
+        **({"categoricals": cats,
+            "column_groups": list(design.groups),
+            "column_words": [list(w) for w in design.words]} if cats else {}),
     }
+
+
+def categoricals_record(design: Design, factors, rows) -> list[dict]:
+    """``design_matrix.json["categoricals"]``: how the method of replacement
+    placed each multi-level categorical -- its pseudo-factor columns, the
+    combination -> level map (the COLLAPSING rule, ``factors.level_of_bits``),
+    the fit's contrast columns, and how often each level runs at the corners.
+    Records the consequences of collapsing rather than leaving them implicit:
+    unequal replication and within-factor non-orthogonality."""
+    from orchestrator.optimize.factors import n_pseudo
+
+    by_id = {f.id: f for f in factors}
+    cols = dict(factor_columns(design))
+    out = []
+    for fid, idxs in cols.items():
+        f = by_id.get(fid)
+        if f is None or not is_categorical(f):
+            continue
+        m = n_pseudo(f)
+        L = len(f.levels)
+        reps = {str(lv): 0 for lv in f.levels}
+        for r in rows:
+            if r.role == "corner":
+                reps[str(r.levels[fid])] += 1
+        out.append({
+            "factor": fid,
+            "levels": list(f.levels),
+            "pseudo_factors": [design.factor_ids[j] for j in idxs],
+            "contrast_columns": list(model_columns(f)),
+            "main_effect_df": L - 1,
+            "level_of_combination": {str(b): level_of_bits(f, b) for b in range(1 << m)},
+            "collapsed": L < (1 << m),
+            "corner_replication": reps,
+            "consequences": (
+                f"{(1 << m) - L} surplus pseudo-factor combination(s) collapse onto "
+                f"the first-declared level(s), which run twice as often; the "
+                f"factor's {L - 1} contrasts are then correlated with each other "
+                f"and the intercept (exact (X'X)^-1 inference is used), while "
+                f"orthogonality with every other factor's main effect is kept "
+                f"(Addelman 1962, proportional frequencies)."
+                if L < (1 << m) else
+                f"L = 2^{m}: no collapsing; the {L - 1} Walsh contrasts are orthogonal."),
+        })
+    return out
 
 
 def check_fidelity(payload: dict, runs: list[dict]) -> list[str]:

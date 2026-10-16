@@ -231,7 +231,23 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
     dropped: list[str] = []
     surviving: list[str] = []
     unknown: list[str] = []
+    from orchestrator.optimize.effects import factor_test
+
     for f in factors:
+        # A multi-level categorical's main effect is L-1 df: its survivor
+        # test is the F test on all of them (effects.FactorTest), not any one
+        # contrast's t -- a level that differs from the others shows up in
+        # some contrast, and which one depends on an arbitrary basis.
+        t = factor_test(fit, f.id)
+        if t is not None:
+            if t.significant is None:
+                surviving.append(f.id)
+                unknown.append(f.id)
+            elif t.significant is False:
+                dropped.append(f.id)
+            else:
+                surviving.append(f.id)
+            continue
         eff = main_effects.get(f.id)
         if eff is None or eff.significant is None:
             surviving.append(f.id)

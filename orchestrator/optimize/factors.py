@@ -22,6 +22,7 @@ how fitting works, and the fitting question is fully determined by
 """
 from __future__ import annotations
 
+import functools
 import math
 
 from dataclasses import dataclass
@@ -149,6 +150,13 @@ def parse_factors(raw: list[dict]) -> list[Factor]:
             )
 
         screen = entry.get("screen_levels")
+        if screen is not None and ftype == "choice" and len(levels) > 2:
+            raise ValueError(
+                f"factor {fid!r}: a choice factor with {len(levels)} levels is "
+                f"screened at EVERY level (method of replacement), so "
+                f"screen_levels does not apply. To screen fewer levels, declare "
+                f"fewer levels.",
+            )
         if screen is None:
             screen_pair_ = (levels[0], levels[-1])
         else:
@@ -288,6 +296,12 @@ def code_actual(f: Factor, level: Any) -> float:
         candidates at, so the fit and the argmax share one coordinate system.
     """
     low, high = f.screen_levels
+    if is_categorical(f):
+        raise ValueError(
+            f"factor {f.id!r} has {len(f.levels)} levels and is coded by "
+            f"{len(model_columns(f))} contrast columns, not one coordinate: "
+            f"use code_vector",
+        )
     if f.type == "choice":
         return float(code_level(f, level))
     lo, hi = _to_axis(f, low), _to_axis(f, high)
@@ -425,6 +439,128 @@ def _integral_as_int(f: Factor, value: Any) -> Any:
     if integer_levels and float(value).is_integer():
         return int(value)
     return value
+
+
+# ── multi-level categoricals: the method of replacement ─────────────────────
+#
+# Spec 2026-10-16-mixed-level-factors-design.md, feature 1. A choice factor
+# with L > 2 levels occupies m = ceil(log2 L) two-level PSEUDO-FACTOR columns
+# in the screen (Addelman 1962; Wu & Hamada, Experiments, ch. 7). A row's
+# pseudo signs p_1..p_m give b = sum_i [p_i = +1] 2^(i-1); b < L runs level b,
+# b >= L COLLAPSES onto level b - L. The fit codes the level that RAN with
+# L-1 Walsh contrasts (products of canonical pseudo signs).
+
+
+def is_categorical(f: Factor) -> bool:
+    """A choice factor with more than two levels: several columns, L-1 df."""
+    return f.type == "choice" and len(f.levels) > 2
+
+
+def n_pseudo(f: Factor) -> int:
+    """m = ceil(log2 L) pseudo-factors (1 for every single-column factor)."""
+    if not is_categorical(f):
+        return 1
+    return max(1, (len(f.levels) - 1).bit_length())
+
+
+def pseudo_ids(f: Factor) -> tuple[str, ...]:
+    """The planned design's columns for ``f``: ``C[1]..C[m]``, or ``(id,)``."""
+    if not is_categorical(f):
+        return (f.id,)
+    return tuple(f"{f.id}[{i + 1}]" for i in range(n_pseudo(f)))
+
+
+def level_of_bits(f: Factor, b: int) -> Any:
+    """The level a pseudo-sign combination ``b`` RUNS -- the collapsing rule:
+    ``b < L`` is level ``b``; a surplus combination ``b >= L`` falls on level
+    ``b - L``, so the first-declared levels (conventionally the baseline) run
+    twice as often. Addelman (1962a): collapsing preserves proportional
+    frequencies with every other factor, i.e. main-effect orthogonality across
+    factors; it costs within-factor orthogonality and equal replication."""
+    L = len(f.levels)
+    return f.levels[b if b < L else b - L]
+
+
+def _signs_of(b: int, m: int) -> tuple[float, ...]:
+    return tuple(1.0 if (b >> i) & 1 else -1.0 for i in range(m))
+
+
+def _walsh(mask: int, signs) -> float:
+    return math.prod(s for i, s in enumerate(signs) if (mask >> i) & 1)
+
+
+@functools.lru_cache(maxsize=None)
+def _contrast_masks(L: int) -> tuple[int, ...]:
+    """The Walsh contrasts (pseudo-sign products, as bitmasks) the fit uses.
+
+    L = 2^m: all 2^m - 1 -- orthogonal, +-1, exactly the columns the generalized
+    resolution guarantee is about, so exact alias detection applies unchanged.
+    L < 2^m: the first L-1 masks in (weight, value) order that are linearly
+    independent with the intercept over the CANONICAL codes of the L levels
+    (b = 0..L-1); any such basis spans the same L-1 df main effect, so
+    predictions do not depend on the choice.
+    """
+    m = max(1, (L - 1).bit_length())
+    order = sorted(range(1, 1 << m), key=lambda x: (bin(x).count("1"), x))
+    if L == 1 << m:
+        return tuple(order)
+    rows = [[1.0] for _ in range(L)]
+    chosen: list[int] = []
+    for mask in order:
+        cand = [r + [_walsh(mask, _signs_of(b, m))] for b, r in enumerate(rows)]
+        if _rank(cand) == len(chosen) + 2:
+            rows, chosen = cand, chosen + [mask]
+            if len(chosen) == L - 1:
+                break
+    return tuple(chosen)
+
+
+def _rank(rows) -> int:
+    a = [list(r) for r in rows]
+    rank, ncol = 0, len(a[0]) if a else 0
+    for c in range(ncol):
+        piv = max(range(rank, len(a)), key=lambda r: abs(a[r][c]), default=None)
+        if piv is None or abs(a[piv][c]) < 1e-9:
+            continue
+        a[rank], a[piv] = a[piv], a[rank]
+        for r in range(len(a)):
+            if r != rank:
+                fac = a[r][c] / a[rank][c]
+                a[r] = [x - fac * y for x, y in zip(a[r], a[rank])]
+        rank += 1
+    return rank
+
+
+def contrast_label(f: Factor, mask: int) -> str:
+    """``C[12]`` for the product of pseudo-factors 1 and 2 of ``C``."""
+    return f"{f.id}[" + "".join(str(i + 1) for i in range(n_pseudo(f))
+                                 if (mask >> i) & 1) + "]"
+
+
+def model_columns(f: Factor) -> tuple[str, ...]:
+    """The FIT's columns for ``f``: ``(id,)``, or its L-1 contrast labels."""
+    if not is_categorical(f):
+        return (f.id,)
+    return tuple(contrast_label(f, mk) for mk in _contrast_masks(len(f.levels)))
+
+
+def code_vector(f: Factor, level: Any) -> tuple[float, ...]:
+    """The coded coordinates of a level that RAN, one per ``model_columns``.
+
+    ``(code_actual(f, level),)`` for a single-column factor; for a categorical
+    the Walsh contrasts at the level's CANONICAL code (its own index ``b``),
+    so every row that ran a level -- canonical or collapsed onto it -- is coded
+    identically (INV-STAT14: code what ran)."""
+    if not is_categorical(f):
+        return (code_actual(f, level),)
+    try:
+        b = f.levels.index(level)
+    except ValueError:
+        raise ValueError(
+            f"factor {f.id!r}: level {level!r} is not one of {list(f.levels)!r}",
+        ) from None
+    signs = _signs_of(b, n_pseudo(f))
+    return tuple(_walsh(mk, signs) for mk in _contrast_masks(len(f.levels)))
 
 
 def is_refinable(f: Factor) -> bool:

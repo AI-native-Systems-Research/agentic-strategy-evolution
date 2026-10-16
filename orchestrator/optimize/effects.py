@@ -96,6 +96,26 @@ class Effect:
 
 
 @dataclass(frozen=True)
+class FactorTest:
+    """The L-1 df main-effect test of a multi-level categorical.
+
+    The Wald F on its contrast coefficients, ``F = b' V^-1 b / (q s_pe^2)`` with
+    ``V`` the ``(X'X)^-1`` block and ``q = L - 1``, on ``(q, df_pe)`` -- equal to
+    the extra-sum-of-squares F for a linear model (Searle, *Linear Models*,
+    1971, §3.6). Same denominator as every other factor's t test (pure error),
+    so a two-level factor's t^2 and this F are the same test at q = 1.
+    ``significant`` is ``None`` without pure error: unknown, never null.
+    """
+
+    factor: str
+    columns: tuple[str, ...]
+    df: int
+    f: float | None
+    p: float | None
+    significant: bool | None
+
+
+@dataclass(frozen=True)
 class Fit:
     """A fitted model plus everything needed to defend or doubt it."""
 
@@ -108,6 +128,20 @@ class Fit:
     lack_of_fit_p: float | None = None
     aliases: tuple[tuple[str, str], ...] = ()
     quadratic: tuple[Effect, ...] = ()
+    #: Mixed-level fits only (a design with a multi-column categorical):
+    #: ``(column, factor)`` per main-effect column, the exact unscaled
+    #: covariance ``(X'X)^-1`` over ``term_labels`` (intercept first, then the
+    #: fitted terms in model order), each term's variance inflation
+    #: ``(X'X)^-1_jj * sum_i x_ij^2`` (1.0 for a column orthogonal to all
+    #: others), and the categoricals' L-1 df F tests. Empty on every two-level
+    #: fit, which keeps the per-column arithmetic (exact for its orthogonal
+    #: columns) and its artifacts byte-identical.
+    groups: tuple[tuple[str, str], ...] = ()
+    term_labels: tuple[str, ...] = ()
+    term_terms: tuple[tuple[str, ...], ...] = ()
+    covariance: tuple[tuple[float, ...], ...] | None = None
+    variance_inflation: tuple[tuple[str, float], ...] = ()
+    factor_tests: tuple[FactorTest, ...] = ()
 
 
 def pure_error(center_responses) -> tuple[float | None, int]:
@@ -168,6 +202,11 @@ def model_matrix(design: Design, factor_ids, *, include_interactions: bool = Tru
     k = len(ids)
     pts = design.points
     has_axial = any(p.role == "axial" for p in pts)
+    # A multi-level categorical owns several columns (its contrasts); products
+    # of a factor's OWN columns are part of its main effect, never a 2fi, and
+    # are never formed. Every two-level design has no groups: unchanged.
+    grp = (dict(zip(design.factor_ids, design.groups))
+           if design.groups else {})
 
     labels: list[str] = []
     terms: list[tuple[str, ...]] = []
@@ -240,6 +279,8 @@ def model_matrix(design: Design, factor_ids, *, include_interactions: bool = Tru
         for j2, fid in enumerate(ids):          # main-effect columns already added
             seen.setdefault(tuple(pts[r].coded[j2] for r in akeys), 1 + j2)
         for i, j in itertools.combinations(range(k), 2):
+            if grp and grp.get(ids[i], ids[i]) == grp.get(ids[j], ids[j]):
+                continue
             col = [p.coded[i] * p.coded[j] for p in pts]
             key = tuple(col[r] for r in akeys)
             neg = tuple(-v for v in key)
@@ -424,6 +465,13 @@ def fit_effects(design: Design, responses, *, factor_ids,
                      aliased_with=alias_classes.get(labels[idx], ()))
         (quads if idx >= quad_start else built).append(eff)
 
+    mixed = bool(design.groups) and len(set(design.groups)) < len(design.groups)
+    extra: dict = {}
+    if mixed:
+        built, quads, extra = _exact_inference(
+            design, labels, terms, cols, coefs, built, quads, quad_start,
+            alias_classes, pe_var, pe_df, tcrit, have_se, alpha)
+
     lof_f = lof_p = None
     if pe_var is not None and pe_var > 0 and pe_df > 0:
         resid = [
@@ -444,7 +492,109 @@ def fit_effects(design: Design, responses, *, factor_ids,
         pure_error_var=pe_var, pure_error_df=pe_df,
         lack_of_fit_f=lof_f, lack_of_fit_p=lof_p,
         aliases=tuple(alias_pairs(design)), quadratic=tuple(quads),
+        **extra,
     )
+
+
+def _invert(a: list[list[float]]) -> list[list[float]]:
+    """Gauss-Jordan inverse with partial pivoting (small p; no numpy)."""
+    p = len(a)
+    m = [list(row) + [1.0 if i == j else 0.0 for j in range(p)] for i, row in enumerate(a)]
+    for c in range(p):
+        piv = max(range(c, p), key=lambda r: abs(m[r][c]))
+        if abs(m[piv][c]) < 1e-12:
+            raise ValueError("design matrix is singular -- (X'X) has no inverse")
+        m[c], m[piv] = m[piv], m[c]
+        d = m[c][c]
+        m[c] = [v / d for v in m[c]]
+        for r in range(p):
+            if r != c and m[r][c] != 0.0:
+                fac = m[r][c]
+                m[r] = [x - fac * y for x, y in zip(m[r], m[c])]
+    return [row[p:] for row in m]
+
+
+def _exact_inference(design, labels, terms, cols, coefs, built, quads, quad_start,
+                     alias_classes, pe_var, pe_df, tcrit, have_se, alpha):
+    """Exact SEs, covariance and the categoricals' F tests for a MIXED fit.
+
+    A mixed-level design is non-orthogonal by construction -- a collapsed
+    categorical's contrasts are correlated with each other and the intercept,
+    and cycled centre rows are coded at their levels -- so the per-column
+    ``sigma / sqrt(sum x^2)`` would be optimistic. Here every term's SE is
+    ``sigma sqrt((X'X)^-1_jj)`` and the full ``(X'X)^-1`` is kept on the Fit so
+    prediction intervals and the model regret bound use ``x'(X'X)^-1 x``.
+    """
+    n = len(cols[0])
+    p = len(cols)
+    xtx = [[sum(cols[i][r] * cols[j][r] for r in range(n)) for j in range(p)]
+           for i in range(p)]
+    cov = _invert(xtx)
+    effs = list(built) + list(quads)
+    new: list[Effect] = []
+    for idx, e in zip(range(1, p), effs):
+        se = lo = hi = sig = None
+        if have_se:
+            se = math.sqrt(pe_var * max(cov[idx][idx], 0.0))
+            lo, hi = e.estimate - tcrit * se, e.estimate + tcrit * se
+            sig = not (lo <= 0.0 <= hi)
+        new.append(Effect(label=e.label, terms=e.terms, estimate=e.estimate, se=se,
+                          ci_low=lo, ci_high=hi, significant=sig,
+                          aliased_with=e.aliased_with))
+    nb = len(built)
+    vif = tuple((labels[j], cov[j][j] * sum(v * v for v in cols[j]))
+                for j in range(1, p))
+    pairs = tuple(zip(design.factor_ids, design.groups))
+    tests: list[FactorTest] = []
+    by_factor: dict[str, list[str]] = {}
+    for c, g in pairs:
+        by_factor.setdefault(g, []).append(c)
+    for g, cs in by_factor.items():
+        if len(cs) < 2:
+            continue
+        idxs = [labels.index(c) for c in cs if c in labels]
+        q = len(idxs)
+        fval = pval = sig = None
+        if have_se and q:
+            b = [coefs[i] for i in idxs]
+            v = [[cov[i][j] for j in idxs] for i in idxs]
+            vinv = _invert(v)
+            quad = sum(b[i] * vinv[i][j] * b[j] for i in range(q) for j in range(q))
+            fval = quad / (q * pe_var)
+            pval = float(1.0 - fisher_f.cdf(fval, q, pe_df))
+            sig = pval < alpha
+        tests.append(FactorTest(factor=g, columns=tuple(cs), df=q, f=fval, p=pval,
+                                significant=sig))
+    extra = {
+        "groups": pairs,
+        "term_labels": tuple(labels),
+        "term_terms": tuple(tuple(t) for t in terms),
+        "covariance": tuple(tuple(r) for r in cov),
+        "variance_inflation": vif,
+        "factor_tests": tuple(tests),
+    }
+    return new[:nb], new[nb:], extra
+
+
+def factor_test(fit: Fit, factor_id: str) -> FactorTest | None:
+    """The categorical's F test on ``fit``, or ``None`` (not a categorical)."""
+    return next((t for t in fit.factor_tests if t.factor == factor_id), None)
+
+
+def prediction_variance(fit: Fit, xa: dict, xb: dict | None = None) -> float | None:
+    """EXACT ``s_pe^2 d'(X'X)^-1 d`` for ``d = x(xa) - x(xb)`` (``xb=None``: the
+    prediction at ``xa`` itself, intercept included), or ``None`` when the fit
+    carries no covariance (every two-level fit, whose consumers keep their
+    per-term arithmetic)."""
+    if fit.covariance is None or not fit.pure_error_var:
+        return None
+    def row(x):
+        return [1.0] + [math.prod(float(x[t]) for t in ts) for ts in fit.term_terms[1:]]
+    a = row(xa)
+    d = a if xb is None else [u - v for u, v in zip(a, row(xb))]
+    c = fit.covariance
+    q = sum(d[i] * c[i][j] * d[j] for i in range(len(d)) for j in range(len(d)))
+    return float(fit.pure_error_var) * max(q, 0.0)
 
 
 def dropped_factors(fit: Fit, factor_ids) -> list[str]:
@@ -455,6 +605,11 @@ def dropped_factors(fit: Fit, factor_ids) -> list[str]:
     """
     out: list[str] = []
     for fid in factor_ids:
+        t = factor_test(fit, fid)
+        if t is not None:
+            if t.significant is False:
+                out.append(fid)
+            continue
         for e in fit.effects:
             if e.terms == (fid,):
                 if e.significant is False:

@@ -66,10 +66,30 @@ from orchestrator.optimize.effects import Fit
 from orchestrator.optimize.factors import (
     Factor,
     code_actual,
+    code_vector,
     decode_coded,
+    is_categorical,
     is_refinable,
+    model_columns,
     runnable_levels,
 )
+
+
+def _flat(f: Factor, c) -> list[tuple[str, float]]:
+    """``(column, coded)`` pairs of one axis entry: ``[(id, c)]`` for a
+    single-column factor, the contrast columns of a categorical."""
+    if isinstance(c, tuple):
+        return list(zip(model_columns(f), c))
+    return [(f.id, c)]
+
+
+def _columns(ids, by_id) -> list[str]:
+    """The fit's columns for factor ids, in order (``ids`` itself unless a
+    categorical is among them)."""
+    out: list[str] = []
+    for fid in ids:
+        out.extend(model_columns(by_id[fid]))
+    return out
 
 
 #: Product of axis sizes at or below which the candidate space is ENUMERATED
@@ -188,6 +208,12 @@ def _axis(f: Factor, *, max_points: int = 9) -> list[tuple[float, object]]:
     the coding of THAT level, not of the unsnapped request.
     """
     low, high = f.screen_levels
+    if is_categorical(f):
+        # EVERY level (spec 2026-10-16 feature 1), each coded by its L-1
+        # contrast vector -- the same ``code_vector`` the fit regressed on. The
+        # coded entry is a TUPLE here; ``_flat`` spreads it over the factor's
+        # ``model_columns`` wherever a candidate's coded dict is built.
+        return [(code_vector(f, lv), lv) for lv in f.levels]
     # `not is_refinable(f)` is the LOAD-BEARING half and it already subsumes
     # the choice test — `is_refinable` is `type == "numeric" and len(levels) >
     # 2`, so a choice factor is never refinable (verified exhaustively over
@@ -278,9 +304,16 @@ def candidates(fit_ids, factors, *, held_fixed: dict,
     it only at or below ``CANDIDATE_CAP`` and searches above it.
     """
     ids, axes = _axes(fit_ids, factors)
+    by_id = {f.id: f for f in factors}
+    multi = any(is_categorical(by_id[fid]) for fid in ids)
     out: list[Candidate] = []
     for combo in itertools.product(*axes):
-        coded = {fid: c for fid, (c, _) in zip(ids, combo)}
+        if multi:
+            coded = {}
+            for fid, (c, _) in zip(ids, combo):
+                coded.update(_flat(by_id[fid], c))
+        else:
+            coded = {fid: c for fid, (c, _) in zip(ids, combo)}
         levels = {**dict(held_fixed), **{fid: lv for fid, (_, lv) in zip(ids, combo)}}
         if _excluded(levels, exclude_levels):
             continue
@@ -377,8 +410,16 @@ def _search(fit: Fit, ids, axes, by_id, *, direction: str, objectives,
     """
     sizes = [len(a) for a in axes]
     n = len(ids)
+    multi = any(is_categorical(by_id[fid]) for fid in ids)
+    cols = _columns(ids, by_id) if multi else list(ids)
 
     def coded_of(idx):
+        if multi:
+            out_ = []
+            for j in range(n):
+                c = axes[j][idx[j]][0]
+                out_.extend(c if isinstance(c, tuple) else (c,))
+            return tuple(out_)
         return tuple(axes[j][idx[j]][0] for j in range(n))
 
     # The centre of every axis always seeds the pool, so a search with no
@@ -403,8 +444,8 @@ def _search(fit: Fit, ids, axes, by_id, *, direction: str, objectives,
             pool.append(idx)
 
     sign = lambda d: 1.0 if d != "minimize" else -1.0  # noqa: E731
-    dirs = [(_compiled(fit, ids), sign(direction))]
-    objs = [(_compiled(o_fit, ids), sign(o_dir)) for o_fit, o_dir in objectives or ()
+    dirs = [(_compiled(fit, cols), sign(direction))]
+    objs = [(_compiled(o_fit, cols), sign(o_dir)) for o_fit, o_dir in objectives or ()
             if o_fit is not None]
     dirs += objs
     adm_pool = [idx for idx in pool if admissible(idx)]
@@ -549,8 +590,15 @@ def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
     by_id = {f.id: f for f in factors}
     held = dict(held_fixed)
 
+    multi = any(is_categorical(by_id[fid]) for fid in ids)
+
     def build(idx) -> Candidate:
-        coded = {fid: axes[j][idx[j]][0] for j, fid in enumerate(ids)}
+        if multi:
+            coded = {}
+            for j, fid in enumerate(ids):
+                coded.update(_flat(by_id[fid], axes[j][idx[j]][0]))
+        else:
+            coded = {fid: axes[j][idx[j]][0] for j, fid in enumerate(ids)}
         levels = {**held, **{fid: axes[j][idx[j]][1] for j, fid in enumerate(ids)}}
         return Candidate(levels=levels, coded=coded, predicted=float("nan"))
 

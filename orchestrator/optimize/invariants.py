@@ -839,6 +839,26 @@ def check_fit_coordinates_are_actual(fit_coordinates: dict, levels_rows,
     by_id = {f.id: f for f in factors}
     ids = list(fit_coordinates.get("factor_ids") or [])
     rows = list(fit_coordinates.get("rows") or [])
+    owner = list(fit_coordinates.get("factor_of_column") or [])
+    if owner:
+        # Mixed-level fit: column j is contrast number (j - first column of its
+        # factor) of factor owner[j], coded by factors.code_vector.
+        from orchestrator.optimize.factors import code_vector
+
+        first = {}
+        for j, g in enumerate(owner):
+            first.setdefault(g, j)
+        if len(rows) != len(levels_rows):
+            return [f"{len(rows)} fitted row(s) recorded but {len(levels_rows)} level row(s) given"]
+        for i, (row, lv) in enumerate(zip(rows, levels_rows)):
+            for j, (cid, g) in enumerate(zip(ids, owner)):
+                want = code_vector(by_id[g], lv[g])[j - first[g]]
+                got = row["fitted"][j]
+                if abs(float(got) - want) > 1e-9:
+                    out.append(
+                        f"fitted row {i} column {cid!r} of factor {g!r}: coded {got} "
+                        f"but the level that ran ({lv[g]!r}) codes {want}")
+        return out
     if len(rows) != len(levels_rows):
         return [f"{len(rows)} fitted row(s) recorded but {len(levels_rows)} level row(s) given"]
     for i, (row, lv) in enumerate(zip(rows, levels_rows)):

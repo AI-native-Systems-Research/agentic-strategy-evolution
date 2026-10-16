@@ -80,6 +80,8 @@
         "basis": { "const": "coded_actual_levels" },
         "rows_by_status": { "type": "object", "additionalProperties": { "type": "integer", "minimum": 0 }, "description": "Fitted rows counted by run status. INV-STAT15: `infeasible` rows (a response.constraints violation -- a valid measurement of an inadmissible configuration) ARE fitted; `rejected` and `failed` rows never are." },
         "factor_ids": { "type": "array", "items": { "type": "string" }, "description": "Column order of planned/fitted (the fitted factor set)." },
+        "planned_factor_ids": { "type": "array", "items": { "type": "string" }, "description": "Mixed-level fits only: the PLANNED design's columns (a categorical's pseudo-factors), the column order of each row's `planned`; `factor_ids` is then the fit's contrast columns." },
+        "factor_of_column": { "type": "array", "items": { "type": "string" }, "description": "Mixed-level fits only: the factor each fitted column belongs to (a categorical owns its L-1 contrast columns)." },
         "rows": {
           "type": "array",
           "description": "One entry per FITTED row, in fit order (excluded rows are absent).",
@@ -96,6 +98,33 @@
           }
         }
       }
+    },
+    "categoricals": {
+      "type": "array",
+      "description": "Mixed-level fits only (spec 2026-10-16-mixed-level-factors-design.md, feature 1): per multi-level categorical, the Wald F test of its L-1 df main effect on pure error, and per level the coded contrast vector, the main-effect contribution and the least-squares (population marginal) mean.",
+      "items": {
+        "type": "object",
+        "required": ["factor", "columns", "df", "f", "p", "significant", "levels"],
+        "properties": {
+          "factor": { "type": "string" },
+          "columns": { "type": "array", "items": { "type": "string" } },
+          "df": { "type": "integer", "minimum": 1 },
+          "f": { "type": ["number", "null"] },
+          "p": { "type": ["number", "null"] },
+          "significant": { "type": ["boolean", "null"] },
+          "test": { "type": "string" },
+          "levels": { "type": "array", "items": { "type": "object", "required": ["level", "coded", "effect", "ls_mean"] } }
+        }
+      }
+    },
+    "interactions_dropped": {
+      "const": true,
+      "description": "Present only when the fitted rows could not support any two-factor interaction (the full model was rank-deficient), so the fit is MAIN EFFECTS ONLY."
+    },
+    "variance_inflation": {
+      "type": "object",
+      "additionalProperties": { "type": "number" },
+      "description": "Mixed-level fits only: per term, (X'X)^-1_jj * sum_i x_ij^2 -- 1.0 for a column orthogonal to every other, above 1 where collapsing or cycled centres correlate it with others. The reported SEs are the exact ones."
     },
     "exclusion_balance": {
       "type": "object",

@@ -3648,6 +3648,8 @@ def run_stage(
                 len(keep),
             )
             fitted_ids = tuple(ident.estimable)
+            # The FACTOR of each fit column (a categorical owns several).
+            _owner_run = design_run.groups or design_run.factor_ids
             # A dropped factor is not "varied but unfitted": every retained row
             # sits at one level of it, so pin it there for the argmax. Reading
             # the level off the retained rows rather than off the baseline keeps
@@ -3665,12 +3667,20 @@ def run_stage(
                         p,
                         coded=tuple(
                             c for j, c in enumerate(p.coded)
-                            if design.factor_ids[j] in set(ident.estimable)
+                            if _owner_run[j] in set(ident.estimable)
                         ),
                     )
                     for p in design_run.points
                 ),
+                **({"groups": tuple(g for g in _owner_run
+                                    if g in set(ident.estimable))}
+                   if design_run.groups else {}),
             )
+            if design_run.groups:
+                design_for_fit = dataclasses.replace(
+                    design_for_fit, factor_ids=tuple(
+                        c for c, g in zip(design_run.factor_ids, _owner_run)
+                        if g in set(ident.estimable)))
         design_for_fit = dataclasses.replace(
             design_for_fit,
             points=tuple(design_for_fit.points[i] for i in keep),
@@ -3760,24 +3770,46 @@ def run_stage(
         logger.warning("%s: %s", stage_name, balance.caveat())
 
     fit = fit_effects(
-        design_for_fit, ys_for_fit, factor_ids=fitted_ids,
+        design_for_fit, ys_for_fit,
+        # A categorical's fit columns are its contrasts, not its factor id;
+        # with none, the design's columns ARE fitted_ids (unchanged).
+        factor_ids=(design_for_fit.factor_ids if design_for_fit.groups
+                    else fitted_ids),
         include_interactions=not interactions_dropped,
         omit_terms=omitted_terms,
     )
     _fit_pos = keep if dropped else list(range(len(ys)))
     _fit_records = _fit_row_records(work_dir, outcomes, stage_name, screen_iter,
                                     n_total=len(ys), n_fold=fold_n)
-    _fit_cols = [design.factor_ids.index(fid) for fid in design_for_fit.factor_ids]
-    _planned_for_fit = dataclasses.replace(
-        design_for_fit,
-        points=tuple(
-            dataclasses.replace(
-                design.points[i],
-                coded=tuple(design.points[i].coded[j] for j in _fit_cols),
-            )
-            for i in _fit_pos
-        ),
-    )
+    if design_for_fit.groups:
+        # Mixed-level: the planned design's columns are pseudo-factors and the
+        # fit's are contrasts -- different widths. Record the planned columns
+        # of every fitted FACTOR beside the fitted ones.
+        _fitted_f = set(design_for_fit.groups)
+        _owner_p = design.groups or design.factor_ids
+        _fit_cols = [j for j, g in enumerate(_owner_p) if g in _fitted_f]
+        _planned_for_fit = dataclasses.replace(
+            design, factor_ids=tuple(design.factor_ids[j] for j in _fit_cols),
+            points=tuple(
+                dataclasses.replace(
+                    design.points[i],
+                    coded=tuple(design.points[i].coded[j] for j in _fit_cols),
+                )
+                for i in _fit_pos
+            ),
+        )
+    else:
+        _fit_cols = [design.factor_ids.index(fid) for fid in design_for_fit.factor_ids]
+        _planned_for_fit = dataclasses.replace(
+            design_for_fit,
+            points=tuple(
+                dataclasses.replace(
+                    design.points[i],
+                    coded=tuple(design.points[i].coded[j] for j in _fit_cols),
+                )
+                for i in _fit_pos
+            ),
+        )
     artifacts.write_effects(
         iter_dir, fit, factors=factors, stage=stage_name,
         exclusion_balance=(balance.as_dict() if dropped else None),
@@ -3786,6 +3818,7 @@ def run_stage(
             statuses=[_fit_records[i][0] for i in _fit_pos],
         ),
         omitted_terms=omitted_terms,
+        interactions_dropped=interactions_dropped,
     )
     if dropped:
         _write_json(iter_dir / "fit_exclusions.json", {
@@ -4563,6 +4596,39 @@ def _fold_on(factors, design_cfg: dict, pairs) -> str | None:
     if resolution <= 3:
         return None
     ids = [f.id for f in factors]
+    from orchestrator.optimize.factors import is_categorical, model_columns
+
+    cats = {f.id: f for f in factors if is_categorical(f)}
+    if cats:
+        # Mixed-level: a label is a product of COLUMN ids, and a categorical's
+        # contrast ``C[12]`` is the product of its pseudo-factors 1 and 2.
+        # Negating pseudo-column ``C[i]`` flips every contrast containing i, so
+        # it breaks a word through ``C[12]`` when i is in {1, 2}. Prefer a
+        # TWO-LEVEL factor in the pair (one column, flips exactly its words);
+        # else fold on the lowest pseudo-column of the first contrast.
+        toks = sorted(set(ids) | {c for f in cats.values() for c in model_columns(f)},
+                      key=len, reverse=True)
+        for kept, alt in pairs or ():
+            for label in (str(kept), str(alt)):
+                parsed, rest = [], label
+                while rest:
+                    m = next((t for t in toks if rest.startswith(t)), None)
+                    if m is None:
+                        break
+                    parsed.append(m)
+                    rest = rest[len(m):]
+                two = [t for t in parsed if t in ids and t not in cats]
+                if two:
+                    return two[0]
+                for t in parsed:
+                    if "[" in t:
+                        base, digits = t[:-1].split("[", 1)
+                        if base in cats and digits:
+                            return f"{base}[{min(digits)}]"
+        logger.warning(
+            "foldover: no column could be read out of the consequential pairs %s; "
+            "falling back to a FULL foldover.", list(pairs or ()))
+        return None
     for kept, _alt in pairs or ():
         rest = str(kept)
         while rest:
@@ -5346,12 +5412,24 @@ def _build_design(factors, design_cfg: dict, stage_name: str, *,
     # resolution V is 8 runs with every 2-factor interaction estimable.
     # Task 10's validator is what rejects a request no design can satisfy;
     # this function must not fail on one a full factorial covers.
-    base = (
-        fractional_factorial(ids, resolution=resolution)
-        if is_tabulated(len(ids), resolution)
-        else full_factorial(ids)
-    )
-    screen = with_center_points(base, int(cfg.get("center_points", 4)))
+    from orchestrator.optimize.factors import is_categorical
+
+    if any(is_categorical(f) for f in factors):
+        # A multi-level categorical: the METHOD OF REPLACEMENT (spec
+        # 2026-10-16 feature 1) -- m = ceil(log2 L) pseudo-factor columns with
+        # the generalized resolution guaranteed by construction. Every pure
+        # two-level campaign keeps the textbook path below, byte-identical.
+        from orchestrator.optimize.design import mixed_screen
+
+        screen = mixed_screen(factors, resolution=resolution,
+                              center_points=int(cfg.get("center_points", 4)))
+    else:
+        base = (
+            fractional_factorial(ids, resolution=resolution)
+            if is_tabulated(len(ids), resolution)
+            else full_factorial(ids)
+        )
+        screen = with_center_points(base, int(cfg.get("center_points", 4)))
     if stage_name != Stage.FOLDOVER.value:
         return screen
     # The fold block is derived from the SCREEN design, deterministically, from
@@ -6179,7 +6257,7 @@ def _refill_candidates(work_dir, factors, warnings: list | None = None) -> list[
     them); an uncodeable candidate or measured row is SKIPPED rather than
     coded as the centre.
     """
-    from orchestrator.optimize.factors import code_actual
+    from orchestrator.optimize.factors import code_vector
 
     def warn(msg: str) -> None:
         logger.warning("refill: %s", msg)
@@ -6215,7 +6293,7 @@ def _refill_candidates(work_dir, factors, warnings: list | None = None) -> list[
                 warn(f"factor {fid!r} in {lv} is not declared; skipped")
                 return None
             try:
-                out_.append(code_actual(f, lv[fid]))
+                out_.extend(code_vector(f, lv[fid]))
             except (TypeError, ValueError) as exc:
                 warn(f"level {fid}={lv[fid]!r} cannot be coded ({exc}); skipped")
                 return None

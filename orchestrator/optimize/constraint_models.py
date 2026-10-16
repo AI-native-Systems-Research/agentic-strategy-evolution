@@ -153,8 +153,11 @@ def fit_constraint_models(constraints, design, records, *, fitted_ids,
     constraint row from the other level is not read as a replicate.
     """
     out: list[ConstraintModel] = []
-    keep_ids = [f for f in design.factor_ids if f in set(fitted_ids)]
-    cols = [j for j, f in enumerate(design.factor_ids) if f in set(fitted_ids)]
+    # A column is kept when its FACTOR is fitted: a categorical's contrast
+    # columns are named ``C[1]``..., grouped to ``C`` by ``design.groups``.
+    owner = design.groups or design.factor_ids
+    keep_ids = [c for c, g in zip(design.factor_ids, owner) if g in set(fitted_ids)]
+    cols = [j for j, g in enumerate(owner) if g in set(fitted_ids)]
     for c in constraints or ():
         metric = str(c.get("metric") or c.get("observable") or "")
         op, value = c.get("op"), c.get("value")
@@ -217,6 +220,7 @@ def _fit_one(metric, design, records, keep_ids, cols, held_levels, levels_by_pos
         ys.append(y)
     sub = dataclasses.replace(
         design, factor_ids=tuple(keep_ids),
+        groups=(tuple(design.groups[j] for j in cols) if design.groups else ()),
         points=tuple(
             dataclasses.replace(
                 design.points[i],
@@ -248,6 +252,12 @@ def predicted_with_se(fit: Fit, coded: dict) -> tuple[float, float]:
     from orchestrator.optimize.decide import predict
 
     y = predict(fit, coded)
+    from orchestrator.optimize.effects import prediction_variance
+
+    exact = prediction_variance(fit, coded)
+    if exact is not None:
+        # Mixed-level fit: exact s^2 x'(X'X)^-1 x (intercept included).
+        return y, math.sqrt(exact)
     var = float(fit.pure_error_var or 0.0) / max(int(fit.n_runs), 1)
     for e in list(fit.effects) + list(fit.quadratic):
         x = math.prod(float(coded[t]) for t in e.terms)
@@ -483,8 +493,9 @@ def fit_objective_models(objectives, design, records, *, fitted_ids,
                          levels_by_pos=None) -> dict:
     """``{metric: ObjectiveModel}``, fitted on the SAME rows and reduction as
     the constraint models (complete + infeasible rows, coded as run)."""
-    keep_ids = [f for f in design.factor_ids if f in set(fitted_ids)]
-    cols = [j for j, f in enumerate(design.factor_ids) if f in set(fitted_ids)]
+    owner = design.groups or design.factor_ids
+    keep_ids = [c for c, g in zip(design.factor_ids, owner) if g in set(fitted_ids)]
+    cols = [j for j, g in enumerate(owner) if g in set(fitted_ids)]
     out: dict = {}
     for o in objectives:
         metric, direction = o["metric"], o.get("direction", "maximize")

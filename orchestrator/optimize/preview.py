@@ -144,7 +144,24 @@ def build_preview(
     from orchestrator.optimize.design import _runs_lower_bound, min_runs_for
 
     k = len(screen.factor_ids)
-    if screen.kind == "fractional":
+    if screen.kind in ("mixed_fraction", "mixed_full"):
+        from orchestrator.optimize.design import mixed_lower_bound
+        from orchestrator.optimize.factors import is_categorical, n_pseudo
+
+        res = int(screen.resolution or 0)
+        roman = {3: "III", 4: "IV", 5: "V", 6: "VI"}.get(res, str(res))
+        bound = mixed_lower_bound(factors, res)
+        parts = [f"{f.id}: {len(f.levels)} levels -> {n_pseudo(f)} pseudo-factor(s), "
+                 f"{len(f.levels) - 1} df"
+                 + (f", first {2 ** n_pseudo(f) - len(f.levels)} level(s) replicated "
+                    f"twice (collapsed)" if len(f.levels) < 2 ** n_pseudo(f) else "")
+                 for f in factors if is_categorical(f)]
+        shape = (f"method of replacement: {len(factors)} factors -> {k} two-level "
+                 f"columns ({'; '.join(parts)}), generalized resolution {roman}, "
+                 + ("the full factorial in the pseudo-factors"
+                    if screen.kind == "mixed_full" else "a regular fraction")
+                 + f"; df lower bound {bound} runs")
+    elif screen.kind == "fractional":
         res = int(screen.resolution or 0)
         known = _runs_lower_bound(k, res)
         roman = {3: "III", 4: "IV", 5: "V", 6: "VI", 7: "VII", 8: "VIII"}.get(res, str(res))

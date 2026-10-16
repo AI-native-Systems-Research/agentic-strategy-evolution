@@ -166,8 +166,15 @@ def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
         return RegretBound(0.0, None, delta, "trivial", "single candidate")
     fx = predict(fit, xhat.coded)
 
+    from orchestrator.optimize.effects import prediction_variance
+
     def contrast(z) -> tuple[float, float, float]:
         est = sign * (predict(fit, z.coded) - fx)
+        exact = prediction_variance(fit, z.coded, xhat.coded)
+        if exact is not None:
+            # A mixed-level fit (non-orthogonal by construction): the exact
+            # s^2 d'(X'X)^-1 d, covariances between coefficients included.
+            return est, math.sqrt(exact), float(fit.pure_error_df)
         var = 0.0
         for e in terms:
             dz = (math.prod(float(z.coded[t]) for t in e.terms)

@@ -350,6 +350,13 @@ def _rule3_screen_levels_membership(factors: list[dict]) -> list[str]:
         if screen_levels is None:
             continue
         levels = factor.get("levels") or []
+        if factor.get("type") == "choice" and len(levels) > 2:
+            errors.append(
+                f"factor {fid!r}: a choice factor with {len(levels)} levels is "
+                f"screened at every level (method of replacement), so "
+                f"screen_levels does not apply. Remove screen_levels; to screen "
+                f"fewer levels, declare fewer levels.")
+            continue
         missing = [lvl for lvl in screen_levels if lvl not in levels]
         if missing:
             errors.append(
@@ -826,8 +833,17 @@ def _rule7_low_resolution_screen_warning(
         from orchestrator.optimize.design import fractional_factorial
 
         ids = tuple(f.get("id", f"F{i}") for i, f in enumerate(factors))
-        design_obj = fractional_factorial(ids, resolution)
-        pairs = design_obj.generators and _alias_pairs_safe(design_obj)
+        if _mixed_screen_runs(design, factors, resolution) is not None:
+            # A multi-level categorical: name the aliasing of the MIXED screen
+            # (generalized, contrast components) the epoch will actually run.
+            from orchestrator.optimize.design import mixed_screen
+            from orchestrator.optimize.factors import parse_factors
+
+            pairs = _alias_pairs_safe(mixed_screen(
+                parse_factors(factors), resolution=resolution, center_points=0))
+        else:
+            design_obj = fractional_factorial(ids, resolution)
+            pairs = design_obj.generators and _alias_pairs_safe(design_obj)
     except Exception:
         pairs = None
     if pairs:
@@ -875,6 +891,20 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
     k = len(factors)
     if k == 0:
         return []
+    mixed = _mixed_screen_runs(design, factors, resolution)
+    if mixed is not None:
+        required, cols = mixed
+        if required <= max_runs:
+            return []
+        return [
+            f"design.screen.resolution={resolution} over {k} factors -- {cols} "
+            f"two-level columns once each multi-level choice factor takes its "
+            f"pseudo-factors (method of replacement) -- needs {required} runs, "
+            f"but design.max_runs={max_runs} is lower. Options: (1) raise "
+            f"max_runs to >= {required}; (2) accept a lower resolution; (3) "
+            f"declare fewer levels on a categorical (L levels cost "
+            f"2^ceil(log2 L) slots); (4) screen fewer factors this epoch. Nous "
+            f"will not silently downgrade resolution to fit the budget."]
     required = min_runs_for(k, resolution)
     if required <= max_runs:
         return []
@@ -890,6 +920,58 @@ def _rule8_resolution_run_budget(design: dict, factors: list[dict]) -> list[str]
         + "; (3) screen fewer factors this epoch. Nous will not silently "
         "downgrade resolution to fit the budget."
     ]
+
+def _mixed_screen_runs(design: dict, factors: list[dict], resolution: int):
+    """``(corner runs, column count)`` of the mixed-level screen when some
+    choice factor has more than two levels, else ``None`` (the two-level path
+    and its exact ``min_runs_for`` apply)."""
+    if not any(isinstance(f, dict) and f.get("type") == "choice"
+               and len(f.get("levels") or []) > 2 for f in factors):
+        return None
+    try:
+        from orchestrator.optimize.design import mixed_screen
+        from orchestrator.optimize.factors import parse_factors
+
+        d = mixed_screen(parse_factors(factors), resolution=int(resolution),
+                         center_points=0)
+    except Exception:  # noqa: BLE001 -- unparseable factors are other rules' job
+        return None
+    return len(d.points), len(d.factor_ids)
+
+
+def _rule29_categorical_expansion(design: dict, factors: list[dict]) -> list[str]:
+    """Rule 29 (WARNING, informational): what a multi-level choice factor costs.
+
+    A choice factor with L > 2 levels is screened at EVERY level by the method
+    of replacement (Addelman 1962; Wu & Hamada ch. 7): m = ceil(log2 L)
+    pseudo-factor columns, L-1 df, and -- when L < 2^m -- collapsed
+    combinations that run the first-declared levels twice as often. Stated so
+    the author sees the expanded column count and the run cost before launch.
+    """
+    cats = [f for f in factors if isinstance(f, dict) and f.get("type") == "choice"
+            and len(f.get("levels") or []) > 2]
+    if not cats:
+        return []
+    res = int(((design or {}).get("screen") or {}).get("resolution", 5) or 5)
+    mixed = _mixed_screen_runs(design, factors, res)
+    if mixed is None:
+        return []
+    runs, cols = mixed
+    out = []
+    for f in cats:
+        L = len(f["levels"])
+        m = (L - 1).bit_length()
+        coll = (f"; {2 ** m - L} surplus combination(s) collaps"
+                f"e onto the first level(s) {f['levels'][:2 ** m - L]}, which run "
+                f"twice as often" if L < 2 ** m else "; no collapsing")
+        out.append(
+            f"WARN: factor {f.get('id')!r} ({L} levels) is screened at every level "
+            f"by the method of replacement: {m} pseudo-factor column(s), {L - 1} "
+            f"df main effect{coll}. The screen has {cols} two-level column(s) and "
+            f"costs {runs} runs at generalized resolution {res} (plus centre "
+            f"points).")
+    return out
+
 
 def _rule9_no_complexity_tier_under_optimization(
     campaign: dict, opt: dict,
@@ -1823,6 +1905,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule25_geometric_levels_without_log_scale(factors))
     errors.extend(_rule27_levels_only(factors))
     errors.extend(_rule28_centre_points_cover_choice_levels(design, factors))
+    errors.extend(_rule29_categorical_expansion(design, factors))
     errors.extend(_rule26_objectives(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd

@@ -181,7 +181,8 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
                    direction: str | None = None,
                    noise_pct: float | None = None,
                    fit_coordinates: dict | None = None,
-                   omitted_terms=None) -> Path:
+                   omitted_terms=None,
+                   interactions_dropped: bool = False) -> Path:
     """Write the fitted model: effects, pure error, lack-of-fit, aliases,
     dropped factors. ``factors`` supplies the factor-id universe that
     ``dropped_factors`` checks against -- the factors this fit was run
@@ -224,6 +225,9 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
         "quadratic": [_effect_to_dict(e) for e in _sorted_effects(fit.quadratic)],
         "dropped_factors": sorted(dropped),
     }
+    if fit.factor_tests:
+        payload["categoricals"] = categorical_record(fit, factors)
+        payload["variance_inflation"] = {k: v for k, v in fit.variance_inflation}
     if exclusion_balance is not None:
         payload["exclusion_balance"] = exclusion_balance
     # INV-STAT14: the coordinates the regression was fitted on (the coded
@@ -237,6 +241,13 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
     # Present only when non-empty, so earlier payloads are byte-identical.
     if omitted_terms:
         payload["omitted_terms"] = [list(t) for t in omitted_terms]
+    # The fitted rows could not support any two-factor interaction (the full
+    # model was rank-deficient -- e.g. a resolution-III mixed-level screen
+    # whose collapsed categorical leaves 2fi columns partially aliased), so the
+    # fit is MAIN EFFECTS ONLY. Recorded on the artifact the reduced model is
+    # read from; present only when it happened (earlier payloads unchanged).
+    if interactions_dropped:
+        payload["interactions_dropped"] = True
 
     # Hold the `plan` stage to its own prediction, on the artifact that carries
     # the coefficient the prediction was about. Same reasoning as
@@ -263,6 +274,47 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
 
     atomic_write(target, _dump(payload))
     return target
+
+
+def categorical_record(fit: Fit, factors) -> list[dict]:
+    """``effects.json["categoricals"]``: per multi-level categorical, its L-1 df
+    F test and, per level, the coded vector, the main-effect contribution
+    ``sum_j b_j c_j(level)`` and the LEAST-SQUARES MEAN (Searle, Speed &
+    Milliken 1980, population marginal means): the predicted response at that
+    level with every numeric and two-level factor at its coded centre and every
+    other categorical averaged over its levels. With main effects and 2fi only
+    (no 3fi), averaging a product equals the product of averages, so the
+    prediction at the averaged coding IS the marginal mean."""
+    from orchestrator.optimize.decide import predict
+    from orchestrator.optimize.factors import code_vector, is_categorical, model_columns
+
+    by_id = {f.id: f for f in factors}
+    owner = dict(fit.groups)
+    base: dict[str, float] = {}
+    for col, g in owner.items():
+        f = by_id.get(g)
+        if f is not None and is_categorical(f):
+            k = model_columns(f).index(col)
+            base[col] = sum(code_vector(f, lv)[k] for lv in f.levels) / len(f.levels)
+        else:
+            base[col] = 0.0
+    est = {e.terms[0]: e.estimate for e in fit.effects if len(e.terms) == 1}
+    out = []
+    for t in fit.factor_tests:
+        f = by_id.get(t.factor)
+        levels = []
+        for lv in (f.levels if f is not None else ()):
+            vec = code_vector(f, lv)
+            coded = {**base, **dict(zip(model_columns(f), vec))}
+            levels.append({
+                "level": lv, "coded": list(vec),
+                "effect": sum(est.get(c, 0.0) * v for c, v in zip(model_columns(f), vec)),
+                "ls_mean": predict(fit, coded),
+            })
+        out.append({"factor": t.factor, "columns": list(t.columns), "df": t.df,
+                    "f": t.f, "p": t.p, "significant": t.significant,
+                    "test": "wald_f_on_pure_error", "levels": levels})
+    return out
 
 
 # ─── relations.json ─────────────────────────────────────────────────────
@@ -375,7 +427,7 @@ def project_findings(fit: Fit, *, factors: list[Factor], stage: str,
     traceability; it does not affect the mapping.
     """
     by_id = {f.id: f for f in factors}
-    main_effects = [e for e in fit.effects if len(e.terms) == 1]
+    main_effects = _single_column_mains(fit)
 
     surviving: list[Effect] = []
     dropped: list[Effect] = []
@@ -452,6 +504,9 @@ def project_findings(fit: Fit, *, factors: list[Factor], stage: str,
             },
         })
 
+    for c in (categorical_record(fit, factors) if fit.factor_tests else ()):
+        arms.append(_categorical_arm(c, by_id.get(c["factor"]), stage, decision, fit))
+
     if not arms:
         # findings.schema.json requires arms to be non-empty (minItems: 1).
         # A fit with no main effects at all (degenerate/edge case) still
@@ -523,7 +578,7 @@ def project_principle_updates(fit: Fit, *, factors: list[Factor],
     ``meta_findings.validate_evidence``'s floor by construction.
     """
     by_id = {f.id: f for f in factors}
-    main_effects = [e for e in fit.effects if len(e.terms) == 1]
+    main_effects = _single_column_mains(fit)
 
     principles: list[dict] = []
     for e in _sorted_effects(tuple(main_effects)):
@@ -585,4 +640,79 @@ def project_principle_updates(fit: Fit, *, factors: list[Factor],
             "derivation_type": "empirical",
         })
 
+    for c in (categorical_record(fit, factors) if fit.factor_tests else ()):
+        principles.append(_categorical_principle(c, by_id.get(c["factor"]), stage, fit))
+
     return {"principles": principles}
+
+
+def _single_column_mains(fit: Fit) -> list[Effect]:
+    """Main effects of SINGLE-column factors. A multi-level categorical's
+    contrasts are basis-dependent (which level a contrast singles out is a
+    coding choice), so it is projected once, from its L-1 df F test and its
+    per-level LS means, by ``_categorical_arm`` / ``_categorical_principle``."""
+    owned = {c for t in fit.factor_tests for c in t.columns}
+    return [e for e in fit.effects if len(e.terms) == 1 and e.terms[0] not in owned]
+
+
+def _cat_observed(c: dict, fit: Fit) -> str:
+    means = ", ".join(f"{lv['level']}={lv['ls_mean']:.6g}" for lv in c["levels"])
+    if c["f"] is None:
+        return (f"L-1={c['df']} df main effect; significance unknown -- no "
+                f"pure-error estimate; LS means {means}; n_runs={fit.n_runs}")
+    return (f"F={c['f']:.6g} on ({c['df']}, {fit.pure_error_df}) df, p={c['p']:.3g}; "
+            f"LS means {means}; n_runs={fit.n_runs}")
+
+
+def _categorical_arm(c: dict, factor, stage: str, decision: str, fit: Fit) -> dict:
+    statement = _factor_statement(factor)
+    best = max(c["levels"], key=lambda lv: lv["ls_mean"])["level"] if c["levels"] else None
+    if c["significant"] is False:
+        arm_type, status, err = "h-control-negative", "REFUTED", "magnitude"
+        note = (f"categorical {c['factor']} dropped as within-noise at stage={stage}: "
+                f"the {c['df']} df F test did not reject (p={c['p']:.3g}).")
+    elif c["significant"] is None:
+        arm_type, status, err = "h-main", "PARTIALLY_CONFIRMED", None
+        note = (f"categorical {c['factor']} unknown-significance: no pure-error "
+                f"estimate at stage={stage}.")
+    else:
+        arm_type, status, err = "h-main", "CONFIRMED", None
+        note = (f"categorical {c['factor']}: the {c['df']} df F test rejects equal "
+                f"levels at stage={stage}; best LS mean at {best!r}.")
+    return {
+        "arm_type": arm_type, "predicted": statement,
+        "observed": _cat_observed(c, fit), "status": status, "error_type": err,
+        "diagnostic_note": note,
+        "metadata": {"label": c["factor"], "terms": list(c["columns"]),
+                     "f": c["f"], "p": c["p"], "df": c["df"],
+                     "significant": c["significant"], "best_level": best,
+                     "levels": c["levels"], "stage": stage, "decision": decision,
+                     "aliases": [list(pair) for pair in fit.aliases]},
+    }
+
+
+def _categorical_principle(c: dict, factor, stage: str, fit: Fit) -> dict:
+    fid = c["factor"]
+    name = factor.name if factor is not None else fid
+    best = max(c["levels"], key=lambda lv: lv["ls_mean"]) if c["levels"] else None
+    if c["significant"] is False:
+        statement = f"{name} ({fid}) has no measurable effect on the response"
+    elif c["significant"] is True and best is not None:
+        statement = (f"{name} ({fid}) matters; {best['level']!r} has the highest "
+                     f"least-squares mean response")
+    else:
+        statement = (f"{name} ({fid})'s effect on the response is not yet "
+                     f"determined (significance unknown)")
+    p = c["p"]
+    conf = "low" if p is None else "high" if p < 0.001 else "medium" if p < 0.05 else "low"
+    return {
+        "id": f"opt-{stage}-{fid}", "statement": statement, "confidence": conf,
+        "regime": stage,
+        "evidence": [f"effects.json (stage={stage}): {fid} " + _cat_observed(c, fit)],
+        "contradicts": [], "extraction_iteration": 0,
+        "mechanism": (f"Wald F test of the {c['df']} df main effect on pure error "
+                      f"(method-of-replacement screen)"),
+        "applicability_bounds": f"declared levels {[lv['level'] for lv in c['levels']]} at stage={stage}",
+        "superseded_by": None, "category": "domain", "status": "active",
+        "derivation_type": "empirical",
+    }

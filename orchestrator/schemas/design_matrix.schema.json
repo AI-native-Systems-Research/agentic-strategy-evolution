@@ -53,7 +53,9 @@
         "fractional",
         "central_composite",
         "foldover",
-        "shortlist_replicate"
+        "shortlist_replicate",
+        "mixed_fraction",
+        "mixed_full"
       ],
       "description": "Design family, as orchestrator.optimize.design labels it. \"fractional\" designs carry non-empty aliases; \"central_composite\" adds axial/center points for curvature. \"foldover\" is the REGISTERED FOLDOVER's block -- the screen's corners with one column (or every column) negated, so it is not a member of any tabulated family and reports resolution null; it is the only kind that carries folded_on / screen_iteration / alias_consequential, because the fold block alone is not a fittable design and the combined screen-plus-fold fit is what de-aliases. \"shortlist_replicate\" is the CONFIRM round's matrix (the paper's terminal-discrimination stage, spec 3.3): not a design over the factor space at all but r replicates of each shortlisted finalist, so it carries no generators and no aliases and instead declares round + finalists. It is the one kind whose rows are role \"confirm\". Note design.combine's \"combined\" label is deliberately absent: that design is assembled AT FIT TIME over two already-registered blocks and is never itself pre-registered, so a matrix on disk claiming it would be an artifact no stage writes."
     },
@@ -149,6 +151,13 @@
       "type": "object",
       "description": "Map of factor id -> the level it was pinned at for this matrix, for factors that are declared in the campaign but not columns of THIS design (e.g. a factor dropped after screening). Recorded because a row's levels alone cannot distinguish \"this factor was not varied\" from \"this factor was not present\"."
     },
+    "categoricals": {
+      "type": "array",
+      "description": "Mixed-level screens only (spec 2026-10-16-mixed-level-factors-design.md, feature 1): per multi-level categorical, its pseudo-factor columns (method of replacement), the pseudo-sign combination -> level map (the collapsing rule), the fit's L-1 contrast columns, its corner replication per level, and the recorded consequences of collapsing.",
+      "items": {"type": "object", "required": ["factor", "levels", "pseudo_factors", "contrast_columns", "main_effect_df", "level_of_combination", "collapsed", "corner_replication"]}
+    },
+    "column_groups": {"type": "array", "items": {"type": "string"}, "description": "Mixed-level screens only: the factor each column of factor_ids belongs to (a categorical owns its pseudo-factor columns)."},
+    "column_words": {"type": "array", "items": {"type": "array", "items": {"type": "integer", "minimum": 0}}, "description": "Mixed-level screens only: each column's word over the base bits -- the base-column indices whose product it is."},
     "held_fixed_basis": {
       "type": "object",
       "additionalProperties": {"enum": ["screen_recommendation", "first_level", "corner_marginal", "centre_mean"]},

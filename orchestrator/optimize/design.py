@@ -67,6 +67,16 @@ class Design:
     #: foldover (every column negated). Also carried by ``combine``'s result,
     #: so the combined design records how the aliasing it resolves was broken.
     folded_on: str | None = None
+    #: The FACTOR each column belongs to, one entry per column; empty means
+    #: every column is its own factor (every two-level design). A multi-level
+    #: categorical owns several columns: its pseudo-factors in a planned
+    #: mixed-level screen (``mixed_screen``), its L-1 contrasts in a fit design
+    #: (``matrix.coded_as_run``).
+    groups: tuple[str, ...] = ()
+    #: Mixed-level screens only: each column's GF(2) word over the base bits
+    #: (the base-column indices whose product it is), the construction's
+    #: provenance, recorded in ``design_matrix.json``.
+    words: tuple[tuple[int, ...], ...] = ()
 
     @property
     def corners(self) -> tuple[DesignPoint, ...]:
@@ -291,6 +301,7 @@ def with_center_points(design: Design, n: int) -> Design:
         points=design.points + centers, factor_ids=design.factor_ids,
         kind=design.kind, resolution=design.resolution,
         generators=design.generators, folded_on=design.folded_on,
+        groups=design.groups, words=design.words,
     )
 
 
@@ -353,6 +364,8 @@ def alias_pairs(design: Design) -> list[tuple[str, str]]:
     corners = design.corners
     if not corners:
         return []
+    if is_mixed(design):
+        return _mixed_alias_pairs(design)
     k = len(design.factor_ids)
     ids = design.factor_ids
 
@@ -437,6 +450,7 @@ def foldover(design: Design, *, on: str | None = None) -> Design:
     return Design(
         points=corners + centers, factor_ids=ids, kind="foldover",
         resolution=None, generators=design.generators, folded_on=on,
+        groups=design.groups, words=design.words,
     )
 
 
@@ -461,4 +475,215 @@ def combine(a: Design, b: Design) -> Design:
     return Design(
         points=a.points + b.points, factor_ids=a.factor_ids, kind="combined",
         resolution=None, generators=a.generators, folded_on=b.folded_on,
+        groups=a.groups, words=a.words,
     )
+
+
+# ── mixed-level screens: the method of replacement ──────────────────────────
+#
+# Spec 2026-10-16-mixed-level-factors-design.md, feature 1. Literature:
+# Addelman (1962a, b); Wu & Hamada, Experiments, ch. 7 (method of
+# replacement, 2^m 4^n designs); Wu & Zhang (1993) for word length with a
+# four-level factor counted ONCE; Mukerjee & Wu (2006) for mixed-level
+# regular designs; Rao (1947) / Hedayat, Sloane & Stufken (1999) for
+# resolution R <=> orthogonal-array strength R-1.
+
+
+def is_mixed(design: Design) -> bool:
+    """Whether some factor owns more than one column of ``design``."""
+    g = design.groups
+    return bool(g) and len(set(g)) < len(g)
+
+
+def factor_columns(design: Design) -> list[tuple[str, list[int]]]:
+    """``(factor_id, column indices)`` in first-appearance order."""
+    groups = design.groups or design.factor_ids
+    out: dict[str, list[int]] = {}
+    for j, g in enumerate(groups):
+        out.setdefault(g, []).append(j)
+    return list(out.items())
+
+
+def _span(vectors) -> list[int]:
+    """Every nonzero XOR combination of ``vectors`` (bit-masks)."""
+    span = [0]
+    for v in vectors:
+        span += [x ^ v for x in span]
+    return span[1:]
+
+
+def _mixed_runs_lower_bound(blocks, resolution: int) -> int:
+    """The df bound: N - 1 >= sum_f (2^m_f - 1) estimable main-effect
+    components (valid for every resolution >= III); for R >= V also every
+    two-factor-interaction component, sum_{f<g} d_f d_g. A power of two."""
+    d = [(1 << m) - 1 for m in blocks]
+    need = 1 + sum(d)
+    if resolution >= 5:
+        need += sum(a * b for a, b in itertools.combinations(d, 2))
+    n = 0
+    while (1 << n) < need:
+        n += 1
+    return 1 << n
+
+
+def _greedy_blocks(n: int, blocks, resolution: int, order) -> list[tuple[int, ...]] | None:
+    """``_greedy_columns`` generalized from columns to BLOCKS.
+
+    ``sums[j]`` holds every XOR of j nonzero elements drawn from j DISTINCT
+    placed factors, j <= R-2. A factor's block is grown vector by vector; a
+    vector ``v`` is accepted iff every NEW element of the block's span is
+    nonzero, not already in the block, and in no ``sums[j]`` -- i.e. it closes
+    no defining word of length <= R-1 with the factors already placed. So the
+    generalized resolution holds BY CONSTRUCTION; no table, no later check.
+    Returns one tuple of vectors per factor, in ``blocks`` order.
+    """
+    depth = max(1, resolution - 2)
+    sums: list[set[int]] = [set() for _ in range(depth + 1)]
+    placed: list[tuple[int, ...] | None] = [None] * len(blocks)
+    place_order = sorted(range(len(blocks)), key=lambda i: (-blocks[i], i))
+    for fi in place_order:
+        vecs: list[int] = []
+        elems: set[int] = set()
+        for _slot in range(blocks[fi]):
+            hit = None
+            for v in order:
+                new = [v] + [v ^ e for e in elems]
+                if any(e == 0 or e in elems for e in new):
+                    continue
+                if any(e in sums[j] for e in new for j in range(1, depth + 1)):
+                    continue
+                hit = v
+                elems.update(new)
+                break
+            if hit is None:
+                return None
+            vecs.append(hit)
+        for j in range(depth, 1, -1):
+            sums[j] |= {e ^ x for e in elems for x in sums[j - 1]}
+        sums[1] |= elems
+        placed[fi] = tuple(vecs)
+    return placed  # type: ignore[return-value]
+
+
+@functools.lru_cache(maxsize=None)
+def mixed_fraction(blocks: tuple[int, ...], resolution: int):
+    """``(n_base, vectors per factor)`` of a regular 2^n design in which factor
+    ``f`` owns ``blocks[f]`` independent pseudo-factor columns and every
+    defining word -- counted in FACTORS, one nonzero element of each touched
+    factor's subspace -- has length >= ``resolution``.
+
+    The base size starts at ``_mixed_runs_lower_bound`` and grows by one bit
+    until the greedy (candidates in (weight, value) order, then 64 seeded
+    shuffles, as ``_construct``) succeeds. It always terminates: at
+    n = sum(blocks) the unit vectors give the full factorial in the
+    pseudo-factors, which has no defining word. Deterministic and cached.
+    """
+    if resolution < 3:
+        raise ValueError("resolution must be >= 3")
+    blocks = tuple(int(b) for b in blocks)
+    n = max(_mixed_runs_lower_bound(blocks, resolution).bit_length() - 1, max(blocks))
+    total = sum(blocks)
+    while n < total:
+        cands = sorted(range(1, 1 << n), key=lambda m: (_weight(m), m))
+        got = _greedy_blocks(n, blocks, resolution, cands)
+        if got is None:
+            rng = random.Random(7919 * resolution + 31 * total + len(blocks))
+            for _ in range(_RESTARTS):
+                sh = cands[:]
+                rng.shuffle(sh)
+                got = _greedy_blocks(n, blocks, resolution, sh)
+                if got is not None:
+                    break
+        if got is not None:
+            return n, tuple(got)
+        n += 1
+    units, i = [], 0
+    for b in blocks:
+        units.append(tuple(1 << (i + t) for t in range(b)))
+        i += b
+    return total, tuple(units)
+
+
+def mixed_screen(factors, *, resolution: int, center_points: int) -> Design:
+    """The mixed-level screen: every factor's pseudo-factor columns
+    (``factors.pseudo_ids``) over the 2^n full factorial in the base bits,
+    each column the product of the base bits in its word, plus centre points.
+
+    ``kind`` is ``"mixed_fraction"`` (``"mixed_full"`` when no generator was
+    needed); ``resolution`` is the GENERALIZED resolution the construction
+    guarantees; ``groups`` maps each column to its factor and ``words``
+    records each column's base word.
+    """
+    from orchestrator.optimize.factors import n_pseudo, pseudo_ids
+
+    fs = list(factors)
+    blocks = tuple(n_pseudo(f) for f in fs)
+    n, vecs = mixed_fraction(blocks, int(resolution))
+    ids: list[str] = []
+    groups: list[str] = []
+    words: list[tuple[int, ...]] = []
+    for f, vs in zip(fs, vecs):
+        for cid, v in zip(pseudo_ids(f), vs):
+            ids.append(cid)
+            groups.append(f.id)
+            words.append(tuple(i for i in range(n) if v >> i & 1))
+    pts = []
+    for base in itertools.product((-1, 1), repeat=n):
+        pts.append(DesignPoint(coded=tuple(
+            float(math.prod(base[i] for i in w)) for w in words)))
+    d = Design(points=tuple(pts), factor_ids=tuple(ids),
+               kind="mixed_full" if n == sum(blocks) else "mixed_fraction",
+               resolution=int(resolution), groups=tuple(groups),
+               words=tuple(words))
+    return with_center_points(d, int(center_points))
+
+
+def mixed_lower_bound(factors, resolution: int) -> int:
+    """The df lower bound on the run count of the mixed screen (preview)."""
+    from orchestrator.optimize.factors import n_pseudo
+
+    return _mixed_runs_lower_bound(tuple(n_pseudo(f) for f in factors), int(resolution))
+
+
+def _subspace_elements(design: Design, cols: list[int], fid: str):
+    """``(label, column over corners)`` for every nonzero element of one
+    factor's pseudo-column subspace; a single column keeps its id."""
+    corners = design.corners
+    if len(cols) == 1:
+        j = cols[0]
+        return [(design.factor_ids[j], tuple(p.coded[j] for p in corners))]
+    out = []
+    for r in range(1, len(cols) + 1):
+        for sub in itertools.combinations(range(len(cols)), r):
+            lab = f"{fid}[" + "".join(str(i + 1) for i in sub) + "]"
+            out.append((lab, tuple(math.prod(p.coded[cols[i]] for i in sub)
+                                   for p in corners)))
+    return out
+
+
+def _mixed_alias_pairs(design: Design) -> list[tuple[str, str]]:
+    """``alias_pairs`` in the GENERALIZED sense: every element of a factor's
+    contrast subspace is a main-effect column, every product of elements of
+    two DISTINCT factors a 2fi column. Reports 2fi ~ main and 2fi ~ 2fi
+    coincidences (up to sign), with the same transitive-echo rule."""
+    elems = {fid: _subspace_elements(design, cols, fid)
+             for fid, cols in factor_columns(design)}
+    mains = [(lab, col) for es in elems.values() for lab, col in es]
+    twofi = []
+    for (fa, ea), (fb, eb) in itertools.combinations(elems.items(), 2):
+        for la, ca in ea:
+            for lb, cb in eb:
+                twofi.append((f"{la}{lb}", tuple(x * y for x, y in zip(ca, cb))))
+    out: list[tuple[str, str]] = []
+    to_main: set[str] = set()
+    for lab, col in twofi:
+        neg = tuple(-v for v in col)
+        for mlab, mcol in mains:
+            if col == mcol or neg == mcol:
+                out.append((lab, mlab))
+                to_main.add(lab)
+    for (l1, c1), (l2, c2) in itertools.combinations(twofi, 2):
+        if (c1 == c2 or tuple(-v for v in c2) == c1) and l1 not in to_main \
+                and l2 not in to_main:
+            out.append((l1, l2))
+    return sorted(out)
