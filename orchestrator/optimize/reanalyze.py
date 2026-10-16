@@ -353,7 +353,13 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
     # The carried build records must still pass their seals (C5).
     from orchestrator.optimize import gate_records as _gr
 
-    if (orig / _gr.SEAL_FILE).exists():
+    from orchestrator.optimize.build_scope import build_declared as _bd
+
+    _built = (orig / "pre_build_tests.json").exists() or any(
+        _bd(c) for c in campaigns.values() if isinstance(c, dict))
+    if _built:
+        # A build campaign's records must be sealed: a missing seal file is
+        # reported as "unsealed" for every record, not skipped (round 3, B4).
         for name in (*_gr.BUILD_RECORDS, *_gr.VERIFY_RECORDS):
             st = _gr.check(orig, name)
             if st not in ("ok", "absent"):

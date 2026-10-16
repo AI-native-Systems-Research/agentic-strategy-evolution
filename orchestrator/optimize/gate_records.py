@@ -161,3 +161,31 @@ def load(work_dir: Path, names=BUILD_RECORDS) -> dict:
         except (OSError, ValueError) as exc:
             raise GateRecordError(f"build gate record {n} is unreadable ({exc})") from exc
     return out
+
+
+#: The keys of baseline_equivalence.json the BUILD stage wrote (verify adds the
+#: post-build measurement and its verdict).
+BUILD_BASELINE_KEYS = ("levels", "pre", "pre_mean", "pre_unavailable", "tolerance_pct",
+                       "workload_seeds", "workload_seed_env")
+
+
+def confirm_build_part(work_dir: Path, sealed: dict) -> None:
+    """Before verify reseals baseline_equivalence.json: its build-written keys
+    on disk must equal the sealed copy loaded at the top of verify."""
+    mem = sealed.get("baseline_equivalence.json")
+    p = Path(work_dir) / "baseline_equivalence.json"
+    if mem is None:
+        if p.exists():
+            raise GateRecordError("baseline_equivalence.json appeared during verify; the "
+                                  "build recorded none")
+        return
+    try:
+        disk = json.loads(p.read_text())
+    except (OSError, ValueError) as exc:
+        raise GateRecordError(f"baseline_equivalence.json became unreadable during "
+                              f"verify ({exc})") from exc
+    if {k: disk.get(k) for k in BUILD_BASELINE_KEYS} != {k: mem.get(k) for k in BUILD_BASELINE_KEYS}:
+        raise GateRecordError(
+            "the pre-build control measurement in baseline_equivalence.json was changed "
+            "during verify (target code ran there); it will not be resealed. Re-run the "
+            "build stage in a fresh work_dir.")

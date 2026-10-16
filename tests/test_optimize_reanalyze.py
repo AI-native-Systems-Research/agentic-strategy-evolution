@@ -249,3 +249,14 @@ def test_a_broken_build_record_seal_is_a_reanalysis_difference(tmp_path, monkeyp
     p.write_text(p.read_text() + " ")
     res = reanalyze(wd)
     assert {"file": "authored_tests.json", "difference": "build record seal broken"} in res.differences
+
+
+def test_a_build_campaign_with_its_seal_file_removed_reports_unsealed(tmp_path, monkeypatch):
+    from tests.test_optimize_waivers import _report
+
+    _report(tmp_path, monkeypatch)
+    wd = tmp_path / "waive"
+    (wd / "gate_records.seal").unlink()
+    res = reanalyze(wd)
+    assert {"file": "pre_build_tests.json", "difference": "build record seal unsealed"} \
+        in res.differences, res.differences

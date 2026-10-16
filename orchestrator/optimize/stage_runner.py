@@ -3052,6 +3052,14 @@ def run_stage(
             _review_build(gate, work_dir, built=_gate is not None)
             if _gate is not None:
                 from orchestrator.optimize import gate_records as _gr
+                # Reseal only what verify itself wrote: the build-written part
+                # of baseline_equivalence.json on disk must still equal the
+                # sealed in-memory copy, or target code that ran at verify
+                # rewrote it (round 3, B3).
+                try:
+                    _gr.confirm_build_part(work_dir, _gate)
+                except _gr.GateRecordError as exc:
+                    raise OptimizationGateFailed(str(exc)) from exc
                 _gr.seal(work_dir, ("baseline_equivalence.json", *_gr.VERIFY_RECORDS))
         # The apparatus is certified, so pre-register the epoch's policy: a
         # JSON document hashed BEFORE the first benchmark run is what makes

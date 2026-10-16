@@ -370,3 +370,37 @@ def test_a_failed_mutant_cleanup_is_logged_not_swallowed(tmp_path, monkeypatch, 
     with caplog.at_level(logging.WARNING, logger="orchestrator.optimize.test_vacuity"):
         test_vacuity.remove_mutant(tmp_path, legacy)
     assert "could not remove mutant worktree" in caplog.text
+
+
+def test_a_control_measurement_rewritten_during_verify_is_never_resealed(tmp_path, monkeypatch):
+    """B3: agent code run at verify rewrites the build-written part of
+    baseline_equivalence.json. What verify finally seals is the sealed
+    in-memory copy, never the rewrite."""
+    wd = tmp_path / "vac"
+    test_src = (
+        "import calc, json, pathlib\n"
+        f"P = pathlib.Path({str(wd / 'baseline_equivalence.json')!r})\n"
+        "def test_mech():\n"
+        "    if P.exists():\n"
+        "        d = json.loads(P.read_text()); d['tolerance_pct'] = 99.0\n"
+        "        P.write_text(json.dumps(d))\n"
+        "    assert calc.scale(3) == 6\n")
+    _run(tmp_path, monkeypatch, {
+        "mech.py": "def boost(x):\n    return 2 * x\n",
+        "calc.py": "import mech\n\ndef scale(x):\n    return mech.boost(x)\n",
+        "tests/test_mech.py": test_src,
+    })
+    from orchestrator.optimize import gate_records as gr
+    assert json.loads((wd / "baseline_equivalence.json").read_text())["tolerance_pct"] != 99.0
+    assert gr.check(wd, "baseline_equivalence.json") == "ok"
+
+
+def test_confirm_build_part_refuses_a_rewritten_record(tmp_path):
+    from orchestrator.optimize import gate_records as gr
+
+    mem = {"levels": {"A": 1}, "pre": [1.0], "pre_mean": 1.0, "tolerance_pct": 5.0}
+    (tmp_path / "baseline_equivalence.json").write_text(json.dumps({**mem, "tolerance_pct": 99}))
+    with pytest.raises(gr.GateRecordError, match="changed during verify"):
+        gr.confirm_build_part(tmp_path, {"baseline_equivalence.json": mem})
+    (tmp_path / "baseline_equivalence.json").write_text(json.dumps({**mem, "post": [1.0]}))
+    gr.confirm_build_part(tmp_path, {"baseline_equivalence.json": mem})
