@@ -36,14 +36,14 @@ def test_the_active_factor_oracle_equals_full_enumeration():
     (12, 5, 256), (16, 5, 256), (16, 4, 32)])
 def test_a_many_knob_campaign_finds_the_optimum_in_seconds(tmp_path, k, resolution,
                                                           screen_corners):
-    t = time.monotonic()
+    t = time.process_time()
     res = run_synthetic_campaign(
         sparse_knobs(k), seed=1, parent_dir=tmp_path,
         campaign_overrides={"design": {
             "screen": {"resolution": resolution, "center_points": 4},
             "refine": {"kind": "central_composite", "center_points": 4},
             "confirm": {"replicates": 3}}})
-    elapsed = time.monotonic() - t
+    elapsed = time.process_time() - t
     assert res.path[-1] == "report", res.path
     assert res.true_gap == pytest.approx(0.0, abs=1e-9), (res.recommendation,
                                                            res.true_optimum)
@@ -52,8 +52,10 @@ def test_a_many_knob_campaign_finds_the_optimum_in_seconds(tmp_path, k, resoluti
     corners = sum(1 for r in screen["rows"] if r.get("role", "corner") == "corner")
     assert corners == screen_corners, "the screen is a fraction, not 2^k"
     assert _runs(res.work_dir) < 2 ** k
-    # Generous: measured 4-9 s; the point is "seconds, not hours".
-    assert elapsed < 120, f"{k} knobs took {elapsed:.0f}s"
+    # CPU seconds, not wall clock (the machine is shared). Measured 3.4 / 5.8 /
+    # 9.1 s CPU for 12@V / 16@V / 16@IV; 16@IV was ~37 s before the searched
+    # alias test's work was bounded. Generous: the point is "seconds, not hours".
+    assert elapsed < 120, f"{k} knobs took {elapsed:.0f}s of CPU"
 
 
 def test_the_oracle_refuses_a_grid_that_would_exhaust_memory():

@@ -8,7 +8,8 @@ ascent. These tests pin, on fitted models built directly:
 
   (a) the search agrees with enumeration where both can run, and is never
       worse than the best configuration it was seeded with;
-  (b) at 12 and 16 knobs it reaches a planted grid optimum, in seconds;
+  (b) at 12 and 16 knobs it reaches a planted (concave) grid optimum, in CPU
+      seconds;
   (c) measured-inadmissible and confidently-infeasible points are excluded at
       every evaluated point, exactly as in enumeration;
   (d) at or under the cap nothing changes -- enumeration, and no
@@ -16,8 +17,9 @@ ascent. These tests pin, on fitted models built directly:
   (e) above the cap a full campaign writes a schema-valid ``candidate_space``,
       says so in ``report.md``, and still finds the answer.
 
-Every test is behavioural: answers, artifacts and wall-clock, never which
-helper ran.
+Every test is behavioural: answers, artifacts and CPU time
+(``time.process_time``, so a loaded shared machine does not flake them),
+never which helper ran.
 """
 from __future__ import annotations
 
@@ -173,18 +175,20 @@ def test_a_twelve_knob_search_is_pinned():
 @pytest.mark.parametrize("k", [12, 16])
 def test_search_reaches_a_planted_optimum_at_many_knobs_in_seconds(k):
     """A planted grid optimum among 9^12 = 2.8e11 (9^16 = 1.9e15) candidates is
-    found on every seed, and each ``ranked(top=None)`` takes well under the
-    stated 5 s (measured ~0.2 s at k=12, ~0.35 s at k=16)."""
+    found on every seed (planted, diagonally dominant concave quadratics -- an
+    easy case, not a guarantee for indefinite surfaces), and each
+    ``ranked(top=None)`` takes well under the stated 5 s of CPU (measured
+    worst 0.25 s at k=12, 0.41 s at k=16)."""
     fs = _factors(k)
     worst = 0.0
     for s in range(6):
         rng = random.Random(s)
         target = _grid_target(k, rng)
         fit = _planted(k, rng, target)
-        t0 = time.perf_counter()
+        t0 = time.process_time()
         r = decide.ranked(fit, fs, direction="maximize", fitted_ids=_ids(k),
                           held_fixed={}, top=None)
-        worst = max(worst, time.perf_counter() - t0)
+        worst = max(worst, time.process_time() - t0)
         assert r[0].coded == pytest.approx(target), s
         assert r.space.exhaustive is False
         assert r.space.size == 9 ** k
@@ -196,7 +200,7 @@ def test_search_reaches_a_planted_optimum_at_many_knobs_in_seconds(k):
 def test_sixteen_knob_recommend_ranked_and_predicted_front_finish_in_seconds():
     """The whole fitting-stage path at 16 knobs and two objectives: the primary
     argmax, the full ranked set, and the predicted front over it. Requirement:
-    seconds, not minutes (measured ~1.5 s in total). The front must reach each
+    seconds, not minutes (measured 3.6 s of CPU in total). The front must reach each
     objective's planted optimum -- its extremes."""
     k = 16
     fs = _factors(k)
@@ -207,13 +211,13 @@ def test_sixteen_knob_recommend_ranked_and_predicted_front_finish_in_seconds():
     objs = [pareto.Objective("a", "maximize", {}), pareto.Objective("b", "maximize", {})]
     models = {"a": ObjectiveModel("a", "maximize", f1, ""),
               "b": ObjectiveModel("b", "maximize", f2, "")}
-    t0 = time.perf_counter()
+    t0 = time.process_time()
     kw = dict(direction="maximize", fitted_ids=_ids(k), held_fixed={})
     rec = decide.recommend(f1, fs, **kw)
     scored = decide.ranked(f1, fs, top=None, objectives=((f1, "maximize"), (f2, "maximize")),
                            **kw)
     front, n_nd = pareto.predicted_front(scored, models, objs, delta=0.05)
-    elapsed = time.perf_counter() - t0
+    elapsed = time.process_time() - t0
     assert elapsed < 10.0, elapsed
     assert rec.coded == pytest.approx(t1)
     nd = [p for p in front if p.status == "nondominated"]
