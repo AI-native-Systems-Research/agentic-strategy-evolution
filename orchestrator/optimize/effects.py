@@ -344,13 +344,14 @@ def fit_effects(design: Design, responses, *, factor_ids,
     # Pure error is only pure if every row in a group is a replicate of ONE
     # configuration. Under the nominal coding every centre row was the origin
     # by construction; under INV-STAT14 the coordinates are the coded actual
-    # levels, so this is checked rather than assumed. Every design this kind
-    # generates still yields one group (``_decode_level`` runs every centre at
-    # the same levels -- numerics at mid, choices at their first level), so
-    # the pooled estimate is exactly the plain sample variance there; a
-    # hand-built or recoded design whose centres differ gets the textbook
-    # pooled within-group estimate instead of a variance that would silently
-    # include a factor effect.
+    # levels, so this is checked rather than assumed. A design without choice
+    # factors yields one group (every centre at the numeric midpoints), so the
+    # pooled estimate is exactly the plain sample variance there. A design WITH
+    # choice factors runs its centres in ``g`` configurations over the choice
+    # levels (``matrix.centre_configurations``, spec 2026-10-16 feature 3), and
+    # gets the textbook pooled within-group estimate (Draper & Smith, 3e §2.1):
+    # SS_pe = sum of within-group SS, df_pe = n_centre - g. A plain variance
+    # over all centres would silently include the choice factor's effect.
     groups: dict[tuple[float, ...], list[float]] = {}
     for p, y in zip(pts, ys):
         if p.role == "center":

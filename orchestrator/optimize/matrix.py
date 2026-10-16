@@ -51,7 +51,36 @@ class ConfigRow:
     apply: dict = field(default_factory=dict)
 
 
-def _decode_level(f: Factor, point: DesignPoint, idx: int) -> Any:
+def centre_choice_levels(f: Factor) -> tuple:
+    """The levels a choice factor's centre rows cycle through: the levels the
+    screen runs it at (its screen pair for a two-level choice)."""
+    return tuple(f.screen_levels)
+
+
+def centre_configurations(n_centre: int, level_counts) -> int:
+    """``g``: how many DISTINCT centre configurations ``n_centre`` centre points
+    are spread over, given the choice factors' level counts.
+
+    ``g = max(1, min(lcm(L_j), floor(n_centre / 2)))`` -- spec
+    2026-10-16-mixed-level-factors-design.md, feature 3, "replication first,
+    then coverage". The ``floor(n/2)`` cap guarantees every configuration at
+    least two replicates whenever ``n_centre >= 2``, so pure error keeps
+    ``n_centre - g >= ceil(n_centre / 2)`` df (Draper & Smith, *Applied
+    Regression Analysis*, 3e, §2.1: pure error needs replicates of ONE
+    configuration). ``lcm`` is the period of the diagonal cycle: past it a new
+    configuration repeats an old one. No choice factor -> ``1``.
+    """
+    counts = [int(c) for c in level_counts if int(c) > 1]
+    if not counts:
+        return 1
+    period = 1
+    for c in counts:
+        period = period * c // math.gcd(period, c)
+    return max(1, min(period, int(n_centre) // 2))
+
+
+def _decode_level(f: Factor, point: DesignPoint, idx: int, *,
+                  n_configs: int = 1) -> Any:
     """The real-world level factor ``f`` takes at coded position ``idx``.
 
     At exactly ±1 (corner points) the coded value maps onto the declared
@@ -61,11 +90,20 @@ def _decode_level(f: Factor, point: DesignPoint, idx: int) -> Any:
     int level stays ``2`` rather than becoming ``2.0``. Any other coded
     value (axial/star points, fractional designs) genuinely needs
     ``decode_coded``'s interpolation.
+
+    A CENTRE row has no categorical coordinate, so a choice factor runs the
+    DIAGONAL CYCLIC assignment (spec 2026-10-16, feature 3): centre replicate
+    ``i`` is configuration ``c = i mod n_configs`` (``centre_configurations``),
+    in which the factor takes ``levels[c mod L]``. With ``n_configs = 1`` --
+    every campaign without a choice factor, and a two-level choice at fewer
+    than four centre points -- that is the first level, as it always was.
     """
     low, high = f.screen_levels
     if point.role == "center":
         if f.type == "choice":
-            return low
+            cyc = centre_choice_levels(f)
+            config = int(point.replicate) % max(1, int(n_configs))
+            return cyc[config % len(cyc)]
         return decode_coded(f, 0.0)
     coded = point.coded[idx]
     if coded == -1:
@@ -73,6 +111,67 @@ def _decode_level(f: Factor, point: DesignPoint, idx: int) -> Any:
     if coded == 1:
         return high
     return decode_coded(f, coded)
+
+
+def _design_centre_configs(design: Design, by_id: dict) -> int:
+    """``centre_configurations`` for this design's centre rows and choice
+    factors -- the one place ``expand`` and the payload record read it from."""
+    n_c = sum(1 for p in design.points if p.role == "center")
+    counts = [len(centre_choice_levels(by_id[fid])) for fid in design.factor_ids
+              if fid in by_id and by_id[fid].type == "choice"]
+    return centre_configurations(n_c, counts)
+
+
+def centre_points_record(design: Design, factors) -> dict | None:
+    """``design_matrix.json["centre_points"]``: how the centre rows cover the
+    choice factors' levels, and what that leaves pure error.
+
+    ``None`` when the design has no centre row or no choice factor, so every
+    such campaign's payload is byte-identical to before. Otherwise: the
+    assignment rule, the number of distinct configurations ``g``, the
+    replicates per configuration, ``pure_error_df = n_centre - g`` (what
+    ``effects.fit_effects`` will pool when every centre row measures), each
+    choice factor's per-level centre count, and a WARNING per level no centre
+    point covers -- curvature is not checked under it.
+    """
+    by_id = {f.id: f for f in factors}
+    choice = [by_id[fid] for fid in design.factor_ids
+              if fid in by_id and by_id[fid].type == "choice"]
+    centres = [p for p in design.points if p.role == "center"]
+    if not centres or not choice:
+        return None
+    g = _design_centre_configs(design, by_id)
+    reps: dict[int, int] = {}
+    per_level: dict = {}
+    for f in choice:
+        per_level[f.id] = {str(lv): 0 for lv in centre_choice_levels(f)}
+    for p in centres:
+        c = int(p.replicate) % g
+        reps[c] = reps.get(c, 0) + 1
+        for f in choice:
+            j = design.factor_ids.index(f.id)
+            per_level[f.id][str(_decode_level(f, p, j, n_configs=g))] += 1
+    warnings = []
+    for f in choice:
+        missing = [lv for lv, n in per_level[f.id].items() if n == 0]
+        if missing:
+            warnings.append(
+                f"choice factor {f.id!r}: level(s) {', '.join(repr(m) for m in missing)} "
+                f"get no centre point ({len(centres)} centre point(s) over {g} "
+                f"configuration(s), each replicated at least twice), so curvature "
+                f"is not checked under them. center_points >= "
+                f"{2 * len(centre_choice_levels(f))} covers every level twice.")
+    return {
+        "assignment": "diagonal_cyclic",
+        "rule": "g = max(1, min(lcm(L_j), floor(n_centre/2))); replicate i runs "
+                "configuration i mod g, choice factor j at levels_j[(i mod g) mod L_j]",
+        "n_centre": len(centres),
+        "configurations": g,
+        "replicates_per_configuration": [reps.get(c, 0) for c in range(g)],
+        "pure_error_df": len(centres) - g,
+        "per_level": per_level,
+        "warnings": warnings,
+    }
 
 
 def coded_as_run(design: Design, factors, levels_by_pos) -> tuple[Design, list[int]]:
@@ -88,22 +187,37 @@ def coded_as_run(design: Design, factors, levels_by_pos) -> tuple[Design, list[i
         of fit (measured: ~100% rejection on a clamped k=2 CCD; ~alpha once
         recoded) and every coefficient touching the axis shrinks.
       * CHOICE CENTRE POINTS. A categorical has no centre. ``_decode_level``
-        runs a choice factor's centre row at its FIRST level, so that row is
-        coded ``-1`` for the choice factor and ``0`` for every numeric. The
+        runs a choice factor's centre rows at the levels of the diagonal
+        cyclic assignment (``centre_configurations``; at fewer than four
+        centre points with one two-level choice, its FIRST level), so each
+        such row is coded at the level it ran (``-1``/``+1``) for the choice
+        factor and ``0`` for every numeric. The
         alternatives were weighed against spec §3.2 and standard mixed-design
         RSM practice:
 
           - replicating centre points at EACH choice level (the textbook
-            mixed-design layout) changes the pre-registered design, its run
-            count and its budget, and splits the pure-error estimate across
-            several configurations; it is a design change, not a fitting fix.
+            mixed-design layout) is a DESIGN change, not a fitting fix -- and
+            it is now made, without changing the centre-point count: the
+            diagonal cyclic assignment (spec 2026-10-16, feature 3) spreads
+            the declared centres over the levels, each configuration
+            replicated at least twice, and pure error is pooled within them.
           - dropping the choice columns from centre rows is not expressible
             in a single least-squares matrix without inventing a value.
-          - coding the level that ran keeps the centre rows TRUE REPLICATES of
-            ONE configuration (numerics at mid, choices at their first level),
-            which is exactly what the pure-error estimate requires, and costs
-            only orthogonality of the choice column with the intercept -- an
-            honest non-orthogonality the general least-squares solve handles.
+          - coding the level that ran keeps the centre rows of each
+            configuration TRUE REPLICATES of it, which is exactly what the
+            pooled pure-error estimate requires, and costs only orthogonality
+            of the choice column with the intercept -- an honest
+            non-orthogonality the general least-squares solve handles.
+
+        WHY THE CURVATURE CONTRAST STAYS UNBIASED with cycled centres: each
+        centre row is coded at the level it ran, so the fitted linear model
+        (main effects and 2fi, estimated from the corners) predicts it under
+        that level, and every choice x numeric interaction vanishes at the
+        numeric midpoint. The residual at a centre of level ``l`` therefore
+        estimates level ``l``'s pure curvature; the pooled lack-of-fit F
+        tests that every covered level's curvature is zero. ASSUMPTION: the
+        linear part is correctly estimated from the corners (resolution >= V,
+        or the aliased terms are zero).
 
         So the principle is one rule for both defects: code what ran.
 
@@ -226,6 +340,7 @@ def expand(design: Design, factors: list[Factor]) -> list[ConfigRow]:
     :func:`matrix_payload` rather than reordering this list.
     """
     by_id = {f.id: f for f in factors}
+    n_configs = _design_centre_configs(design, by_id)
     rows: list[ConfigRow] = []
     for row_index, point in enumerate(design.points):
         levels: dict[str, Any] = {}
@@ -236,7 +351,7 @@ def expand(design: Design, factors: list[Factor]) -> list[ConfigRow]:
 
         for idx, fid in enumerate(design.factor_ids):
             f = by_id[fid]
-            level = _decode_level(f, point, idx)
+            level = _decode_level(f, point, idx, n_configs=n_configs)
             levels[fid] = level
             rendered = _render_apply(f, level)
             cli_args.extend(rendered.get("cli_args", []))
@@ -280,6 +395,7 @@ def matrix_payload(design: Design, factors: list[Factor], *,
     """
     rows = expand(design, factors)
     run_order = randomized_run_order(len(rows), run_order_seed)
+    centre = centre_points_record(design, factors)
     return {
         "factor_ids": list(design.factor_ids),
         "kind": design.kind,
@@ -298,6 +414,7 @@ def matrix_payload(design: Design, factors: list[Factor], *,
             }
             for r in rows
         ],
+        **({"centre_points": centre} if centre is not None else {}),
     }
 
 

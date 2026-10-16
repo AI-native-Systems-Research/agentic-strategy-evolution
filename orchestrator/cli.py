@@ -1988,8 +1988,10 @@ def _center_levels(factors) -> dict:
     Delegates to ``matrix._decode_level`` with a synthetic center ``DesignPoint``
     rather than reimplementing the rule, because the rule has two halves that
     must not drift: a numeric factor takes ``decode_coded(f, 0.0)`` (its
-    midpoint, grid-snapped), and a ``choice`` factor is PINNED to
-    ``screen_levels[0]`` since it has no midpoint. A probe that guessed either
+    midpoint, grid-snapped), and a ``choice`` factor runs the level of centre
+    REPLICATE 0 -- ``screen_levels[0]``, the first configuration of the
+    diagonal cyclic assignment -- since it has no midpoint (the other levels'
+    centre configurations are the liveness sweep's corners at numeric mid). A probe that guessed either
     half differently would test a configuration the epoch never runs.
     """
     from orchestrator.optimize.design import DesignPoint

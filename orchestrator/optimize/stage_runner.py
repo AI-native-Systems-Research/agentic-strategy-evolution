@@ -2935,6 +2935,9 @@ def run_stage(
         # mean over the complete CORNER rows estimates its main effect free of
         # curvature -- which is also the right criterion at the refine design's
         # centre, where every interaction with a refined factor vanishes.
+        basis = {f.id: ("screen_recommendation"
+                        if prev_levels and f.id in prev_levels else "first_level")
+                 for f in held}
         if prev_rec and prev_rec.get("model_adequate") is False:
             corner_best = _corner_marginal_best(
                 work_dir, prev_rec.get("iteration"), [f.id for f in held],
@@ -2948,6 +2951,34 @@ def run_stage(
                     corner_best,
                 )
                 prev_levels = {**(prev_levels or {}), **corner_best}
+                basis.update({fid: "corner_marginal" for fid in corner_best})
+            # ── a CHOICE factor: its centre-point means, when every level has one ──
+            #
+            # The corner marginal is unbiased by curvature only when curvature
+            # does not depend on the level. When it does -- the very case the
+            # cycled centre points exist to detect (spec 2026-10-16, feature 3;
+            # `curvature_under_second_level`: C=on is a bowl reading 11.1 at the
+            # corners and 16 at the centre, C=off is flat at 15) -- the corners
+            # make the curved level look WORSE, and refine would be spent on the
+            # flat branch. The centre-point mean at each level is an unbiased
+            # estimate of the response AT REFINE'S DESIGN CENTRE under that level
+            # (the point the CCD is built around), so it is the right criterion
+            # whenever every level was measured there; otherwise the corner rule
+            # stands and the basis says so.
+            centre_best = _centre_mean_best(
+                work_dir, prev_rec.get("iteration"),
+                [f for f in held if f.type == "choice"], primary, direction,
+            )
+            if centre_best:
+                logger.info(
+                    "refine: every level of held choice factor(s) %s was measured "
+                    "at the screen's centre, so each is held at its best "
+                    "CENTRE-POINT mean (the response at refine's design centre "
+                    "under that level), which level-dependent curvature cannot "
+                    "bias: %s", sorted(centre_best), centre_best,
+                )
+                prev_levels = {**(prev_levels or {}), **centre_best}
+                basis.update({fid: "centre_mean" for fid in centre_best})
         fixed = {
             f.id: (
                 prev_levels[f.id]
@@ -2976,6 +3007,11 @@ def run_stage(
             ]
             payload = dict(payload)
             payload["held_fixed"] = dict(fixed)
+            # Where each held level came from -- recorded whenever a CHOICE
+            # factor is held (the case the centre-mean rule can change), so a
+            # campaign with only numeric held factors is byte-identical.
+            if any(f.type == "choice" for f in held if f.id in fixed):
+                payload["held_fixed_basis"] = {fid: basis[fid] for fid in fixed}
             payload["rows"] = [
                 {**row, "levels": {**fixed, **dict(row.get("levels") or {})}}
                 for row in payload.get("rows", [])
@@ -6458,6 +6494,59 @@ def _corner_marginal_best(work_dir, iteration, factor_ids, primary: str,
             continue
         best = max(by_level.values(), key=lambda a: sign * a[1] / a[2])
         out[fid] = best[0]
+    return out
+
+
+def _centre_mean_best(work_dir, iteration, factors, primary: str,
+                      direction: str) -> dict:
+    """Each choice factor's best level by its mean over the CENTRE rows of
+    ``runs/iter-<iteration>/runs.jsonl`` -- only for a factor EVERY one of
+    whose centre-cycled levels (``matrix.centre_choice_levels``) has at least
+    one complete centre row with a finite primary. A factor with an unmeasured
+    level is omitted, so the caller keeps its corner-marginal rule: a level
+    never seen at the centre cannot be compared there. Ties go to the level
+    declared first.
+    """
+    import math
+
+    from orchestrator.optimize.matrix import centre_choice_levels
+
+    if iteration is None or not factors:
+        return {}
+    p = Path(work_dir) / "runs" / f"iter-{int(iteration)}" / "runs.jsonl"
+    if not p.exists():
+        return {}
+    acc: dict[str, dict] = {f.id: {} for f in factors}
+    for line in p.read_text().splitlines():
+        if not line.strip():
+            continue
+        row = json.loads(line)
+        if row.get("status") != "complete" or row.get("role") != "center":
+            continue
+        y = (row.get("response") or {}).get(primary)
+        if not isinstance(y, (int, float)) or not math.isfinite(y):
+            continue
+        for f in factors:
+            lv = (row.get("levels") or {}).get(f.id)
+            if lv is None:
+                continue
+            a = acc[f.id].setdefault(json.dumps(lv), [0.0, 0])
+            a[0] += float(y)
+            a[1] += 1
+    sign = -1.0 if direction == "minimize" else 1.0
+    out: dict = {}
+    for f in factors:
+        levels = list(centre_choice_levels(f))
+        means = {}
+        for lv in levels:
+            a = acc[f.id].get(json.dumps(lv))
+            if not a:
+                break
+            means[json.dumps(lv)] = a[0] / a[1]
+        else:
+            best = max(levels, key=lambda lv: (sign * means[json.dumps(lv)],
+                                               -levels.index(lv)))
+            out[f.id] = best
     return out
 
 

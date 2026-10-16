@@ -909,7 +909,11 @@ def test_no_identifiable_factor_at_all_aborts_through_the_real_run_stage(
     from orchestrator.optimize.harness import _all_pass, synthetic_campaign
     from orchestrator.iteration import setup_work_dir
 
-    surface = SURFACES["additive"]()
+    # A NUMERIC-only surface: its centre rows are replicates of ONE
+    # configuration. (A choice factor's centres now cycle its levels -- spec
+    # 2026-10-16 feature 3 -- which would make that factor identifiable from
+    # the centres alone and defeat the construction.)
+    surface = SURFACES["bowl"]()
     campaign = synthetic_campaign(surface, stages=["verify", "screen", "confirm"])
 
     def only_centres_measure(row):

@@ -129,7 +129,18 @@ def build_preview(
     screen = _build_design(factors, design_cfg, Stage.SCREEN.value)
     n_centre = sum(1 for p in screen.points if p.role == "center")
     pv.screen_corners = len(screen.corners)
-    pv.pure_error_df = max(0, n_centre - 1)
+    # Pure error pools WITHIN identical configurations (effects.fit_effects),
+    # and the centre rows cover the choice factors' levels in `g` distinct
+    # configurations (matrix.centre_configurations, spec 2026-10-16 feature 3),
+    # so the df is n_centre - g, not n_centre - 1 -- the same count the fit
+    # will use when every centre row measures.
+    from orchestrator.optimize.matrix import centre_points_record
+
+    centre_rec = centre_points_record(screen, factors)
+    pv.pure_error_df = (int(centre_rec["pure_error_df"]) if centre_rec is not None
+                        else max(0, n_centre - 1))
+    if centre_rec is not None:
+        pv.warnings.extend(centre_rec["warnings"])
     from orchestrator.optimize.design import _runs_lower_bound, min_runs_for
 
     k = len(screen.factor_ids)
@@ -153,7 +164,10 @@ def build_preview(
         shape = "the full factorial, already the smallest design of this resolution"
     pv.stages.append(StageRuns(
         "screen", len(screen.points), len(screen.points), False,
-        f"{pv.screen_corners} corners ({shape}) + {n_centre} centre point(s)",
+        f"{pv.screen_corners} corners ({shape}) + {n_centre} centre point(s)"
+        + (f" in {centre_rec['configurations']} configuration(s) over the choice "
+           f"levels (pure-error df {pv.pure_error_df})"
+           if centre_rec is not None and centre_rec["configurations"] > 1 else ""),
     ))
 
     if "foldover" in states:

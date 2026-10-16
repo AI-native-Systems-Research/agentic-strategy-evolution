@@ -1822,6 +1822,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule24_integer_levels_without_grid(factors))
     errors.extend(_rule25_geometric_levels_without_log_scale(factors))
     errors.extend(_rule27_levels_only(factors))
+    errors.extend(_rule28_centre_points_cover_choice_levels(design, factors))
     errors.extend(_rule26_objectives(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
@@ -2129,6 +2130,36 @@ def _rule27_levels_only(factors: list[dict]) -> list[str]:
                 f"levels (e.g. every power of two between them) so refine can "
                 f"use them, or drop levels_only.")
     return out
+
+
+def _rule28_centre_points_cover_choice_levels(design: dict, factors: list[dict]) -> list[str]:
+    """Rule 28 (WARNING): a choice level the screen's centre points never run.
+
+    Centre points cycle the choice factors through their levels in
+    ``g = max(1, min(lcm(L_j), floor(center_points / 2)))`` configurations
+    (``matrix.centre_configurations``; spec 2026-10-16, feature 3), each
+    replicated at least twice so pure error keeps its df. A level outside the
+    first ``g`` gets no centre point, so the lack-of-fit test cannot see
+    curvature under it -- the defect that made a bowl under ``C=on`` invisible
+    when every centre ran ``C=off``. Reported from the same record the
+    pre-registered ``design_matrix.json`` carries, so the two cannot disagree.
+    """
+    if not isinstance(design, dict) or not factors:
+        return []
+    try:
+        from orchestrator.optimize.factors import parse_factors
+        from orchestrator.optimize.matrix import centre_points_record
+        from orchestrator.optimize.stage import Stage
+        from orchestrator.optimize.stage_runner import _build_design
+
+        parsed = parse_factors(factors)
+        screen = _build_design(parsed, design, Stage.SCREEN.value)
+        rec = centre_points_record(screen, parsed)
+    except Exception:  # noqa: BLE001 -- other rules report an unparseable block
+        return []
+    if rec is None:
+        return []
+    return [f"WARN: {w}" for w in rec["warnings"]]
 
 
 def _rule25_geometric_levels_without_log_scale(factors: list[dict]) -> list[str]:

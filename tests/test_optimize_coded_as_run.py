@@ -169,7 +169,8 @@ def test_linear_surface_coefficients_are_recovered_within_their_intervals():
         assert mean == pytest.approx(truth[label], abs=0.02)
 
 
-def _mixed_fits(n_seeds, *, as_run: bool, drop_corner: bool):
+def _mixed_fits(n_seeds, *, as_run: bool, drop_corner: bool,
+                pin_centres: bool = False):
     """A x C (numeric x choice) with centre points; truth known in coded units.
 
     y = 10 + 0.3 A + 2 [C=on] + 0.1 A [C=on]. With a = (A - 9)/7 and
@@ -183,6 +184,10 @@ def _mixed_fits(n_seeds, *, as_run: bool, drop_corner: bool):
                     _choice("C"))
     d = with_center_points(full_factorial(["A", "B", "C"]), 4)
     lv = _levels_by_pos(d, facs)
+    if pin_centres:
+        # The pre-2026-10-16 layout: every centre row at C's FIRST level.
+        lv = [dict(x, C="off") if p.role == "center" else x
+              for x, p in zip(lv, d.points)]
     run, _ = coded_as_run(d, facs, lv)
     use = run if as_run else d
     keep = [i for i, x in enumerate(lv)
@@ -215,8 +220,11 @@ def test_mixed_choice_numeric_recovers_the_interaction_without_bias(drop_corner)
 
 def test_mixed_choice_numeric_nominal_coding_is_the_defect():
     """Regression guard on the instrument: with the old coding the centre rows
-    lie about C, so C's main effect is biased and lack of fit rejects."""
-    fits = _mixed_fits(100, as_run=False, drop_corner=True)
+    lie about C, so C's main effect is biased and lack of fit rejects. Built on
+    the PINNED centre layout the defect was observed under (every centre at
+    C's first level); cycled centres are the subject of
+    test_optimize_centre_levels."""
+    fits = _mixed_fits(100, as_run=False, drop_corner=True, pin_centres=True)
     assert abs(_mean(fits, "AC") - 0.35) > 0.1
     assert _lof_reject_rate(fits) > 0.5
 
@@ -249,8 +257,10 @@ def test_effects_json_records_the_coordinates_the_fit_used(tmp_path):
     assert screen["basis"] == "coded_actual_levels"
     ci = screen["factor_ids"].index("C")
     centres = [r for r in screen["rows"] if r["role"] == "center"]
-    assert centres and all(r["planned"][ci] == 0.0 and r["fitted"][ci] == -1.0
-                           for r in centres)
+    # Planned at the nominal origin, fitted at the level each centre RAN: the
+    # four centres cycle C through off/on (spec 2026-10-16 feature 3).
+    assert centres and all(r["planned"][ci] == 0.0 for r in centres)
+    assert sorted(r["fitted"][ci] for r in centres) == [-1.0, -1.0, 1.0, 1.0]
     refine = by_stage["refine"]["fit_coordinates"]
     axial = [r for r in refine["rows"] if r["role"] == "axial"]
     assert axial

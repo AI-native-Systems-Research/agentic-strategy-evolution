@@ -458,6 +458,25 @@ def sparse_knobs(k: int, *, noise_sd: float = 0.05) -> Surface:
         active=(a, b, c),
     )
 
+def curvature_under_second_level() -> Surface:
+    """Curvature that exists only under a NON-FIRST choice level (spec
+    2026-10-16-mixed-level-factors-design.md, feature 3).
+
+    ``C=off`` is flat at 15; ``C=on`` is a bowl peaking at 16 at the design
+    centre (A = B = 9) and reading 11.1 at every corner. With every centre row
+    at ``C=off`` (the old layout) the screen sees no curvature, nothing
+    refines, and the campaign certifies ``off`` 1.0 below the optimum; with the
+    centres cycled the ``on`` centres show the bowl. Not in ``SURFACES``: the
+    every-surface loops and the byte-identity baseline stay as they were.
+    """
+    return Surface(
+        name="curvature_under_second_level", noise_sd=0.05,
+        factors=(_numeric("A"), _numeric("B"), _choice("C")),
+        fn=lambda lv: (15.0 if lv["C"] == "off" else
+                       16.0 - 0.05 * ((lv["A"] - 9) ** 2 + (lv["B"] - 9) ** 2)),
+    )
+
+
 SURFACES: dict[str, Callable[[], Surface]] = {
     "additive": _additive,
     "interaction_only": _interaction_only,

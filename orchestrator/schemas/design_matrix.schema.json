@@ -149,6 +149,26 @@
       "type": "object",
       "description": "Map of factor id -> the level it was pinned at for this matrix, for factors that are declared in the campaign but not columns of THIS design (e.g. a factor dropped after screening). Recorded because a row's levels alone cannot distinguish \"this factor was not varied\" from \"this factor was not present\"."
     },
+    "held_fixed_basis": {
+      "type": "object",
+      "additionalProperties": {"enum": ["screen_recommendation", "first_level", "corner_marginal", "centre_mean"]},
+      "description": "Where each held_fixed level came from, recorded whenever a CHOICE factor is held (spec 2026-10-16-mixed-level-factors-design.md, feature 3): the previous stage's recommendation, the factor's first declared level, its best corner marginal mean (lack-of-fit branch), or its best CENTRE-POINT mean (lack-of-fit branch, every level measured at the screen's centre -- the rule level-dependent curvature cannot bias)."
+    },
+    "centre_points": {
+      "type": "object",
+      "required": ["assignment", "n_centre", "configurations", "replicates_per_configuration", "pure_error_df", "per_level", "warnings"],
+      "description": "How the centre rows cover the choice factors' levels (spec 2026-10-16, feature 3). Present only when the design has centre rows AND a choice factor. g = max(1, min(lcm(L_j), floor(n_centre/2))) distinct configurations, replicate i at configuration i mod g (the diagonal cyclic assignment), each replicated at least twice so pure error keeps n_centre - g df; per_level counts each choice level's centre rows and warnings names every level none covers (curvature is not checked under it).",
+      "properties": {
+        "assignment": {"const": "diagonal_cyclic"},
+        "rule": {"type": "string"},
+        "n_centre": {"type": "integer", "minimum": 1},
+        "configurations": {"type": "integer", "minimum": 1},
+        "replicates_per_configuration": {"type": "array", "items": {"type": "integer", "minimum": 0}},
+        "pure_error_df": {"type": "integer", "minimum": 0},
+        "per_level": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": {"type": "integer", "minimum": 0}}},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
     "round": {
       "type": "integer",
       "minimum": 1,

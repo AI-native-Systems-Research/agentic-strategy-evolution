@@ -659,12 +659,23 @@ not chosen freely.
   blocks) at `resolution < 5` with more than one factor — see anti-pattern
   §6.3. `center_points` are replicated runs at the center of the design,
   giving the pure-error estimate the lack-of-fit test needs. A `choice`
-  factor has no centre, so its centre runs sit at its **first** declared
-  level — every centre row is still one configuration (true replicates, which
-  is what pure error needs), and the fit codes that factor at the level it
-  ran (`-1`), not at the design's nominal `0`. Pure error with 2 df (3 centre
-  points) is very noisy; a lack-of-fit verdict resting on it is weak either
-  way, so prefer 4–6 centre points when the constraint models matter.
+  factor has no centre, so the centre runs **cycle it through its levels**
+  — otherwise curvature under any level but the first is invisible (measured
+  on the `curvature_under_second_level` oracle: a bowl under `C=on` with all
+  centres at `C=off` went unrefined and certified an answer 1.0 below the
+  optimum on 8/8 seeds; cycled, it refines and finds it on 8/8). The rule is
+  *replication first, then coverage*: the centres form
+  `g = max(1, min(lcm of the choice level counts, floor(center_points / 2)))`
+  configurations, replicate `i` at configuration `i mod g` (the diagonal cyclic
+  assignment — several choice factors advance together, so their centres stay
+  replicated), each replicated at least twice. Pure error is pooled within
+  configurations, so its df is `center_points - g`; the fit codes each centre
+  row at the level it ran. A level no centre covers is recorded in
+  `design_matrix.json["centre_points"]` and `nous validate` warns (rule 28):
+  with one two-level choice factor, 3 centres leave `on` uncovered and 4 cover
+  both. Pure error with 2 df is very noisy; a lack-of-fit verdict resting on
+  it is weak either way, so prefer 4–6 centre points when the constraint
+  models matter.
 - **`refine`** — `{kind: central_composite, center_points}`. Runs only
   when at least two `numeric` factors with more than 2 levels survive
   screening (the validator's rule 4). Omit this key entirely when your
@@ -721,7 +732,8 @@ the levels that actually **ran** (`factors.code_actual`):
   was never run. Fitting the nominal value is an errors-in-variables bias:
   measured, a truly linear surface on a clamped CCD failed lack of fit on
   essentially every seed, and at ~α once fitted on what ran;
-- a `choice` factor's centre row is fitted at the level it ran (`-1`);
+- a `choice` factor's centre row is fitted at the level it ran (`-1` or `+1`
+  for a two-level choice, as the centre cycle assigned it);
 - a grid-snapped point is fitted at its snapped level.
 
 The same coordinates drive the constraint models, and they are the coding the
@@ -2050,8 +2062,13 @@ The registered branches worth understanding as an author:
      2-level design is one contrast that no single factor can be credited
      with, so refine's central composite spans **every** refinable factor (it
      always has), and non-refinable factors are held at their best **corner**
-     marginal level — the centre rows pin each `choice` factor to one level,
-     so the screen's own argmax would credit the curvature to that level.
+     marginal level — the screen's own argmax would credit the curvature to
+     whichever levels the centres ran. A **`choice`** factor every level of
+     which was measured at the centre is held at its best **centre-point
+     mean** instead: when curvature differs by level, the corners make the
+     curved level look worse, while the centre mean estimates the response at
+     refine's own design centre under each level
+     (`design_matrix.json["held_fixed_basis"]` records which rule applied).
      Accounting: `policy.CURVATURE_ACCOUNTING` (INV-SEM16).
 
   All-`choice` or all-binary campaigns register neither rule, which is why

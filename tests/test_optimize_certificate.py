@@ -30,6 +30,12 @@ def _fit_and_rank(surface, seed):
     rng = random.Random(seed)
     rows = expand(d, factors)
     ys = [surface.fn(r.levels) + rng.gauss(0, surface.noise_sd) for r in rows]
+    # Fitted where the rows RAN (INV-STAT14), as the stage runner fits: a
+    # choice factor's centre rows cycle its levels, so the nominal origin would
+    # pool its effect into "pure error".
+    from orchestrator.optimize.matrix import coded_as_run
+
+    d, _ = coded_as_run(d, factors, [r.levels for r in rows])
     fit = fit_effects(d, ys, factor_ids=ids)
     scored = ranked(fit, factors, direction="maximize", fitted_ids=ids,
                     held_fixed={}, top=None)

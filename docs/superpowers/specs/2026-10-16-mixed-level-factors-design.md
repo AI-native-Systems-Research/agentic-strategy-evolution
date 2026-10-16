@@ -90,25 +90,38 @@ every seed and is 256.
 
 ## Feature 3 — centre points that cover every categorical level
 
-**Rule (deterministic).** In the screen (and foldover) the centre replicate
-with index `i` runs each choice factor `j` at level `levels_j[i mod L_j]`
-(`L_j` = the levels the screen uses for `j`: the screen pair for a two-level
-choice, every declared level for a multi-level categorical once feature 1
-lands). Numerics stay at their midpoint. Call this the **diagonal cyclic
-assignment**.
+**Rule (deterministic): replication first, then coverage.** With n_c screen
+(and foldover) centre points and choice factors with `L_j` screen levels
+(the screen pair for a two-level choice; every declared level for a
+multi-level categorical once feature 1 lands), the number of distinct centre
+CONFIGURATIONS is
 
-**Why diagonal, not the full product.** Pure error needs several replicates of
-ONE configuration. The full product of choice levels across n_c centre points
-(e.g. (off,off),(on,off),(off,on),(on,on) at n_c = 4) makes every centre a
-singleton and leaves ZERO pure-error df. The diagonal assignment uses
-`min(n_c, lcm(L_j))` distinct centre configurations, so for two 2-level choice
-factors and n_c = 4 it gives two configurations of two replicates (df 2).
-Balance: each level of each choice factor is run `floor(n_c/L_j)` or
-`ceil(n_c/L_j)` times; exactly balanced when `L_j` divides n_c. (Textbook
-practice -- Montgomery, *DAE* 8e §6.8, and Myers, Montgomery & Anderson-Cook, RSM, on
-qualitative factors -- is to run centre points at each level of the
-qualitative factors; the diagonal assignment is that practice under a fixed
-centre-point budget.)
+    g = max(1, min(lcm_j(L_j), floor(n_c / 2)))
+
+and centre replicate `i` runs configuration `c = i mod g`, in which choice
+factor `j` takes level `levels_j[c mod L_j]`. Numerics stay at their
+midpoint. Call this the **diagonal cyclic assignment**.
+
+  * `floor(n_c / 2)` guarantees every configuration at least two replicates
+    whenever n_c >= 2, so pure error keeps `n_c - g >= ceil(n_c / 2)` df. A
+    rule that cycled every replicate through the levels would leave a
+    5-level categorical with 4 centre points four singletons and ZERO
+    pure-error df: no significance test and no lack-of-fit test at all.
+  * Diagonal rather than the full product of choice levels for the same
+    reason: the product (off,off),(on,off),(off,on),(on,on) at n_c = 4 is four
+    singletons. The diagonal pairs the factors' level indices, so two 2-level
+    choice factors at n_c = 4 give (off,off),(on,on) twice each (df 2).
+  * Balance: within the covered levels each is run `floor` or `ceil` of
+    `n_c / g` times (exactly balanced when g divides n_c).
+  * Textbook practice (Montgomery, *DAE* 8e §6.8; Myers, Montgomery &
+    Anderson-Cook, RSM, on qualitative factors) runs centre points at every
+    level of the qualitative factors; this is that practice under a fixed
+    centre-point budget, with the budget's shortfall recorded, not hidden.
+
+A campaign with no choice factor has g = 1 and is byte-identical. A two-level
+choice campaign with n_c = 3 also has g = 1 (all centres at the first level,
+as before) and now gets a warning that the second level's curvature is
+unchecked.
 
 **Pure error is pooled within groups of identical configurations**
 (Draper & Smith, *Applied Regression Analysis*, 3e, §2.1): SS_pe = sum over
@@ -129,10 +142,10 @@ Assumption, stated in `matrix.expand`: the linear part is correctly estimated
 from the corners -- true at resolution >= V, or when the aliased terms are
 zero.
 
-**centre_points vs level count.** If n_c < L_j for some choice factor, levels
-`n_c .. L_j-1` get no centre point: curvature is not checked under them. If
-some configuration gets one replicate, df_pe drops below n_c - 1. Both are
-recorded: `design_matrix.json["centre_points"]` (the per-level centre counts,
+**centre_points vs level count.** If g < L_j for some choice factor, its
+levels `g .. L_j-1` get no centre point: curvature is not checked under them
+(raise n_c to `2 * lcm_j(L_j)` to cover every level twice). Whenever g > 1,
+df_pe is `n_c - g` rather than `n_c - 1`. Both are recorded: `design_matrix.json["centre_points"]` (the per-level centre counts,
 the number of distinct centre configurations, df_pe and the warnings), a
 validator WARNING, and the preview. No silent change of n_c.
 

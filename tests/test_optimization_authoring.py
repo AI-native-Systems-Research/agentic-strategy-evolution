@@ -162,7 +162,9 @@ def test_scaffold_is_structurally_complete(tmp_path, capsys):
                 "run_timeout_sec", "locked_observables", "known_valid_baseline",
                 "workload", "policy", "response", "factors", "design", "stages"):
         assert key in opt, key
-    assert opt["design"]["screen"] == {"resolution": 5, "center_points": 3}
+    # 4 centres: the two-level choice factor B gets two centre configurations
+    # of two replicates each (spec 2026-10-16 feature 3), df = 2.
+    assert opt["design"]["screen"] == {"resolution": 5, "center_points": 4}
     numeric = [f for f in opt["factors"] if f["type"] == "numeric"]
     assert numeric and numeric[0]["grid"] == 1
     assert {f["type"] for f in opt["factors"]} == {"numeric", "choice"}
@@ -230,10 +232,12 @@ def test_liveness_prints_preview_with_the_screen_run_count(tmp_path, capsys, mon
     code, out, err = _nous(["validate", "campaign", str(camp), "--liveness"], capsys)
     assert code == 0, err + out
     assert "DESIGN PREVIEW" in out
-    # 2 factors at resolution 5 -> full 2^2 = 4 corners + 3 centres = 7, and
-    # the preview says why it is the full factorial.
-    assert re.search(r"screen\s+7\s+— 4 corners \(the full factorial, already the "
-                     r"smallest design of this resolution\) \+ 3 centre", out), out
+    # 2 factors at resolution 5 -> full 2^2 = 4 corners + 4 centres = 8, and
+    # the preview says why it is the full factorial; the centres cover both
+    # levels of the choice factor B in 2 configurations (df 4 - 2 = 2).
+    assert re.search(r"screen\s+8\s+— 4 corners \(the full factorial, already the "
+                     r"smallest design of this resolution\) \+ 4 centre point\(s\) "
+                     r"in 2 configuration", out), out
     # confirm: 3 finalists x 3 replicates, 1 round.
     assert re.search(r"confirm\s+9\s+— 3 finalist", out), out
     assert "refine" not in out.split("DESIGN PREVIEW", 1)[1].split("total")[0]

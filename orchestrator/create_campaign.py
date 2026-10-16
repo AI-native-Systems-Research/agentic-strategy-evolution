@@ -521,9 +521,13 @@ optimization:
 
   design:
     # Resolution 5: no main effect or 2-factor interaction is aliased with
-    # another. Centre points buy the pure-error df the screen's tests use:
-    # df = center_points - 1 (3 centres -> df=2 -> t=4.30, a coarse screen).
-    screen: {{resolution: 5, center_points: 3}}
+    # another. Centre points buy the pure-error df the screen's tests use.
+    # They cycle each choice factor through its levels (so curvature is
+    # checked under every level), each centre configuration replicated at
+    # least twice: df = center_points - #configurations. With the one
+    # two-level choice factor below, 4 centres -> 2 configurations -> df=2
+    # (t=4.30, a coarse screen); `nous validate` warns if a level gets none.
+    screen: {{resolution: 5, center_points: 4}}
     # refine fits curvature and NEEDS >= 2 numeric factors with > 2 levels;
     # this scaffold has one, so it is off. Enable by adding a second such
     # factor, uncommenting this, and adding `refine` to stages.
