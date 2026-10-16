@@ -1,11 +1,13 @@
-"""The recommendation: x-hat = argmax over X_valid of the fitted response.
+"""The recommendation: x-hat = argmax over X_valid of the fitted response
+(exact by enumeration at or below ``CANDIDATE_CAP`` candidates; over a seeded
+search's evaluated set above it -- see "THE CANDIDATE SPACE" below).
 
 Spec §3.3. A stationary point of a quadratic is where the gradient vanishes —
 which is a saddle or a minimum as readily as a maximum, and which ignores
 choice factors entirely. Observed on a live campaign: the confirmed
 "optimum" was 38% below a corner the screen had already measured. The paper's
-recommendation is enumeration over the valid space instead; for the small
-spaces this kind handles that is exact and needs no model judgement.
+recommendation is enumeration over the valid space instead; for a small
+space that is exact and needs no model judgement.
 
 Three properties the stationary-point solve could not have:
 
@@ -24,21 +26,109 @@ Three properties the stationary-point solve could not have:
     to the declared range, so a recommendation is by construction a
     configuration the target can run.
 
-The cost is exponential in the number of fitted factors: at most 9 points per
-refinable numeric axis and 2 per choice/two-level axis, so k=8 refinable
-numerics would be 9^8. That is far outside what this kind's designs support
-(``design.min_runs_for`` caps k at 8 and a refine stage rarely carries more
-than 3), and the validator's run-budget rules bind first, so the enumeration
-is left exact rather than replaced by a search.
+THE CANDIDATE SPACE, AND WHEN IT IS NOT ENUMERATED. The space is the product
+of the fitted factors' axes: at most 9 points per refinable numeric axis and 2
+per choice/two-level axis. Its size is exponential in the number of fitted
+factors -- a 6-knob campaign is 9^6 = 531k candidates, 12 knobs 9^12 = 2.8e11 --
+so exhaustive enumeration stops being a computation at all somewhere around
+seven refinable knobs (measured: 3.19M ``predict`` calls and 74 s at six; seven
+did not finish in nine minutes).
+
+  * At or below ``CANDIDATE_CAP`` (product of axis sizes) the space is
+    ENUMERATED exactly, as it always was. Every claim above about the argmax
+    being exact holds there. The cap is chosen so every campaign this kind has
+    run stays exhaustive: the synthetic oracle surfaces are <= 4 factors
+    (<= 9^4 = 6561 candidates) and the largest real campaign ~ 26k.
+  * Above it the space is SEARCHED (``_search``): a deterministic, seeded,
+    multi-start coordinate ascent over the full axes, from a pool of every
+    measured configuration of the epoch plus a seeded uniform sample. For the
+    low-order polynomials this kind fits (main effects, two-factor
+    interactions, pure quadratics) coordinate ascent is the natural local
+    search -- along one axis a quadratic is a parabola, so cycling a factor
+    through its axis values with the rest held finds that axis's exact
+    conditional optimum -- and multiple starts guard the interaction-driven
+    local optima. The argmax is then over the EVALUATED set, which is not
+    claimed exhaustive: ``Scored.space`` says so, and the fitting stage records
+    it as ``recommendation.json["candidate_space"]``.
+
+The same exclusions apply at every evaluated point in either mode: measured-
+inadmissible configurations (``exclude_levels``) and, with constraint models,
+confidently-infeasible candidates.
 """
 from __future__ import annotations
 
 import itertools
 import math
+import random
 from dataclasses import dataclass
 
 from orchestrator.optimize.effects import Fit
 from orchestrator.optimize.factors import Factor, code_actual, decode_coded, is_refinable
+
+
+#: Product of axis sizes at or below which the candidate space is ENUMERATED
+#: exactly (byte-identical to the pre-search behaviour). Above it the space is
+#: searched (``_search``). 50k keeps every campaign this kind has run exhaustive
+#: -- oracle surfaces <= 4 factors (<= 6561 candidates), the largest real
+#: campaign ~ 26k -- and is the size at which a 6-term fit enumerates in well
+#: under a second.
+CANDIDATE_CAP = 50_000
+
+#: The search's seed. A constant, like ``pareto.HV_MC_SEED``: the same fit and
+#: exclusions always yield the same evaluated set and so the same artifact.
+SEARCH_SEED = 0
+
+#: Size of the seeded uniform sample in the search pool. Smaller than the cap
+#: on purpose: the sample only supplies diverse STARTS for the ascent (which
+#: does the optimizing), while every sampled point is also carried into every
+#: downstream consumer of the evaluated set (the regret bound, the predicted
+#: front, the constraint record, each alias resolution's search). Measured on
+#: random 12- and 16-knob quadratics, the ascent reached the planted optimum
+#: from a 4k sample as reliably as from a 50k one (see tests).
+SEARCH_SAMPLE = 4_000
+
+#: Ascent starts per objective direction (the best pooled points), and per
+#: multi-objective weight vector.
+SEARCH_STARTS = 8
+SEARCH_STARTS_WEIGHTED = 3
+
+
+@dataclass(frozen=True)
+class CandidateSpace:
+    """How the scored candidate set was obtained -- ``recommendation.json``'s
+    ``candidate_space``.
+
+    ``size`` is the product of the axis sizes (the full space), ``evaluated``
+    the number of distinct configurations actually scored (before exclusions),
+    ``method`` ``"enumeration"`` or ``"sampled_coordinate_ascent"``; ``seed``
+    is the search seed (``None`` when enumerated: nothing was random).
+    """
+
+    exhaustive: bool
+    size: int
+    evaluated: int
+    method: str
+    seed: int | None
+
+    def as_dict(self) -> dict:
+        return {"exhaustive": self.exhaustive, "size": int(self.size),
+                "evaluated": int(self.evaluated), "method": self.method,
+                "seed": self.seed}
+
+
+class Scored(list):
+    """A list of scored ``Candidate``s that also says how it was obtained.
+
+    A plain list to every existing consumer (iteration, slicing, sorting, the
+    regret bound, the predicted front); ``.space`` is a ``CandidateSpace``.
+    Slicing returns a plain ``list``, so only the whole set carries the record.
+    """
+
+    space: "CandidateSpace"
+
+    def __init__(self, items=(), space: "CandidateSpace | None" = None):
+        super().__init__(items)
+        self.space = space
 
 
 @dataclass(frozen=True)
@@ -124,6 +214,27 @@ def _excluded(levels: dict, exclude_levels) -> bool:
     return False
 
 
+def _axes(fit_ids, factors) -> tuple[list, list]:
+    """``(ids, axes)`` for the fitted factors, refusing an undeclared id."""
+    by_id = {f.id: f for f in factors}
+    ids = list(fit_ids)
+    unknown = [fid for fid in ids if fid not in by_id]
+    if unknown:
+        raise ValueError(
+            f"cannot build a candidate axis for {unknown!r}: no such factor was "
+            f"declared (declared: {sorted(by_id)}). `fitted_ids` must name the "
+            f"columns of the design that was actually built — see "
+            f"stage_runner._design_factor_ids.",
+        )
+    return ids, [_axis(by_id[fid]) for fid in ids]
+
+
+def space_size(fit_ids, factors) -> int:
+    """The number of candidates in the full space: the product of axis sizes."""
+    _ids, axes = _axes(fit_ids, factors)
+    return math.prod(len(a) for a in axes)
+
+
 def candidates(fit_ids, factors, *, held_fixed: dict,
                exclude_levels=()) -> list[Candidate]:
     """Every valid combination of the fitted factors' axes.
@@ -135,18 +246,11 @@ def candidates(fit_ids, factors, *, held_fixed: dict,
     every flag on the command line, and the recommendation has to name a
     complete configuration — but never its ``coded``, because they carry no
     fitted term and so contribute nothing to the prediction.
+
+    This is the EXHAUSTIVE enumeration, whatever the size: ``_scored`` calls
+    it only at or below ``CANDIDATE_CAP`` and searches above it.
     """
-    by_id = {f.id: f for f in factors}
-    ids = list(fit_ids)
-    unknown = [fid for fid in ids if fid not in by_id]
-    if unknown:
-        raise ValueError(
-            f"cannot build a candidate axis for {unknown!r}: no such factor was "
-            f"declared (declared: {sorted(by_id)}). `fitted_ids` must name the "
-            f"columns of the design that was actually built — see "
-            f"stage_runner._design_factor_ids.",
-        )
-    axes = [_axis(by_id[fid]) for fid in ids]
+    ids, axes = _axes(fit_ids, factors)
     out: list[Candidate] = []
     for combo in itertools.product(*axes):
         coded = {fid: c for fid, (c, _) in zip(ids, combo)}
@@ -157,9 +261,176 @@ def candidates(fit_ids, factors, *, held_fixed: dict,
     return out
 
 
+# ── the search above the cap ─────────────────────────────────────────────────
+
+
+def _compiled(fit: Fit, ids):
+    """``predict(fit, .)`` over a coded TUPLE in ``ids`` order.
+
+    The same terms in the same order with the same arithmetic as ``predict``
+    (``y = intercept``, then ``y += estimate * prod(coded)`` per term), so the
+    value is bit-for-bit ``predict``'s -- only the dict lookups are hoisted.
+    """
+    pos = {fid: j for j, fid in enumerate(ids)}
+    terms = [(float(e.estimate), tuple(pos[t] for t in e.terms))
+             for e in list(fit.effects) + list(fit.quadratic)]
+    b0 = float(fit.intercept)
+
+    def f(x) -> float:
+        y = b0
+        for est, ts in terms:
+            y += est * math.prod([x[t] for t in ts])
+        return y
+
+    return f
+
+
+def _snap(levels: dict, ids, axes, by_id) -> tuple | None:
+    """The axis-index tuple nearest a measured configuration, or ``None``.
+
+    A choice level must match exactly; a numeric one goes to the axis point
+    nearest its coding (a CCD axial point beyond the screen range, an
+    off-grid level), ties to the lower index. A configuration missing a
+    fitted factor, or with a level that cannot be coded, seeds nothing.
+    """
+    out = []
+    for fid, axis in zip(ids, axes):
+        if fid not in levels:
+            return None
+        v = levels[fid]
+        f = by_id[fid]
+        hit = next((j for j, (_c, lv) in enumerate(axis) if lv == v), None)
+        if hit is None:
+            if f.type == "choice":
+                return None
+            try:
+                c = code_actual(f, v)
+            except (TypeError, ValueError):
+                return None
+            hit = min(range(len(axis)), key=lambda j: (abs(axis[j][0] - c), j))
+        out.append(hit)
+    return tuple(out)
+
+
+def _weight_vectors(k: int, step: int = 4) -> list[tuple[float, ...]]:
+    """Interior points of the simplex lattice with spacing ``1/step``.
+
+    The vertices are the single-objective directions, searched separately; the
+    rest reach the predicted front's interior (the centroid is the knee
+    direction for equally scaled objectives).
+    """
+    out = []
+
+    def rec(prefix, left, slots):
+        if slots == 1:
+            out.append(prefix + (left,))
+            return
+        for a in range(left, -1, -1):
+            rec(prefix + (a,), left - a, slots - 1)
+
+    rec((), step, k)
+    return [tuple(a / step for a in w) for w in out if max(w) < step]
+
+
+def _search(fit: Fit, ids, axes, by_id, *, direction: str, objectives,
+            seed_levels, admissible, seed: int, sample: int) -> list[tuple]:
+    """Every distinct axis-index tuple the search scored, ascending.
+
+    Pool: the axes' centre, ``seed_levels`` snapped onto the axes, then
+    ``sample`` seeded uniform draws. Then, per direction, a coordinate ascent from each of the
+    best pooled admissible points: cycle every factor through ALL its axis
+    values holding the others, move to the best admissible improvement, and
+    repeat until a full sweep improves nothing. Directions: ``fit`` at
+    ``direction``; each ``(fit, direction)`` in ``objectives``; and, with two
+    or more objectives, a lattice of weight vectors over their
+    pool-range-normalised sum (the predicted front's interior). Every scored
+    tuple is returned, admissible or not; ``admissible`` (a cached predicate)
+    gates only the starts and the moves.
+    """
+    sizes = [len(a) for a in axes]
+    n = len(ids)
+
+    def coded_of(idx):
+        return tuple(axes[j][idx[j]][0] for j in range(n))
+
+    # The centre of every axis always seeds the pool, so a search with no
+    # measured configuration and no sample still has a start.
+    centre = tuple(s // 2 for s in sizes)
+    seen: dict[tuple, None] = {centre: None}
+    pool: list[tuple] = [centre]
+    for lv in seed_levels or ():
+        idx = _snap(lv, ids, axes, by_id)
+        if idx is not None and idx not in seen:
+            seen[idx] = None
+            pool.append(idx)
+    rng = random.Random(seed)
+    for _ in range(int(sample)):
+        idx = tuple(rng.randrange(s) for s in sizes)
+        if idx not in seen:
+            seen[idx] = None
+            pool.append(idx)
+
+    sign = lambda d: 1.0 if d != "minimize" else -1.0  # noqa: E731
+    dirs = [(_compiled(fit, ids), sign(direction))]
+    objs = [(_compiled(o_fit, ids), sign(o_dir)) for o_fit, o_dir in objectives or ()
+            if o_fit is not None]
+    dirs += objs
+    adm_pool = [idx for idx in pool if admissible(idx)]
+
+    def scorer(fs):
+        cache: dict[tuple, float] = {}
+
+        def s(idx):
+            v = cache.get(idx)
+            if v is None:
+                x = coded_of(idx)
+                v = sum(w * sg * f(x) for f, sg, w in fs)
+                cache[idx] = v
+            return v
+        return s
+
+    scorers = [(scorer([(f, sg, 1.0)]), SEARCH_STARTS) for f, sg in dirs]
+    if len(objs) >= 2 and adm_pool:
+        span = []
+        for f, sg in objs:
+            vals = [f(coded_of(idx)) for idx in adm_pool]
+            r = max(vals) - min(vals)
+            span.append(r if r > 0 and math.isfinite(r) else 1.0)
+        for w in _weight_vectors(len(objs)):
+            fs = [(f, sg, wk / sp) for (f, sg), wk, sp in zip(objs, w, span) if wk > 0]
+            scorers.append((scorer(fs), SEARCH_STARTS_WEIGHTED))
+
+    for score, m in scorers:
+        starts = sorted(adm_pool, key=lambda idx: -score(idx))[:m]
+        for cur in starts:
+            cur_s = score(cur)
+            improved = True
+            while improved:
+                improved = False
+                for j in range(n):
+                    best_v, best_s = cur[j], cur_s
+                    for v in range(sizes[j]):
+                        if v == cur[j]:
+                            continue
+                        cand = cur[:j] + (v,) + cur[j + 1:]
+                        seen.setdefault(cand, None)
+                        if not admissible(cand):
+                            continue
+                        sc = score(cand)
+                        if sc > best_s:
+                            best_v, best_s = v, sc
+                    if best_v != cur[j]:
+                        cur = cur[:j] + (best_v,) + cur[j + 1:]
+                        cur_s = best_s
+                        improved = True
+    return sorted(seen)
+
+
 def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
             exclude_levels, constraint_models=(),
-            constraint_delta: float = 0.05) -> list[Candidate]:
+            constraint_delta: float = 0.05, direction: str = "maximize",
+            objectives=(), seed_levels=(), cap: int | None = None,
+            seed: int | None = None, sample: int | None = None) -> Scored:
     """Every valid candidate, scored -- minus the CONFIDENTLY infeasible ones.
 
     ``constraint_models`` (``constraint_models.fit_constraint_models``) removes a
@@ -169,26 +440,85 @@ def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
     nothing. If the models would exclude EVERY candidate the exclusion is not
     applied at all: spec §3.6 says always act, and a confirm round can still
     measure what the model doubts, whereas an empty space can only abort.
+
+    "Every" holds at or below ``cap`` (default ``CANDIDATE_CAP``), where the
+    space is enumerated. Above it the candidates are those ``_search`` scored
+    (``direction`` and ``objectives`` steer it; ``seed_levels`` -- measured
+    configurations -- seed its pool), with the same two exclusions applied at
+    every one; ``.space`` on the result records which mode ran.
     """
-    scored = [
-        Candidate(levels=c.levels, coded=c.coded, predicted=predict(fit, c.coded))
-        for c in candidates(fitted_ids, factors, held_fixed=held_fixed,
-                            exclude_levels=exclude_levels)
-    ]
-    if not any(getattr(m, "modelled", False) for m in constraint_models or ()):
-        return scored
+    cap = CANDIDATE_CAP if cap is None else int(cap)
+    ids, axes = _axes(fitted_ids, factors)
+    size = math.prod(len(a) for a in axes)
+    modelled = any(getattr(m, "modelled", False) for m in constraint_models or ())
+    if size <= cap:
+        scored = [
+            Candidate(levels=c.levels, coded=c.coded, predicted=predict(fit, c.coded))
+            for c in candidates(fitted_ids, factors, held_fixed=held_fixed,
+                                exclude_levels=exclude_levels)
+        ]
+        space = CandidateSpace(True, size, size, "enumeration", None)
+        if not modelled:
+            return Scored(scored, space)
+        from orchestrator.optimize.constraint_models import confidently_infeasible
+
+        kept = [c for c in scored
+                if not confidently_infeasible(constraint_models, c.coded,
+                                              delta=constraint_delta)]
+        return Scored(kept or scored, space)
+
     from orchestrator.optimize.constraint_models import confidently_infeasible
 
-    kept = [c for c in scored
-            if not confidently_infeasible(constraint_models, c.coded,
-                                          delta=constraint_delta)]
-    return kept or scored
+    seed = SEARCH_SEED if seed is None else int(seed)
+    sample = SEARCH_SAMPLE if sample is None else int(sample)
+    by_id = {f.id: f for f in factors}
+    held = dict(held_fixed)
+
+    def build(idx) -> Candidate:
+        coded = {fid: axes[j][idx[j]][0] for j, fid in enumerate(ids)}
+        levels = {**held, **{fid: axes[j][idx[j]][1] for j, fid in enumerate(ids)}}
+        return Candidate(levels=levels, coded=coded, predicted=float("nan"))
+
+    def run(use_models: bool):
+        memo: dict[tuple, bool] = {}
+
+        def admissible(idx) -> bool:
+            ok = memo.get(idx)
+            if ok is None:
+                c = build(idx)
+                ok = not _excluded(c.levels, exclude_levels) and not (
+                    use_models and confidently_infeasible(
+                        constraint_models, c.coded, delta=constraint_delta))
+                memo[idx] = ok
+            return ok
+
+        visited = _search(fit, ids, axes, by_id, direction=direction,
+                          objectives=objectives, seed_levels=seed_levels,
+                          admissible=admissible, seed=seed, sample=sample)
+        return visited, [i for i in visited if admissible(i)]
+
+    visited, kept = run(modelled)
+    if modelled and not kept:
+        # The models would exclude every evaluated candidate: as in the
+        # enumerated case, the exclusion is not applied at all.
+        visited, kept = run(False)
+    out = []
+    for idx in kept:
+        c = build(idx)
+        out.append(Candidate(levels=c.levels, coded=c.coded,
+                             predicted=predict(fit, c.coded)))
+    return Scored(out, CandidateSpace(False, size, len(visited),
+                                      "sampled_coordinate_ascent", seed))
 
 
 def recommend(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict,
               exclude_levels=(), constraint_models=(),
-              constraint_delta: float = 0.05) -> Candidate:
+              constraint_delta: float = 0.05, **search) -> Candidate:
     """x-hat: the best-predicted valid candidate.
+
+    Best over the WHOLE space at or below ``CANDIDATE_CAP``; above it, best
+    over what the search evaluated (``_scored``; ``search`` passes
+    ``objectives`` / ``seed_levels`` / ``cap`` / ``seed`` / ``sample``).
 
     "Valid" excludes configurations measured inadmissible (``exclude_levels``)
     and, when ``constraint_models`` are given, candidates some modelled
@@ -205,7 +535,8 @@ def recommend(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict
     for c in _scored(fit, factors, fitted_ids=fitted_ids, held_fixed=held_fixed,
                      exclude_levels=exclude_levels,
                      constraint_models=constraint_models,
-                     constraint_delta=constraint_delta):
+                     constraint_delta=constraint_delta, direction=direction,
+                     **search):
         if best is None or sign * c.predicted > sign * best.predicted:
             best = c
     if best is None:
@@ -272,7 +603,8 @@ def alias_resolutions(fit: Fit) -> list[tuple[int, str, str, Fit]]:
 def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
                         held_fixed: dict, exclude_levels=(),
                         epsilon_pct: float = 2.0, constraint_models=(),
-                        constraint_delta: float = 0.05) -> list[tuple[str, str]]:
+                        constraint_delta: float = 0.05,
+                        **search) -> list[tuple[str, str]]:
     """Aliased pairs whose resolution could change the recommended winner.
 
     Spec §3.4 / paper §Illustrative: "If every plausible resolution of an alias
@@ -337,9 +669,14 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
     resolutions predict different values, so each side is measured against its
     own scale.
     """
+    # Above ``CANDIDATE_CAP`` each resolution's "optimal set" is over what ITS
+    # search evaluated (each alternative fit is searched in its own direction),
+    # so the test is as good as the search, not exhaustive. Extra objectives
+    # are not passed on: the question is about the primary fit's winner.
+    search = {k: v for k, v in search.items() if k != "objectives"}
     kw = dict(direction=direction, fitted_ids=fitted_ids, held_fixed=held_fixed,
               exclude_levels=exclude_levels, constraint_models=constraint_models,
-              constraint_delta=constraint_delta)
+              constraint_delta=constraint_delta, **search)
     base_all = ranked(fit, factors, top=None, **kw)
     if not base_all:
         return []
@@ -369,8 +706,16 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
 
 def ranked(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict,
            exclude_levels=(), top: int | None = 5, constraint_models=(),
-           constraint_delta: float = 0.05) -> list[Candidate]:
+           constraint_delta: float = 0.05, **search) -> list[Candidate]:
     """The best ``top`` candidates, best first; ``top=None`` for all of them.
+
+    ``top=None`` returns a ``Scored`` (a list carrying ``.space``): the whole
+    space at or below ``CANDIDATE_CAP``, the search's evaluated set above it.
+    ``search`` is ``_scored``'s ``objectives`` / ``seed_levels`` / ``cap`` /
+    ``seed`` / ``sample``; ``objectives`` (``(fit, direction)`` pairs) makes
+    the search also climb every objective and a spread of their weighted sums,
+    so a predicted front taken over the result reaches its extremes and
+    interior.
 
     ``recommendation.json``'s ``top_candidates``: a reader can see how close
     the runner-up was, which is what says whether the recommendation is a
@@ -382,7 +727,8 @@ def ranked(fit: Fit, factors, *, direction: str, fitted_ids, held_fixed: dict,
     scored = _scored(fit, factors, fitted_ids=fitted_ids, held_fixed=held_fixed,
                      exclude_levels=exclude_levels,
                      constraint_models=constraint_models,
-                     constraint_delta=constraint_delta)
+                     constraint_delta=constraint_delta, direction=direction,
+                     **search)
     # DETERMINISTIC TIE-BREAK, and an honest account of what it does and does not
     # buy. Exact ties are real and common here -- 53 tie groups in a 45-candidate
     # 3-factor space on one fixture -- and they arise structurally: whenever a
