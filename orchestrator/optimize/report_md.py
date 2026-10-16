@@ -134,7 +134,10 @@ def _candidate_space_note(work_dir: Path) -> list[str]:
         out.append(
             f"- `{rec.get('stage', '?')}` ({p.parent.name}): {cs.get('evaluated')} of "
             f"{cs.get('size')} configurations evaluated by `{cs.get('method')}` "
-            f"(seed {cs.get('seed')})")
+            f"(seed {cs.get('seed')})"
+            + ("; constraint models NOT applied: neither the search nor a "
+               "feasibility ascent found a point they admit"
+               if cs.get("constraint_models_applied") is False else ""))
     if not out:
         return []
     return [
@@ -143,8 +146,11 @@ def _candidate_space_note(work_dir: Path) -> list[str]:
         "model's argmax, its runners-up, the model regret bound and any "
         "predicted front were taken over the configurations a seeded search "
         "evaluated, not over every valid configuration. A better configuration "
-        "the search did not reach is possible; measured results (confirm, the "
-        "terminal bound) are unaffected.",
+        "the search did not reach is possible. Likewise an empty "
+        "`alias_consequential` means no consequential alias was FOUND "
+        "(`alias_consequential_basis: searched`), and a predicted front's "
+        "`nondominated` statuses are among evaluated points only. Measured "
+        "results (confirm, the terminal bound) are unaffected.",
         "",
         *out,
         "",

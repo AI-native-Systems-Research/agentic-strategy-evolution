@@ -710,6 +710,7 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
                         held_fixed: dict, exclude_levels=(),
                         epsilon_pct: float = 2.0, constraint_models=(),
                         constraint_delta: float = 0.05,
+                        baseline: Candidate | None = None,
                         **search) -> list[tuple[str, str]]:
     """Aliased pairs whose resolution could change the recommended winner.
 
@@ -774,11 +775,20 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
     is a percentage rather than the resolved absolute width because the two
     resolutions predict different values, so each side is measured against its
     own scale.
+
+    ABOVE ``CANDIDATE_CAP`` the test is only as good as the searches: each
+    resolution's "optimal set" is over what ITS search evaluated, so an empty
+    list means no consequential alias was FOUND (the fitting stage records
+    ``alias_consequential_basis: "searched"``). Two things keep it from being
+    weaker than it has to be. ``baseline`` -- the stage's own primary argmax,
+    from the search that ALSO climbed every objective -- is the reference
+    winner when it is better than this function's own (objective-free)
+    search finds; and every resolution's search is seeded with the baseline's
+    levels, so the alternative reading is asked about the region the fitted
+    reading actually recommends. Extra objectives are not passed on: the
+    question is about the primary fit's winner. Under the cap ``baseline`` is
+    ignored -- enumeration already found the exact argmax.
     """
-    # Above ``CANDIDATE_CAP`` each resolution's "optimal set" is over what ITS
-    # search evaluated (each alternative fit is searched in its own direction),
-    # so the test is as good as the search, not exhaustive. Extra objectives
-    # are not passed on: the question is about the primary fit's winner.
     search = {k: v for k, v in search.items() if k != "objectives"}
     kw = dict(direction=direction, fitted_ids=fitted_ids, held_fixed=held_fixed,
               exclude_levels=exclude_levels, constraint_models=constraint_models,
@@ -787,8 +797,12 @@ def alias_consequential(fit: Fit, factors, *, direction: str, fitted_ids,
     if not base_all:
         return []
     base = base_all[0]
-    eps = abs(base.predicted) * float(epsilon_pct) / 100.0
     sign_d = 1.0 if direction != "minimize" else -1.0
+    if baseline is not None and not base_all.space.exhaustive:
+        if sign_d * baseline.predicted > sign_d * base.predicted:
+            base = baseline
+        kw["seed_levels"] = [dict(baseline.levels), *(kw.get("seed_levels") or ())]
+    eps = abs(base.predicted) * float(epsilon_pct) / 100.0
 
     out: list[tuple[str, str]] = []
     for _i, kept_label, alt_label, alt_fit in alias_resolutions(fit):

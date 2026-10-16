@@ -1574,8 +1574,11 @@ def test_candidate_space_checker_accepts_a_searched_record_and_rejects_dishonest
 
     good = {"top_candidates": [{}] * 5,
             "residual_regret_model": {"detail": "M=9; NOT over all of X_valid: ..."},
+            "alias_consequential_basis": "searched",
+            "constraint_models": [{"metric": "p99", "modelled": True, "applied": True}],
             "candidate_space": {"exhaustive": False, "size": 9 ** 12, "evaluated": 4730,
-                                "method": "sampled_coordinate_ascent", "seed": 0}}
+                                "method": "sampled_coordinate_ascent", "seed": 0,
+                                "constraint_models_applied": True}}
     assert inv.check_candidate_space(good) == []
     assert inv.check_candidate_space({"top_candidates": []}) == []
 
@@ -1591,3 +1594,13 @@ def test_candidate_space_checker_accepts_a_searched_record_and_rejects_dishonest
     bad = json.loads(json.dumps(good))
     bad["residual_regret_model"]["detail"] = "M=9"
     assert any("evaluated set only" in e for e in inv.check_candidate_space(bad))
+    bad = json.loads(json.dumps(good))
+    del bad["alias_consequential_basis"]
+    assert any("alias_consequential_basis" in e for e in inv.check_candidate_space(bad))
+    bad = json.loads(json.dumps(good))
+    bad["predicted_front"] = [{}]
+    assert any("predicted_front_basis" in e for e in inv.check_candidate_space(bad))
+    bad["predicted_front_basis"] = "evaluated_points"
+    assert inv.check_candidate_space(bad) == []
+    assert any("constraint_models_applied" in e
+               for e in mutate(constraint_models_applied=False))

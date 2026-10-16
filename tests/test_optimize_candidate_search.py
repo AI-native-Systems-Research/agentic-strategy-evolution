@@ -323,6 +323,8 @@ def test_a_searched_campaign_records_candidate_space_and_still_finds_the_optimum
         assert cs["exhaustive"] is False and cs["method"] == "sampled_coordinate_ascent"
         assert 1 <= cs["evaluated"] and cs["seed"] == decide.SEARCH_SEED
         assert "NOT over all of X_valid" in doc["residual_regret_model"]["detail"]
+        assert doc["alias_consequential_basis"] == "searched"
+        assert "predicted_front_basis" not in doc
         assert check_candidate_space(doc) == []
     assert "Candidate space searched, not enumerated" in render_report_markdown(
         Path(res.work_dir))
@@ -349,6 +351,8 @@ def test_a_searched_multi_objective_campaign_keeps_its_front(tmp_path, monkeypat
         assert doc["candidate_space"]["exhaustive"] is False
         assert check_candidate_space(doc) == []
         assert doc["predicted_front"]
+        assert doc["predicted_front_basis"] == "evaluated_points"
+        assert doc["alias_consequential_basis"] == "searched"
     assert res["coverage"] >= base["coverage"] - 1e-9, (res["coverage"], base["coverage"])
 
 
@@ -451,3 +455,32 @@ def test_a_searched_constraint_record_counts_the_set_the_ranking_filtered(
     assert entry["at_recommendation"]["verdict"] in ("feasible", "uncertain")
     assert not [c for c in rec["top_candidates"]
                 if c["levels"]["BS"] == 32 and c["levels"]["CMP"] == 2]
+
+
+def _alias_fit(k: int = 4) -> Fit:
+    """``y = X00*X01``, its coefficient aliased with ``X02*X03``. The fitted
+    reading's best is X00 = X01 at an edge (y = 1); the alternative reading's
+    winners leave X00, X01 free, and some of them lose 2 under the fitted one --
+    so the alias is consequential (enumeration says so)."""
+    return Fit(0.0, (Effect("X00X01", ("X00", "X01"), 1.0,
+                            aliased_with=((("X02", "X03"), 1.0),)),), 30)
+
+
+def test_a_searched_alias_test_uses_the_stage_baseline():
+    """With a pool of just the axes' centre (``sample=0``) the ascent cannot
+    leave the saddle of ``X00*X01`` -- no single-factor move improves on 0 -- so
+    alias_consequential's own search finds no winner worth defending and calls
+    the alias irrelevant. Given the stage's own argmax as ``baseline`` (here the
+    enumerated one), the searched test agrees with enumeration."""
+    k = 4
+    fs = _factors(k)
+    fit = _alias_fit(k)
+    kw = dict(direction="maximize", fitted_ids=_ids(k), held_fixed={})
+    exact = decide.alias_consequential(fit, fs, **kw)
+    assert exact == [("X00X01", "X02X03")]
+    stage_rec = decide.recommend(fit, fs, **kw)
+    assert stage_rec.predicted == 1.0
+    blind = decide.alias_consequential(fit, fs, cap=0, sample=0, **kw)
+    assert blind == []          # the failure mode the baseline exists for
+    assert decide.alias_consequential(fit, fs, cap=0, sample=0, baseline=stage_rec,
+                                      **kw) == exact

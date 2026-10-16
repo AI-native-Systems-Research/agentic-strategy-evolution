@@ -980,8 +980,11 @@ def check_candidate_space(rec: dict) -> list[str]:
     absent (the space was enumerated). When present: ``exhaustive`` is false,
     ``method`` is the search, the full ``size`` exceeds ``decide.CANDIDATE_CAP``
     (a space under the cap must be enumerated), ``evaluated`` is at most
-    ``size`` and at least the number of ``top_candidates``, and the model
-    regret bound's ``detail`` says it was not taken over all of X_valid.
+    ``size`` and at least the number of ``top_candidates``, the model
+    regret bound's ``detail`` says it was not taken over all of X_valid,
+    ``alias_consequential_basis`` is ``"searched"``, a predicted front carries
+    ``predicted_front_basis: "evaluated_points"``, and every modelled
+    constraint's ``applied`` agrees with ``constraint_models_applied``.
     """
     from orchestrator.optimize.decide import CANDIDATE_CAP
 
@@ -1006,6 +1009,17 @@ def check_candidate_space(rec: dict) -> list[str]:
     if "NOT over all of X_valid" not in detail:
         out.append("residual_regret_model.detail does not say the bound was taken over "
                    "the evaluated set only")
+    if rec.get("alias_consequential_basis") != "searched":
+        out.append("alias_consequential is not marked alias_consequential_basis: "
+                   "'searched'")
+    if "predicted_front" in rec and rec.get("predicted_front_basis") != "evaluated_points":
+        out.append("predicted_front statuses are not marked predicted_front_basis: "
+                   "'evaluated_points'")
+    applied = cs.get("constraint_models_applied")
+    for e in rec.get("constraint_models") or []:
+        if e.get("modelled") and applied is not None and bool(e.get("applied")) != applied:
+            out.append(f"constraint {e.get('metric')!r} says applied={e.get('applied')} "
+                       f"but candidate_space.constraint_models_applied={applied}")
     return out
 
 
@@ -1803,9 +1817,11 @@ _ENTRIES: tuple[Invariant, ...] = (
                             "candidate space (the product of the fitted factors' axis sizes) "
                             "exceeds decide.CANDIDATE_CAP and was SEARCHED; it then says "
                             "exhaustive: false, the search method and seed, the full size and "
-                            "the evaluated count, and the model regret bound's detail says the "
-                            "max ran over the evaluated set only. At or below the cap the space "
-                            "is enumerated and the key is absent.",
+                            "the evaluated count and whether the constraint models applied; the "
+                            "model regret bound's detail says the max ran over the evaluated set "
+                            "only, alias_consequential_basis is 'searched', and a predicted "
+                            "front is marked predicted_front_basis: 'evaluated_points'. At or "
+                            "below the cap the space is enumerated and none of these keys exist.",
               "STAT", "artifact", "decide._scored; stage_runner recommendation write",
               TEST, check_candidate_space,
               note="tests/test_optimize_candidate_search.py forces the search on oracle "

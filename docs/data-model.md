@@ -395,7 +395,8 @@ because `choice` factors are excluded from a quadratic solve.
 | `stationary_point` | The solved quadratic stationary point, when there is one — reported, never blindly trusted |
 | `residual_regret_model` | The **model bound** `R_δ^model(x̂)`: `value`, `challenger`, `delta`, `method`, `detail` |
 | `aliases` / `alias_consequential` | The alias classes, and which of them could actually change the winner — the spec's `alias_map.json` content, recorded at every fitting state |
-| `candidate_space` | Present only when the space was SEARCHED (above the cap): `{exhaustive: false, size, evaluated, method: "sampled_coordinate_ascent", seed}`. Absent means every valid candidate was enumerated |
+| `candidate_space` | Present only when the space was SEARCHED (above the cap): `{exhaustive: false, size, evaluated, method: "sampled_coordinate_ascent", seed, constraint_models_applied}`. Absent means every valid candidate was enumerated. `constraint_models_applied` is `false` only when neither the search nor a feasibility ascent found a point the models admit (`null`: none modelled) |
+| `alias_consequential_basis` / `predicted_front_basis` | With `candidate_space` only: `"searched"` (an empty `alias_consequential` means none was FOUND) and `"evaluated_points"` (predicted-front statuses and `front_size_predicted` are among evaluated points) |
 | `fitted_ids` / `held_fixed` | Which factors this fit covered, and what the rest were pinned at |
 | `model_adequate` | Whether the lack-of-fit test rejected the registered response class — read by `confirm` to decide whether the model's pick may be seated as a finalist |
 

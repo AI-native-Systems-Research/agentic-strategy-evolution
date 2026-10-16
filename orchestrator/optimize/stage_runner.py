@@ -4026,7 +4026,11 @@ def run_stage(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded,
         epsilon_pct=float((pol["objective"]["epsilon"] or {}).get("pct", 2.0)),
-        constraint_models=cmods, constraint_delta=delta_s, **_search,
+        constraint_models=cmods, constraint_delta=delta_s,
+        # The stage's own primary argmax (`scored` is sorted by the primary):
+        # above the cap it came from the search that also climbed every
+        # objective, so it can beat what alias_consequential's own search finds.
+        baseline=scored[0] if scored else None, **_search,
     )
     # Counted over the set the ranking ACTUALLY filtered (`scored.unfiltered`),
     # not a fresh ranking: above the cap a second search would evaluate a
@@ -4112,7 +4116,12 @@ def run_stage(
         # (above `decide.CANDIDATE_CAP`): absence means the argmax, the
         # shortlist, the regret bound and the predicted front were all taken
         # over the whole valid space, exactly as before the search existed.
-        **({"candidate_space": candidate_space.as_dict()}
+        **({"candidate_space": candidate_space.as_dict(),
+            # Searched, not enumerated: an empty alias list means none was
+            # FOUND, and front statuses are relative to the evaluated points.
+            "alias_consequential_basis": "searched",
+            **({"predicted_front_basis": "evaluated_points"}
+               if (mo_record or {}).get("predicted_front") is not None else {})}
            if not candidate_space.exhaustive else {}),
     })
     if alias_pairs_consequential:
