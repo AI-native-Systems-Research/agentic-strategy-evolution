@@ -353,3 +353,14 @@ def test_a_real_pre_build_run_with_no_readable_output_fails_closed(tmp_path, ext
            "output_recorded": False, **extra}
     with pytest.raises(ValueError, match="output was not recorded"):
         _check_direct(tmp_path, pre)
+
+
+def test_a_failed_mutant_cleanup_is_logged_not_swallowed(tmp_path, monkeypatch, caplog):
+    import logging
+
+    from orchestrator.optimize import build_scope, test_vacuity
+
+    monkeypatch.setattr(build_scope, "_git", lambda *a, **k: None)
+    with caplog.at_level(logging.WARNING, logger="orchestrator.optimize.test_vacuity"):
+        test_vacuity.remove_mutant(tmp_path, tmp_path / "gone")
+    assert "could not remove mutant worktree" in caplog.text

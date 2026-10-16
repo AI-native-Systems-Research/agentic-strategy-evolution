@@ -12,6 +12,8 @@ import math
 import sys
 from pathlib import Path
 
+import json
+
 import numpy as np
 import pytest
 
@@ -148,3 +150,38 @@ def test_a_baselines_regret_matches_the_hand_computed_noiseless_value():
     by_hand = 20.0 - (20.0 - 0.05 * (a - 9) ** 2 - 0.05 * (b - 11) ** 2)
     assert S.true_regret(s, rec, S.truth(s)) == (pytest.approx(by_hand), "ok")
     assert run_baseline("RS", "bowl", 1.0, 5, 12)["regret_best_observed"] == pytest.approx(by_hand)
+
+
+# ─── round 2, C6 / C7 ────────────────────────────────────────────────────────
+
+
+def test_a_seed_that_crashed_before_measuring_still_gets_baselines():
+    from benchmarks.optimization.run import _budget_for
+
+    crashed = {"surface": "bowl", "mult": 1.0, "seed": 1, "budget": 0, "regret": 1.0,
+               "error": "TypeError: x"}
+    ok = {"surface": "bowl", "mult": 1.0, "seed": 2, "budget": 29, "regret": 0.0}
+    assert _budget_for(crashed, [crashed, ok]) == 29
+
+
+def test_legacy_error_rows_without_a_regret_are_not_listed_as_charged():
+    legacy = {"surface": "bowl", "mult": 1.0, "seed": 1, "error": "old"}
+    charged = {"surface": "bowl", "mult": 1.0, "seed": 2, "error": "new", "budget": 3,
+               "regret": 1.0, "status": "error", "certified": False, "false_cert": False,
+               "wall_s": 0, "cpu_s": 0}
+    s = summarize([legacy, charged], [], [])
+    assert [e["seed"] for e in s["errors"]] == [2]
+
+
+def test_a_cached_row_from_other_code_is_not_reused(tmp_path):
+    from benchmarks.optimization.run import run_suite
+
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    stale = {"_key": "deadbeefdeadbeef|bowl|1.0|1", "surface": "bowl", "mult": 1.0,
+             "seed": 1, "budget": 29, "regret": 999.0, "status": "ok",
+             "certified": False, "false_cert": False, "wall_s": 0, "cpu_s": 0}
+    (cache / "nous.jsonl").write_text(json.dumps(stale) + "\n")
+    nous, base = run_suite(["bowl"], [1.0], [1], ["RS"], 1, str(tmp_path), cache)
+    assert nous[0]["regret"] != 999.0
+    assert base and base[0]["dead_fallbacks"] == 0

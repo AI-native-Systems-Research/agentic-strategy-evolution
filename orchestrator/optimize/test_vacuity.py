@@ -365,9 +365,12 @@ def build_stub_mutant(repo: Path, work_dir: Path, rec: dict, declared: list[str]
 def remove_mutant(repo: Path, dest: Path) -> None:
     from orchestrator.optimize.build_scope import _git
 
-    _git(repo, "worktree", "remove", "--force", str(dest), check=False)
+    if _git(repo, "worktree", "remove", "--force", str(dest), check=False) is None:
+        logger.warning("could not remove mutant worktree %s (git worktree remove "
+                       "failed); removing the directory and pruning", dest)
     shutil.rmtree(dest, ignore_errors=True)
-    _git(repo, "worktree", "prune", check=False)
+    if _git(repo, "worktree", "prune", check=False) is None:
+        logger.warning("git worktree prune failed in %s after removing a mutant", repo)
 
 
 def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,

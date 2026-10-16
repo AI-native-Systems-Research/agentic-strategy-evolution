@@ -204,6 +204,7 @@ def gp_bo(surface, name, budget, rng):
         y, feas, obs = tgt.measure(lv)
         log.add(lv, y, feas, obs)
     model, cmodels, step = G.GP(restarts=2, seed=npseed), {}, 0
+    dead_fallbacks = 0
     while tgt.n < budget:
         rows = [r for r in log.rows if r[1] is not None]
         if len(rows) < 2:
@@ -223,7 +224,12 @@ def gp_bo(surface, name, budget, rng):
             # GP's data, so EI stays high there and the loop would re-measure it
             # for most of its budget (review B1). Drop it from the pool.
             dead = _failed_only(log)
-            pool = [p for p in _pool(ax, rng, inc) if _key(p) not in dead] or _pool(ax, rng, inc)
+            full = _pool(ax, rng, inc)
+            pool = [p for p in full if _key(p) not in dead]
+            if not pool:
+                # Every candidate has only ever failed: re-picking one is the only
+                # move left. Counted, not silent (review C7).
+                pool, dead_fallbacks = full, dead_fallbacks + 1
             P = np.array([coder(p) for p in pool])
             mu, sd = model.predict(P)
             pf = np.ones(len(pool))
@@ -241,7 +247,7 @@ def gp_bo(surface, name, budget, rng):
             step += 1
         y, feas, obs = tgt.measure(lv)
         log.add(lv, y, feas, obs)
-    return _finish(log, coder, npseed), tgt.n
+    return {**_finish(log, coder, npseed), "dead_fallbacks": dead_fallbacks}, tgt.n
 
 
 def gp_bo_crude(surface, name, budget, rng):

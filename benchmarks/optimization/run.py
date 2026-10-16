@@ -122,6 +122,7 @@ def run_baseline(method: str, name: str, mult: float, seed: int, budget: int) ->
     out = {"surface": name, "mult": mult, "seed": seed, "method": method,
            "budget": budget, "used": used, "wall_s": wall, "cpu_s": cpu,
            "code": _bench_digest()}
+    out["dead_fallbacks"] = recs.pop("dead_fallbacks", 0)
     for rule, rec in recs.items():
         reg, st = S.true_regret(s, rec, tr)
         out[f"regret_{rule}"], out[f"status_{rule}"] = reg, st
@@ -169,18 +170,32 @@ def _cached_map(fn, jobs, workers, cache: Path | None, key):
     return out
 
 
+def _budget_for(r: dict, nous: list[dict]) -> int:
+    """The budget a Nous row's baselines get. A campaign that crashed before
+    measuring anything (budget 0) still counts in the head-to-heads (review C6):
+    its baselines get the median budget of the cell's other seeds."""
+    if r.get("budget"):
+        return int(r["budget"])
+    cell = [x["budget"] for x in nous if x["surface"] == r["surface"]
+            and x["mult"] == r["mult"] and x.get("budget")]
+    return int(statistics.median(cell)) if cell else 0
+
+
 def run_suite(names, mults, seeds, methods, workers, scratch, cache_dir: Path | None = None):
+    # The CODE DIGEST is part of every cache key (review C6): a row produced by
+    # different Nous or benchmark code is never silently reused.
+    nd, bd = _nous_digest(), _bench_digest()
     jobs = [(n, m, s, scratch) for n in names for m in mults for s in seeds]
     nous = _cached_map(_nous_job, jobs, workers,
                        cache_dir / "nous.jsonl" if cache_dir else None,
-                       key=lambda j: f"{j[0]}|{j[1]}|{j[2]}")
-    bjobs = [(meth, r["surface"], r["mult"], r["seed"], r["budget"])
-             for r in nous if r.get("budget") for meth in methods]
+                       key=lambda j: f"{nd}|{j[0]}|{j[1]}|{j[2]}")
+    bjobs = [(meth, r["surface"], r["mult"], r["seed"], _budget_for(r, nous))
+             for r in nous if _budget_for(r, nous) for meth in methods]
     # Longest (GP-BO on the biggest budgets) first, for load balance.
     bjobs.sort(key=lambda j: -(j[4] * (10 if j[0] == "GP-BO" else 1)))
     base = _cached_map(_base_job, bjobs, workers,
                        cache_dir / "baselines.jsonl" if cache_dir else None,
-                       key=lambda j: f"{j[0]}|{j[1]}|{j[2]}|{j[3]}|{j[4]}")
+                       key=lambda j: f"{bd}|{j[0]}|{j[1]}|{j[2]}|{j[3]}|{j[4]}")
     return nous, base
 
 
@@ -250,7 +265,8 @@ def summarize(nous, base, methods):
         fam[fname] = {m: {"exact": head_to_head(fn, fb, m, PRIMARY_RULE[m]),
                           "within_epsilon": head_to_head(fn, fb, m, PRIMARY_RULE[m], True)}
                       for m in methods}
-    errors = [r for r in nous if "error" in r]
+    # Only rows that were actually charged (legacy error rows carry no regret).
+    errors = [r for r in nous if "error" in r and "regret" in r]
     codes = {"nous": sorted({r.get("code", "unrecorded") for r in nous}),
              "baselines": sorted({b.get("code", "unrecorded") for b in base})}
     return {"rows": rows, "head_to_head": h2h, "by_family": fam, "errors": errors,
