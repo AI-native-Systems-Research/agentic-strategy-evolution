@@ -5337,6 +5337,11 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
 
     by_idx = {r.row_index: r for r in rows}
     samples: dict[str, list[float]] = {f["key"]: [] for f in fin}
+    # Multi-objective: every objective's replicates per finalist, for
+    # confirmation.json's `means` (C2). None for a single-objective campaign,
+    # whose finalists keep exactly the fields they always had.
+    mo_samples = ({f["key"]: {o.metric: [] for o in pareto_stage.objectives(pol)}
+                   for f in fin} if pareto_stage.objectives(pol) else None)
     status: dict[str, str] = {f["key"]: "ok" for f in fin}
     for o, y in zip(outcomes, ys):
         row = by_idx.get(o.row_index)
@@ -5378,6 +5383,12 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 )
         else:
             samples[key].append(float(y))
+        if mo_samples is not None and o.status == "complete":
+            for _ob in pareto_stage.objectives(pol):
+                _v = (o.response or {}).get(_ob.metric)
+                if isinstance(_v, (int, float)) and not isinstance(_v, bool) \
+                        and math.isfinite(_v):
+                    mo_samples[key][_ob.metric].append(float(_v))
     # Any non-"ok" status is out of the running, whatever its reason: the
     # terminal comparison needs fresh usable samples and neither an inadmissible
     # nor an unmeasured finalist has them. The reason survives for the REPORT.
@@ -5660,7 +5671,10 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             {"key": f["key"], "levels": f["levels"], "why": f.get("why"),
              "samples": samples[f["key"]],
              "mean": mean(samples[f["key"]]) if samples[f["key"]] else None,
-             "n": len(samples[f["key"]]), "status": status[f["key"]]}
+             "n": len(samples[f["key"]]), "status": status[f["key"]],
+             **({"means": {m: (sum(v) / len(v) if v else None)
+                           for m, v in mo_samples[f["key"]].items()}}
+                if mo_samples is not None else {})}
             for f in fin
         ],
         "best": best,
@@ -5804,6 +5818,16 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                     best_obs.get("levels"), gap, pct,
                 )
 
+    # The refill branch's candidate pool, read BEFORE confirmation.json is
+    # written so anything it could not read is recorded there (B4).
+    _refill_cands: list = []
+    if any(v == "infeasible" for v in status.values()) and any(
+            t.get("accounting") == policy_mod.REFILL_ACCOUNTING
+            for t in pol.get("transitions") or []):
+        _refill_warnings: list = []
+        _refill_cands = _refill_candidates(work_dir, factors, _refill_warnings)
+        if _refill_warnings:
+            summary["warnings"] = list(_refill_warnings)
     _write_json(iter_dir / "confirmation.json", summary)
     # `shortlist.json` is the name spec §3.9's artifact table gives this
     # record. Written as a pointer rather than a copy so there is exactly one
@@ -5882,8 +5906,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         # DERIVED, like confirm_affordable: no refill spent yet this epoch AND
         # the refill pool still holds a candidate worth measuring.
         obs["refill_available"] = (
-            _refills_spent(pol, work_dir) < 1
-            and bool(_refill_candidates(work_dir, factors))
+            _refills_spent(pol, work_dir) < 1 and bool(_refill_cands)
         )
     if "pareto" in summary:
         # The PREFERENCE scalarisation's terminal pair (spec step 7), and the
@@ -6033,7 +6056,7 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
     return certified, reasons
 
 
-def _refill_candidates(work_dir, factors) -> list[dict]:
+def _refill_candidates(work_dir, factors, warnings: list | None = None) -> list[dict]:
     """The REFILL branch's candidates (policy.REFILL_ACCOUNTING), best first.
 
     The supported-feasible pool first, then the constraint-filtered ranking
@@ -6045,8 +6068,19 @@ def _refill_candidates(work_dir, factors) -> list[dict]:
     corner the finalists were just measured infeasible in (``SURFACES["sla"]``:
     2A + B <= 40, every pool member past the boundary). A heuristic, like the
     box: a refill seat is measured before it can win.
+
+    Nothing degrades silently: a missing or corrupt ``refill_pool.json`` and a
+    level that cannot be coded are each logged at WARNING and appended to
+    ``warnings`` (``confirmation.json["warnings"]`` when the caller records
+    them); an uncodeable candidate or measured row is SKIPPED rather than
+    coded as the centre.
     """
     from orchestrator.optimize.factors import code_actual
+
+    def warn(msg: str) -> None:
+        logger.warning("refill: %s", msg)
+        if warnings is not None and msg not in warnings:
+            warnings.append(msg)
 
     rec_ = _read_recommendation(work_dir) or {}
     if rec_.get("iteration") is None:
@@ -6055,21 +6089,32 @@ def _refill_candidates(work_dir, factors) -> list[dict]:
     pool_file = Path(work_dir) / "runs" / f"iter-{rec_.get('iteration')}" / "refill_pool.json"
     try:
         ranked = json.loads(pool_file.read_text()).get("candidates") or []
-    except (OSError, ValueError):
+    except FileNotFoundError:
         ranked = []
+        warn(f"{pool_file} is absent: the refill draws on the supported-feasible "
+             f"pool only")
+    except (OSError, ValueError) as exc:
+        ranked = []
+        warn(f"{pool_file} is unreadable ({exc}): the refill draws on the "
+             f"supported-feasible pool only")
     cands = [dict(p_.get("levels") or {}) for p_ in
              (rec_.get("supported_feasible_candidate") or {}).get("pool") or []]
     cands += [dict(c_.get("levels") or {}) for c_ in ranked]
     by_id = {f.id: f for f in factors}
 
     def code(lv):
+        """Coded coordinates, or ``None`` when a level cannot be coded."""
         out_ = []
         for fid in sorted(lv):
             f = by_id.get(fid)
+            if f is None:
+                warn(f"factor {fid!r} in {lv} is not declared; skipped")
+                return None
             try:
-                out_.append(code_actual(f, lv[fid]) if f is not None else 0.0)
-            except (TypeError, ValueError):
-                out_.append(0.0)
+                out_.append(code_actual(f, lv[fid]))
+            except (TypeError, ValueError) as exc:
+                warn(f"level {fid}={lv[fid]!r} cannot be coded ({exc}); skipped")
+                return None
         return out_
 
     invalid = _measured_infeasible(work_dir)
@@ -6078,12 +6123,16 @@ def _refill_candidates(work_dir, factors) -> list[dict]:
         for row in artifacts.read_runs(rp.parent):
             lv_ = row.get("levels")
             if lv_ and row.get("status") in ("complete", "infeasible", "rejected"):
-                measured.append((code(lv_), _config_admissible(work_dir, lv_, invalid=invalid)))
+                z_ = code(lv_)
+                if z_ is not None:
+                    measured.append((z_, _config_admissible(work_dir, lv_, invalid=invalid)))
 
     def near_feasible(lv) -> bool:
+        z = code(lv)
+        if z is None:
+            return False
         if not measured:
             return True
-        z = code(lv)
         return min(measured, key=lambda m: (math.dist(z, m[0]), not m[1]))[1]
 
     out: list[dict] = []

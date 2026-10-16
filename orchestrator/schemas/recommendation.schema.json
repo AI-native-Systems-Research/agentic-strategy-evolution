@@ -374,6 +374,28 @@
         }
       }
     },
+    "preferred_basis": {
+      "type": "object",
+      "required": [
+        "basis",
+        "reason"
+      ],
+      "description": "Multi-objective only: what the top-level levels/predicted ARE. `predicted_front_preference` = the preference's point of the predicted front; `primary_argmax_fallback` = no predicted front existed (an objective model could not be estimated), so they are the first objective's argmax and confirm labels the seat accordingly.",
+      "properties": {
+        "basis": {
+          "enum": [
+            "predicted_front_preference",
+            "primary_argmax_fallback"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
     "front_size_predicted": {
       "type": "integer",
       "minimum": 0,

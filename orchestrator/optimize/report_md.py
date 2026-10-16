@@ -285,7 +285,12 @@ def _next_epoch_section(work_dir: Path, report: dict) -> list[str]:
     return lines
 
 
-def _campaign_factors(work_dir: Path) -> dict:
+def _campaign_factors(work_dir: Path) -> tuple[dict, str | None]:
+    """``({factor_id: Factor}, problem)``. ``problem`` names why the campaign's
+    factors could not be read (B4): logged at WARNING and printed in report.md
+    instead of silently dropping the range-edge advice."""
+    import logging
+
     import yaml
 
     from orchestrator.optimize.factors import parse_factors
@@ -295,9 +300,40 @@ def _campaign_factors(work_dir: Path) -> dict:
     try:
         campaign = yaml.safe_load(source.read_text()) or {}
         return {f.id: f for f in parse_factors(
-            (campaign.get("optimization") or {}).get("factors") or [])}
-    except (OSError, ValueError, yaml.YAMLError):
-        return {}
+            (campaign.get("optimization") or {}).get("factors") or [])}, None
+    except (OSError, ValueError, yaml.YAMLError) as exc:
+        problem = f"{source.name} could not be read ({type(exc).__name__}: {exc})"
+        logging.getLogger(__name__).warning("report.md: %s", problem)
+        return {}, problem
+
+
+def _eps_cell(v) -> str:
+    return "**unknown** (no reference for a percentage)" if v is None else _fmt(v)
+
+
+def _preferred_entry(report: dict) -> dict | None:
+    par = report.get("pareto") or {}
+    chosen = dict((par.get("preference") or {}).get("chosen") or {})
+    return next((f for f in par.get("front") or []
+                 if dict(f.get("levels") or {}) == chosen), None) if chosen else None
+
+
+def _objective_values(report: dict) -> list[str]:
+    """C1: every objective's mean (and interval) at the recommendation."""
+    par = report.get("pareto") or {}
+    f = _preferred_entry(report)
+    rec_levels = dict((report.get("recommendation") or {}).get("levels") or {})
+    if f is None or dict(f.get("levels") or {}) != rec_levels:
+        return [f"- **Value:** not on the measured front (no per-objective "
+                f"measurement of the recommendation to show)"]
+    out = []
+    for o in par.get("objectives") or []:
+        m = o["metric"]
+        ci = (f.get("ci") or {}).get(m)
+        out.append(f"- **{m}** ({o['direction']}): {_fmt((f.get('mean') or {}).get(m))}"
+                   + (f" [{_fmt(ci[0])}, {_fmt(ci[1])}]" if ci else "")
+                   + f", n={_fmt(f.get('n'))}")
+    return out
 
 
 def _front_section(work_dir: Path, report: dict) -> list[str]:
@@ -318,6 +354,7 @@ def _front_section(work_dir: Path, report: dict) -> list[str]:
     lines.append("")
     if not front:
         return lines + ["_No measured admissible configuration formed a front._", ""]
+    eps = par.get("epsilon") or {}
     head = "| # | configuration | " + " | ".join(f"{m}" for m in metrics) + \
         " | n | status | source |"
     lines += [head, "|" + "---|" * (len(metrics) + 5)]
@@ -343,14 +380,33 @@ def _front_section(work_dir: Path, report: dict) -> list[str]:
         f"{_fmt_levels(chosen)} ({pref.get('chosen_status') or 'n/a'}); scalar "
         f"regret {_fmt(pref.get('scalar_regret'))} vs epsilon "
         f"{_fmt(pref.get('scalar_epsilon'))}.",
-        f"- **Hypervolume:** {_fmt(hv.get('value'))} (objectives normalised to "
-        f"[0, 1] by the measured range; reference "
-        + ", ".join(f"{m}={_fmt(v)}" for m, v in sorted((hv.get("reference") or {}).items()))
-        + f"; {hv.get('method', '')}).",
+        (f"- **Hypervolume:** {_fmt(hv.get('value'))} over "
+         f"{sum(1 for f in front if f.get('status') == 'confidently_nondominated')} "
+         f"confidently nondominated point(s) (objectives normalised to "
+         f"[0, 1] by the measured range; reference "
+         + ", ".join(f"{m}={_fmt(v)}" for m, v in sorted((hv.get("reference") or {}).items()))
+         + f"; {hv.get('method', '')}).")
+        if hv.get("value") is not None else
+        f"- **Hypervolume:** undefined -- {hv.get('reason') or 'no confident point'}.",
+        "- **Epsilon per objective:** " + ", ".join(
+            f"`{m}` {_eps_cell(eps.get(m))}" for m in metrics) + ".",
+        (f"- **Predicted rivals:** "
+         + ("considered" if (par.get("predicted_rivals") or {}).get("considered")
+            else "NOT considered")
+         + f" -- {(par.get('predicted_rivals') or {}).get('reason', 'not recorded')}.")
+        if par.get("predicted_rivals") else "- **Predicted rivals:** not recorded.",
         f"- **Confirm rounds:** {_fmt(par.get('rounds'))}.",
     ]
+    excl = par.get("excluded_incomplete") or []
+    if excl:
+        lines.append("- **Left out for an incomplete measurement:** " + "; ".join(
+            f"{_fmt_levels(x.get('levels'))} (missing {', '.join(x.get('missing') or []) or 'a usable value'}"
+            f", {x.get('source', '')})" for x in excl) + ".")
     gaps = par.get("gaps_remaining") or []
-    if gaps:
+    if gaps and par.get("gap_threshold") is None:
+        lines.append("- **Gaps:** no objective's epsilon is known, so no gap can be "
+                     "judged against an indifference width.")
+    elif gaps:
         lines.append("- **Gaps remaining** (normalised, wider than twice the largest "
                      "normalised epsilon): " + "; ".join(
                          f"between #{g['between'][0]} and #{g['between'][1]} "
@@ -368,6 +424,24 @@ def _front_next_steps(work_dir: Path, report: dict) -> list[str]:
     front = par.get("front") or []
     objs = par.get("objectives") or []
     out = ["## What to do next", ""]
+    if not front:
+        # B5: nothing to refine -- say why nothing was admissible.
+        n = par.get("n_measured_configurations")
+        excl = par.get("excluded_incomplete") or []
+        why = []
+        if excl:
+            why.append(f"{len(excl)} configuration(s) were left out because a row "
+                       f"lacked a usable value for some objective "
+                       f"({', '.join(sorted({m for x in excl for m in x.get('missing') or []})) or 'see pareto.excluded_incomplete'})"
+                       f" -- fix the adapter's output for those objectives")
+        if not n:
+            why.append("no configuration was measured ADMISSIBLE: every measured row "
+                       "was infeasible, rejected or failed -- relax the constraint "
+                       "that rejected them, widen the factors' ranges into the "
+                       "admissible region, or repair the runs that failed")
+        out += [f"- The measured front is EMPTY: " + "; ".join(
+            why or ["no admissible configuration produced every objective"]) + ".", ""]
+        return out
     if par.get("gaps_remaining"):
         out.append(
             "- **Fill the gaps:** the front has gaps wider than the campaign's "
@@ -380,7 +454,9 @@ def _front_next_steps(work_dir: Path, report: dict) -> list[str]:
             f"- **Resolve {n_poss} possibly-dominated point(s):** more confirm "
             f"replicates (`design.confirm.replicates`) narrow every interval; a "
             f"wider `policy.epsilon` accepts smaller differences as ties.")
-    factors = _campaign_factors(work_dir)
+    factors, factors_problem = _campaign_factors(work_dir)
+    if factors_problem:
+        out.append(f"- _Range-edge advice unavailable: {factors_problem}._")
     edges = []
     for o in objs:
         m, sgn = o["metric"], (-1.0 if o["direction"] == "minimize" else 1.0)
@@ -401,7 +477,7 @@ def _front_next_steps(work_dir: Path, report: dict) -> list[str]:
                    "declared range edge -- " + "; ".join(edges) + ". Extending "
                    "that factor's levels past the edge may extend the front "
                    "(unless a constraint binds there).")
-    if len(out) == 2:
+    if len(out) == 2 and not factors_problem:
         out.append("- The front is resolved at this campaign's epsilon; pick the "
                    "trade-off you want from the table above.")
     return out + [""]
@@ -439,7 +515,8 @@ def render_report_markdown(work_dir: Path) -> str:
         "## Recommendation",
         "",
         f"- **Configuration:** {_fmt_levels(rec.get('levels'))}",
-        f"- **Value:** {_fmt(rec.get('value'))}",
+        *(_objective_values(report) if isinstance(report.get("pareto"), dict)
+          else [f"- **Value:** {_fmt(rec.get('value'))}"]),
         f"- **Basis:** `{basis}` — {BASIS_MEANING.get(basis, 'unknown rung')}",
         f"- **Certified:** {'yes' if report.get('certified') else 'no'}",
     ]
@@ -476,7 +553,33 @@ def render_report_markdown(work_dir: Path) -> str:
         ]
         lines += _next_epoch_section(work_dir, report)
 
-    lines += [
+    par = report.get("pareto") if isinstance(report.get("pareto"), dict) else None
+    if par is not None:
+        # C3: the single-objective rows describe the FIRST objective only; a
+        # multi-objective certificate is the preference scalarisation's.
+        pref = par.get("preference") or {}
+        first = ((par.get("objectives") or [{}])[0]).get("metric", "")
+        lines += [
+            "## Bounds",
+            "",
+            f"The certificate is the `{pref.get('method', 'knee')}` preference's "
+            "scalarisation over the measured front (normalised units); per-objective "
+            "epsilon is each objective's indifference width.",
+            "",
+            "| quantity | value |",
+            "|---|---|",
+            *[f"| epsilon, `{o['metric']}` | {_eps_cell((par.get('epsilon') or {}).get(o['metric']))} |"
+              for o in par.get("objectives") or []],
+            f"| scalar regret, terminal (preference) | {_fmt(pref.get('scalar_regret'))} |",
+            f"| scalar epsilon (preference) | {_fmt(pref.get('scalar_epsilon'))} |",
+            f"| residual regret, model (first objective `{first}`, at its argmax) | "
+            f"{_fmt(report.get('residual_regret_model'))} |",
+            f"| delta, screen | {_fmt(report.get('delta_screen'))} |",
+            f"| delta, front statuses | {_fmt(par.get('delta_front'))} |",
+            f"| delta, certification | {_fmt(par.get('delta_certification'))} |",
+            "",
+        ]
+    lines += [] if par is not None else [
         "## Bounds",
         "",
         "| quantity | value |",
@@ -489,7 +592,7 @@ def render_report_markdown(work_dir: Path) -> str:
         f"| delta, terminal | {_fmt(report.get('delta_terminal'))} |",
         "",
     ]
-    if basis != "model":
+    if basis != "model" and par is None:
         # The model bound is computed at the fitted argmax, which a fallback
         # rung or a terminal winner need not be: printed bare under the
         # recommendation it would read as THAT configuration's regret.
@@ -502,6 +605,32 @@ def render_report_markdown(work_dir: Path) -> str:
         ]
 
     finalists = report.get("finalists") or []
+    if finalists and par is not None:
+        metrics = [o["metric"] for o in par.get("objectives") or []]
+        lines += [
+            "## Finalists",
+            "",
+            "| key | configuration | " + " | ".join(metrics) + " | n | status | why |",
+            "|" + "---|" * (len(metrics) + 5),
+        ]
+        by_levels = {json.dumps(x.get("levels") or {}, sort_keys=True, default=str): x
+                     for x in par.get("front") or []}
+        for f in finalists:
+            means = f.get("means")
+            if means is None:
+                # Written before confirm recorded per-objective means: the first
+                # objective's `mean` is this round's; any other column comes
+                # from the measured front (every confirm round), or n/a.
+                fr = by_levels.get(json.dumps(f.get("levels") or {}, sort_keys=True,
+                                              default=str)) or {}
+                means = {**(fr.get("mean") or {}),
+                         **({metrics[0]: f.get("mean")} if metrics else {})}
+            lines.append(
+                f"| {f.get('key', '')} | {_fmt_levels(f.get('levels'))} | "
+                + " | ".join(_fmt(means.get(m)) for m in metrics)
+                + f" | {_fmt(f.get('n'))} | {f.get('status', '')} | {f.get('why', '')} |")
+        lines.append("")
+        finalists = []
     if finalists:
         lines += [
             "## Finalists",

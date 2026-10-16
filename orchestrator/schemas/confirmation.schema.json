@@ -92,6 +92,16 @@
             "type": "integer",
             "minimum": 0
           },
+          "means": {
+            "type": "object",
+            "description": "Multi-objective campaigns only: this finalist's mean over its usable replicates, per objective metric (`mean` stays the first objective's, for single-objective consumers). null for an objective with no usable replicate.",
+            "additionalProperties": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
           "status": {
             "type": "string",
             "enum": [
@@ -530,6 +540,13 @@
         ]
       },
       "description": "Facts that weaken the certificate's premise without withholding it. Present only when non-empty. `finalist_measured_infeasible`: a finalist was measured inadmissible but at least two admissible finalists remained, their simultaneous bound is within epsilon and the model was adequate (stage_runner._INFEASIBLE_FINALIST_CAVEAT)."
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Inputs this round could not read or use (a missing or corrupt refill_pool.json, an uncodeable level), each also logged at WARNING. Present only when non-empty."
     },
     "paired": {
       "type": "boolean",

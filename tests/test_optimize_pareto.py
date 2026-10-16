@@ -600,3 +600,127 @@ def test_a_differently_cased_epsilon_map_key_reaches_its_objective():
     pol = compile_policy(_mo_campaign(policy={"epsilon": {"F2": {"abs": 0.5}, "f1": {"pct": 1}}}))
     eps = {o["metric"]: o["epsilon"] for o in pol["objective"]["objectives"]}
     assert eps == {"f1": {"pct": 1}, "f2": {"abs": 0.5}}
+
+
+def test_a_missing_predicted_front_is_recorded_not_relabelled(tmp_path, monkeypatch):
+    """B1: an objective model that cannot be estimated (a screen row with a
+    non-finite f2) leaves no predicted front. The recommendation says it is
+    the first objective's argmax, and confirm does not call that seat the
+    preferred point of a predicted front."""
+    import orchestrator.optimize.synthetic as syn
+
+    real = syn._observe
+
+    def inf_f2(surface, levels, **kw):
+        obs = real(surface, levels, **kw)
+        if levels.get("A") == 2 and levels.get("B") == 2:
+            obs["f2"] = float("inf")
+        return obs
+
+    monkeypatch.setattr(syn, "_observe", inf_f2)
+    r = run_synthetic_campaign(PARETO_SURFACES["pareto_convex"](), seed=1, parent_dir=tmp_path)
+    recs = [json.loads(p.read_text()) for p in Path(r.work_dir).glob("runs/iter-*/recommendation.json")]
+    fallback = [x for x in recs if x["preferred_basis"]["basis"] == "primary_argmax_fallback"]
+    assert fallback and "f2" in fallback[0]["preferred_basis"]["reason"]
+    whys = [f["why"] for p in Path(r.work_dir).glob("runs/iter-*/confirmation.json")
+            for f in json.loads(p.read_text())["finalists"]]
+    assert not any("preferred point of the predicted front" in w for w in whys), whys
+
+
+# ── honest recording (B) and report.md for multi-objective (C, D8) ───────────
+
+
+def test_no_confident_point_means_an_undefined_hypervolume(tmp_path):
+    """B3: noise far above epsilon leaves nothing confident; the hypervolume is
+    null with a reason (not 0.0), and report.md says so."""
+    from orchestrator.optimize.report_md import render_report_markdown
+    from orchestrator.optimize.synthetic import _pareto_convex
+
+    r = run_synthetic_campaign(_pareto_convex(name="pareto_very_noisy", noise_sd=3.0),
+                               seed=1, parent_dir=tmp_path)
+    hv = r.report["pareto"]["hypervolume"]
+    assert hv["value"] is None and hv["reason"] and hv["n_points"] == 0
+    assert "**Hypervolume:** undefined" in render_report_markdown(r.work_dir)
+
+
+def test_unreadable_inputs_are_logged_and_recorded(tmp_path, caplog):
+    """B4: a corrupt effects.json does not silently become a confirm stage, and
+    a missing refill pool is a recorded warning, not a quiet []."""
+    from orchestrator.optimize import artifacts, pareto_stage
+    from orchestrator.optimize.stage_runner import _refill_candidates
+
+    it = tmp_path / "runs" / "iter-2"
+    it.mkdir(parents=True)
+    (it / "effects.json").write_text("{not json")
+    artifacts.append_run(it, {
+        "row_index": 0, "levels": {"A": 2, "B": 2}, "role": "corner", "replicate": 0,
+        "status": "complete", "response": {"f1": 1.0, "f2": 2.0}, "held_out": {},
+        "manipulation": [], "invariants": [], "duration_ms": 1, "error": ""})
+    with caplog.at_level("WARNING"):
+        pts = pareto_stage.measured_points(tmp_path, _objs())
+    assert pts[0].source == "unknown"
+    assert any("unreadable" in m for m in caplog.messages)
+    (it / "recommendation.json").write_text(json.dumps({"iteration": 2, "stage": "screen"}))
+    warnings: list = []
+    _refill_candidates(tmp_path, [], warnings)
+    assert warnings and "refill_pool.json" in warnings[0]
+
+
+def test_an_empty_front_says_why_in_report_md(tmp_path):
+    """B5: no table, and no 'the front is resolved' claim -- the reason."""
+    from orchestrator.optimize.report_md import render_report_markdown
+
+    (tmp_path / "report.json").write_text(json.dumps({
+        "recommendation": {"levels": {}, "basis": "none"}, "certified": False,
+        "certification_withheld": ["no_front_point"], "epoch": 1,
+        "pareto": {"objectives": [{"metric": "f1", "direction": "maximize"},
+                                  {"metric": "f2", "direction": "maximize"}],
+                   "front": [], "n_measured_configurations": 0,
+                   "hypervolume": {"value": None, "reason": "no point", "reference": {},
+                                   "normalized": True},
+                   "preference": {"method": "knee", "chosen": {}}, "rounds": 1,
+                   "gaps_remaining": []}}))
+    md = render_report_markdown(tmp_path)
+    assert "front is EMPTY" in md and "no configuration was measured ADMISSIBLE" in md
+    assert "The front is resolved" not in md
+
+
+def _md_rows(md: str, heading: str) -> list[list[str]]:
+    block = md.split(f"## {heading}", 1)[1].split("\n## ", 1)[0]
+    rows = [ln for ln in block.splitlines() if ln.startswith("|")]
+    return [[c.strip() for c in r.strip("|").split("|")] for r in rows[2:]]
+
+
+def test_report_md_restates_the_front_the_report_holds(tmp_path):
+    """D8 + C1-C3 + B2: parse report.md and hold it to report.json."""
+    from orchestrator.optimize.report_md import render_report_markdown
+
+    r = run_synthetic_campaign(PARETO_SURFACES["pareto_convex"](), seed=1, parent_dir=tmp_path)
+    par = r.report["pareto"]
+    md = render_report_markdown(r.work_dir)
+    rows = _md_rows(md, "Trade-off front")
+    assert len(rows) == len(par["front"])
+    marked = [i for i, row in enumerate(rows) if "**(preferred)**" in row[1]]
+    chosen = par["preference"]["chosen"]
+    assert [par["front"][i]["levels"] for i in marked] == [chosen]
+    assert [row[-2] for row in rows] == [f["status"] for f in par["front"]]
+    n_poss = sum(f["status"] == "possibly_dominated" for f in par["front"])
+    if n_poss:
+        assert f"`possibly_dominated` ({n_poss})" in md
+    hv_line = next(ln for ln in md.splitlines() if ln.startswith("- **Hypervolume:**"))
+    from orchestrator.optimize.report_md import _fmt
+    assert _fmt(par["hypervolume"]["value"]) in hv_line
+    # C1: every objective's value at the recommendation.
+    rec = md.split("## Recommendation", 1)[1].split("\n## ", 1)[0]
+    entry = next(f for f in par["front"] if f["levels"] == chosen)
+    for m in ("f1", "f2"):
+        assert f"**{m}**" in rec and _fmt(entry["mean"][m]) in rec
+    # C2: one column per objective in the finalists table, filled.
+    fin = _md_rows(md, "Finalists")
+    assert fin and all(row[2] != "n/a" and row[3] != "n/a" for row in fin)
+    # C3: the bounds are labelled as the preference's, per-objective epsilon shown.
+    bounds = md.split("## Bounds", 1)[1].split("\n## ", 1)[0]
+    assert "scalar regret, terminal (preference)" in bounds
+    assert "epsilon, `f1`" in bounds and "epsilon, `f2`" in bounds
+    # B2: whether predicted rivals were used is stated.
+    assert "**Predicted rivals:**" in md and par["predicted_rivals"]["reason"] in md

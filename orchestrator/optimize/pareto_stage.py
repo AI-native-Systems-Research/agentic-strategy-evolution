@@ -47,13 +47,20 @@ def _iter_index(path: Path) -> int:
 
 
 def _stage_of(iter_dir: Path) -> str:
+    """The fitting stage an iteration ran, for a measured point's ``source``.
+
+    No effects/recommendation file at all is a confirm iteration. A file that
+    exists but cannot be read is NOT silently a confirm one: it is logged and
+    the source is recorded as ``unknown`` (B4)."""
     for name in ("effects.json", "recommendation.json"):
         p = iter_dir / name
         if p.exists():
             try:
                 return str(json.loads(p.read_text()).get("stage") or "screen")
-            except (OSError, json.JSONDecodeError):
-                pass
+            except (OSError, json.JSONDecodeError) as exc:
+                logger.warning("%s is unreadable (%s): the points it measured are "
+                               "recorded with source 'unknown'", p, exc)
+                return "unknown"
     return "confirm"
 
 
@@ -225,8 +232,20 @@ def fit_record(pol, *, scored, omodels, delta_s: float, stage_name: str,
                 continue
             seen.add(key)
             entries.append({**e, "stage": e.get("stage") or prev_rec.get("stage") or "screen"})
+    if chosen is not None:
+        basis = {"basis": "predicted_front_preference", "method": pref.method,
+                 "reason": f"the {pref.method} point of the predicted front"}
+    else:
+        unfit = sorted(m for m, om in omodels.items() if om.fit is None)
+        basis = {"basis": "primary_argmax_fallback", "method": pref.method,
+                 "reason": (f"no predicted front: objective model(s) {unfit} could not "
+                            f"be estimated, so every prediction is undefined"
+                            if unfit else "no predicted front point matched a "
+                                          "scored candidate")
+                 + f"; the recommendation is objective {objs[0].metric!r}'s argmax"}
     record = {
         "objectives": [o.metric for o in objs],
+        "preferred_basis": basis,
         "objective_models": {m: om.as_dict() for m, om in omodels.items()},
         "predicted_front": entries,
         "front_size_predicted": n_nd,
@@ -424,9 +443,12 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
             if ok:
                 ex = max(ok, key=lambda p: s * p.predicted[o.metric])
                 nominate(ex.levels, f"predicted extreme of {o.metric}", False, ex.predicted)
-        nominate(rec.get("levels"), f"preferred point of the predicted front "
-                                    f"({preference(pol).method})", False,
-                 pred_values(rec.get("levels") or {}))
+        basis = (rec.get("preferred_basis") or {}).get("basis")
+        nominate(rec.get("levels"),
+                 f"objective {objs[0].metric!r} argmax (no predicted front)"
+                 if basis == "primary_argmax_fallback" else
+                 f"preferred point of the predicted front ({preference(pol).method})",
+                 False, pred_values(rec.get("levels") or {}))
     # Round r > 1 spends its seats on what the campaign has NOT measured
     # freshly yet. Re-seating an already-confirmed point the front is sure of
     # buys nothing for the front, and on a noisy constraint boundary it is how
