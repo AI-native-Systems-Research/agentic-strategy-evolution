@@ -18,7 +18,7 @@ def _git_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
     (repo / "mech.py").write_text("X = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "init"], cwd=repo, check=True)
     return repo
 
 
@@ -801,7 +801,7 @@ def test_allowlist_matching_agrees_with_gits_own_pathspec(tmp_path):
         (repo / d).mkdir()
         (repo / d / "a.py").write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "dirs"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "dirs"], cwd=repo, check=True)
     for d in ("src", "srcx"):
         (repo / d / "a.py").write_text("V = 2\n")
     for entry in ("src", "src/", "src/a", "srcx", "nope"):
@@ -911,7 +911,7 @@ def test_a_rejected_glob_is_exactly_what_the_runtime_cannot_match(tmp_path):
     for rel in ("src/mech.py", "src/other.py"):
         (repo / rel).write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "src"], cwd=repo, check=True)
     for rel in ("src/mech.py", "src/other.py"):
         (repo / rel).write_text("V = 2\n")
 
@@ -1037,7 +1037,7 @@ def test_the_parent_escape_really_disarms_the_oracle(tmp_path):
     (repo / "src").mkdir()
     (repo / "src" / "mech.py").write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "src"], cwd=repo, check=True)
     (repo / "src" / "mech.py").write_text("V = 2\n")
     wd = tmp_path / "wd"
     wd.mkdir()
@@ -1062,7 +1062,7 @@ def test_a_rejected_normalization_entry_is_what_the_runtime_cannot_match(tmp_pat
     (repo / "src").mkdir()
     (repo / "src" / "mech.py").write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "src"], cwd=repo, check=True)
     (repo / "src" / "mech.py").write_text("V = 2\n")
 
     for entry in ("src//mech.py", "src/./mech.py", "./src/mech.py"):
@@ -1090,7 +1090,7 @@ def test_a_padded_entry_really_makes_the_oracle_watch_nothing(tmp_path):
     (repo / "src").mkdir()
     (repo / "src" / "mech.py").write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "src"], cwd=repo, check=True)
 
     padded, clean = ["  src/mech.py  "], ["src/mech.py"]
     before_pad = current_mechanism_hash(repo, allowlist=padded)

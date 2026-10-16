@@ -335,6 +335,8 @@ def _build_campaign(tmp_path, capsys, *, new_file_exists: bool) -> Path:
     doc = yaml.safe_load(camp.read_text())
     opt = doc["optimization"]
     opt["stages"] = ["build", "verify", "screen", "confirm"]
+    # A build stage must declare where it may write (build_scope.validation_findings).
+    opt.setdefault("build_checks", {})["mechanism_paths"] = ["src", "tests/test_new.py"]
     opt["test_command"] += " tests/test_new.py"
     opt["factors"][1]["relations"][0]["native_test"] = (
         "tests/test_new.py::test_choice_mechanism")

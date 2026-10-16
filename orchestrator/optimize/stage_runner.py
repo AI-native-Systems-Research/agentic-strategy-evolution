@@ -2711,7 +2711,7 @@ def run_stage(
 
         # The write-scope gate: what the agent changed is the diff between the
         # tree just before and just after its call (build_scope.py).
-        _scope_before = build_scope.tree_state(Path(repo), work_dir) if repo else None
+        _scope_before = build_scope.snapshot(Path(repo), work_dir) if repo else None
         build_mod.run_build(
             campaign, work_dir,
             iteration=iteration,
@@ -2916,10 +2916,24 @@ def run_stage(
         # never actually tested (2(b)) or is not the system the control
         # describes (2(c)) would leave a signed commitment to a broken
         # experiment on disk for a later resume to pick up.
-        _check_tests_failed_before_build(campaign, work_dir, factors, test_results)
-        _check_authored_tests_discriminate(campaign, work_dir, factors, iteration)
-        _check_baseline_equivalence(campaign, work_dir, factors, config_runner)
-        _review_build(gate, work_dir)
+        # The build's gate records must exist and be the ones written at build
+        # time; "a build ran" is decided from the campaign, not from a file the
+        # build agent could delete (build_scope.verify_records).
+        #
+        # `nous reanalyze` (reanalyze.py) re-derives the ANALYSIS from recorded
+        # rows; these gates are measurements of the target tree and were
+        # decided when the campaign ran, so a reanalysis carries their records
+        # instead of re-running them.
+        if not _ignored.get("reanalysis"):
+            from orchestrator.optimize import build_scope as _bscope
+            try:
+                _bscope.verify_records(campaign, work_dir)
+            except _bscope.BuildScopeViolation as exc:
+                raise OptimizationGateFailed(str(exc)) from exc
+            _check_tests_failed_before_build(campaign, work_dir, factors, test_results)
+            _check_authored_tests_discriminate(campaign, work_dir, factors, iteration)
+            _check_baseline_equivalence(campaign, work_dir, factors, config_runner)
+            _review_build(gate, work_dir)
         # The apparatus is certified, so pre-register the epoch's policy: a
         # JSON document hashed BEFORE the first benchmark run is what makes
         # the path a pre-registration rather than a story told afterwards.

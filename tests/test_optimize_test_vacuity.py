@@ -28,7 +28,7 @@ def _repo(tmp_path: Path) -> Path:
         subprocess.run(["git", *args], cwd=repo, check=True)
     (repo / "calc.py").write_text("def scale(x):\n    return x\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "init"], cwd=repo, check=True)
     return repo
 
 

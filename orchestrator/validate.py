@@ -1875,6 +1875,9 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     # locked_observables keys, and a WARN naming every unenforceable lock.
     from orchestrator.optimize.locked import validation_findings as _locked_rules
     errors.extend(_locked_rules(campaign))
+    # A build stage must declare where it may write (build_scope.py).
+    from orchestrator.optimize.build_scope import validation_findings as _scope_rules
+    errors.extend(_scope_rules(campaign))
     return errors
 
 

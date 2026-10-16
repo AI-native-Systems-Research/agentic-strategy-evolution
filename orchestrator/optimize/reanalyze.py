@@ -63,6 +63,11 @@ NOT_DERIVED = frozenset({
     "mechanism_plan.json", "reanalysis.json",
 })
 
+#: Build-gate records carried into the scratch dir (report.json's waivers are
+#: read from them); they are measurements of the target, never re-derived.
+CARRIED_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json",
+                   "authored_tests.json", "build_scope.json", "build_review.json")
+
 #: Bookkeeping files outside the analysis (engine state, ledgers, logs).
 IGNORED = frozenset({
     "state.json", "ledger.json", "best_found.json", "retry_log.jsonl",
@@ -323,7 +328,7 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
                              campaign=_detached(campaigns[min(campaigns)]))
         # build_review.json is a record of a human decision that report.json's
         # provenance.waivers reads; it is carried, not re-derived.
-        for name in ("mechanism.sha256", "mechanism.patch", "build_review.json"):
+        for name in ("mechanism.sha256", "mechanism.patch", *CARRIED_RECORDS):
             if (orig / name).exists():
                 shutil.copy2(orig / name, new / name)
         last = iters[-1] if iters else 0
@@ -343,7 +348,7 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
                 try:
                     out = run_stage(c, new, iteration=i, config_runner=rr,
                                     test_results=_test_results(orig / "runs" / f"iter-{i}"),
-                                    auto_approve=True)
+                                    auto_approve=True, reanalysis=True)
                 except OptimizationAborted as exc:
                     result.differences.append(
                         {"file": f"runs/iter-{i}", "difference": f"reanalysis aborted: {exc}"})

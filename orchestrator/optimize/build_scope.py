@@ -1,34 +1,50 @@
-"""The build agent's write scope, enforced by diffing what the build changed.
+"""The build agent's write scope, CHECKED by diffing what the build changed,
+and the integrity of Nous's own build-gate records.
 
-The build prompt TELLS the agent where it may write; before this module
-nothing CHECKED it (audit Q10): the tree was snapshotted after the build, so
-anything the agent touched -- the benchmark harness included -- silently
-became "the mechanism". Now the stage records the dirty-file state of the
-target immediately before the agent call and again immediately after, and the
-difference is what the build wrote. Two rules:
+The build agent runs with ``bypassPermissions`` and its cwd is the target repo
+(and the default work_dir ``<repo>/.nous/<run>/`` is inside its reach). The
+prompt TELLS it where it may write; this module CHECKS what it did, and every
+check fails CLOSED: an unreadable state is a violation, never a pass.
 
-1. **Declared scope.** When ``optimization.build_checks.mechanism_paths`` is
-   declared, every path the build wrote must fall under it (the same
-   component-prefix rule the drift oracle uses, ``build._in_allowlist``).
-2. **Protected inputs**, always, unless explicitly listed in
-   ``mechanism_paths``: a file the ``run_command`` names that existed before
-   the build (the benchmark harness that produces the objective), and the file
-   of every declared native test that already RAN before the build (a
-   pre-existing relation test the agent could weaken).
+What is snapshotted, immediately before and immediately after the agent call
+(``snapshot``):
 
-A violation aborts the campaign before ``verify`` and is recorded in
-``build_scope.json`` -- unless ``build_checks.allow_out_of_scope_writes``
-waives it with a reason, which is recorded there and in report.json's
-``provenance.waivers``.
+* the bytes of every TRACKED file (hashed directly from the worktree, so a
+  ``git update-index --skip-worktree`` / ``--assume-unchanged`` cannot hide an
+  edit) and of every untracked-not-ignored file;
+* IGNORED files that hold source or configuration (``SOURCE_SUFFIXES``), by
+  size and mtime -- a ``conftest.py`` hidden through ``.git/info/exclude`` is
+  still a write; tool caches and dependency/build-output trees are skipped;
+* symlinks by their target (never followed) and submodules (gitlinks) by their
+  HEAD and status;
+* git metadata the agent could use to hide work: ``HEAD`` and the branch it
+  names, ``refs/stash``, the index entries (``ls-files -s``), the per-file
+  flags (``ls-files -v``), ``.git/info/exclude`` and ``core.excludesFile``;
+* the digests of Nous's gate records in the work_dir (``GATE_RECORDS``): the
+  agent must not edit the evidence the verify-stage oracles read.
 
-Nous's own outputs (``.nous*`` and the work_dir) and well-known tool caches
-(``__pycache__``, ``.pytest_cache`` ...) never count: no mechanism lives in
-them, and an agent that runs the tests produces them. A non-git target has no
-diff, so the gate is recorded as not applicable rather than passed.
+``check`` then fails the build on: any git read that worked before and fails
+after; HEAD, the branch or the stash moving (a commit, checkout or stash makes
+every later diff blind); a change to the flags, the exclude files, or a gate
+record; and any changed path outside ``build_checks.mechanism_paths`` or on a
+PROTECTED input (``protected_paths``: every tracked file the ``run_command``
+names or lives under a directory / module it names, and every pre-existing
+declared test file), unless listed by exact path in ``mechanism_paths``.
+``build_checks.allow_out_of_scope_writes: "<why>"`` waives the PATH rules only,
+never the integrity rules. ``build_scope.json`` records everything, including
+the gate-record digests ``verify_records`` re-checks at verify.
+
+What it cannot see: writes outside the repo (a ``$HOME`` config, a system
+library), changes the agent makes and reverts within its own call, and edits
+under the skipped trees (``SKIP_DIRS``). A non-git target has no diff at all;
+that is recorded as ``applicable: false`` and listed as a waiver in
+report.json, not as a pass.
 """
 from __future__ import annotations
 
 import hashlib
+import json
+import os
 import shlex
 import subprocess
 from pathlib import Path
@@ -39,72 +55,207 @@ TOOL_CACHE_PARTS = frozenset({
     "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache", ".hypothesis",
     ".tox", ".nox", ".coverage",
 })
+#: Ignored trees that hold dependencies or build outputs, never authored source.
+SKIP_DIRS = frozenset({"node_modules", ".venv", "venv", ".git", "target", "dist",
+                       "build", ".gradle", ".next"})
+#: Ignored files with these suffixes (or names) are watched: they can be code or
+#: configuration a run_command or test runner picks up.
+SOURCE_SUFFIXES = frozenset({
+    ".py", ".pyi", ".go", ".rs", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".java",
+    ".kt", ".c", ".h", ".cc", ".cpp", ".hpp", ".rb", ".sh", ".toml", ".yaml",
+    ".yml", ".json", ".cfg", ".ini", ".pth", ".mk",
+})
+SOURCE_NAMES = frozenset({"Makefile", "makefile", "GNUmakefile", "Dockerfile",
+                          "conftest.py", "pytest.ini", "setup.cfg", "tox.ini"})
+
+#: Nous's own gate records in the work_dir, and the keys of each that the
+#: BUILD stage wrote (verify later adds keys to baseline_equivalence.json, so its
+#: digest covers only what build wrote).
+GATE_RECORDS = {
+    "pre_build_tests.json": None,
+    "baseline_equivalence.json": ("levels", "pre", "pre_mean", "pre_unavailable",
+                                  "tolerance_pct", "workload_seeds",
+                                  "workload_seed_env"),
+}
 
 
 class BuildScopeViolation(RuntimeError):
-    """The build wrote outside the scope the campaign allows."""
+    """The build wrote outside its scope, or tampered with what is checked."""
 
 
-def _git(repo: Path, *args: str) -> str | None:
+class GitError(RuntimeError):
+    pass
+
+
+def _git(repo: Path, *args: str, check: bool = True) -> str | None:
+    """stdout, or None when ``check`` is False and git failed. With ``check``
+    a failure raises :class:`GitError` carrying git's stderr."""
     try:
-        proc = subprocess.run(["git", *args], cwd=str(repo), capture_output=True,
-                              text=True, timeout=120)
-    except (OSError, subprocess.SubprocessError):
+        proc = subprocess.run(["git", "-c", "core.quotepath=off", *args], cwd=str(repo),
+                              capture_output=True, text=True, timeout=300)
+    except (OSError, subprocess.SubprocessError) as exc:
+        if check:
+            raise GitError(f"git {' '.join(args)}: {exc}") from exc
         return None
-    return proc.stdout if proc.returncode == 0 else None
+    if proc.returncode != 0:
+        if check:
+            raise GitError(f"git {' '.join(args)} exited {proc.returncode}: "
+                           f"{(proc.stderr or '').strip()[:400]}")
+        return None
+    return proc.stdout
 
 
-def _ignored(rel: str, owned: list[str]) -> bool:
+def is_git_tree(repo: Path) -> bool:
+    out = _git(Path(repo), "rev-parse", "--is-inside-work-tree", check=False)
+    return (out or "").strip() == "true"
+
+
+def _skipped(rel: str, owned: list[str]) -> bool:
     parts = rel.split("/")
     if any(p in TOOL_CACHE_PARTS for p in parts) or rel.endswith((".pyc", ".pyo")):
         return True
     return _in_allowlist(rel, owned)
 
 
-def tree_state(repo: Path, work_dir: Path | None = None) -> dict[str, str] | None:
-    """``{repo-relative path: sha256 of its bytes | "<deleted>"}`` for every
-    path git reports as differing from HEAD (tracked edits, deletions and
-    untracked-not-ignored files). None when ``repo`` is not a git work tree."""
-    out = _git(Path(repo), "status", "--porcelain=v1", "-z", "-uall", "--no-renames")
-    if out is None:
+def _sha_file(p: Path) -> str:
+    if p.is_symlink():
+        return "link:" + os.readlink(p)
+    if not p.exists():
+        return "<deleted>"
+    if p.is_dir():
+        return "<dir>"
+    return hashlib.sha256(p.read_bytes()).hexdigest()
+
+
+def record_digest(work_dir: Path, name: str) -> str | None:
+    """Digest of a gate record (of the build-written keys only, where listed);
+    None when absent; ``"<unreadable>"`` when it does not parse."""
+    p = Path(work_dir) / name
+    if not p.exists():
         return None
-    owned = _nous_owned_prefixes(Path(repo), work_dir)
-    state: dict[str, str] = {}
-    for entry in out.split("\0"):
-        if len(entry) < 4:
-            continue
-        rel = entry[3:]
-        if _ignored(rel, owned):
-            continue
-        p = Path(repo) / rel
-        if p.is_file():
-            state[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
-        elif not p.exists():
-            state[rel] = "<deleted>"
-    return state
+    keys = GATE_RECORDS.get(name)
+    if keys is None:
+        return hashlib.sha256(p.read_bytes()).hexdigest()
+    try:
+        doc = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return "<unreadable>"
+    sub = {k: doc.get(k) for k in keys if k in doc}
+    return hashlib.sha256(json.dumps(sub, sort_keys=True, default=str).encode()).hexdigest()
 
 
-def changed_paths(before: dict[str, str], after: dict[str, str]) -> list[str]:
-    """Paths whose state differs: written, created, deleted, or reverted."""
-    return sorted(p for p in set(before) | set(after) if before.get(p) != after.get(p))
+def snapshot(repo: Path, work_dir: Path | None) -> dict:
+    """Everything ``check`` compares. ``{"git": False, "error": ...}`` when the
+    tree cannot be read as git."""
+    repo = Path(repo)
+    snap: dict = {"git": False, "gate_records": {
+        n: record_digest(work_dir, n) for n in GATE_RECORDS} if work_dir else {}}
+    if not is_git_tree(repo):
+        snap["error"] = "not a git work tree"
+        return snap
+    try:
+        owned = _nous_owned_prefixes(repo, work_dir)
+        snap["head"] = (_git(repo, "rev-parse", "-q", "--verify", "HEAD", check=False)
+                        or "").strip() or None
+        snap["branch"] = (_git(repo, "symbolic-ref", "-q", "HEAD", check=False) or "").strip()
+        snap["stash"] = (_git(repo, "rev-parse", "-q", "--verify", "refs/stash",
+                              check=False) or "").strip() or None
+        index: dict[str, str] = {}
+        gitlinks: list[str] = []
+        for ent in _git(repo, "ls-files", "-s", "-z").split("\0"):
+            if not ent:
+                continue
+            meta, path = ent.split("\t", 1)
+            index[path] = meta
+            if meta.startswith("160000"):
+                gitlinks.append(path)
+        flags = {}
+        for ent in _git(repo, "ls-files", "-v", "-z").split("\0"):
+            if ent and ent[0] != "H":
+                flags[ent[2:]] = ent[0]
+        files: dict[str, str] = {}
+        for path in index:
+            if path in gitlinks or _skipped(path, owned):
+                continue
+            files[path] = _sha_file(repo / path)
+        for path in _git(repo, "ls-files", "--others", "--exclude-standard", "-z").split("\0"):
+            if path and not _skipped(path, owned):
+                files[path] = _sha_file(repo / path)
+        for path in _git(repo, "ls-files", "--others", "--ignored", "--exclude-standard",
+                         "--directory", "-z").split("\0"):
+            if not path or _skipped(path.rstrip("/"), owned):
+                continue
+            top = path.rstrip("/").split("/")
+            if any(t in SKIP_DIRS for t in top):
+                continue
+            base = repo / path
+            cands = [base] if base.is_file() or base.is_symlink() else [
+                q for q in base.rglob("*") if q.is_file()
+                and not (set(q.relative_to(repo).parts) & SKIP_DIRS)]
+            for q in cands:
+                rel = q.relative_to(repo).as_posix()
+                if _skipped(rel, owned):
+                    continue
+                if q.suffix in SOURCE_SUFFIXES or q.name in SOURCE_NAMES:
+                    st = q.lstat()
+                    files[rel] = f"ignored:{st.st_size}:{st.st_mtime_ns}"
+        subs = {}
+        for g in gitlinks:
+            sub = repo / g
+            h = _git(sub, "rev-parse", "HEAD", check=False) if sub.exists() else None
+            stt = _git(sub, "status", "--porcelain", check=False) if sub.exists() else None
+            subs[g] = f"{(h or '').strip()}:{hashlib.sha256((stt or '').encode()).hexdigest()}"
+        ex = (_git(repo, "rev-parse", "--git-path", "info/exclude") or "").strip()
+        exp = (repo / ex) if ex and not Path(ex).is_absolute() else Path(ex)
+        xf = (_git(repo, "config", "--get", "core.excludesFile", check=False) or "").strip()
+        xfp = Path(os.path.expanduser(xf)) if xf else None
+        snap.update({
+            "git": True, "index": index, "flags": flags, "files": files,
+            "gitlinks": subs,
+            "info_exclude": _sha_file(exp) if ex else None,
+            "excludes_file": f"{xf}:{_sha_file(xfp) if xfp else ''}",
+        })
+    except (GitError, OSError) as exc:
+        snap["git"] = False
+        snap["error"] = str(exc)
+    return snap
 
 
 def protected_paths(repo: Path, campaign: dict, pre_ran: list[str]) -> set[str]:
-    """Files the build must not touch unless ``mechanism_paths`` lists them:
-    pre-existing files the run_command names, and the files of declared native
-    tests that already ran before the build."""
+    """Tracked files the build must not touch unless listed by exact path in
+    ``mechanism_paths``: every tracked file the run_command names, lives under a
+    directory it names, or that a ``-m pkg.mod`` / ``make <target>`` reaches
+    (the module's file or package, the Makefile); plus every pre-existing
+    declared test file."""
     opt = (campaign or {}).get("optimization") or {}
-    tracked = set((_git(Path(repo), "ls-files") or "").splitlines())
+    tracked = set((_git(Path(repo), "ls-files", check=False) or "").splitlines())
     out: set[str] = set()
     try:
         tokens = shlex.split(str(opt.get("run_command") or ""))
     except ValueError:
         tokens = []
-    for tok in tokens:
-        cand = tok.split("=", 1)[-1] if tok.startswith("--") else tok
-        cand = cand.removeprefix("./")
+
+    def _add(cand: str):
+        cand = cand.removeprefix("./").rstrip("/")
+        if not cand or cand in (".", ".."):
+            return
         if cand in tracked:
             out.add(cand)
+        out.update(t for t in tracked if t.startswith(cand + "/"))
+
+    for i, tok in enumerate(tokens):
+        if tok.startswith("--") and "=" in tok:
+            tok = tok.split("=", 1)[1]
+        if i > 0 and tokens[i - 1] == "-m":
+            mod = tok.replace(".", "/")
+            _add(mod + ".py")
+            _add(mod)
+            continue
+        if tokens[0] in ("make", "gmake") or Path(tokens[0]).name in ("make", "gmake"):
+            for mk in ("Makefile", "makefile", "GNUmakefile"):
+                if mk in tracked:
+                    out.add(mk)
+        _add(tok)
     for t in pre_ran or ():
         f = str(t).split("::", 1)[0]
         if f in tracked:
@@ -112,37 +263,72 @@ def protected_paths(repo: Path, campaign: dict, pre_ran: list[str]) -> set[str]:
     return out
 
 
-def check(campaign: dict, repo: Path, work_dir: Path, before: dict[str, str] | None,
-          *, pre_ran: list[str] | None = None) -> dict:
-    """Compare the post-build tree with ``before``; write ``build_scope.json``;
-    raise :class:`BuildScopeViolation` on an unwaived violation."""
-    import json
+def _diff(a: dict, b: dict) -> list[str]:
+    return sorted(k for k in set(a) | set(b) if a.get(k) != b.get(k))
 
-    record: dict = {"applicable": before is not None}
-    after = tree_state(repo, work_dir) if before is not None else None
-    if before is None or after is None:
-        record["why_not"] = "target is not a git work tree; no diff to check"
-        (Path(work_dir) / "build_scope.json").write_text(json.dumps(record, indent=2))
-        return record
+
+def check(campaign: dict, repo: Path, work_dir: Path, before: dict,
+          *, pre_ran: list[str] | None = None) -> dict:
+    """Compare the post-build state with ``before``; write ``build_scope.json``;
+    raise :class:`BuildScopeViolation` on any unwaived violation."""
+    after = snapshot(repo, work_dir)
+    record: dict = {"applicable": bool(before.get("git")),
+                    "head_before": before.get("head"),
+                    "gate_records": after["gate_records"]}
+    integrity: list[str] = []
+    changed_records = [n for n in GATE_RECORDS
+                       if before["gate_records"].get(n) != after["gate_records"].get(n)]
+    if changed_records:
+        integrity.append(f"Nous's gate record(s) {changed_records} changed during the "
+                         f"build: the evidence verify reads was edited")
+    if not before.get("git"):
+        record["why_not"] = (f"no diff to check: {before.get('error')}"
+                             if before.get("error") else "no diff to check")
+    elif not after.get("git"):
+        integrity.append(f"the tree was readable before the build and is not after "
+                         f"it ({after.get('error')}); an unreadable tree is not a "
+                         f"clean one")
+    written: list[str] = []
+    if before.get("git") and after.get("git"):
+        for k, what in (("head", "HEAD"), ("branch", "the checked-out branch"),
+                        ("stash", "refs/stash")):
+            if before.get(k) != after.get(k):
+                integrity.append(f"{what} moved during the build ({before.get(k)} -> "
+                                 f"{after.get(k)}): a commit, checkout or stash hides "
+                                 f"the build's edits from every diff")
+        fl = _diff(before["flags"], after["flags"])
+        if fl:
+            integrity.append(f"git per-file flags changed on {fl} (skip-worktree / "
+                             f"assume-unchanged hide edits from git)")
+        for k, what in (("info_exclude", ".git/info/exclude"),
+                        ("excludes_file", "core.excludesFile")):
+            if before.get(k) != after.get(k):
+                integrity.append(f"{what} changed during the build (it can hide new files)")
+        written = sorted(set(_diff(before["files"], after["files"]))
+                         | set(_diff(before["index"], after["index"]))
+                         | set(_diff(before["gitlinks"], after["gitlinks"])))
     bc = ((campaign.get("optimization") or {}).get("build_checks")) or {}
     scope = [str(p) for p in (bc.get("mechanism_paths") or []) if str(p).strip()]
-    protected = protected_paths(repo, campaign, list(pre_ran or ()))
-    written = changed_paths(before, after)
+    protected = protected_paths(repo, campaign, list(pre_ran or ())) if after.get("git") else set()
     outside = [p for p in written if scope and not _in_allowlist(p, scope)]
     touched_protected = [p for p in written if p in protected
-                         and not (scope and _in_allowlist(p, scope)
-                                  and any(str(e).strip("/") == p for e in scope))]
+                         and not any(str(e).strip("/") == p for e in scope)]
     record.update({
         "written": written, "mechanism_paths": scope or None,
         "protected": sorted(protected),
         "outside_scope": outside, "protected_touched": touched_protected,
+        "integrity_violations": integrity,
     })
     bad = sorted(set(outside) | set(touched_protected))
     waiver = bc.get("allow_out_of_scope_writes")
     if bad and isinstance(waiver, str) and waiver.strip():
         record["waived"] = waiver.strip()
-    record["ok"] = not bad or "waived" in record
+    record["ok"] = not integrity and (not bad or "waived" in record)
     (Path(work_dir) / "build_scope.json").write_text(json.dumps(record, indent=2))
+    if integrity:
+        raise BuildScopeViolation(
+            "build integrity check failed (not waivable): " + "; ".join(integrity)
+            + ". See build_scope.json.")
     if bad and "waived" not in record:
         parts = []
         if outside:
@@ -160,3 +346,67 @@ def check(campaign: dict, repo: Path, work_dir: Path, before: dict[str, str] | N
             "(recorded in report.json). See build_scope.json."
         )
     return record
+
+
+def build_declared(campaign: dict) -> bool:
+    from orchestrator.optimize.policy import pre_epoch_stages
+
+    return "build" in pre_epoch_stages(campaign)
+
+
+def verify_records(campaign: dict, work_dir: Path) -> None:
+    """At verify: decide "a build ran" from the CAMPAIGN, not from a file the
+    agent could delete, and require every gate record intact. Raises
+    :class:`BuildScopeViolation`; no-op for a campaign with no build stage and
+    no build records."""
+    wd = Path(work_dir)
+    declared = build_declared(campaign)
+    if not declared and not (wd / "pre_build_tests.json").exists():
+        return
+    missing = [n for n in ("pre_build_tests.json", "build_scope.json")
+               if not (wd / n).exists()]
+    if missing:
+        raise BuildScopeViolation(
+            f"the campaign declares a build stage but its gate record(s) {missing} "
+            f"are missing from the work_dir. Every build oracle (2(b), 2(c), 2(d), "
+            f"the write scope and the build review) reads them; without them none "
+            f"can run, and a missing record is not a passed check. Re-run the "
+            f"build stage in a fresh work_dir.")
+    try:
+        json.loads((wd / "pre_build_tests.json").read_text())
+        scope = json.loads((wd / "build_scope.json").read_text())
+    except (OSError, ValueError) as exc:
+        raise BuildScopeViolation(
+            f"a build gate record is unreadable ({exc}); re-run the build stage.") from exc
+    recorded = scope.get("gate_records") or {}
+    for name in GATE_RECORDS:
+        now = record_digest(wd, name)
+        if recorded.get(name) != now:
+            raise BuildScopeViolation(
+                f"{name} no longer matches the digest recorded right after the build "
+                f"({recorded.get(name)} -> {now}): the evidence the build oracles read "
+                f"was edited, added or removed after it was written. Re-run the build "
+                f"stage in a fresh work_dir.")
+
+
+def validation_findings(campaign: dict) -> list[str]:
+    """A campaign with a ``build`` stage must declare
+    ``build_checks.mechanism_paths``: without it the write-scope check can only
+    protect the inputs it can infer from the run_command, and an inferred
+    protected set can be empty or miss an imported module."""
+    opt = (campaign or {}).get("optimization") or {}
+    stages = opt.get("stages") if isinstance(opt, dict) else None
+    if not isinstance(stages, list) or "build" not in stages:
+        return []
+    bc = opt.get("build_checks") if isinstance(opt.get("build_checks"), dict) else {}
+    paths = [p for p in (bc.get("mechanism_paths") or []) if str(p).strip()]
+    if paths:
+        return []
+    return [
+        "optimization.stages declares `build` but optimization.build_checks."
+        "mechanism_paths is not declared. The build agent writes into the target "
+        "repo; mechanism_paths is the only scope its writes are checked against "
+        "(anything outside it aborts the campaign). Declare the files and "
+        "directories the mechanism and its tests may live in, e.g. "
+        "mechanism_paths: [src/mechanism.py, tests/test_mechanism.py]."
+    ]
