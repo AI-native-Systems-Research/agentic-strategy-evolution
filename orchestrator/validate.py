@@ -1065,8 +1065,11 @@ def _rule30_mixed_resolution_three_foldover(opt: dict, design: dict,
             # The screen Nous builds is the level-space full factorial, which
             # aliases nothing: there is no aliasing for a fold to clear (N10).
             return []
-    except ValueError:
-        pass
+    except ValueError as exc:
+        # Unparseable factors (other rules report them): say THAT, rather than
+        # a foldover verdict that rests on a screen nobody could build (P9).
+        return [f"rule 30 could not build the screen to check resolution-III "
+                f"foldover aliasing, because the factors do not parse: {exc}"]
     return [
         "design.screen.resolution=3 with a multi-level choice factor and the "
         "registered foldover on: a full foldover of a mixed-level screen does "

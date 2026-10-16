@@ -156,6 +156,10 @@ class Fit:
     #: Replicated centres with ZERO pure error and residuals that vanish: no
     #: F test exists, but the model fits exactly (deterministic targets).
     lof_exact_fit: bool = False
+    #: Zero pure error with lack-of-fit df: ``"exact_fit"`` (residuals vanish)
+    #: or ``"rejected"`` (nonzero residuals against zero replicate spread --
+    #: lack of fit ESTABLISHED, no F needed); ``None`` otherwise.
+    lof_exact: str | None = None
 
 
 def pure_error(center_responses) -> tuple[float | None, int]:
@@ -587,13 +591,23 @@ def fit_effects(design: Design, responses, *, factor_ids,
     # A DETERMINISTIC response (replicated centres, zero pure error) has no F
     # test, but lack of fit is then decidable exactly: a model whose residuals
     # vanish fits (stage-1b N5). Not written to effects.json.
+    # Only when there IS lack-of-fit df (n - p - df_pe > 0, stage-1c P5): with
+    # none, the residuals are pure error by construction and nothing is
+    # decided. With df and zero pure error, nonzero residuals are an
+    # ESTABLISHED lack of fit, recorded as such (``lof_exact``), not "not
+    # computable".
     exact_fit = False
-    if lof_p is None and pe_df > 0 and pe_var is not None and pe_var == 0.0:
+    lof_exact = None
+    df_lof_all = n - len(cols) - pe_df
+    if (lof_p is None and pe_df > 0 and pe_var is not None and pe_var == 0.0
+            and df_lof_all > 0):
         resid0 = [ys[r] - sum(coefs_lof[c] * cols[c][r] for c in range(len(cols)))
                   for r in range(n)]
         scale = 1.0 + sum(v * v for v in ys)
         exact_fit = sum(v * v for v in resid0) <= 1e-18 * scale
+        lof_exact = "exact_fit" if exact_fit else "rejected"
     extra["lof_exact_fit"] = exact_fit
+    extra["lof_exact"] = lof_exact
 
     return Fit(
         intercept=coefs[0], effects=tuple(built), n_runs=n,

@@ -273,10 +273,11 @@ def best_reference_pred(values, objs) -> dict:
 
 
 def models_rejected(omodels, *, lack_of_fit_only: bool = False) -> list[str]:
-    """Objectives whose model the data rejected (lack of fit) or -- unless
-    ``lack_of_fit_only`` -- that could not be estimated at all. A model with no
-    pure error is NOT rejected: there is no test to fail, exactly as for the
-    primary's ``model_adequate``."""
+    """Objectives whose model the data rejected (lack of fit, or an exact
+    rejection against zero pure error) or -- unless ``lack_of_fit_only`` --
+    that could not be estimated at all. A model with NO lack-of-fit test is
+    not rejected: it is UNKNOWN (``models_untested``), and the primary's
+    ``model_adequate`` becomes null for it (stage-1c P6)."""
     from orchestrator.optimize.constraint_models import LACK_OF_FIT_ALPHA
 
     out = []
@@ -285,7 +286,21 @@ def models_rejected(omodels, *, lack_of_fit_only: bool = False) -> list[str]:
         if f is None:
             if not lack_of_fit_only:
                 out.append(m)
-        elif f.lack_of_fit_p is not None and f.lack_of_fit_p < LACK_OF_FIT_ALPHA:
+        elif (f.lack_of_fit_p is not None and f.lack_of_fit_p < LACK_OF_FIT_ALPHA) \
+                or getattr(f, "lof_exact", None) == "rejected":
+            out.append(m)
+    return out
+
+
+def models_untested(omodels) -> list[str]:
+    """Objectives whose model was fitted but has NO lack-of-fit verdict (no
+    pure error, or no lack-of-fit df, and no exact zero-pure-error decision):
+    their adequacy is UNKNOWN, three-valued like the primary's (stage-1c P6)."""
+    out = []
+    for m, om in omodels.items():
+        f = om.fit
+        if f is not None and f.lack_of_fit_p is None \
+                and getattr(f, "lof_exact", None) is None:
             out.append(m)
     return out
 

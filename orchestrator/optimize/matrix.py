@@ -512,18 +512,20 @@ def matrix_payload(design: Design, factors: list[Factor], *,
 
 
 def screen_choice_record(design: Design, factors) -> dict:
-    """Which mixed-level screen was built and why (stage-1b N11): both
-    candidates' corner runs, the chosen one, and the rule."""
-    from orchestrator.optimize.design import mixed_screen_options
+    """Which mixed-level screen was built and why (stage-1b N11), read from
+    the decision ``design.mixed_screen`` STORED on the design when it built it
+    (stage-1c P7) -- never re-derived, and never an invented resolution. A
+    design without the record (hand-built) gets a schema-conformant
+    ``{"chosen": None, "reason": ...}`` and a logged warning."""
+    import logging
 
-    by_id = {f.id: f for f in factors}
-    fs = [by_id[fid] for fid, _ in factor_columns(design) if fid in by_id]
-    res = design.requested_resolution or design.resolution or 5
-    try:
-        opts = mixed_screen_options(fs, int(res))
-    except ValueError:
-        return {"chosen": design.kind}
-    return {**opts, "resolution_requested": int(res),
+    if not design.screen_choice:
+        logging.getLogger(__name__).warning(
+            "design_matrix.json screen_choice: the design carries no recorded "
+            "mixed-screen decision (not built by design.mixed_screen).")
+        return {"chosen": None,
+                "reason": "the design carries no recorded mixed-screen decision"}
+    return {**dict(design.screen_choice),
             "rule": "the level-space full factorial when its runs are no more "
                     "than the method-of-replacement fraction's (it aliases "
                     "nothing); otherwise the fraction"}

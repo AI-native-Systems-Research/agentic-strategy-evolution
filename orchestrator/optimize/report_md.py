@@ -604,15 +604,30 @@ def render_report_markdown(work_dir: Path) -> str:
             f"`{r}` ({WITHHELD_MEANING.get(r, 'unrecognised reason')})"
             for r in withheld))
     if "model_adequate" in report and report["model_adequate"] is None:
-        lines.append(f"- **Model adequacy:** unknown (`{report.get('model_adequate_basis')}`"
-                     f" — {WITHHELD_MEANING.get(str(report.get('model_adequate_basis')), '')})")
+        # A legacy record may carry null with no basis (stage-1c P9).
+        b = str(report.get("model_adequate_basis") or "model_adequacy_unknown")
+        lines.append(f"- **Model adequacy:** unknown (`{b}` — {WITHHELD_MEANING.get(b, '')})")
+    elif report.get("model_adequate") is False:
+        lines.append("- **Model adequacy:** rejected — the latest fitting stage's "
+                     "lack-of-fit test (or an objective model's) rejected the model")
+    every = set(report.get("all_levels_inadmissible") or ())
     for key, label in (("curvature_untested_levels", "Curvature never checked under"),
                        ("lost_levels", "Levels lost (no retained run; never recommended)"),
                        ("inadmissible_levels",
                         "Levels inadmissible wherever measured (never recommended)")):
-        if report.get(key):
+        rows = {fid: lvs for fid, lvs in (report.get(key) or {}).items()
+                if not (key == "inadmissible_levels" and fid in every)}
+        if rows:
             lines.append(f"- **{label}:** " + "; ".join(
-                f"{fid}: {', '.join(map(str, lvs))}" for fid, lvs in report[key].items()))
+                f"{fid}: {', '.join(map(str, lvs))}" for fid, lvs in rows.items()))
+    if every:
+        lines.append(f"- **Every level inadmissible wherever measured:** "
+                     f"{', '.join(sorted(every))} — none excluded; the "
+                     f"recommendation necessarily names one")
+    if report.get("aliases_not_assessed"):
+        lines.append("- **Aliases not assessed** (2fi in the span of kept columns; "
+                     "alias_consequential cannot re-attribute them): "
+                     + ", ".join(report["aliases_not_assessed"]))
     lines.append("")
     lines += _candidate_space_note(work_dir)
     if isinstance(report.get("pareto"), dict):

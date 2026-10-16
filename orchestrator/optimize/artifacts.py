@@ -233,6 +233,10 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
         payload["centre_isolated"] = bool(fit.centre_isolated)
         if fit.centre_isolation_reason:
             payload["centre_isolation_reason"] = fit.centre_isolation_reason
+        elif not fit.centre_isolated:
+            # false here does NOT mean curvature leaked: there was nothing to
+            # isolate (stage-1c P9).
+            payload["centre_isolation_reason"] = "no_centre_rows"
         payload["variance_inflation"] = {k: v for k, v in fit.variance_inflation}
     if exclusion_balance is not None:
         payload["exclusion_balance"] = exclusion_balance
@@ -254,6 +258,10 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
     # read from; present only when it happened (earlier payloads unchanged).
     if interactions_dropped:
         payload["interactions_dropped"] = True
+    if fit.lof_exact is not None:
+        # Zero pure error with lack-of-fit df (a deterministic target): the
+        # verdict is exact, so it is recorded although no F exists (P5).
+        payload["lack_of_fit_exact"] = fit.lof_exact
     if curvature_untested_levels:
         # Choice levels no fitted centre row ran: lack of fit (the curvature
         # check) says nothing about them (stage-1 M8).

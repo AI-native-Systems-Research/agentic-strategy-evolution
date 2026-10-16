@@ -83,6 +83,11 @@ class Design:
     #: level-space full factorial has ``resolution=None`` -- it aliases
     #: nothing -- but was chosen against a fraction at this resolution).
     requested_resolution: int | None = None
+    #: Mixed-level screens only: the construction's own decision, stored when
+    #: it was made (stage-1c P7) -- ``((key, value), ...)`` of the replacement
+    #: and level-space run counts, the chosen design and the requested
+    #: resolution.
+    screen_choice: tuple = ()
 
     @property
     def corners(self) -> tuple[DesignPoint, ...]:
@@ -422,6 +427,7 @@ def with_center_points(design: Design, n: int) -> Design:
         generators=design.generators, folded_on=design.folded_on,
         groups=design.groups, words=design.words,
         requested_resolution=design.requested_resolution,
+        screen_choice=design.screen_choice,
     )
 
 
@@ -578,6 +584,7 @@ def foldover(design: Design, *, on: str | None = None) -> Design:
         resolution=None, generators=design.generators, folded_on=on,
         groups=design.groups, words=design.words,
         requested_resolution=design.requested_resolution,
+        screen_choice=design.screen_choice,
     )
 
 
@@ -604,6 +611,7 @@ def combine(a: Design, b: Design) -> Design:
         resolution=None, generators=a.generators, folded_on=b.folded_on,
         groups=a.groups, words=a.words,
         requested_resolution=a.requested_resolution,
+        screen_choice=a.screen_choice,
     )
 
 
@@ -754,6 +762,10 @@ def mixed_screen(factors, *, resolution: int, center_points: int,
     fs = list(factors)
     blocks = tuple(n_pseudo(f) for f in fs)
     n, vecs = mixed_fraction(blocks, int(resolution))
+    choice = (("replacement", 1 << n), ("level_full", level_full_runs(fs)),
+              ("chosen", "level_full" if allow_level_full
+               and level_full_runs(fs) <= 1 << n else "replacement"),
+              ("resolution_requested", int(resolution)))
     if allow_level_full and level_full_runs(fs) <= 1 << n:
         # The LEVEL-SPACE full factorial is no larger than the replacement
         # fraction (stage-1 M4: three 3-level factors and a 2-level one are
@@ -764,7 +776,8 @@ def mixed_screen(factors, *, resolution: int, center_points: int,
         # Xu 2002's algorithmic designs) can be smaller still; they are NOT
         # implemented.
         return with_center_points(
-            dataclasses.replace(_level_full(fs), requested_resolution=int(resolution)),
+            dataclasses.replace(_level_full(fs), requested_resolution=int(resolution),
+                                screen_choice=choice),
             int(center_points))
     ids: list[str] = []
     groups: list[str] = []
@@ -781,7 +794,8 @@ def mixed_screen(factors, *, resolution: int, center_points: int,
     d = Design(points=tuple(pts), factor_ids=tuple(ids),
                kind="mixed_full" if n == sum(blocks) else "mixed_fraction",
                resolution=int(resolution), groups=tuple(groups),
-               words=tuple(words), requested_resolution=int(resolution))
+               words=tuple(words), requested_resolution=int(resolution),
+               screen_choice=choice)
     return with_center_points(d, int(center_points))
 
 

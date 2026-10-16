@@ -957,7 +957,8 @@ def check_supported_feasible_candidate(recommendation: dict) -> list[str]:
     return out
 
 
-def check_recommendation_avoids_lost_levels(recommendation: dict) -> list[str]:
+def check_recommendation_avoids_lost_levels(recommendation: dict, report: dict | None = None,
+                                            confirmation: dict | None = None) -> list[str]:
     """INV-SEM19: the recommendation never names a categorical level the fit
     could not speak for -- LOST (no retained row) or INADMISSIBLE wherever it
     was measured (stage-1b N7). Matches the LEVEL, not a whole configuration,
@@ -975,6 +976,10 @@ def check_recommendation_avoids_lost_levels(recommendation: dict) -> list[str]:
     out: list[str] = []
     rows = [recommendation.get("levels") or {}] + [
         c.get("levels") or {} for c in recommendation.get("top_candidates") or []]
+    # The SAME rule wherever a configuration is recommended (stage-1c P1): the
+    # report's recommendation and every confirm finalist.
+    rows += [((report or {}).get("recommendation") or {}).get("levels") or {}]
+    rows += [f.get("levels") or {} for f in (confirmation or {}).get("finalists") or []]
     for lv in rows:
         for fid, lvs in bad.items():
             if fid in lv and lv[fid] in lvs:

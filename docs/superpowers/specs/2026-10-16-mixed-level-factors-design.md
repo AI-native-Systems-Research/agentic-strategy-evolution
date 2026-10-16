@@ -378,6 +378,33 @@ center_points 0 only `drift` and `interaction_only` change (8/8 -> 0/8,
 lack_of_fit_not_computable). In all 256 runs the recommendation and the stage
 path are identical; no false certification appears either side.
 
+## Stage-1c (round 4) fixes (nous-e2e/audit/stage1c-mixed-round4-fixes.md)
+
+- P1/P2: ONE RULE -- a lost level (incl. lost at the corners) or a level
+  inadmissible wherever measured (unless every level is) is never recommended
+  anywhere: `_config_admissible` (every RETURN / SEED selector) and confirm's
+  `_add` refuse it, the exclusion lists are unioned per factor, and INV-SEM19
+  reads report.json's recommendation and the confirm finalists too.
+- P3/P4/P8: report.json/report.md carry `all_levels_inadmissible` (own line),
+  `model_adequate: false` (visible without a confirm), and
+  `aliases_not_assessed`.
+- P5: zero pure error decides exactly only with lack-of-fit df: residuals that
+  vanish are an exact fit, nonzero ones an ESTABLISHED rejection
+  (`effects.json["lack_of_fit_exact"]`, model_adequate false).
+- P6: a secondary objective's model with no lack-of-fit verdict makes the
+  primary's adequacy unknown (`pareto_stage.models_untested`).
+- P7: the mixed-screen decision is stored on the Design at construction; a
+  design without it records `{"chosen": null, "reason": ...}`.
+- P9: `centre_isolation_reason: no_centre_rows`; legacy null adequacy reads
+  `model_adequacy_unknown`; rule 30 names a parse failure as such.
+
+**Byte-identity (round 4).** Against f2d4fac, the only artifact change on the
+SURFACES / PARETO_SURFACES sweep is P4's: report.json gains
+`model_adequate: false` exactly where the latest fitting stage's model was
+rejected (14 of 24 surfaces, on the seeds where that happens); nothing else
+differs. The non-choice surfaces' other artifacts remain byte-identical to
+nousko fecd076.
+
 ## What this design cannot answer (open questions)
 
 - Non-regular mixed-level designs (e.g. the 18-run OA(18, 2^1 3^7), 36-run

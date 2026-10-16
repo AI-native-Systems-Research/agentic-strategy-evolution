@@ -2251,11 +2251,17 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # curvature, lost or inadmissible levels), so a report without them is
         # byte-identical. A REJECTED model is already named by
         # certification_withheld (model_inadequate).
+        # Unknown AND rejected adequacy are both copied (stage-1c P4): a
+        # rejected model is otherwise invisible in a report whose confirm never
+        # ran (certification_withheld is then only no_terminal_discrimination).
         **({"model_adequate": None,
             "model_adequate_basis": rec.get("model_adequate_basis")}
            if "model_adequate" in rec and rec["model_adequate"] is None else {}),
+        **({"model_adequate": False} if rec.get("model_adequate") is False else {}),
         **({k: dict(rec[k]) for k in ("curvature_untested_levels", "lost_levels",
                                       "inadmissible_levels") if rec.get(k)}),
+        **({k: list(rec[k]) for k in ("all_levels_inadmissible", "aliases_not_assessed")
+            if rec.get(k)}),
         "residual_regret_terminal": (
             conf.get("residual_regret_terminal") if conf else None
         ),
@@ -2376,7 +2382,40 @@ def _config_admissible(work_dir, levels: dict, *,
     ``invalid`` lets a caller that tests many configurations read
     ``_measured_infeasible`` once.
     """
+    if _names_barred_level(levels, _barred_levels(work_dir)):
+        return False
     return not _measured_infeasible_contains(work_dir, levels, invalid=invalid)
+
+
+def _union_levels(*maps) -> dict:
+    """Per-factor union of ``{factor: [levels]}`` maps, order kept."""
+    out: dict = {}
+    for m in maps:
+        for fid, lvs in (m or {}).items():
+            cur = out.setdefault(fid, [])
+            for lv in lvs:
+                if lv not in cur:
+                    cur.append(lv)
+    return out
+
+
+def _barred_levels(work_dir) -> dict:
+    """ONE RULE (stage-1c P1): the categorical levels nothing may recommend --
+    lost (no retained row, incl. lost at the corners) and inadmissible
+    wherever measured (unless EVERY level of the factor is), per the latest
+    fitting stage's recommendation.json. ``{}`` for every campaign without
+    them, which leaves every selector unchanged."""
+    rec = _read_recommendation(work_dir) or {}
+    every = set(rec.get("all_levels_inadmissible") or ())
+    return _union_levels(
+        {k: v for k, v in (rec.get("inadmissible_levels") or {}).items()
+         if k not in every},
+        rec.get("lost_levels") or {})
+
+
+def _names_barred_level(levels, barred: dict) -> bool:
+    return any(fid in (levels or {}) and levels[fid] in lvs
+               for fid, lvs in (barred or {}).items())
 
 
 def run_stage(
@@ -4064,8 +4103,10 @@ def run_stage(
             "%s: EVERY level of %s was inadmissible wherever measured; recorded "
             "(all_levels_inadmissible) but none is excluded, which would leave "
             "no candidate.", stage_name, all_bad)
-    for fid, lvs in {**{k: v for k, v in inadmissible_levels.items()
-                        if k not in all_bad}, **lost_levels}.items():
+    # UNION per factor (stage-1c P2): a factor can have one lost AND one
+    # inadmissible level; a dict merge would keep only one of the two lists.
+    for fid, lvs in _union_levels({k: v for k, v in inadmissible_levels.items()
+                                   if k not in all_bad}, lost_levels).items():
         for lv in lvs:
             excluded = list(excluded) + [{fid: lv}]
     # ── the constraint models (constrained response-surface practice) ──────
@@ -4181,6 +4222,7 @@ def run_stage(
     mo_record = None
     mo_rejected: list[str] = []
     mo_lof: list[str] = []
+    mo_untested: list[str] = []
     mo_survivors: set[str] = set()
     if pareto_stage.objectives(pol):
         _pref_cand, mo_record = pareto_stage.fit_record(
@@ -4190,6 +4232,7 @@ def run_stage(
         )
         mo_rejected = pareto_stage.models_rejected(_omodels)
         mo_lof = pareto_stage.models_rejected(_omodels, lack_of_fit_only=True)
+        mo_untested = pareto_stage.models_untested(_omodels)
         mo_survivors = pareto_stage.survivors(_omodels, factors)
         if _pref_cand is not None:
             rec = _pref_cand
@@ -4310,7 +4353,8 @@ def run_stage(
     # not REJECTED, and every finalist is re-measured anyway) but certification
     # is withheld with the basis named (``_finish_confirm``).
     adequate, adequacy_basis = _model_adequacy(
-        decision, mo_rejected, fit, untested, design_for_fit)
+        decision, mo_rejected, fit, untested, design_for_fit,
+        mo_untested=mo_untested)
     _write_json(iter_dir / "recommendation.json", {
         "stage": stage_name,
         "iteration": iteration,
@@ -4569,6 +4613,8 @@ def run_stage(
     # adequacy is None, never True.
     if adequate is None and obs.get("model_adequate") is True:
         obs["model_adequate"] = None
+    if adequate is False:
+        obs["model_adequate"] = False
     if mo_record is not None:
         # NOT the semantic "optimum outside the hull" exception. That guard
         # says the declared ranges cannot contain THE optimum; a front has no
@@ -5117,6 +5163,7 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
     # The reserved supported-feasible seat may displace a model-ranked
     # nomination, never one of these.
     measured_seat: list[bool] = []
+    barred = _barred_levels(work_dir)
 
     def _add(levels, why: str, *, allow_measured_invalid: bool = False,
              measured: bool = False) -> None:
@@ -5152,6 +5199,14 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             return
         lv = dict(levels)
         if any(lv == f for f in finalists) or len(finalists) >= k:
+            return
+        if _names_barred_level(lv, barred):
+            # ONE RULE (stage-1c P1): a lost or inadmissible-wherever-measured
+            # categorical level is never seated -- not even the baseline --
+            # so it can never win confirm and the report never recommends it.
+            logger.info(
+                "confirm round %d: not seating %s (%s) -- it names a lost or "
+                "inadmissible categorical level %s.", rnd, lv, why, barred)
             return
         if not allow_measured_invalid and _measured_infeasible_contains(work_dir, lv):
             logger.info(
@@ -5350,7 +5405,8 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         else:
             logger.info(
                 "confirm round %d: the fitting stage reported model_adequate="
-                "false (lack of fit), so the shortlist is SEEDED from the "
+                "false (its lack-of-fit test, or an objective model's, rejected), "
+                "so the shortlist is SEEDED from the "
                 "leading MEASURED valid configurations rather than from the "
                 "model's argmax — the terminal comparison must not be anchored "
                 "on a surface the data rejected. The model's ranked candidates "
@@ -6823,11 +6879,16 @@ def _corner_marginal_best(work_dir, iteration, factor_ids, primary: str,
     return out
 
 
-def _model_adequacy(decision, mo_rejected, fit, untested, design_for_fit):
-    """``(model_adequate, basis)`` -- see the block that calls it."""
+def _model_adequacy(decision, mo_rejected, fit, untested, design_for_fit,
+                    mo_untested=()):
+    """``(model_adequate, basis)`` -- see the block that calls it. A secondary
+    objective's model with no lack-of-fit verdict makes it unknown too
+    (stage-1c P6)."""
     if Trigger.LACK_OF_FIT in set(decision.triggers) or mo_rejected:
         return False, None
-    if fit.lack_of_fit_p is None and not fit.lof_exact_fit:
+    if fit.lof_exact == "rejected":
+        return False, None
+    if (fit.lack_of_fit_p is None and not fit.lof_exact_fit) or mo_untested:
         return None, "lack_of_fit_not_computable"
     if untested:
         return None, "curvature_untested"

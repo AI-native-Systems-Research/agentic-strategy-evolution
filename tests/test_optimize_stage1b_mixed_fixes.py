@@ -275,5 +275,7 @@ def test_N5_a_deterministic_exact_fit_stays_adequate_a_deterministic_misfit_is_u
     assert _model_adequacy(decide_after_screen(fit, []), False, fit, {}, d) == (True, None)
     curved = [y + (1.0 if p.role == "center" else 0.0) for y, p in zip(lin, d.points)]
     fit2 = fit_effects(d, curved, factor_ids=["A", "B"])
+    # Superseded by stage-1c P5: with lack-of-fit df, nonzero residuals against
+    # zero pure error are an ESTABLISHED lack of fit, not "not computable".
     assert _model_adequacy(decide_after_screen(fit2, []), False, fit2, {}, d) == (
-        None, "lack_of_fit_not_computable")
+        False, None)

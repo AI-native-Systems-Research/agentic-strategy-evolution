@@ -103,7 +103,9 @@
       "minLength": 1,
       "description": "GENUINELY OPTIONAL, not nullable: _run_report includes this key ONLY when a semantic exception ended the epoch, and its value is the guard that fired (state plus the `when` clause). Its mere PRESENCE is the signal -- a reader can tell an ordinary report from one written on the way out of a failed epoch without reading the log, and epoch_end-<epoch>.json carries the full record next to it. Its presence also suppresses the `model` rung of the ladder."
     },
-    "model_adequate": {"type": "null", "description": "Present only when the latest fitting stage's model adequacy is UNKNOWN (stage-1b N4); see recommendation.schema.json."},
+    "model_adequate": {"type": ["null", "boolean"], "enum": [null, false], "description": "Present only when the latest fitting stage's model adequacy is UNKNOWN (null; stage-1b N4) or REJECTED (false; stage-1c P4 -- visible even when confirm never ran); see recommendation.schema.json."},
+    "all_levels_inadmissible": {"type": "array", "items": {"type": "string"}, "description": "Copied from the latest recommendation.json: categoricals every level of which was inadmissible wherever measured -- none excluded, so the recommendation necessarily names one (stage-1c P3)."},
+    "aliases_not_assessed": {"type": "array", "items": {"type": "string"}, "description": "Copied from the latest recommendation.json: span-aliased 2fi alias_consequential cannot assess (stage-1c P8)."},
     "model_adequate_basis": {"enum": ["lack_of_fit_not_computable", "curvature_untested", "curvature_not_isolated", null]},
     "curvature_untested_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Copied from the latest recommendation.json when non-empty: choice levels the curvature check never looked under."},
     "lost_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Copied from the latest recommendation.json when non-empty: categorical levels with no retained run, never recommended."},
