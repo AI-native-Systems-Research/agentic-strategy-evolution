@@ -303,12 +303,12 @@ def true_front_hypervolume(surface: Surface, levels_list) -> tuple[float, float]
     REPORTED by what they are actually worth, not by what it measured."""
     from orchestrator.optimize import pareto
     from orchestrator.optimize.synthetic import (
-        candidate_grid,
+        _truth_grid,
         objective_values,
         true_front,
     )
 
-    grid = [lv for lv in candidate_grid(list(surface.factors))
+    grid = [lv for lv in _truth_grid(surface)
             if surface.invalid is None or not surface.invalid(lv)]
     objs = [pareto.Objective(o["metric"], o["direction"], {}) for o in surface.objectives]
     frame = pareto.make_frame(objs, [objective_values(surface, lv) for lv in grid], {})

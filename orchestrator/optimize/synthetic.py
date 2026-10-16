@@ -64,6 +64,7 @@ from __future__ import annotations
 
 import argparse
 import itertools
+import math
 import json
 import random
 import sys
@@ -604,6 +605,10 @@ PARETO_SURFACES: dict[str, Callable[[], Surface]] = {
 }
 
 
+#: Largest oracle grid ``candidate_grid`` will materialise (~200 MB).
+MAX_ORACLE_POINTS = 1_000_000
+
+
 def candidate_grid(factors_raw: list[dict], *, max_numeric_points: int = 9) -> list[dict]:
     """Every level combination worth predicting: declared levels, plus for
     numeric factors with a grid up to ``max_numeric_points`` snapped points
@@ -638,6 +643,19 @@ def candidate_grid(factors_raw: list[dict], *, max_numeric_points: int = 9) -> l
             axes.append(sorted(pts))
         else:
             axes.append(levels)
+    size = math.prod(len(a) for a in axes)
+    if size > MAX_ORACLE_POINTS:
+        # The oracle materialises every combination as a dict (~200 bytes
+        # each). A grid of 10 values over 8 knobs is 10^8 points, ~18 GB per
+        # process before objectives are stored -- measured: eight parallel
+        # benchmark workers each grew to 26-39 GB and froze a 64 GB machine.
+        # Refuse loudly instead: a many-knob surface must declare its
+        # ``active`` factors (``_truth_grid``) so the truth stays exact.
+        raise ValueError(
+            f"the oracle grid over {len(axes)} factors has {size:,} points "
+            f"(> {MAX_ORACLE_POINTS:,}); declare Surface.active so the truth "
+            f"enumerates only the factors the response reads"
+        )
     return [dict(zip(ids, combo)) for combo in itertools.product(*axes)]
 
 
