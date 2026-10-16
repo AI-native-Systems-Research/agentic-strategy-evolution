@@ -64,3 +64,45 @@ def test_the_oracle_refuses_a_grid_that_would_exhaust_memory():
     with pytest.raises(ValueError, match="declare Surface.active"):
         true_optimum(s)
     assert true_optimum(sparse_knobs(8))  # with active factors: exact and cheap
+
+
+def _judged(s, lv) -> tuple:
+    """Everything the oracle judges a configuration by, deterministically."""
+    import random
+
+    out = [s.fn(lv), s.extra_observables(lv)]
+    for f in (s.invalid, s.fails_at):
+        out.append(None if f is None else f(lv))
+    ex = s.exception_at
+    out.append(None if ex is None else all(lv.get(i) == v for i, v in ex.items()))
+    if s.noisy_observables is not None:
+        out.append(s.noisy_observables(lv, random.Random(0)))
+    out += [o["fn"](lv) for o in s.objectives]
+    return tuple(out)
+
+
+def _inert_changes_something(s, *, trials: int = 200, seed: int = 0) -> bool:
+    import random
+
+    rng = random.Random(seed)
+    levels = {f["id"]: list(f["levels"]) for f in s.factors}
+    inert = [i for i in levels if i not in s.active]
+    for _ in range(trials):
+        lv = {i: rng.choice(v) for i, v in levels.items()}
+        moved = {**lv, **{i: rng.choice(levels[i]) for i in inert}}
+        if _judged(s, lv) != _judged(s, moved):
+            return True
+    return False
+
+
+@pytest.mark.parametrize("k", [4, 8, 16])
+def test_perturbing_inert_factors_changes_nothing_the_oracle_judges(k):
+    """B8: ``Surface.active`` is a CLAIM the oracle's shortcut rests on (it
+    enumerates only the active grid). Property: moving every inert factor
+    leaves the response, the observables and every validity predicate
+    unchanged -- and a surface whose declared ``active`` omits a live factor
+    is caught by the same check."""
+    s = sparse_knobs(k)
+    assert s.active and not _inert_changes_something(s)
+    lying = dataclasses.replace(s, active=s.active[:2])  # X02 is live
+    assert _inert_changes_something(lying)
