@@ -211,7 +211,9 @@ none of these paths.
    Bonferroni over every (member, rival, objective), because the statuses are
    one claim about all members at once and the certified point is selected
    from them (review A3; it was per point, `delta / ((N-1) K)`).
-   `pareto.predicted_rivals` records whether predicted rivals were used.
+   `pareto.predicted_rivals` records whether predicted rivals were used; a
+   configuration the campaign MEASURED inadmissible is never a predicted rival
+   (the predicted front predates the confirm round that struck it off).
 6a. **An unknown epsilon stays unknown** (review A2). A `pct` epsilon whose
    reference is zero is `null` throughout: it resolves no rival, a predicted
    rival merely ahead on that objective stays unresolved, no gap threshold is
