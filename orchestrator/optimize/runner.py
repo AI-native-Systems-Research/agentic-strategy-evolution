@@ -1664,10 +1664,14 @@ def make_config_runner(
     # read as one with eighteen. And NOT `cwd` when there is no log dir: `cwd` is
     # the target repo, so scratch landed in its working tree. Beside the
     # iteration's other artifacts when there is one; a private temp dir when not.
-    if log_dir is not None:
-        run_root = Path(log_dir).parent / "run_dirs"
-    else:
-        run_root = Path(tempfile.mkdtemp(prefix="nous-run-dirs-"))
+    #
+    # ALWAYS a private temp dir, never under the work_dir: NOUS_RUN_DIR is
+    # handed to target code, and a path inside the work_dir would put the
+    # campaign's records a few `..` away (round 4). A run dir the adapter wrote
+    # into is COPIED back to `runs/iter-N/run_dirs/row-K/` afterwards, so the
+    # evidence is kept without the target ever learning where it is kept.
+    run_root = Path(tempfile.mkdtemp(prefix="nous-run-dirs-"))
+    keep_root = Path(log_dir).parent / "run_dirs" if log_dir is not None else None
 
     def run(row) -> dict:
         cmd = shlex.split(command_template)
@@ -1702,10 +1706,20 @@ def make_config_runner(
         finally:
             # An empty run dir is noise; one the adapter wrote into is evidence
             # and stays. rmdir refuses a non-empty directory, which is the test.
+            rd = Path(iso["NOUS_RUN_DIR"])
             try:
-                Path(iso["NOUS_RUN_DIR"]).rmdir()
+                rd.rmdir()
             except OSError:
-                pass
+                if keep_root is not None:
+                    import shutil
+
+                    try:
+                        shutil.copytree(rd, keep_root / rd.name, symlinks=True,
+                                        dirs_exist_ok=True)
+                    except OSError as exc:
+                        logger.warning("could not keep run dir %s: %s", rd, exc)
+                    finally:
+                        shutil.rmtree(rd, ignore_errors=True)
 
     def _run_command(row, cmd, *, cwd, env_extra, timeout, log_dir):
         try:

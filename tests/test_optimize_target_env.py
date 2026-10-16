@@ -8,6 +8,7 @@ import os
 import py_compile
 import struct
 import sys
+from pathlib import Path
 
 from orchestrator.optimize import runner
 
@@ -42,3 +43,30 @@ def test_the_target_environment_redirects_bytecode_and_hides_gate_secrets(monkey
     env = runner.target_env()
     assert os.path.isdir(env["PYTHONPYCACHEPREFIX"])
     assert "NOUS_GATE_KEY_PATH" not in env
+
+
+def test_the_run_dir_handed_to_target_code_is_outside_the_work_dir_and_kept(tmp_path):
+    """Round 4, item 1: NOUS_RUN_DIR must not put the work_dir a few `..` away;
+    what the adapter wrote is still kept beside the iteration."""
+    import json
+    import sys
+
+    from orchestrator.optimize.matrix import ConfigRow
+
+    wd = tmp_path / "campaigns" / "run1"
+    log_dir = wd / "runs" / "iter-2" / "failed_runs"
+    log_dir.mkdir(parents=True)
+    script = tmp_path / "adapter.py"
+    script.write_text(
+        "import json, os, pathlib\n"
+        "rd = os.environ['NOUS_RUN_DIR']\n"
+        "pathlib.Path(rd, 'evidence.txt').write_text('built')\n"
+        "print(json.dumps({'m': 1.0, 'rd': rd}))\n")
+    run = runner.make_config_runner(f"{sys.executable} {script}", cwd=tmp_path,
+                                    metric_path="m", timeout=60, log_dir=log_dir)
+    out = run(ConfigRow(row_index=3, levels={}, role="corner", replicate=0, apply={}))
+    rd = out["rd"]
+    assert str(wd.resolve()) not in str(Path(rd).resolve()), rd
+    kept = wd / "runs" / "iter-2" / "run_dirs" / Path(rd).name / "evidence.txt"
+    assert kept.read_text() == "built"
+    assert not Path(rd).exists(), "the temp run dir is removed after copying back"
