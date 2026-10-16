@@ -62,6 +62,30 @@ EXPLOIT, EXPLORE = "exploit", "explore"
 
 # ─── budget ──────────────────────────────────────────────────────────────────────────────────
 
+BIG_REPLIES_PER_ARM = 2.0
+
+
+def largest_reply_usd(work_dir: Path) -> float:
+    """Most expensive single model reply recorded in this campaign's metrics (0 when none)."""
+    from orchestrator.judge_profile import read_jsonl
+    from orchestrator.v7_execute import _metrics_path
+    vals = [_v for r in read_jsonl(_metrics_path(work_dir))
+            if isinstance(_v := r.get("max_reply_usd"), (int, float))]
+    return max(vals, default=0.0)
+
+
+def arm_settings(campaign: dict, work_dir: Path) -> V8Settings:
+    """v8 settings with the arm floor raised to afford two of the campaign's largest replies.
+
+    Live p58: replies ran to the 64k output limit at ~$5 each, so $4-6 arms were stopped after one
+    reply and never submitted a solution; fewer, larger arms let a session act on its reasoning.
+    """
+    import dataclasses
+    s8 = v8_settings(campaign)
+    floor = max(s8.arm_floor_usd, BIG_REPLIES_PER_ARM * largest_reply_usd(work_dir))
+    return dataclasses.replace(s8, arm_floor_usd=round(floor, 2)) if floor > s8.arm_floor_usd else s8
+
+
 def winner_reserve(s: V7Settings, s8: V8Settings) -> float:
     """What screening must leave for the winner's continuation."""
     return max(s.winner_min_usd, s8.winner_share * s.iteration_budget_usd)
@@ -585,7 +609,7 @@ def _screen(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, ke
     resumes at the result recovery instead of screening again.
     """
     adir = Path(iter_dir) / ARMS_DIR
-    s, s8 = v7_settings(campaign), v8_settings(campaign)
+    s, s8 = v7_settings(campaign), arm_settings(campaign, work_dir)
     patch = Path(iter_dir) / "patches" / f"{key}.patch"
     if (state["sessions"].get(key) or {}).get("status") != "ended":
         hard = screening_hard_cap(s, s8, cap, remaining(), waiting)
@@ -715,6 +739,7 @@ def run_v8_execute(dispatcher, campaign: dict, work_dir: Path, iter_dir: Path, i
         rec = state["sessions"].get(key) or {}
         if rec.get("status") == "done":
             continue
+        s8 = arm_settings(campaign, work_dir)
         screened = any((state["sessions"].get(k) or {}).get("status") == "done"
                        and (state["sessions"].get(k) or {}).get("outcome") != SKIPPED for k, _ in arms)
         # The first arm always runs; a later one is skipped when the floor no longer fits above the reserve.

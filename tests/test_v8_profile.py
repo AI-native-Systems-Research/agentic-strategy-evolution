@@ -244,6 +244,16 @@ class TestTranscriptCaps:
         assert iteration_spent(c, tmp_path, it) == pytest.approx(2.25)
         assert "max_budget_stop" in (tmp_path / "retry_log.jsonl").read_text()  # and no wrap-up turn
 
+    def test_metrics_row_records_the_largest_single_reply(self, monkeypatch, tmp_path, spawned):
+        runner, _ = _transcript_runner(monkeypatch, tmp_path, spawned, replies=2)
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=runner, max_retries=1)
+        with d.session_budget(9.0, label="h-main"):
+            d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        assert _metrics(tmp_path)[-1]["max_reply_usd"] == pytest.approx(0.75)  # 10k output tokens
+
     def test_default_locator_finds_session_and_subagent_files(self, tmp_path):
         from orchestrator.sdk_dispatch import default_transcript_paths, project_key
         cwd = tmp_path / "wt.x"
@@ -1182,6 +1192,21 @@ class TestFundedArms:
         left = remaining - hard - CAP_OVERSHOOT_USD * 0.9
         assert repair_funded(s, s8, left, waiting=1)
         assert arm_funded(s, s8, left - s8.repair_budget_usd - CAP_OVERSHOOT_USD * 0.9)
+
+    def test_floor_grows_to_two_of_the_largest_replies(self, tmp_path):
+        from orchestrator.v8_execute import arm_settings
+        c = _v8()
+        assert arm_settings(c, tmp_path).arm_floor_usd == 4.0
+        (tmp_path / "llm_metrics.jsonl").write_text(json.dumps({"phase": "design", "max_reply_usd": 5.2}) + "\n")
+        assert arm_settings(c, tmp_path).arm_floor_usd == pytest.approx(10.4)
+
+    def test_after_a_5_dollar_reply_one_well_funded_family_is_screened(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _setup(tmp_path, monkeypatch, {"h-main": 50, "h-alternative-1": 90})
+        (work / "llm_metrics.jsonl").write_text(json.dumps({"phase": "design", "max_reply_usd": 5.0}) + "\n")
+        fake.cost_tokens = 134_000  # each session spends ~$10, its whole raised floor
+        _execute(repo, work, it, campaign, d)
+        assert fake.names() == ["evaluator", "h-main", "winner:h-main"]
+        assert dict(fake.calls)["h-main"]["max_cost_usd"] >= 10.0
 
     def test_a_repair_that_would_starve_a_waiting_arm_is_not_run(self):
         from orchestrator.v8_execute import repair_funded, winner_reserve

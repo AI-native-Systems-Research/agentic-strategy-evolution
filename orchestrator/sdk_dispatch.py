@@ -224,6 +224,10 @@ class TranscriptMeter:
     def cost(self) -> float:
         return usage_cost(self.totals(), self._rates)
 
+    def max_reply_cost(self) -> float:
+        with self._lock:
+            return max((usage_cost(u, self._rates) for u in self._per_msg.values()), default=0.0)
+
 
 def _load_methodology_preamble(methodology_dir: Path) -> str | None:
     """Load the static methodology text as a single cached system block.
@@ -637,6 +641,8 @@ class SDKResult:
     subtype: str | None = None
     # Token-ruler cost of the last model reply (measured only for dollar-capped sessions); sizes wrap-ups.
     last_turn_cost_usd: float = 0.0
+    # Token-ruler cost of the session's most expensive single reply (v8, from its transcript).
+    max_reply_usd: float = 0.0
 
     def __post_init__(self) -> None:
         if self.is_error and not self.error_message.strip():
@@ -809,10 +815,11 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
         def _with_transcript_usage(res: SDKResult) -> SDKResult:
             if meter is None or not transcript_caps:
                 return res
+            import dataclasses as _dc
             best = _best_usage(_usage_of(res))
+            res = _dc.replace(res, max_reply_usd=max(res.max_reply_usd, meter.max_reply_cost()))
             if usage_cost(best, cost_rates) <= usage_cost(_usage_of(res), cost_rates):
                 return res
-            import dataclasses as _dc
             return _dc.replace(res, cost_usd=usage_cost(best, cost_rates),
                                **{k: int(best.get(k, 0) or 0) for k in _USAGE_KEYS})
 
@@ -846,6 +853,7 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
                              error_message=f"session cost ${spent:.2f} reached the ${max_cost_usd:.2f} cap",
                              subtype="error_max_budget_usd", cost_usd=spent,
                              duration_ms=int((time.time() - t0) * 1000), num_turns=n, session_id=session_id,
+                             max_reply_usd=meter.max_reply_cost() if meter is not None else 0.0,
                              **{k: int(totals.get(k, 0) or 0) for k in _USAGE_KEYS})
 
         async def _session() -> SDKResult:
@@ -1582,6 +1590,8 @@ class SDKDispatcher(CLIDispatcher):
 
     def _log_metrics_row(self, result: SDKResult, budget: float | None = None) -> None:
         extra = {} if budget is None else {"budget_usd": budget, "session_label": self._session_label}
+        if getattr(result, "max_reply_usd", 0.0):
+            extra["max_reply_usd"] = round(float(result.max_reply_usd), 4)
         log_metrics(self._metrics_path, {
             "dispatcher": "sdk",
             "role": self._current_role,

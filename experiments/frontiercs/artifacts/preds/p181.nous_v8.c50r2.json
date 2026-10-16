@@ -1,0 +1,72 @@
+{
+  "problem_id": "181",
+  "track": "algorithmic",
+  "agent": "nous",
+  "label": "p181_v8c50r2",
+  "model": "claude-opus-4-6",
+  "final_score": 47.85,
+  "cost_usd": 52.68,
+  "n_clean_candidates": 11,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/research_p181_v8c50r2_measured_20261016_081947/m0079_092142_score47.13.cpp",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p181-v8c50r2/runs/iter-1/patches/baseline.patch",
+      "score": 35.4326
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p181-v8c50r2/runs/iter-1/patches/h-alternative-1.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p181-v8c50r2/runs/iter-1/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p181-v8c50r2/runs/iter-2/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p181-v8c50r2/runs/iter-3/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p181_v8c50r2_measured_20261016_081947/m0089_092517_score47.67.cpp",
+      "score": 46.311609999999995
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p181_v8c50r2_measured_20261016_081947/m0093_092824_score47.61.cpp",
+      "score": 40.02131000000001
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p181_v8c50r2_measured_20261016_081947/m0079_092142_score47.13.cpp",
+      "score": 47.85106999999999
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p181_v8c50r2_measured_20261016_081947/m0073_091802_score47.02.cpp",
+      "score": 46.47893499999999
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p181_v8c50r2_measured_20261016_081947/m0064_090704_score46.79.cpp",
+      "score": 46.590865
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p181_v8c50r2_measured_20261016_081947/m0074_091831_score46.78.cpp",
+      "score": 45.65833
+    }
+  ],
+  "elapsed_s": 4820.7,
+  "cost_usd_tokenbased": 57.35,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true,
+  "stop_rule": "finish the iteration in progress at $50.0 (ceiling $57.0)",
+  "best_at_budget": 47.1,
+  "budget_reached_at": 1792157451.322628
+}
