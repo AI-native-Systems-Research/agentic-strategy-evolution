@@ -2432,8 +2432,8 @@ def _union_levels(*maps) -> dict:
 def _epoch_recommendations(work_dir) -> list[dict]:
     """Every fitting-stage recommendation.json of this epoch, in order."""
     out = []
-    for rp in _this_epoch_runs(work_dir):
-        p = Path(rp).parent / "recommendation.json"
+    for d in _this_epoch_dirs(work_dir):
+        p = d / "recommendation.json"
         if p.exists():
             try:
                 out.append(json.loads(p.read_text()))
@@ -5671,6 +5671,13 @@ def _latest_confirmation(work_dir) -> dict | None:
     so a lexicographic walk silently returns a STALE record on any campaign
     reaching double digits. Two consumers: round r > 1's finalist carry-over,
     and ``_run_report``'s top rung.
+
+    EPOCH-SCOPED (``_this_epoch_runs``): a recompiled epoch is a new
+    pre-registration with its own error budget, so an earlier epoch's
+    certificate never answers for it -- otherwise an epoch that ended before
+    confirming reported the previous epoch's certified finalist, bound and
+    front as its own. The earlier result stays in its own iteration's
+    artifacts and in ``report.json["error_budget"]``.
     """
     import json
 
@@ -5680,15 +5687,7 @@ def _latest_confirmation(work_dir) -> dict | None:
     if not runs.exists():
         return None
 
-    def _iter_index(path: Path) -> int:
-        try:
-            return int(path.name.split("-", 1)[1])
-        except (IndexError, ValueError):
-            return -1
-
-    for d in sorted(
-        (p for p in runs.iterdir() if p.is_dir()), key=_iter_index, reverse=True,
-    ):
+    for d in reversed(_this_epoch_dirs(work_dir)):
         p = d / "confirmation.json"
         if not p.exists():
             continue
@@ -7262,6 +7261,43 @@ def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
     means = [(lv, sum(vs) / len(vs), len(vs)) for lv, vs in seen.values()]
     ranked = sorted(means, key=lambda t: -sign * t[1])
     return [{"levels": lv, primary: m, "n": n} for lv, m, n in ranked[:max(1, int(k))]]
+
+
+def _this_epoch_dirs(work_dir) -> list[Path]:
+    """The ``runs/iter-*`` directories of THIS epoch, in numeric order.
+
+    Same epoch rule as ``_this_epoch_runs`` (a ``design_matrix.json`` naming a
+    DIFFERENT policy hash excludes the iteration; no matrix or no hash keeps
+    it), but over directories rather than ``runs.jsonl`` files: an iteration
+    that wrote a recommendation.json or confirmation.json but no rows yet (an
+    interrupted iteration, a hand-built fixture) is still this epoch's.
+    """
+    try:
+        current = policy_mod.policy_hash(policy_mod.read_policy(Path(work_dir)))
+    except Exception:  # no policy yet: nothing to scope by
+        current = None
+    runs = Path(work_dir) / "runs"
+    if not runs.exists():
+        return []
+
+    def _idx(d: Path) -> int:
+        try:
+            return int(d.name.split("-", 1)[1])
+        except (IndexError, ValueError):
+            return -1
+
+    out = []
+    for d in sorted((d for d in runs.glob("iter-*") if d.is_dir()), key=_idx):
+        if current is not None:
+            dm = d / "design_matrix.json"
+            try:
+                h = json.loads(dm.read_text()).get("policy_hash") if dm.exists() else None
+            except (OSError, ValueError):
+                h = None
+            if h and h != current:
+                continue
+        out.append(d)
+    return out
 
 
 def _this_epoch_runs(work_dir) -> list[Path]:

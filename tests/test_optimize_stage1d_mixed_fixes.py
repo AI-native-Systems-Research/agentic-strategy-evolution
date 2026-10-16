@@ -404,3 +404,50 @@ def test_R6_an_epoch_without_a_fit_never_reports_the_previous_epochs_model(tmp_p
     assert rep["recommendation"].get("value") != 123.0
     assert rep.get("residual_regret_model") in (None, {}), rep.get("residual_regret_model")
     assert rep.get("epsilon") != 5.0
+
+
+def test_R7_an_earlier_epochs_certificate_never_answers_for_a_recompiled_epoch(tmp_path):
+    """Merge-gate probe: epoch 1 certified lfu (mean 99). Epoch 2 was recompiled
+    and ended before confirming. A recompiled epoch is a new pre-registration
+    with its own error budget, so the report must not claim epoch 1's
+    certificate as its own."""
+    from types import SimpleNamespace
+
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.policy import compile_policy, policy_hash, write_policy
+    from orchestrator.optimize.stage_runner import _run_report
+
+    s = Surface(name="r7", fn=lambda lv: 0.0,
+                factors=(_numeric("A"), _choice("POL", levels=("lru", "lfu", "arc"))))
+    camp = synthetic_campaign(s)
+    pol1 = compile_policy(camp)
+    it1 = tmp_path / "runs" / "iter-4"
+    it1.mkdir(parents=True)
+    (it1 / "runs.jsonl").write_text("")
+    (it1 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol1)}))
+    (it1 / "confirmation.json").write_text(json.dumps({
+        "certified": True, "confirmed_at_levels": {"A": 2, "POL": "lfu"},
+        "winner": {"levels": {"A": 2, "POL": "lfu"}, "mean": 99.0},
+        "finalists": [{"key": "f0", "levels": {"A": 2, "POL": "lfu"}, "mean": 99.0}],
+        "residual_regret_terminal": 0.1, "epsilon": 2.0,
+        "certification_withheld": []}))
+    pol2 = dict(pol1, epoch=2)
+    write_policy(tmp_path, pol2)
+    it5 = tmp_path / "runs" / "iter-5"
+    it5.mkdir(parents=True)
+    (it5 / "design_matrix.json").write_text(json.dumps({"policy_hash": policy_hash(pol2)}))
+    (it5 / "runs.jsonl").write_text(json.dumps({
+        "row_index": 0, "status": "complete", "role": "corner",
+        "levels": {"A": 16, "POL": "arc"}, "response": {"m": 1.0}}) + "\n")
+
+    class _Eng(SimpleNamespace):
+        def transition(self, *_a, **_k):
+            pass
+
+    _run_report(_Eng(), camp, tmp_path, 5, pol2, recommendation_levels=None)
+    rep = json.loads((tmp_path / "report.json").read_text())
+    assert rep["certified"] is False
+    assert rep["recommendation"]["basis"] != "certified", rep["recommendation"]
+    assert rep["recommendation"].get("value") != 99.0
+    assert rep["finalists"] == []
+    assert rep["certification_withheld"] == ["no_terminal_discrimination"]

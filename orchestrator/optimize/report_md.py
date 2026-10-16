@@ -136,9 +136,14 @@ def _candidate_space_note(work_dir: Path) -> list[str]:
     report is unchanged). The fitted argmax, shortlist, model regret bound and
     predicted front of such a stage are over the evaluated set only.
     """
+    from orchestrator.optimize.stage_runner import _this_epoch_dirs
+
     out = []
-    for p in sorted((work_dir / "runs").glob("iter-*/recommendation.json"),
-                    key=lambda q: int(q.parent.name.split("-")[1])):
+    # THIS epoch's stages only: report.json carries this epoch's
+    # candidate_space, and the note must not describe another epoch's search.
+    for p in (d / "recommendation.json" for d in _this_epoch_dirs(work_dir)):
+        if not p.exists():
+            continue
         cs = (_read_json(p) or {}).get("candidate_space")
         if not isinstance(cs, dict) or cs.get("exhaustive", True):
             continue
@@ -202,16 +207,20 @@ def _out_of_hull_axes(work_dir: Path) -> list[str]:
     the next epoch should bracket the direction, not jump to the extrapolated
     value.
     """
-    import glob
     import math
 
     import yaml
 
     from orchestrator.optimize.factors import _from_axis, _to_axis, parse_factors, snap_to_grid
 
-    recs = sorted(glob.glob(str(work_dir / "runs" / "iter-*" / "recommendation.json")),
-                  key=lambda p: int(Path(p).parent.name.split("-")[1]))
-    sp = (_read_json(Path(recs[-1])) or {}).get("stationary_point") if recs else None
+    from orchestrator.optimize.stage_runner import _epoch_recommendations
+
+    # THIS epoch's latest stationary point: it is in coded units relative to
+    # the ranges it was fitted on, and is decoded below against THIS epoch's
+    # factors -- an earlier epoch's point would be decoded against the wrong
+    # ranges and the "widen to X" advice would be wrong.
+    _recs = _epoch_recommendations(work_dir)
+    sp = _recs[-1].get("stationary_point") if _recs else None
     # The campaign THIS epoch registered (stage_runner writes it at compile);
     # campaign.yaml is the first epoch's and goes stale once levels are revised.
     epoch_copy = work_dir / f"campaign.epoch-{_epoch_of(work_dir)}.yaml"
