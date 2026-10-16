@@ -1,6 +1,13 @@
 """The build agent's write scope, CHECKED by diffing what the build changed,
 and the integrity of Nous's own build-gate records.
 
+ROLE SINCE THE CLEAN-CHECKOUT MODEL (clean_tree.py): an EARLY, INFORMATIVE
+signal. It explains what the agent tried and stops a misbehaving build before
+anything is measured, but the correctness of every measurement no longer
+depends on it: verify and the epoch run in a fresh checkout of the pre-build
+commit plus the recorded mechanism patch, where none of the writes this module
+looks for exist.
+
 The build agent runs with ``bypassPermissions`` and its cwd is the target repo
 (and the default work_dir ``<repo>/.nous/<run>/`` is inside its reach). The
 prompt TELLS it where it may write; this module CHECKS what it did, and every
@@ -78,6 +85,18 @@ GATE_RECORDS = {
                                   "tolerance_pct", "workload_seeds",
                                   "workload_seed_env"),
 }
+
+
+#: Ignored source/config files up to this size are hashed by bytes.
+IGNORED_HASH_LIMIT = 1 << 20
+
+#: What the write-scope diff does not see, recorded in every build_scope.json.
+NOT_CHECKED = (
+    "writes outside the repository (home directory, system libraries)",
+    "edits made and reverted within the agent call",
+    "dependency and build-output trees: " + ", ".join(sorted(SKIP_DIRS)),
+    "ignored files larger than 1 MiB beyond their size and mtime",
+)
 
 
 class BuildScopeViolation(RuntimeError):
@@ -199,7 +218,13 @@ def snapshot(repo: Path, work_dir: Path | None) -> dict:
                     continue
                 if q.suffix in SOURCE_SUFFIXES or q.name in SOURCE_NAMES:
                     st = q.lstat()
-                    files[rel] = f"ignored:{st.st_size}:{st.st_mtime_ns}"
+                    # By BYTES when small: a size- and mtime-preserving rewrite
+                    # must not pass. Large files fall back to size+mtime, and
+                    # are counted as not byte-checked.
+                    if st.st_size <= IGNORED_HASH_LIMIT or q.is_symlink():
+                        files[rel] = "ignored:" + _sha_file(q)
+                    else:
+                        files[rel] = f"ignored-large:{st.st_size}:{st.st_mtime_ns}"
         subs = {}
         for g in gitlinks:
             sub = repo / g
@@ -319,6 +344,8 @@ def check(campaign: dict, repo: Path, work_dir: Path, before: dict,
         "protected": sorted(protected),
         "outside_scope": outside, "protected_touched": touched_protected,
         "integrity_violations": integrity,
+        "not_checked": list(NOT_CHECKED),
+        "role": "early signal; the measured tree is the clean checkout (clean_tree.py)",
     })
     bad = sorted(set(outside) | set(touched_protected))
     waiver = bc.get("allow_out_of_scope_writes")

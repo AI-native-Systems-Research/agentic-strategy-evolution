@@ -490,3 +490,29 @@ def test_a_build_whose_processes_all_finish_passes_isolation(tmp_path, monkeypat
     wd, build, _ = _adversarial(tmp_path, monkeypatch, act)
     build()
     assert json.loads((Path(wd) / "build_isolation.json").read_text())["survivors"] == []
+
+
+def test_a_size_and_mtime_preserving_rewrite_of_an_ignored_config_is_seen(tmp_path, monkeypatch):
+    import os
+
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+
+    def act(repo, wd):
+        p = repo / "hidden" / "settings.py"
+        st = p.stat()
+        p.write_text("HACK = 2\n")                       # same length as before
+        os.utime(p, ns=(st.st_atime_ns, st.st_mtime_ns))
+
+    def seed(repo):
+        (repo / "hidden").mkdir()
+        (repo / "hidden" / "settings.py").write_text("SAFE = 1\n")
+
+    from orchestrator.optimize import build_scope as bs
+    _, build, _ = _adversarial(
+        tmp_path, monkeypatch, lambda repo, wd: ((repo / "mech.py").write_text("X = 2\n"), act(repo, wd)),
+        extra_tracked={".gitignore": "hidden/\n"})
+    seed(tmp_path / "target")
+    with pytest.raises(OptimizationAborted, match="hidden/settings.py"):
+        build()
+    rec = json.loads((tmp_path / "adv" / "build_scope.json").read_text())
+    assert rec["not_checked"] and "clean checkout" in rec["role"]
