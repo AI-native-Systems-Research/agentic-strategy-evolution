@@ -64,7 +64,7 @@ NOT_DERIVED = frozenset({
     "authored_tests.json", "build_scope.json", "adapter_contract.json",
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
-    "clean_tree.manifest.json", "clean_tree.extras.json",
+    "clean_tree.manifest.json", "clean_tree.extras.json", "clean_tree.probe.json",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
@@ -73,7 +73,7 @@ CARRIED_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json",
                    "authored_tests.json", "build_scope.json", "build_review.json",
                    "clean_tree.json", "mechanism.clean.patch", "gate_records.seal",
                    "build_isolation.json", "clean_tree.manifest.json",
-                   "clean_tree.extras.json")
+                   "clean_tree.extras.json", "clean_tree.probe.json")
 
 #: Bookkeeping files outside the analysis (engine state, ledgers, logs).
 IGNORED = frozenset({
@@ -361,7 +361,7 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
     if _built:
         # A build campaign's records must be sealed: a missing seal file is
         # reported as "unsealed" for every record, not skipped (round 3, B4).
-        for name in (*_gr.BUILD_RECORDS, *_gr.VERIFY_RECORDS):
+        for name in (*_gr.BUILD_RECORDS, *_gr.VERIFY_RECORDS, *_gr.TREE_RECORDS):
             st = _gr.check(orig, name)
             if st not in ("ok", "absent"):
                 result.differences.append(

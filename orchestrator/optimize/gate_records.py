@@ -40,6 +40,9 @@ SEAL_FILE = "gate_records.seal"
 BUILD_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json", "build_scope.json",
                  "clean_tree.json", "mechanism.clean.patch", "mechanism.sha256",
                  "build_isolation.json")
+#: Written when the clean tree is created (at verify), sealed at once.
+TREE_RECORDS = ("clean_tree.manifest.json", "clean_tree.extras.json",
+                "clean_tree.probe.json")
 VERIFY_RECORDS = ("authored_tests.json", "build_review.json")
 
 

@@ -58,6 +58,7 @@ RECORD = "clean_tree.json"
 PATCH = "mechanism.clean.patch"
 MANIFEST = "clean_tree.manifest.json"
 EXTRAS = "clean_tree.extras.json"
+PROBE_RECORD = "clean_tree.probe.json"
 TREE = "tree"
 CODE_SUFFIXES = frozenset({".py", ".pth", ".pyc", ".go", ".rs", ".js", ".mjs", ".cjs",
                            ".ts", ".java", ".rb", ".sh", ".so", ".dylib", ".dll"})
@@ -356,24 +357,48 @@ def _create(repo: Path, work_dir: Path, rec: dict) -> Path:
     extras = copy_extras(Path(repo), dest, rec.get("extras") or [])
     ep = Path(work_dir) / EXTRAS
     if ep.exists():
-        if json.loads(ep.read_text()) != extras:
+        if _sealed_json(work_dir, EXTRAS) != extras:
             raise CleanTreeError(
                 "the worktree_extras copied into the rebuilt clean tree differ from the "
                 "ones first copied (the agent's repo changed them since)")
     else:
         ep.write_text(json.dumps(extras, indent=1, sort_keys=True))
-    probe_imports(dest, Path(repo), rec.get("probe_commands") or [])
+    probe_imports(dest, Path(repo), rec.get("probe_commands") or [],
+                  work_dir=Path(work_dir))
     mf = _manifest(dest)
     mp = Path(work_dir) / MANIFEST
     if mp.exists():
-        # A recreated tree must be byte-identical to the one first measured.
-        prev = json.loads(mp.read_text())
+        # A recreated tree must be byte-identical to the one first measured --
+        # compared against the SEALED manifest, never an unsealed file.
+        prev = _sealed_json(work_dir, MANIFEST)
         if prev != mf:
             raise CleanTreeError("the clean tree rebuilt from the recorded commit and "
                                  "patch differs from the one first created")
     else:
         mp.write_text(json.dumps(mf, indent=1, sort_keys=True))
+    # Sealed right after creation, before the first measurement (round 4,
+    # item 2), and kept in memory: every later integrity check compares with the
+    # in-memory reference when this process created the tree, and with the
+    # seal-verified file otherwise.
+    from orchestrator.optimize import gate_records
+
+    gate_records.seal(work_dir, (MANIFEST, EXTRAS))
+    _REFERENCE[str(Path(work_dir).resolve())] = mf
     return dest
+
+
+#: work_dir -> the manifest this process created (the in-memory reference).
+_REFERENCE: dict[str, dict] = {}
+
+
+def _sealed_json(work_dir: Path, name: str) -> dict:
+    from orchestrator.optimize import gate_records
+
+    st = gate_records.check(Path(work_dir), name)
+    if st != "ok":
+        raise CleanTreeError(f"{name} fails its seal ({st}): the reference the clean "
+                             f"tree is checked against cannot be trusted")
+    return json.loads((Path(work_dir) / name).read_text())
 
 
 #: Probe run with each Python interpreter a target command names: prints every
@@ -406,45 +431,116 @@ print(json.dumps(roots))
 """
 
 
-def _interpreters(cmd: str, cwd: Path) -> list[str]:
+#: Launchers that run ANOTHER program; the interpreter they end up running
+#: cannot be read off the command line (round 4, item 3).
+LAUNCHERS = frozenset({"uv", "uvx", "conda", "mamba", "micromamba", "poetry", "pipenv",
+                       "pdm", "hatch", "rye", "make", "gmake", "sh", "bash", "zsh",
+                       "env", "nix", "nix-shell", "docker", "podman", "npx", "npm",
+                       "go", "cargo", "tox", "nox"})
+#: Version-manager shims: a script that re-dispatches by configuration.
+SHIM_DIRS = (".pyenv/shims", ".asdf/shims", ".rbenv/shims", "shims")
+
+
+def _resolve_interpreter(tok: str, cwd: Path) -> tuple[str | None, str | None]:
+    """``(executable, None)`` for a Python interpreter the command runs
+    DIRECTLY, ``(None, reason)`` when what runs cannot be determined, and
+    ``(None, None)`` when the token is not a Python launcher at all."""
+    name = Path(tok).name
+    if name in LAUNCHERS:
+        return None, f"`{name}` launches another program; its interpreter is not known"
+    is_py = name.startswith("python") or name in ("pytest", "py.test")
+    if not is_py:
+        return None, None
+    exe = tok if os.path.isabs(tok) else (str(cwd / tok) if "/" in tok else shutil.which(tok))
+    if not exe:
+        return None, f"`{tok}` is not on PATH"
+    real = os.path.realpath(exe)
+    if any(sd in exe for sd in SHIM_DIRS) or any(sd in real for sd in SHIM_DIRS):
+        return None, f"`{tok}` is a version-manager shim ({exe}); what it runs depends on configuration"
+    if name in ("pytest", "py.test"):
+        try:
+            first = Path(exe).read_text(errors="replace").splitlines()[0]
+        except (OSError, IndexError):
+            return None, f"cannot read the interpreter of {exe}"
+        if not first.startswith("#!"):
+            return None, f"{exe} has no interpreter line"
+        parts = first[2:].strip().split()
+        if not parts or Path(parts[0]).name == "env":
+            return None, f"{exe} runs `{first[2:].strip()}`; its interpreter is not fixed"
+        exe = parts[0]
+    return exe, None
+
+
+def _interpreters(cmd: str, cwd: Path) -> tuple[list[tuple[str, list[str]]], list[str]]:
+    """``([(exe, flags)], undetermined_reasons)``. ``flags`` are the
+    interpreter's own options (e.g. ``-S``, ``-I``) so the probe runs the same
+    way the command will."""
     import shlex
 
     try:
         toks = shlex.split(cmd)
-    except ValueError:
-        return []
-    out = []
-    for t in toks[:2]:
-        name = Path(t).name
-        if name.startswith("python") or name in ("pytest", "py.test"):
-            exe = t if os.path.isabs(t) else (str(cwd / t) if "/" in t else shutil.which(t))
-            if exe and name in ("pytest", "py.test"):
-                try:
-                    first = Path(exe).read_text().splitlines()[0]
-                    exe = first[2:].strip().split()[0] if first.startswith("#!") else None
-                except (OSError, IndexError):
-                    exe = None
-            if exe:
-                out.append(exe)
-    return out
+    except ValueError as exc:
+        return [], [f"`{cmd[:60]}` cannot be parsed ({exc})"]
+    if not toks:
+        return [], []
+    exe, why = _resolve_interpreter(toks[0], cwd)
+    if why:
+        return [], [why]
+    if exe is None:
+        return [], []                    # not a Python command: nothing to probe
+    flags = []
+    for t in toks[1:]:
+        if t.startswith("-") and t not in ("-m", "-c") and len(t) <= 3:
+            flags.append(t)
+        else:
+            break
+    return [(exe, flags)], []
 
 
-def probe_imports(dest: Path, repo: Path, commands: list[str]) -> None:
+def probe_imports(dest: Path, repo: Path, commands: list[str], *,
+                  work_dir: Path | None = None) -> None:
     """Refuse a clean tree whose Python would import from the AGENT's repo: an
     editable install, a ``.pth`` file or a PYTHONPATH entry pointing there
-    measures the agent's tree silently (round 3, D1)."""
+    measures the agent's tree silently (round 3, D1).
+
+    FAILS CLOSED (round 4, item 3): a probe that cannot run, exits non-zero or
+    prints something unparseable refuses the tree. A command whose interpreter
+    cannot be determined (a launcher such as ``uv run`` or ``make``, a version-
+    manager shim) is not refused -- such commands are legitimate -- but is
+    recorded in ``clean_tree.probe.json`` and listed in report.json
+    ``provenance.waivers`` as not probed."""
     from orchestrator.optimize.runner import target_env
 
     repo_r = str(Path(repo).resolve())
     env = target_env()
+    record = {"probed": [], "not_probed": []}
     for cmd in commands:
-        for exe in _interpreters(cmd, dest):
+        found, reasons = _interpreters(cmd, dest)
+        for r in reasons:
+            record["not_probed"].append({"command": cmd, "reason": r})
+        for exe, flags in found:
             try:
-                proc = subprocess.run([exe, "-c", _PROBE], cwd=str(dest), env=env,
+                proc = subprocess.run([exe, *flags, "-c", _PROBE], cwd=str(dest), env=env,
                                       capture_output=True, text=True, timeout=120)
-                roots = json.loads(proc.stdout) if proc.returncode == 0 else []
-            except (OSError, subprocess.SubprocessError, ValueError):
-                continue
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise CleanTreeError(f"the import probe for `{cmd[:60]}` could not run "
+                                     f"({exc}); the clean tree cannot be shown to import "
+                                     f"only from itself") from exc
+            if proc.returncode != 0:
+                raise CleanTreeError(
+                    f"the import probe for `{cmd[:60]}` failed (exit {proc.returncode}: "
+                    f"{proc.stderr.strip()[:200]}); the clean tree cannot be shown to "
+                    f"import only from itself")
+            try:
+                roots = json.loads(proc.stdout.strip().splitlines()[-1])
+                if not isinstance(roots, list):
+                    raise ValueError("not a list")
+            except (ValueError, IndexError) as exc:
+                raise CleanTreeError(
+                    f"the import probe for `{cmd[:60]}` printed something unparseable "
+                    f"({exc}); the clean tree cannot be shown to import only from itself"
+                ) from exc
+            record["probed"].append({"command": cmd, "interpreter": exe, "flags": flags})
             bad = sorted({r for r in roots
                           if str(Path(r).resolve()) == repo_r
                           or str(Path(r).resolve()).startswith(repo_r + os.sep)})
@@ -456,6 +552,11 @@ def probe_imports(dest: Path, repo: Path, commands: list[str]) -> None:
                     f"would then measure the agent's tree, not the recorded mechanism. "
                     f"Install the package non-editably, or from the clean tree, and use "
                     f"target_system.worktree_extras for ignored assets.")
+    if work_dir is not None:
+        (Path(work_dir) / PROBE_RECORD).write_text(json.dumps(record, indent=2))
+        from orchestrator.optimize import gate_records
+
+        gate_records.seal(work_dir, (PROBE_RECORD,))
 
 
 def integrity_problems(work_dir: Path, rec: dict | None = None) -> list[str]:
@@ -467,11 +568,20 @@ def integrity_problems(work_dir: Path, rec: dict | None = None) -> list[str]:
     mp = Path(work_dir) / MANIFEST
     if not dest.is_dir():
         return [f"the clean tree {dest} is missing"]
-    if not mp.exists():
-        return ["the clean-tree manifest is missing"]
-    want = json.loads(mp.read_text())
+    want = _REFERENCE.get(str(Path(work_dir).resolve()))
+    if want is None:
+        if not mp.exists():
+            return ["the clean-tree manifest is missing"]
+        try:
+            want = _sealed_json(work_dir, MANIFEST)
+        except CleanTreeError as exc:
+            return [str(exc)]
     have = _manifest(dest)
     out = []
+    linked = _multiply_linked(dest)
+    if linked:
+        out.append(f"files with extra hard links (writable through another path): "
+                   f"{linked[:10]}")
     changed = sorted(p for p in want if have.get(p) != want[p])
     if changed:
         out.append(f"files changed or removed: {changed[:10]}")
@@ -481,6 +591,22 @@ def integrity_problems(work_dir: Path, rec: dict | None = None) -> list[str]:
     if new_code:
         out.append(f"new code files or symlinks appeared: {new_code[:10]}")
     return out
+
+
+def _multiply_linked(dest: Path) -> list[str]:
+    """Files in the tree with more than one hard link: their bytes can be
+    changed through another path without touching this one (round 4)."""
+    out = []
+    for p in dest.rglob("*"):
+        rel = p.relative_to(dest).as_posix()
+        if rel == ".git" or rel.startswith(".git/") or p.is_symlink() or not p.is_file():
+            continue
+        try:
+            if p.stat().st_nlink > 1:
+                out.append(rel)
+        except OSError:
+            out.append(rel)
+    return sorted(out)
 
 
 def ensure(repo: Path, work_dir: Path, *, fresh: bool = False) -> Path:

@@ -262,3 +262,125 @@ def test_nous_validate_reports_the_build_preconditions(setup, tmp_path, monkeypa
     with pytest.raises(SystemExit):
         cli.main()
     assert "[build]" in capsys.readouterr().err
+
+
+# ─── round 4: sealed tree records, fail-closed probe, hard links ─────────────
+
+
+def _fresh(setup):
+    repo, wd = setup
+    d = ct.ensure(repo, wd, fresh=True)
+    return repo, wd, d
+
+
+def test_the_manifest_is_sealed_when_the_tree_is_created(setup):
+    from orchestrator.optimize import gate_records as gr
+
+    repo, wd, d = _fresh(setup)
+    assert gr.check(wd, ct.MANIFEST) == "ok" and gr.check(wd, ct.EXTRAS) == "ok"
+
+
+def test_a_forged_manifest_cannot_bless_a_tampered_tree(setup):
+    """Item 2: rewrite the harness AND the manifest to match; a later check
+    (here: a new process, which has no in-memory reference) still refuses."""
+    import hashlib
+
+    repo, wd, d = _fresh(setup)
+    (d / "harness.py").write_text("print('FORGED')\n")
+    mp = wd / ct.MANIFEST
+    mf = json.loads(mp.read_text())
+    mf["harness.py"] = hashlib.sha256((d / "harness.py").read_bytes()).hexdigest()
+    mp.write_text(json.dumps(mf))
+    ct._REFERENCE.clear()                     # as in a resumed process
+    with pytest.raises(ct.CleanTreeError, match="fails its seal"):
+        ct.check(wd)
+
+
+def test_the_in_memory_reference_wins_over_a_rewritten_manifest(setup):
+    import hashlib
+
+    from orchestrator.optimize import gate_records as gr
+
+    repo, wd, d = _fresh(setup)
+    (d / "harness.py").write_text("print('FORGED')\n")
+    mp = wd / ct.MANIFEST
+    mf = json.loads(mp.read_text())
+    mf["harness.py"] = hashlib.sha256((d / "harness.py").read_bytes()).hexdigest()
+    mp.write_text(json.dumps(mf))
+    gr.seal(wd, (ct.MANIFEST,))               # even a resealed forgery
+    with pytest.raises(ct.CleanTreeError, match="harness.py"):
+        ct.check(wd)
+
+
+def test_a_hard_link_into_the_clean_tree_is_refused(setup, tmp_path):
+    """A hard link elsewhere lets target code rewrite a measured file through a
+    path the integrity check never looks at."""
+    import os
+
+    repo, wd, d = _fresh(setup)
+    os.link(d / "harness.py", tmp_path / "backdoor.py")
+    with pytest.raises(ct.CleanTreeError, match="hard links"):
+        ct.check(wd)
+
+
+@pytest.mark.parametrize("cmd,why", [
+    ("uv run python harness.py", "launches another program"),
+    ("make bench", "launches another program"),
+    ("sh -c 'python harness.py'", "launches another program"),
+    ("conda run -n x python harness.py", "launches another program"),
+])
+def test_a_launcher_command_is_recorded_as_not_probed(setup, cmd, why):
+    from orchestrator.optimize.provenance import waivers
+
+    repo, wd = setup
+    ct.probe_imports(wd, repo, [cmd], work_dir=wd)
+    rec = json.loads((wd / ct.PROBE_RECORD).read_text())
+    assert rec["not_probed"] and why in rec["not_probed"][0]["reason"]
+    (wd / "pre_build_tests.json").write_text("{}")
+    assert any(w["gate"] == "clean_tree_import_probe" for w in waivers(wd, {}))
+
+
+def test_a_version_manager_shim_is_recorded_as_not_probed(setup, tmp_path):
+    repo, wd = setup
+    shim = tmp_path / ".pyenv" / "shims" / "python"
+    shim.parent.mkdir(parents=True)
+    shim.write_text("#!/bin/sh\nexec python3 \"$@\"\n")
+    shim.chmod(0o755)
+    ct.probe_imports(wd, repo, [f"{shim} harness.py"], work_dir=wd)
+    rec = json.loads((wd / ct.PROBE_RECORD).read_text())
+    assert "shim" in rec["not_probed"][0]["reason"]
+
+
+def test_a_probe_that_fails_refuses_the_tree(setup, tmp_path):
+    repo, wd = setup
+    bad = tmp_path / "python3"
+    bad.write_text("#!/bin/sh\nexit 3\n")
+    bad.chmod(0o755)
+    with pytest.raises(ct.CleanTreeError, match="import probe .* failed"):
+        ct.probe_imports(wd, repo, [f"{bad} harness.py"], work_dir=wd)
+
+
+def test_a_probe_with_unparseable_output_refuses_the_tree(setup, tmp_path):
+    repo, wd = setup
+    bad = tmp_path / "python3"
+    bad.write_text("#!/bin/sh\necho not-json\n")
+    bad.chmod(0o755)
+    with pytest.raises(ct.CleanTreeError, match="unparseable"):
+        ct.probe_imports(wd, repo, [f"{bad} harness.py"], work_dir=wd)
+
+
+def test_the_probe_runs_with_the_commands_own_interpreter_flags(setup, tmp_path):
+    """`python -S` skips site-packages, so a .pth into the repo is NOT read by
+    the command; probing without -S would refuse an honest tree."""
+    import sys
+
+    repo, wd = setup
+    venv = tmp_path / "v"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+    site = next(venv.glob("lib/python*/site-packages"))
+    (site / "agent.pth").write_text(str(repo) + "\n")
+    with pytest.raises(ct.CleanTreeError, match="would import from"):
+        ct.probe_imports(wd, repo, [f"{venv}/bin/python harness.py"], work_dir=wd)
+    ct.probe_imports(wd, repo, [f"{venv}/bin/python -S harness.py"], work_dir=wd)
+    rec = json.loads((wd / ct.PROBE_RECORD).read_text())
+    assert rec["probed"][0]["flags"] == ["-S"]

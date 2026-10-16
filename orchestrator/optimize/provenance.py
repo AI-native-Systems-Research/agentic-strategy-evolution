@@ -260,7 +260,7 @@ def waivers(work_dir: Path, campaign: dict | None) -> list[dict]:
                                        else " (the waiver is not in this campaign's build_checks)")})
         from orchestrator.optimize import gate_records as _gr
 
-        for name in (*_gr.BUILD_RECORDS, *_gr.VERIFY_RECORDS):
+        for name in (*_gr.BUILD_RECORDS, *_gr.VERIFY_RECORDS, *_gr.TREE_RECORDS):
             st = _gr.check(wd, name)
             if st not in ("ok", "absent"):
                 out.append({"gate": "gate_record_seal", "reason": f"{name} seal {st}",
@@ -274,6 +274,10 @@ def waivers(work_dir: Path, campaign: dict | None) -> list[dict]:
             ev = (e or {}).get("evidence")
             if ev in ("pre_build_failure_unclassified", "declared_preexisting_behaviour"):
                 out.append({"gate": "oracle_2d_authored_tests", "reason": ev, "note": t})
+        pr, _ = _read("clean_tree.probe.json")
+        for np_ in (pr or {}).get("not_probed") or []:
+            out.append({"gate": "clean_tree_import_probe", "reason": "not probed",
+                        "note": f"{np_.get('command', '')[:60]}: {np_.get('reason')}"})
         sm = ((at or {}).get("mutant") or {}).get("stub_mutant")
         if at is not None and (not sm or not sm.get("ran")):
             out.append({"gate": "oracle_2d_stub_mutant", "reason": "not run",
