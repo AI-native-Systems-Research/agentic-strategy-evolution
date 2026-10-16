@@ -54,3 +54,13 @@ def test_a_many_knob_campaign_finds_the_optimum_in_seconds(tmp_path, k, resoluti
     assert _runs(res.work_dir) < 2 ** k
     # Generous: measured 4-9 s; the point is "seconds, not hours".
     assert elapsed < 120, f"{k} knobs took {elapsed:.0f}s"
+
+
+def test_the_oracle_refuses_a_grid_that_would_exhaust_memory():
+    """Eight parallel benchmark workers once each materialised a 10^8-point
+    oracle grid (26-39 GB apiece) and froze the machine. A surface that does
+    not declare its active factors must be refused, not enumerated."""
+    s = dataclasses.replace(sparse_knobs(8), active=())
+    with pytest.raises(ValueError, match="declare Surface.active"):
+        true_optimum(s)
+    assert true_optimum(sparse_knobs(8))  # with active factors: exact and cheap

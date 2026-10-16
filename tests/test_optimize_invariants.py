@@ -1604,3 +1604,14 @@ def test_candidate_space_checker_accepts_a_searched_record_and_rejects_dishonest
     assert inv.check_candidate_space(bad) == []
     assert any("constraint_models_applied" in e
                for e in mutate(constraint_models_applied=False))
+    # A2: a searched record may not claim the models exclude EVERY candidate.
+    bad = json.loads(json.dumps(good))
+    bad["candidate_space"]["constraint_models_applied"] = False
+    bad["constraint_models"][0].update(
+        applied=False, reason="modelled, but NOT applied: the models predict every "
+                              "candidate confidently infeasible")
+    assert any("EVERY candidate" in e for e in inv.check_candidate_space(bad))
+    bad["constraint_models"][0]["reason"] = (
+        "modelled, but NOT applied: no point the models admit was FOUND among 4730 "
+        "evaluated configurations (searched, not enumerated)")
+    assert inv.check_candidate_space(bad) == []

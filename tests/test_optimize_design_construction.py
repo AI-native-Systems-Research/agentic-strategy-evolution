@@ -13,9 +13,9 @@ import itertools
 import numpy as np
 import pytest
 
+import orchestrator.optimize.design as D
 from orchestrator.optimize.design import (
     _GENERATORS,
-    _runs_lower_bound,
     alias_pairs,
     central_composite,
     fractional_factorial,
@@ -63,37 +63,186 @@ def test_every_constructed_design_has_at_least_its_resolution(k, res):
     assert np.allclose(X.T @ X, len(X) * np.eye(k))
 
 
-@pytest.mark.parametrize("res", [3, 4])
-@pytest.mark.parametrize("k", [9, 12, 16, 17, 31, 32, 33, 64, 100])
-def test_resolution_three_and_four_meet_the_theoretical_minimum(k, res):
-    """III: N = the smallest power of two above k. IV: N = 2k rounded up
-    to a power of two (the even / folded-over design). Both are optimal."""
-    assert min_runs_for(k, res) == _runs_lower_bound(k, res)
+# Literal run counts: an independent statement of what the construction must
+# give, never a comparison of one helper of this module with another.
+RES_III = {3: 4, 7: 8, 8: 16, 15: 16, 16: 32, 31: 32, 32: 64, 63: 64, 64: 128,
+           100: 128, 127: 128}
+RES_IV = {4: 8, 5: 16, 8: 16, 9: 32, 16: 32, 17: 64, 32: 64, 33: 128, 64: 128,
+          65: 256, 100: 256}
+RES_V = {5: 16, 6: 32, 8: 64, 9: 128, 11: 128, 12: 256, 17: 256, 18: 512, 23: 512,
+         24: 1024, 30: 1024}
 
 
-@pytest.mark.parametrize("k", range(5, 31))
-def test_resolution_five_matches_the_smallest_known_regular_design(k):
-    """Known maxima: 8 / 11 / 17 / 23 / 33 resolution-V factors in
-    64 / 128 / 256 / 512 / 1024 runs. Attained for every k up to 30."""
-    assert min_runs_for(k, 5) == _runs_lower_bound(k, 5)
+@pytest.mark.parametrize("res,table", [(3, RES_III), (4, RES_IV)])
+def test_resolution_three_and_four_run_counts(res, table):
+    """III: the smallest power of two above k. IV: the smallest power of two
+    >= 2k (the even / folded-over design). Both meet Rao's counting bound
+    (k + 1 and 2k), so they are optimal among regular designs."""
+    for k, n in table.items():
+        assert min_runs_for(k, res) == n, (k, res)
+        assert D._counting_bound_runs(k, res) == n, (k, res)
+
+
+def test_resolution_five_run_counts():
+    """The largest known resolution-V factor counts -- 6 / 8 / 11 / 17 / 23 in
+    32 / 64 / 128 / 256 / 512 runs -- are attained, and 24..30 fit in 1024."""
+    for k, n in RES_V.items():
+        assert min_runs_for(k, 5) == n, k
 
 
 @pytest.mark.parametrize("k", [31, 40, 47, 64])
 def test_resolution_five_beyond_thirty_is_within_one_doubling(k):
-    assert min_runs_for(k, 5) <= 2 * _runs_lower_bound(k, 5)
+    assert min_runs_for(k, 5) <= 2 * D._smallest_known_runs(k, 5)
 
 
 def test_a_sixteen_knob_screen_is_a_fraction_not_sixty_five_thousand_runs():
     assert min_runs_for(16, 5) == 256 and min_runs_for(16, 4) == 32
     assert min_runs_for(16, 3) == 32
-    assert 2 ** 16 == 65536
 
 
-def test_construction_is_deterministic():
-    for k, r in [(12, 5), (20, 4), (25, 5), (40, 3)]:
-        assert generators_for(k, r) == generators_for(k, r)
-        a, b = fractional_factorial(_ids(k), r), fractional_factorial(_ids(k), r)
-        assert a.points == b.points
+# ── golden digests: an RNG change must not silently change a design ─────────
+
+# Resolution V at these k needs the seeded restarts (``random.Random``), so a
+# change to Python's RNG, to the seed formula or to the candidate order would
+# change the design every campaign of that size compiles. Pinned here.
+GOLDEN = {
+    23: (9, "ddf469e7c4fc774f48b8278799a109aa0d74f17868bb7a3f0b828dda9b2333d7"),
+    30: (10, "eba5affdae3c8dab4f36b64cb87449675e2e71c4c0c29b96ae7128227801869e"),
+    39: (11, "707545bd2cf1ffff70cfa0935751842ee2a56db25ebac46e048fff157bbf5e0d"),
+}
+
+
+@pytest.mark.parametrize("k", sorted(GOLDEN))
+def test_rng_dependent_constructions_are_pinned(k):
+    import hashlib
+
+    entry = generators_for(k, 5)
+    n_base, digest = GOLDEN[k]
+    assert entry[0] == n_base
+    assert hashlib.sha256(repr(entry).encode()).hexdigest() == digest
+
+
+# ── GF(2) check off the matrix, at sizes the brute-force check cannot reach ─
+
+def _bitmasks(d):
+    """Each factor's column over the corners as an int: bit i set when run i
+    is at -1. Multiplying +/-1 columns is XOR of these masks, and a defining
+    word (a product that is constant, +1 OR -1) is an XOR equal to 0 or ALL."""
+    cols = []
+    for j in range(len(d.factor_ids)):
+        m = 0
+        for i, p in enumerate(d.corners):
+            if p.coded[j] < 0:
+                m |= 1 << i
+        cols.append(m)
+    return cols, (1 << len(d.corners)) - 1
+
+
+def _shortest_word_gf2(cols, full, upto):
+    """Length of the shortest defining word, checked up to ``upto`` <= 4 by
+    hashing: length 1 is a constant column; 2, two equal (or complementary)
+    columns; 3, a column equal to the XOR of two others; 4, two pairs with
+    the same XOR. ``upto + 1`` means none that short."""
+    norm = lambda v: min(v, v ^ full)  # noqa: E731 -- a word's sign is irrelevant
+    singles = [norm(c) for c in cols]
+    if 0 in singles:
+        return 1
+    if upto >= 2 and len(set(singles)) < len(singles):
+        return 2
+    if upto < 3:
+        return upto + 1
+    single_set = set(singles)
+    pairs: set[int] = set()
+    for i, j in itertools.combinations(range(len(cols)), 2):
+        v = norm(cols[i] ^ cols[j])
+        if v in single_set:
+            return 3
+        if upto >= 4:
+            if v in pairs:
+                return 4
+            pairs.add(v)
+    return upto + 1
+
+
+@pytest.mark.parametrize("k", [25, 31, 40, 47, 64])
+def test_resolution_five_holds_on_the_matrix_at_many_knobs(k):
+    """B4: no defining word of length <= 4, read off the generated matrix."""
+    cols, full = _bitmasks(fractional_factorial(_ids(k), 5))
+    assert _shortest_word_gf2(cols, full, 4) >= 5
+
+
+@pytest.mark.parametrize("res", [3, 4])
+@pytest.mark.parametrize("k", [9, 17, 33, 64, 65, 100, 128])
+def test_resolutions_three_and_four_hold_on_the_matrix_to_128_knobs(k, res):
+    cols, full = _bitmasks(fractional_factorial(_ids(k), res))
+    assert _shortest_word_gf2(cols, full, res - 1) >= res
+
+
+def test_the_gf2_checker_has_teeth():
+    """A planted word of each length 1..4 is found (columns over 4 runs)."""
+    a, b, c = 0b0011, 0b0101, 0b1001
+    full = 0b1111
+    assert _shortest_word_gf2([a, 0], full, 4) == 1
+    assert _shortest_word_gf2([a, a ^ full], full, 4) == 2
+    assert _shortest_word_gf2([a, b, a ^ b], full, 4) == 3
+    # a length-4 word with sign -1 (the four columns XOR to ALL), over 8 runs
+    assert _shortest_word_gf2([a, b, c, a ^ b ^ c ^ 0xFF], 0xFF, 4) == 4
+    assert _shortest_word_gf2([a, b, c], 0xFF, 4) == 5
+
+
+# ── what Nous calls "smallest known" (A3) ────────────────────────────────────
+
+def test_smallest_known_never_exceeds_the_full_factorial():
+    """2 and 3 factors at resolution V: the full factorial (4, 8 runs) is the
+    smallest design; the old ``_runs_lower_bound`` reported 16 for both."""
+    from orchestrator.optimize.design import _runs_lower_bound
+
+    assert D._smallest_known_runs(2, 5) == 4 and D._smallest_known_runs(3, 5) == 8
+    # The deprecated alias (kept for one release) gives the same, clamped value.
+    assert _runs_lower_bound(2, 5) == 4 and _runs_lower_bound(3, 5) == 8
+    assert _runs_lower_bound(2, 3) == 4
+
+
+def test_no_catalogue_bound_is_claimed_at_resolution_six_or_past_the_catalogue():
+    """The resolution-V catalogue says nothing about VI+, nor past 65 factors:
+    those are None, and the counting bound is a separate floor."""
+    assert D._smallest_known_runs(8, 6) is None
+    assert D._smallest_known_runs(70, 5) is None
+    assert D._smallest_known_runs(65, 5) == 4096
+    # Rao's bound at VI: 1 + 8 + 28 + C(7, 2) = 58 -> 64; 8 factors at VI in
+    # fact need 128 (no binary [8, 2, 6] code exists), so a floor is a floor.
+    assert D._counting_bound_runs(8, 6) == 64 and min_runs_for(8, 6) == 128
+    assert D._counting_bound_runs(100, 5) == 8192
+
+
+def test_a_resolution_six_preview_names_no_nonexistent_smaller_design():
+    """It used to say "smallest known is 64" for 8 factors at resolution VI:
+    no such design exists (128 is the minimum)."""
+    _, note = _preview_screen_note(8, 6)
+    assert "smallest known is 64" not in note
+    assert "no catalogue bound for resolution VI+" in note
+    assert "counting bound (a theoretical floor) is 64" in note
+
+
+# ── a stated construction limit, instead of a stall (A8) ────────────────────
+
+def test_resolution_five_past_the_construction_limit_is_refused_fast():
+    """101 factors at resolution V is refused at once, naming resolution IV;
+    100 is the stated limit. Higher resolutions have lower limits (the greedy
+    search tracks sum C(k, j) over j <= R - 2); III and IV have none."""
+    import time
+
+    from orchestrator.optimize.design import _construct, max_constructible_factors
+
+    assert max_constructible_factors(5) == 100
+    assert max_constructible_factors(4) is None and max_constructible_factors(3) is None
+    for k, res in [(101, 5), (max_constructible_factors(8) + 1, 8)]:
+        _construct.cache_clear()
+        t = time.process_time()
+        with pytest.raises(ValueError, match="resolution 4"):
+            min_runs_for(k, res)
+        assert time.process_time() - t < 0.5
+    assert min_runs_for(1000, 4) == 2048 and min_runs_for(1000, 3) == 1024
 
 
 def test_the_textbook_table_is_unchanged():
@@ -104,11 +253,22 @@ def test_the_textbook_table_is_unchanged():
         assert generators_for(*key) == entry
 
 
-@pytest.mark.parametrize("k", [3, 4])
+@pytest.mark.parametrize("k", [2, 3, 4])
 def test_where_the_full_factorial_is_minimal_it_is_used(k):
+    """What the screen stage and the refine composite actually BUILD for
+    2-4 factors at resolution V: the full 2^k cube."""
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import _build_design
+    from orchestrator.optimize.synthetic import _numeric
+
     assert not is_tabulated(k, 5)
     assert min_runs_for(k, 5) == 2 ** k
-    assert len(full_factorial(_ids(k)).points) == 2 ** k
+    fs = parse_factors([_numeric(i) for i in _ids(k)])
+    screen = _build_design(fs, {"screen": {"resolution": 5, "center_points": 0}}, "screen")
+    assert screen.kind == "full"
+    cube = sorted(p.coded for p in full_factorial(_ids(k)).points)
+    assert sorted(p.coded for p in screen.corners) == cube
+    assert sorted(p.coded for p in central_composite(_ids(k), center_points=0).corners) == cube
 
 
 # ── the refine design: a small composite over a resolution-V cube ───────────
@@ -188,10 +348,10 @@ def test_resolution_five_at_a_hundred_knobs_is_within_two_doublings_and_cached()
     from orchestrator.optimize.design import _construct
 
     _construct.cache_clear()
-    t = time.monotonic()
+    t = time.process_time()
     first = min_runs_for(100, 5)
-    cold = time.monotonic() - t
-    t = time.monotonic()
+    cold = time.process_time() - t
+    t = time.process_time()
     assert min_runs_for(100, 5) == first
-    assert time.monotonic() - t < max(0.05, cold / 10), "the second ask is cached"
-    assert first <= 4 * _runs_lower_bound(100, 5)
+    assert time.process_time() - t < max(0.05, cold / 10), "the second ask is cached"
+    assert first <= 4 * D._counting_bound_runs(100, 5)

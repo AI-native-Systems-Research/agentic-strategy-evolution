@@ -512,10 +512,11 @@ def test_rule7_low_resolution_with_single_factor_is_not_warned():
 # Rule 8 (corrected per task brief): tabulated vs untabulated (k, resolution).
 
 
-def test_rule8_tabulated_combination_exceeding_max_runs_is_an_error_with_two_options():
+def test_rule8_tabulated_combination_exceeding_max_runs_is_an_error_with_its_options():
     campaign = _minimal_optimization_campaign()
-    # k=2 factors, resolution 4 is untabulated for k=2, so use a tabulated
-    # pair instead: (4, 4) -> 8 runs needed. Use max_runs below that.
+    # (4, 4) -> 8 corners + the campaign's 2 centre points = 10 runs. The only
+    # lower resolution, III, ALSO takes 8 corners for 4 factors, so it buys
+    # more aliasing for nothing and is not offered.
     campaign["optimization"]["factors"] = [
         _numeric_factor(id="L1"), _numeric_factor_2(id="L2"),
         _numeric_factor(id="L3", name="l3"), _numeric_factor_2(id="L4", name="l4"),
@@ -523,12 +524,12 @@ def test_rule8_tabulated_combination_exceeding_max_runs_is_an_error_with_two_opt
     campaign["optimization"]["design"]["screen"]["resolution"] = 4
     campaign["optimization"]["design"]["max_runs"] = 4
     errors = validate_optimization_campaign(campaign)
-    matches = [e for e in errors if "max_runs" in e and "8" in e and "4" in e]
+    matches = [e for e in errors if "max_runs=4" in e]
     assert matches, errors
     msg = matches[0]
-    assert "raise" in msg.lower() and (
-        "lower resolution" in msg.lower() or "accept" in msg.lower()
-    )
+    assert "needs 10 runs (8 corners + 2 centre points)" in msg
+    assert "raise max_runs to >= 10" in msg and "screen fewer factors" in msg
+    assert "lower resolution" not in msg
 
 
 def test_rule8_tabulated_combination_within_max_runs_passes():
@@ -542,17 +543,18 @@ def test_rule8_tabulated_combination_within_max_runs_passes():
 def test_rule8_six_factors_at_resolution_three_need_eight_runs_not_sixty_four():
     """(6, 3) used to fall back to the 64-run full factorial even though a
     resolution-III design exists at 8 runs. min_runs_for is now exact for
-    every combination, so a budget of 8 fits and 4 does not."""
+    every combination, so a budget of 8 corners + 2 centre points fits and
+    4 does not."""
     campaign = _minimal_optimization_campaign()
     campaign["optimization"]["factors"] = [
         _numeric_factor(id=f"L{i}", name=f"f{i}") for i in range(1, 7)
     ]
     campaign["optimization"]["design"]["screen"]["resolution"] = 3
-    campaign["optimization"]["design"]["max_runs"] = 8
+    campaign["optimization"]["design"]["max_runs"] = 10
     assert not any("max_runs" in e for e in validate_optimization_campaign(campaign))
     campaign["optimization"]["design"]["max_runs"] = 4
     errors = [e for e in validate_optimization_campaign(campaign) if "max_runs" in e]
-    assert errors and "needs 8 runs" in errors[0], errors
+    assert errors and "needs 10 runs (8 corners + 2 centre points)" in errors[0], errors
 
 
 def test_min_runs_for_six_factors_at_resolution_three_is_eight():
@@ -767,14 +769,15 @@ def test_rule8_untabulated_and_full_factorial_exceeds_the_budget_still_errors():
     """Where the full factorial is already the smallest design of the
     resolution (3 factors at resolution V), its 2**k IS the exact
     requirement, and a budget below it is an error that names it."""
-    errors = _hard_errors(_small_campaign(3, max_runs=4))  # needs 8
-    assert errors and "needs 8 runs" in errors[0], errors
+    errors = _hard_errors(_small_campaign(3, max_runs=4))  # needs 8 + 4 centre
+    assert errors and "needs 12 runs (8 corners + 4 centre points)" in errors[0], errors
 
 
 def test_rule8_tabulated_over_budget_still_names_the_exact_requirement():
-    errors = _hard_errors(_small_campaign(5, max_runs=10))  # res V needs 16
+    errors = _hard_errors(_small_campaign(5, max_runs=10))  # res V needs 16 + 4
     assert errors
-    assert "16 runs" in errors[0] and "max_runs=10" in errors[0]
+    assert "20 runs (16 corners + 4 centre points)" in errors[0]
+    assert "max_runs=10" in errors[0]
 
 
 # ─── `nous validate campaign` — the CLI surface for the cross-field rules ──
@@ -1166,3 +1169,104 @@ def test_rule20_silent_when_no_self_check_is_declared():
     """A campaign written before this field existed is unaffected."""
     errors = validate_optimization_campaign(_minimal_optimization_campaign())
     assert [e for e in errors if not e.startswith("WARN:")] == []
+
+
+# ─── stage-0 review: run counts quoted by the validator are the screen's ────
+
+
+def _no_budget(n_factors: int, resolution: int = 5, **opt) -> dict:
+    c = _small_campaign(n_factors, max_runs=1, resolution=resolution)
+    del c["optimization"]["design"]["max_runs"]
+    c["optimization"].update(opt)
+    return c
+
+
+def test_rule18_quotes_the_resolution_screen_not_the_full_factorial():
+    """A5: with no ``max_runs``, the run-timeout warning's exposure is the
+    screen Nous will build -- 512 corners + 4 centre points for 20 knobs at
+    resolution V -- not the 2**20 = 1,048,576-row full factorial it never
+    builds."""
+    from orchestrator.validate import validate_optimization_campaign
+
+    warns = [w for w in validate_optimization_campaign(_no_budget(20, run_timeout_sec=7200))
+             if "run_timeout_sec=7200" in w]
+    assert warns, "a two-hour ceiling must warn"
+    assert "516 run(s) (the resolution-V screen of 20 factors: 512 corners + 4 " \
+           "centre points)" in warns[0], warns[0]
+    assert "1048576" not in warns[0]
+
+
+def test_wall_clock_check_quotes_the_resolution_screen_not_the_full_factorial():
+    """A5: the max_wall_clock_hours exposure uses the same basis."""
+    from orchestrator.validate import validate_optimization_campaign
+
+    warns = [w for w in validate_optimization_campaign(
+        _no_budget(20, resolution=4, max_wall_clock_hours=10))
+        if "worst-case exposure" in w]
+    assert warns
+    # resolution IV at 20 knobs: 64 corners + 4 centre points, at 600 s each.
+    assert "68 run(s) from the resolution-IV screen of 20 factors" in warns[0], warns[0]
+    assert "1048576" not in warns[0]
+
+
+def _rule8(n_factors: int, resolution: int, max_runs: int) -> list[str]:
+    return [e for e in _hard_errors(_small_campaign(n_factors, max_runs, resolution))
+            if "max_runs=" in e]
+
+
+def test_rule8_suggests_only_undominated_lower_resolutions():
+    """B5 / A6 (16, 5, 40): resolution V needs 256 + 4 runs. IV (32 + 4 = 36)
+    fits; III ALSO costs 32 corners at 16 knobs, so it buys more aliasing for
+    nothing and is not offered."""
+    (msg,) = _rule8(16, 5, 40)
+    assert "needs 260 runs (256 corners + 4 centre points)" in msg
+    assert "(2) accept a lower resolution and its named aliasing " \
+           "(resolution 4 at 36 runs fits)" in msg, msg
+    assert "resolution 3" not in msg
+    assert "(3) screen fewer factors" in msg
+
+
+def test_rule8_names_no_lower_resolution_when_none_fits():
+    """B5 (16, 5, 20): neither IV nor III fits 20 runs, so the option is not
+    offered at all (it used to read "accept a lower resolution (none fits this
+    budget either)")."""
+    (msg,) = _rule8(16, 5, 20)
+    assert "lower resolution" not in msg
+    assert "(1) raise max_runs to >= 260; (2) screen fewer factors" in msg, msg
+
+
+def test_rule8_counts_centre_points_at_the_boundary():
+    """B5 / A6: max_runs is a RUN budget -- the runtime budget and the preview
+    count the centre points, so rule 8 does too. 16 knobs at resolution IV is
+    32 corners + 4 centre points: 32 is short, 36 fits."""
+    (msg,) = _rule8(16, 4, 32)
+    assert "needs 36 runs (32 corners + 4 centre points)" in msg, msg
+    assert _rule8(16, 4, 36) == []
+
+
+def test_rule8_resolution_three_over_budget_offers_no_lower_resolution():
+    """B5 / A6 (6, 3, 4): resolution III is the lowest there is, so the error
+    names only the two real options."""
+    (msg,) = _rule8(6, 3, 4)
+    assert "needs 12 runs (8 corners + 4 centre points)" in msg
+    assert "lower resolution" not in msg and "none fits" not in msg
+    assert "(1) raise max_runs to >= 12; (2) screen fewer factors" in msg, msg
+
+
+def test_the_validator_refuses_an_unconstructible_factor_count_quickly():
+    """A8: 101 factors at resolution V is past the construction's stated limit.
+    The validator reports it as an error -- naming resolution IV -- in well
+    under a second of CPU, instead of stalling in the column search (150
+    factors took 10.7 s cold) or raising out of the rule."""
+    import time
+
+    from orchestrator.optimize.design import _construct
+
+    for campaign in (_small_campaign(101, 10 ** 6, 5), _no_budget(101)):
+        _construct.cache_clear()
+        t = time.process_time()
+        errors = [e for e in _hard_errors(campaign) if "cannot be built" in e]
+        assert time.process_time() - t < 1.0
+        (msg,) = errors
+        assert "at most 100 factors" in msg and "resolution 4" in msg, msg
+    assert not [e for e in _hard_errors(_no_budget(100)) if "cannot be built" in e]
