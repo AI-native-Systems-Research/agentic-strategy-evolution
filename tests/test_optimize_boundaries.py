@@ -359,25 +359,22 @@ def test_resolution_three_is_accepted_on_the_other_side_of_that_boundary():
 
 
 @pytest.mark.mutation_sentinel
-@pytest.mark.parametrize("k,res", [(2, 4), (3, 4), (3, 5), (4, 5), (2, 5), (9, 4)])
+@pytest.mark.parametrize("k,res", [(2, 4), (3, 4), (3, 5), (4, 5), (2, 5)])
 def test_too_few_factors_for_a_resolution_is_refused_not_silently_downgraded(k, res):
-    """A resolution claim the factor count cannot support must ABORT.
+    """A fraction the factor count cannot support must not be invented.
 
-    k=3 at resolution V is the interesting boundary: a 3-factor design has only
-    three 2fi, so "resolution V" is vacuously satisfiable by the full factorial
-    — but it is NOT tabulated, and inventing a fraction on the fly is what would
-    silently produce a design whose real resolution is lower than the campaign
-    pre-registered. `min_runs_for`'s untabulated fallback is a conservative
-    UPPER bound (2**k), never the true minimum, so a feasibility decision must
-    consult `is_tabulated` first.
+    k=3 at resolution V: a 3-factor design has only three 2fi, so the full
+    factorial is already the smallest resolution-V design and no fraction
+    exists. Asking for one is refused, and the exact requirement is the full
+    factorial's 2**k. (Where a fraction DOES exist -- e.g. 9 factors at
+    resolution IV, 32 runs -- it is constructed, and its resolution is read
+    back off the matrix by tests/test_optimize_design_construction.py.)
     """
     ids = tuple(chr(ord("A") + i) for i in range(k))
-    assert not is_tabulated(k, res), "re-pick a genuinely untabulated pair"
-    with pytest.raises(ValueError, match="no tabulated resolution"):
+    assert not is_tabulated(k, res)
+    with pytest.raises(ValueError, match="already the smallest design"):
         fractional_factorial(ids, res)
-    assert min_runs_for(k, res) == 2 ** k, (
-        "the untabulated fallback must be the conservative full-factorial bound"
-    )
+    assert min_runs_for(k, res) == 2 ** k
 
 
 @pytest.mark.parametrize("k,res,n", [(4, 4, 8), (5, 4, 16), (5, 5, 16), (8, 4, 16),

@@ -264,7 +264,8 @@ def test_every_tabulated_resolution_iv_design_fits():
     from orchestrator.optimize.design import fractional_factorial, is_tabulated
     from orchestrator.optimize.effects import fit_effects
 
-    for k in (4, 5, 6, 7, 8):
+    # 4..8: the textbook table; 9, 12, 16: constructed even designs.
+    for k in (4, 5, 6, 7, 8, 9, 12, 16):
         if not is_tabulated(k, 4):
             continue
         ids = tuple(chr(65 + i) for i in range(k))
@@ -311,7 +312,8 @@ def test_the_collapse_records_which_terms_it_absorbed_on_every_res_iv_design():
     from orchestrator.optimize.design import fractional_factorial, is_tabulated
     from orchestrator.optimize.effects import fit_effects
 
-    for k in (4, 5, 6, 7, 8):
+    # 4..8: the textbook table; 9, 12, 16: constructed even designs.
+    for k in (4, 5, 6, 7, 8, 9, 12, 16):
         if not is_tabulated(k, 4):
             continue
         ids = tuple(chr(65 + i) for i in range(k))
@@ -379,3 +381,21 @@ def test_resolution_v_is_unchanged_by_the_alias_collapse():
     # 5 main effects + 10 two-factor interactions, all estimable
     assert len(fit.effects) == 15, f"expected 15 effects, got {len(fit.effects)}"
     assert not fit.aliases
+
+
+@pytest.mark.parametrize("k", [5, 7, 9, 12, 15, 16])
+def test_a_resolution_three_screen_fits_every_main_effect(k):
+    """Resolution III aliases 2fi ONTO main effects. The fit must still
+    produce one estimable coefficient per main effect (absorbing the aliased
+    2fi into it, recorded), not a singular system -- at any factor count."""
+    from orchestrator.optimize.design import fractional_factorial
+    from orchestrator.optimize.effects import fit_effects
+
+    ids = tuple(chr(65 + i) for i in range(k))
+    design = fractional_factorial(list(ids), 3)
+    ys = [float((i * 7) % 11) + 0.5 * design.points[i].coded[0]
+          for i in range(len(design.points))]
+    fit = fit_effects(design, ys, factor_ids=ids)
+    got = {e.label for e in fit.effects}
+    assert set(ids) <= got, f"k={k} res=3 lost a main effect: {sorted(got)}"
+    assert fit.aliases, "res-III fit must report what it confounded"

@@ -64,6 +64,9 @@ Fill every `TODO-`. The rules that have cost real campaigns:
   name an interpreter that has the deps (e.g. `.venv/bin/python`); test paths
   relative to `repo_path`; the target's own pytest addopts apply.
 - Integer levels need `grid: 1`; geometric knobs need `scale: log`.
+- Any number of knobs is fine; the screen is always a fraction. Past about 10
+  knobs, screen at `resolution: 4` first (about 2k runs) and refine the live
+  ones next epoch; the `--liveness` preview prices each option.
 - `known_valid_baseline` uses a declared level of every factor.
 - Declare `refine` (and add it to `stages`) whenever ≥ 2 numeric factors have
   > 2 levels — curvature at the screen routes there.

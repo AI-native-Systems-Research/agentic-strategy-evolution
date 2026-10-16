@@ -121,6 +121,11 @@ says which step catches it. **[static]** = `nous validate campaign`,
 - **Screen at `resolution: 5`**, so no main effect or two-factor interaction
   is aliased. Lower resolutions depend on a foldover to untangle what they
   confounded. [static warns]
+- **Any number of knobs works** — the screen is always a fraction (resolution
+  V: 128 runs to 11 knobs, 256 to 17; resolution IV: about 2k). With more than
+  about 10 knobs, screen at `resolution: 4` first (32 runs for 16 knobs), keep
+  the live ones, and refine them next epoch. The `--liveness` preview prints
+  each option's cost. [live]
 - **A factor that moves the objective by less than 2× the noise is a dead
   axis** — unless it moves a constraint metric, which `--liveness` also
   measures and labels "keep (it decides feasibility)". Widen a dead axis's

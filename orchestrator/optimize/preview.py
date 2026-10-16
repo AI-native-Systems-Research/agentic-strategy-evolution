@@ -128,9 +128,30 @@ def build_preview(
     n_centre = sum(1 for p in screen.points if p.role == "center")
     pv.screen_corners = len(screen.corners)
     pv.pure_error_df = max(0, n_centre - 1)
+    from orchestrator.optimize.design import _runs_lower_bound, min_runs_for
+
+    k = len(screen.factor_ids)
+    if screen.kind == "fractional":
+        res = int(screen.resolution or 0)
+        known = _runs_lower_bound(k, res)
+        roman = {3: "III", 4: "IV", 5: "V", 6: "VI", 7: "VII", 8: "VIII"}.get(res, str(res))
+        shape = (f"resolution-{roman} "
+                 f"fraction 2^({k}-{len(screen.generators)}) of {2 ** k} -- "
+                 + ("the smallest known" if pv.screen_corners <= known
+                    else f"smallest known is {known}"))
+        # The cost of the neighbouring resolutions, so the author can trade
+        # aliasing against runs knowingly: a higher resolution at the SAME
+        # cost is free, and a screen-first IV is usually far cheaper than V.
+        if res < 5 and min_runs_for(k, res + 1) == pv.screen_corners:
+            shape += f"; resolution {({3: 'IV', 4: 'V'})[res]} costs the same here -- use it"
+        elif res >= 5 and min_runs_for(k, 4) < pv.screen_corners:
+            shape += (f"; a resolution-IV screen would take {min_runs_for(k, 4)} "
+                      f"(main effects clear, 2fi aliased in chains)")
+    else:
+        shape = "the full factorial, already the smallest design of this resolution"
     pv.stages.append(StageRuns(
         "screen", len(screen.points), len(screen.points), False,
-        f"{pv.screen_corners} corners + {n_centre} centre point(s)",
+        f"{pv.screen_corners} corners ({shape}) + {n_centre} centre point(s)",
     ))
 
     if "foldover" in states:

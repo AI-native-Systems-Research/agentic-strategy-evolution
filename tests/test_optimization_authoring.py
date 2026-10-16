@@ -230,8 +230,10 @@ def test_liveness_prints_preview_with_the_screen_run_count(tmp_path, capsys, mon
     code, out, err = _nous(["validate", "campaign", str(camp), "--liveness"], capsys)
     assert code == 0, err + out
     assert "DESIGN PREVIEW" in out
-    # 2 factors at resolution 5 -> full 2^2 = 4 corners + 3 centres = 7.
-    assert re.search(r"screen\s+7\s+— 4 corners \+ 3 centre", out), out
+    # 2 factors at resolution 5 -> full 2^2 = 4 corners + 3 centres = 7, and
+    # the preview says why it is the full factorial.
+    assert re.search(r"screen\s+7\s+— 4 corners \(the full factorial, already the "
+                     r"smallest design of this resolution\) \+ 3 centre", out), out
     # confirm: 3 finalists x 3 replicates, 1 round.
     assert re.search(r"confirm\s+9\s+— 3 finalist", out), out
     assert "refine" not in out.split("DESIGN PREVIEW", 1)[1].split("total")[0]
