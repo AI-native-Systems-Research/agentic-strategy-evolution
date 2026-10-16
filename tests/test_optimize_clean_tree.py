@@ -84,7 +84,8 @@ def test_verify_runs_the_tests_in_the_clean_checkout_not_the_agents_tree(tmp_pat
                              build_checks={"allow_out_of_scope_writes": "a stray helper"})
     stage(1)
     stage(2)
-    clean = wd / "clean-tree"
+    from orchestrator.optimize.clean_tree import TREE, tree_root
+    clean = tree_root(wd) / TREE
     cwds = (tmp_path / "cwd.log").read_text().split()
     assert str(clean.resolve()) in cwds, cwds
     assert str(repo.resolve()) not in cwds, "a verify test ran in the agent's tree"
@@ -108,7 +109,8 @@ def test_a_planted_cache_in_the_agents_tree_never_runs(tmp_path, monkeypatch):
     stage(2)
     # Nothing writes bytecode into the measured tree either: every target
     # command runs with PYTHONPYCACHEPREFIX pointed at a Nous-owned directory.
-    assert not list((wd / "clean-tree").rglob("*.pyc")), "a cache reached the clean tree"
+    from orchestrator.optimize.clean_tree import TREE, tree_root
+    assert not list((tree_root(wd) / TREE).rglob("*.pyc")), "a cache reached the clean tree"
 
 
 def test_target_code_that_modifies_the_measured_tree_aborts_the_next_stage(tmp_path, monkeypatch):
@@ -177,9 +179,9 @@ def test_a_missing_clean_tree_is_recreated_identically(tmp_path, monkeypatch):
     repo, wd, stage = _setup(tmp_path, monkeypatch, _honest)
     stage(1)
     stage(2)
-    before = (wd / "clean-tree" / "calc.py").read_text()
-    shutil.rmtree(wd / "clean-tree")
-    subprocess.run(["git", "worktree", "prune"], cwd=repo, check=True)
+    from orchestrator.optimize.clean_tree import TREE, tree_root
+    before = (tree_root(wd) / TREE / "calc.py").read_text()
+    shutil.rmtree(tree_root(wd) / TREE)
     from orchestrator.optimize.clean_tree import ensure
     dest = ensure(repo, wd)
     assert (dest / "calc.py").read_text() == before

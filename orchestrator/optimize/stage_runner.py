@@ -2673,6 +2673,9 @@ def run_stage(
         try:
             _bs0.mechanism_scope(campaign)
             _clean_base = clean_tree.require_clean_base(Path(repo)) if repo else None
+            # The pre-build TREE hash, recorded before the agent can touch the
+            # repository's objects: every clean tree is checked against it.
+            _clean_tree_sha = clean_tree.base_tree(Path(repo), _clean_base) if repo else None
         except (_bs0.BuildScopeViolation, clean_tree.CleanTreeError) as exc:
             raise OptimizationGateFailed(str(exc)) from exc
         _write_json(Path(work_dir) / "pre_build_tests.json", {
@@ -2815,7 +2818,8 @@ def run_stage(
                 _clean_rec = clean_tree.capture(
                     campaign, Path(repo), work_dir, _clean_base,
                     protected=build_scope.protected_paths(
-                        Path(repo), campaign, sorted(test_results or {})))
+                        Path(repo), campaign, sorted(test_results or {})),
+                    base_tree_sha=_clean_tree_sha)
             except (clean_tree.CleanTreeError, build_scope.GitError) as exc:
                 raise OptimizationGateFailed(str(exc)) from exc
         # Pre-register WHICH CODE the epoch will measure. `verify` compiles the

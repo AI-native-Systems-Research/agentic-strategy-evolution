@@ -17,25 +17,33 @@ The model:
    benchmark harness, a pre-existing declared test) is refused unless that path
    is listed exactly in ``mechanism_paths``. The pre-build tree must have no
    tracked modifications, because the clean tree is built from the commit.
-2. **Clean tree** (``ensure``). A fresh ``git worktree`` of the pre-build commit
-   in the work_dir (outside the repo), with the patch applied. Verify's test
+2. **Clean tree** (``ensure``). A PRIVATE tree (``materialize``): the pre-build
+   commit's blobs read with ``ls-tree``/``cat-file`` (no hooks, filters or
+   attributes apply), written as plain files into a directory under the Nous
+   state home (``tree_root``, unrelated to the work_dir), committed to a fresh
+   repository run with hardened git (no hooks, no fsmonitor, no global/system
+   config, no excludes or attributes), checked to hash to the pre-build TREE
+   recorded before the agent ran, and with the patch applied. It shares no
+   ``.git`` with the agent's repo. Verify's test
    runs, the baseline re-measurement, the 2(d) mutants and EVERY epoch
    measurement run there, never in the agent's working tree. Out-of-scope
    writes, protected-file edits, commits, hidden or ignored files, symlink swaps
    and planted caches in the agent's tree are simply absent from it.
-3. **Integrity** (``ensure`` at every later stage). Before each iteration the
-   clean tree must still be base + patch: the mechanism paths diff to the same
-   patch, no tracked file outside them changed, and no untracked CODE file
-   appeared outside them. Target code that modifies the checkout it is measured
+3. **Integrity** (``check``: before each stage, after every measurement batch,
+   and at the terminal transition). Every file on disk is hashed and compared
+   with the manifest recorded when the tree was created -- independent of the
+   tree's own index and of any exclude file -- and a new file with a code
+   suffix or name, or a new symlink, is a problem anywhere. Target code that modifies the checkout it is measured
    in aborts the campaign. A missing clean tree (a resume on another machine, a
    cleaned scratch dir) is recreated deterministically from the recorded commit
    and patch.
 
-What it does not cover: target code can still modify the clean tree WITHIN one
-iteration and restore it before the next check, and it can reach anything
-outside the repo (the home directory, system libraries). The integrity check
-reads only tracked files and untracked code files (``CODE_SUFFIXES``); a planted
-data file is not detected.
+What it does not cover: target code can modify the clean tree WITHIN one batch
+and restore it before the check after it; it can reach anything outside the
+tree (the home directory, system libraries); a planted DATA file (no code suffix
+or name) is not detected; and in-process tampering by in-scope mechanism code
+(e.g. monkeypatching the harness's timer at import) leaves nothing on disk at
+all -- only the build review can catch that.
 """
 from __future__ import annotations
 
@@ -48,9 +56,13 @@ from pathlib import Path
 
 RECORD = "clean_tree.json"
 PATCH = "mechanism.clean.patch"
-TREE = "clean-tree"
+MANIFEST = "clean_tree.manifest.json"
+TREE = "tree"
 CODE_SUFFIXES = frozenset({".py", ".pth", ".pyc", ".go", ".rs", ".js", ".mjs", ".cjs",
                            ".ts", ".java", ".rb", ".sh", ".so", ".dylib", ".dll"})
+CODE_NAMES = frozenset({"conftest.py", "sitecustomize.py", "usercustomize.py",
+                        "Makefile", "go.mod", "package.json", "pytest.ini", "setup.cfg",
+                        "tox.ini", "pyproject.toml"})
 
 
 class CleanTreeError(RuntimeError):
@@ -89,31 +101,66 @@ def require_clean_base(repo: Path) -> str:
     return head
 
 
-def _diff_against(tree: Path, base: str, paths: list[str], index: Path) -> tuple[bytes, list[str]]:
-    env = {"GIT_INDEX_FILE": str(index)}
-    _git(tree, "read-tree", base, env=env)
-    present = [p for p in paths if (tree / p).exists()
-               or _git(tree, "ls-tree", "--name-only", base, "--", p).strip()]
+def _copy_scope(src: Path, dst: Path, paths: list[str]) -> None:
+    """Copy the mechanism paths from ``src`` (the agent's tree) into ``dst`` by
+    plain file reads -- no git command runs in the agent's repo, so none of its
+    hooks, filters or fsmonitor can. Ignored caches are skipped; a symlink is
+    copied as a symlink, never followed."""
+    for rel in paths:
+        s_, d_ = src / rel, dst / rel
+        if d_.is_symlink() or d_.is_file():
+            d_.unlink()
+        elif d_.is_dir():
+            shutil.rmtree(d_)
+        if s_.is_symlink():
+            d_.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(os.readlink(s_), d_)
+        elif s_.is_file():
+            d_.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(s_, d_)
+        elif s_.is_dir():
+            for q in s_.rglob("*"):
+                r = q.relative_to(src)
+                if set(r.parts) & {"__pycache__", ".git", ".pytest_cache", ".mypy_cache"} \
+                        or q.suffix in (".pyc", ".pyo"):
+                    continue
+                t = dst / r
+                if q.is_symlink():
+                    t.parent.mkdir(parents=True, exist_ok=True)
+                    os.symlink(os.readlink(q), t)
+                elif q.is_file():
+                    t.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(q, t)
+
+
+def _diff_against(repo: Path, base: str, paths: list[str], scratch: Path,
+                  expect_tree: str | None = None) -> tuple[bytes, list[str]]:
+    """The mechanism patch, computed in a PRIVATE tree: materialize the base,
+    copy the scope from the agent's tree by file reads, diff with hardened git."""
+    if scratch.exists():
+        shutil.rmtree(scratch)
+    materialize(Path(repo), base, scratch, patch=None, expect_tree=expect_tree)
+    _copy_scope(Path(repo), scratch, paths)
+    tracked = set(_hgit(scratch, "ls-files", "-z").split("\0"))
+    present = [p for p in paths if (scratch / p).exists() or os.path.lexists(scratch / p)
+               or any(t == p or t.startswith(p.rstrip("/") + "/") for t in tracked)]
     if present:
-        _git(tree, "add", "-A", "--", *present, env=env)
-    patch = _git(tree, "diff", "--cached", "--binary", "--full-index", base, "--",
-                 *present, env=env, binary=True) if present else b""
-    names = _git(tree, "diff", "--cached", "--name-only", base, "--", *present,
-                 env=env).split() if present else []
-    try:
-        index.unlink()
-    except OSError:
-        pass
+        _hgit(scratch, "add", "-A", "-f", "--", *present)
+    patch = _hgit(scratch, "diff", "--cached", "--binary", "--full-index", "HEAD", binary=True)
+    names = [n for n in _hgit(scratch, "diff", "--cached", "--name-only", "-z", "HEAD")
+             .split("\0") if n]
+    shutil.rmtree(scratch, ignore_errors=True)
     return patch, sorted(names)
 
 
 def capture(campaign: dict, repo: Path, work_dir: Path, base: str,
-            *, protected: set[str]) -> dict:
+            *, protected: set[str], base_tree_sha: str | None = None) -> dict:
     """Record the mechanism patch; refuse one that touches a protected path."""
     from orchestrator.optimize.build_scope import mechanism_scope
 
     paths = [p.strip("/") for p in mechanism_scope(campaign)]
-    patch, names = _diff_against(Path(repo), base, paths, Path(work_dir) / ".clean_index")
+    patch, names = _diff_against(Path(repo), base, paths, tree_root(work_dir) / "capture",
+                                 expect_tree=base_tree_sha)
     listed = {str(p).strip("/") for p in paths}
     bad = sorted(n for n in names if n in protected and n not in listed)
     if bad:
@@ -122,7 +169,8 @@ def capture(campaign: dict, repo: Path, work_dir: Path, base: str,
             f"harness or a pre-existing declared test). List each one by exact path in "
             f"build_checks.mechanism_paths if editing it is part of the mechanism.")
     (Path(work_dir) / PATCH).write_bytes(patch)
-    rec = {"base_sha": base, "patch_sha256": hashlib.sha256(patch).hexdigest(),
+    rec = {"base_sha": base, "base_tree": base_tree_sha,
+           "patch_sha256": hashlib.sha256(patch).hexdigest(),
            "paths": paths, "touched": names}
     (Path(work_dir) / RECORD).write_text(json.dumps(rec, indent=2))
     return rec
@@ -140,64 +188,189 @@ def read_record(work_dir: Path) -> dict:
     return rec
 
 
-def _remove(repo: Path, dest: Path) -> None:
+#: git, hardened: no hooks, no fsmonitor, no filters/attributes or excludes from
+#: anywhere, no global or system config. Used for every command on a PRIVATE
+#: tree (the clean tree and the mutants), which never shares a .git with the
+#: agent's repo.
+HARDENED_ENV = {"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1",
+                "GIT_TERMINAL_PROMPT": "0", "GIT_OPTIONAL_LOCKS": "0"}
+HARDENED_C = ("-c", f"core.hooksPath={os.devnull}", "-c", "core.fsmonitor=false",
+              "-c", "core.untrackedCache=false", "-c", f"core.excludesFile={os.devnull}",
+              "-c", f"core.attributesFile={os.devnull}", "-c", "commit.gpgsign=false",
+              "-c", "user.name=nous", "-c", "user.email=nous@localhost",
+              "-c", "core.autocrlf=false", "-c", "core.symlinks=true")
+
+
+def _hgit(cwd: Path, *args: str, binary: bool = False, env: dict | None = None):
     try:
-        _git(repo, "worktree", "remove", "--force", str(dest))
-    except CleanTreeError:
-        pass
-    shutil.rmtree(dest, ignore_errors=True)
+        proc = subprocess.run(["git", *HARDENED_C, *args], cwd=str(cwd), capture_output=True,
+                              timeout=600, env={**os.environ, **HARDENED_ENV, **(env or {})})
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CleanTreeError(f"git {' '.join(args)}: {exc}") from exc
+    if proc.returncode != 0:
+        raise CleanTreeError(f"git {' '.join(args)} exited {proc.returncode}: "
+                             f"{proc.stderr.decode(errors='replace').strip()[:400]}")
+    return proc.stdout if binary else proc.stdout.decode(errors="replace")
+
+
+def tree_root(work_dir: Path) -> Path:
+    """Where the clean tree for ``work_dir`` lives: under the Nous state home,
+    in a directory unrelated to the work_dir (so target code holding a path to
+    one learns nothing about the other)."""
+    from orchestrator.work_dir_resolver import STATE_HOME_ENV
+
+    home = os.environ.get(STATE_HOME_ENV)
+    base = (Path(home).expanduser() if home else Path.home() / ".nous") / "clean-trees"
+    tag = hashlib.sha256(str(Path(work_dir).resolve()).encode()).hexdigest()[:16]
+    return base / tag
+
+
+def _read_objects(repo: Path, base_sha: str) -> list[tuple[str, str, bytes]]:
+    """``[(mode, path, bytes)]`` for every entry of ``base_sha``'s tree, read with
+    ``ls-tree`` + ``cat-file --batch`` (hardened): neither applies attributes,
+    filters or hooks, unlike ``archive`` or ``checkout``."""
+    ls = _hgit(Path(repo), "ls-tree", "-r", "-z", "--full-tree", base_sha)
+    ents = []
+    for e in ls.split("\0"):
+        if not e:
+            continue
+        meta, path = e.split("\t", 1)
+        mode, typ, sha = meta.split()
+        ents.append((mode, typ, sha, path))
+    blobs = [e for e in ents if e[1] == "blob"]
+    if any(e[1] == "commit" for e in ents):
+        raise CleanTreeError("the target has submodules; the clean-checkout model does "
+                             "not support them")
     try:
-        _git(repo, "worktree", "prune")
-    except CleanTreeError:
-        pass
+        proc = subprocess.run(["git", *HARDENED_C, "cat-file", "--batch"], cwd=str(repo),
+                              input=b"".join(e[2].encode() + b"\n" for e in blobs),
+                              capture_output=True, timeout=600,
+                              env={**os.environ, **HARDENED_ENV})
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise CleanTreeError(f"git cat-file: {exc}") from exc
+    if proc.returncode != 0:
+        raise CleanTreeError(f"git cat-file exited {proc.returncode}")
+    out, pos, data = [], 0, proc.stdout
+    for mode, _t, sha, path in blobs:
+        nl = data.index(b"\n", pos)
+        hdr = data[pos:nl].decode().split()
+        size = int(hdr[2])
+        out.append((mode, path, data[nl + 1:nl + 1 + size]))
+        pos = nl + 1 + size + 1
+    return out
+
+
+def base_tree(repo: Path, base_sha: str) -> str:
+    return _hgit(Path(repo), "rev-parse", f"{base_sha}^{{tree}}").strip()
+
+
+def materialize(repo: Path, base_sha: str, dest: Path, *, patch: Path | None,
+                include: list[str] | None = None, expect_tree: str | None = None) -> None:
+    """A PRIVATE tree at ``dest``: the blobs of ``base_sha`` written as files (no
+    .git of the agent repo is ever used as the tree's repository), a fresh
+    hardened repository committing them, then ``patch`` applied (only
+    ``include`` paths when given). When ``expect_tree`` is given, the private
+    commit's tree must hash to it -- the base recorded BEFORE the build -- so a
+    rewritten object in the agent repo cannot change the base."""
+    if dest.exists():
+        shutil.rmtree(dest)
+    dest.mkdir(parents=True)
+    for mode, path, data in _read_objects(Path(repo), base_sha):
+        t = dest / path
+        t.parent.mkdir(parents=True, exist_ok=True)
+        if mode == "120000":
+            os.symlink(data.decode(), t)
+        else:
+            t.write_bytes(data)
+            if mode == "100755":
+                t.chmod(0o755)
+    _hgit(dest, "init", "-q")
+    _hgit(dest, "add", "-A", "-f")
+    _hgit(dest, "commit", "-q", "--allow-empty", "-m", f"nous clean base {base_sha}")
+    if expect_tree is not None:
+        got = _hgit(dest, "rev-parse", "HEAD^{tree}").strip()
+        if got != expect_tree:
+            raise CleanTreeError(f"the base rebuilt from the agent repo's objects hashes to "
+                                 f"tree {got}, not the pre-build tree {expect_tree}: the "
+                                 f"repository's objects were changed")
+    if patch is not None and patch.stat().st_size:
+        _hgit(dest, "apply", "--binary", "--whitespace=nowarn",
+              *[f"--include={p}" for p in (include or [])], str(Path(patch).resolve()))
+
+
+def _manifest(dest: Path) -> dict[str, str]:
+    """``{path: sha256 | "link:<target>"}`` of every FILE on disk under ``dest``
+    (``.git`` excluded), read from the filesystem -- not from any index."""
+    out = {}
+    for p in sorted(dest.rglob("*")):
+        rel = p.relative_to(dest).as_posix()
+        if rel == ".git" or rel.startswith(".git/"):
+            continue
+        if p.is_symlink():
+            out[rel] = "link:" + os.readlink(p)
+        elif p.is_file():
+            out[rel] = hashlib.sha256(p.read_bytes()).hexdigest()
+    return out
 
 
 def _create(repo: Path, work_dir: Path, rec: dict) -> Path:
-    dest = Path(work_dir) / TREE
-    if dest.exists():
-        _remove(repo, dest)
-    _git(repo, "worktree", "add", "--detach", "--force", str(dest), rec["base_sha"])
-    patch = Path(work_dir) / PATCH
-    if patch.stat().st_size:
-        _git(dest, "apply", "--binary", "--whitespace=nowarn", str(patch.resolve()))
+    dest = tree_root(work_dir) / TREE
+    materialize(Path(repo), rec["base_sha"], dest, patch=Path(work_dir) / PATCH,
+                expect_tree=rec.get("base_tree"))
+    mf = _manifest(dest)
+    mp = Path(work_dir) / MANIFEST
+    if mp.exists():
+        # A recreated tree must be byte-identical to the one first measured.
+        prev = json.loads(mp.read_text())
+        if prev != mf:
+            raise CleanTreeError("the clean tree rebuilt from the recorded commit and "
+                                 "patch differs from the one first created")
+    else:
+        mp.write_text(json.dumps(mf, indent=1, sort_keys=True))
     return dest
 
 
-def integrity_problems(work_dir: Path, rec: dict) -> list[str]:
-    dest = Path(work_dir) / TREE
+def integrity_problems(work_dir: Path, rec: dict | None = None) -> list[str]:
+    """Compare the clean tree ON DISK with the manifest recorded when it was
+    created. Independent of the tree's own index and of any exclude file: every
+    file is hashed; a new file with a CODE suffix is a problem anywhere (data
+    files a run writes are allowed, and listed nowhere)."""
+    dest = tree_root(work_dir) / TREE
+    mp = Path(work_dir) / MANIFEST
+    if not dest.is_dir():
+        return [f"the clean tree {dest} is missing"]
+    if not mp.exists():
+        return ["the clean-tree manifest is missing"]
+    want = json.loads(mp.read_text())
+    have = _manifest(dest)
     out = []
-    head = _git(dest, "rev-parse", "HEAD").strip()
-    if head != rec["base_sha"]:
-        out.append(f"HEAD moved to {head}")
-    patch, _ = _diff_against(dest, rec["base_sha"], rec["paths"], Path(work_dir) / ".clean_index2")
-    if hashlib.sha256(patch).hexdigest() != rec["patch_sha256"]:
-        out.append("the mechanism paths no longer diff to the recorded patch")
-    excl = [f":(exclude){p}" for p in rec["paths"]]
-    changed = _git(dest, "diff", "--name-only", rec["base_sha"], "--", ".", *excl).split()
+    changed = sorted(p for p in want if have.get(p) != want[p])
     if changed:
-        out.append(f"tracked files outside the mechanism changed: {changed[:10]}")
-    others = _git(dest, "ls-files", "--others", "--exclude-standard", "--", ".", *excl).split()
-    code = [o for o in others if Path(o).suffix in CODE_SUFFIXES]
-    if code:
-        out.append(f"untracked code files appeared outside the mechanism: {code[:10]}")
+        out.append(f"files changed or removed: {changed[:10]}")
+    new_code = sorted(p for p in have if p not in want and (
+        Path(p).suffix in CODE_SUFFIXES or Path(p).name in CODE_NAMES
+        or have[p].startswith("link:")))
+    if new_code:
+        out.append(f"new code files or symlinks appeared: {new_code[:10]}")
     return out
 
 
 def ensure(repo: Path, work_dir: Path, *, fresh: bool = False) -> Path:
     """The clean tree, created (``fresh`` or missing) or integrity-checked."""
     rec = read_record(work_dir)
-    dest = Path(work_dir) / TREE
+    dest = tree_root(work_dir) / TREE
     if fresh or not dest.exists():
-        dest = _create(Path(repo), Path(work_dir), rec)
-        problems = integrity_problems(work_dir, rec)
-        if problems:
-            raise CleanTreeError("the clean tree could not be rebuilt from the recorded "
-                                 "commit and patch: " + "; ".join(problems))
-        return dest
-    problems = integrity_problems(work_dir, rec)
+        return _create(Path(repo), Path(work_dir), rec)
+    check(work_dir)
+    return dest
+
+
+def check(work_dir: Path) -> None:
+    """Raise when the clean tree is not what was created (A4: called after
+    every measurement batch and at the terminal transition, too)."""
+    problems = integrity_problems(work_dir)
     if problems:
         raise CleanTreeError(
             "the clean checkout the epoch measures was modified (" + "; ".join(problems)
             + "). Target code changed the tree it is measured in; the measurements "
             "since the last check describe a different system. Start a new campaign.")
-    return dest

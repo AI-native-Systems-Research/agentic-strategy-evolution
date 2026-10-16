@@ -1113,7 +1113,10 @@ def target_env() -> dict:
 
     if _PYCACHE_PREFIX is None or not Path(_PYCACHE_PREFIX).is_dir():
         _PYCACHE_PREFIX = tempfile.mkdtemp(prefix="nous-pycache-")
-    env = {k: v for k, v in os.environ.items() if not k.startswith("NOUS_GATE")}
+    # No path to Nous's records or keys: NOUS_CAMPAIGN_PARENT and the state home
+    # locate the work_dir and the seal key (round 3, B1).
+    hidden = ("NOUS_GATE", "NOUS_CAMPAIGN_PARENT", "NOUS_STATE_HOME")
+    env = {k: v for k, v in os.environ.items() if not k.startswith(hidden)}
     env["PYTHONPYCACHEPREFIX"] = _PYCACHE_PREFIX
     return env
 

@@ -275,21 +275,18 @@ def build_mutant(repo: Path, work_dir: Path, written: list[str],
 
 def build_mutant_clean(repo: Path, work_dir: Path, rec: dict, declared: list[str],
                        dest: Path) -> list[str]:
-    """The mechanism-reverted mutant in the clean-checkout model: a worktree of
-    the pre-build commit with ONLY the patch's test files and NEW files applied.
-    Every pre-existing non-test file the patch edits stays at the base commit."""
-    from orchestrator.optimize.build_scope import _git
-    from orchestrator.optimize.clean_tree import PATCH
+    """The mechanism-reverted mutant: a PRIVATE tree (clean_tree.materialize --
+    no .git shared with the agent's repo) of the pre-build commit with ONLY the
+    patch's test files and NEW files applied. Every pre-existing non-test file
+    the patch edits stays at the base commit."""
+    from orchestrator.optimize.clean_tree import PATCH, _read_objects, materialize
 
-    base = rec["base_sha"]
-    _git(repo, "worktree", "add", "--detach", "--force", str(dest), base)
-    in_base = set(_git(repo, "ls-tree", "-r", "--name-only", base).splitlines())
+    in_base = {p for _m, p, _d in _read_objects(Path(repo), rec["base_sha"])}
     keep = [p for p in rec.get("touched") or [] if is_test_path(p, declared) or p not in in_base]
     reverted = sorted(p for p in rec.get("touched") or [] if p not in keep)
-    patch = (Path(work_dir) / PATCH).resolve()
-    if keep and patch.stat().st_size:
-        _git(dest, "apply", "--binary", "--whitespace=nowarn",
-             *[f"--include={p}" for p in keep], str(patch))
+    materialize(Path(repo), rec["base_sha"], dest,
+                patch=(Path(work_dir) / PATCH) if keep else None, include=keep,
+                expect_tree=rec.get("base_tree"))
     return reverted
 
 
@@ -340,19 +337,21 @@ def build_stub_mutant(repo: Path, work_dir: Path, rec: dict, declared: list[str]
     exist, so a test that only checks existence (``hasattr``, ``in dir(m)``,
     ``vars(m)``, ``inspect``) still PASSES here -- which is how it is caught.
     Returns the stubbed qualified names ("path:qualname")."""
-    from orchestrator.optimize.build_scope import _git
-    from orchestrator.optimize.clean_tree import PATCH
+    from orchestrator.optimize.clean_tree import PATCH, _read_objects, materialize
 
     base = rec["base_sha"]
-    _git(repo, "worktree", "add", "--detach", "--force", str(dest), base)
-    patch = (Path(work_dir) / PATCH).resolve()
-    if patch.stat().st_size:
-        _git(dest, "apply", "--binary", "--whitespace=nowarn", str(patch))
+    materialize(Path(repo), base, dest, patch=Path(work_dir) / PATCH,
+                expect_tree=rec.get("base_tree"))
+    base_src_of = {p: d for _m, p, d in _read_objects(Path(repo), base)}
     stubbed = []
     for rel in rec.get("touched") or []:
         if not rel.endswith(".py") or is_test_path(rel, declared) or not (dest / rel).exists():
             continue
-        base_src = _git(repo, "show", f"{base}:{rel}", check=False)
+        raw = base_src_of.get(rel)
+        try:
+            base_src = raw.decode() if raw is not None else None
+        except UnicodeDecodeError:
+            base_src = None
         st = _Stubber(base_src)
         try:
             (dest / rel).write_text(st.apply((dest / rel).read_text()))
@@ -363,14 +362,19 @@ def build_stub_mutant(repo: Path, work_dir: Path, rec: dict, declared: list[str]
 
 
 def remove_mutant(repo: Path, dest: Path) -> None:
+    """Remove a mutant tree. Private trees are plain directories; a legacy
+    worktree-based mutant (no clean record) is also unregistered from git."""
     from orchestrator.optimize.build_scope import _git
 
-    if _git(repo, "worktree", "remove", "--force", str(dest), check=False) is None:
-        logger.warning("could not remove mutant worktree %s (git worktree remove "
-                       "failed); removing the directory and pruning", dest)
+    if (Path(dest) / ".git").is_file():
+        if _git(repo, "worktree", "remove", "--force", str(dest), check=False) is None:
+            logger.warning("could not remove mutant worktree %s (git worktree remove "
+                           "failed); removing the directory and pruning", dest)
+        if _git(repo, "worktree", "prune", check=False) is None:
+            logger.warning("git worktree prune failed in %s after removing a mutant", repo)
     shutil.rmtree(dest, ignore_errors=True)
-    if _git(repo, "worktree", "prune", check=False) is None:
-        logger.warning("git worktree prune failed in %s after removing a mutant", repo)
+    if Path(dest).exists():
+        logger.warning("could not remove mutant tree %s", dest)
 
 
 def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
@@ -430,9 +434,10 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
                 "no git target, no test_command, or no record of what the build wrote")
         else:
             from orchestrator.optimize.build_scope import GitError
+            from orchestrator.optimize.clean_tree import CleanTreeError, tree_root
 
-            scratch = wd / ".mutant-tmp"
-            scratch.mkdir(exist_ok=True)
+            scratch = tree_root(wd) / "mutants"
+            scratch.mkdir(parents=True, exist_ok=True)
             dest = Path(tempfile.mkdtemp(prefix="nous-mutant-", dir=scratch)) / "tree"
             try:
                 declared = [r["native_test"] for f in factors for r in (f.relations or ())
@@ -442,7 +447,7 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
                     reverted = (build_mutant_clean(Path(repo), wd, clean_rec, declared, dest)
                                 if clean_rec else
                                 build_mutant(Path(repo), wd, written, declared, dest))
-                except GitError as exc:
+                except (GitError, CleanTreeError) as exc:
                     reverted = None
                     mutant_info["unavailable"] = f"could not build the mutant: {exc}"
                 if reverted is not None:
@@ -494,9 +499,10 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
         "pre_build_behavioral_failure", "mutant_behavioral_failure")]
     if with_evidence and clean_rec and repo is not None and run_tests is not None:
         from orchestrator.optimize.build_scope import GitError
+        from orchestrator.optimize.clean_tree import CleanTreeError, tree_root
 
-        scratch = wd / ".mutant-tmp"
-        scratch.mkdir(exist_ok=True)
+        scratch = tree_root(wd) / "stubs"
+        scratch.mkdir(parents=True, exist_ok=True)
         dest = Path(tempfile.mkdtemp(prefix="nous-stub-", dir=scratch)) / "tree"
         try:
             declared = [r["native_test"] for f in factors for r in (f.relations or ())
@@ -512,7 +518,7 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
                             "it PASSES with every new or changed function body "
                             "stubbed to raise NotImplementedError: it checks that "
                             "the mechanism's names exist, not what they do")}
-        except GitError as exc:
+        except (GitError, CleanTreeError, UnicodeDecodeError) as exc:
             mutant_info["stub_unavailable"] = str(exc)
         finally:
             remove_mutant(Path(repo), dest)

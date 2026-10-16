@@ -109,8 +109,11 @@ def test_a_test_that_observes_the_mechanisms_behaviour_passes(tmp_path, monkeypa
     assert "boost" in (Path(tmp_path) / "target" / "calc.py").read_text()
     wt = subprocess.run(["git", "worktree", "list"], cwd=tmp_path / "target",
                         capture_output=True, text=True).stdout
-    # The repo itself plus the persistent clean checkout; no mutant left behind.
-    assert "nous-mutant" not in wt and len(wt.strip().splitlines()) == 2, wt
+    # The clean tree and the mutants are PRIVATE repositories: the agent's repo
+    # has no worktrees registered at all, and no mutant is left behind.
+    assert len(wt.strip().splitlines()) == 1, wt
+    from orchestrator.optimize.clean_tree import tree_root
+    assert not list(tree_root(wd).glob("mutants/*")) and not list(tree_root(wd).glob("stubs/*"))
 
 
 def test_a_waiver_lets_a_nondiscriminating_test_through_and_is_recorded(tmp_path, monkeypatch):
@@ -361,6 +364,9 @@ def test_a_failed_mutant_cleanup_is_logged_not_swallowed(tmp_path, monkeypatch, 
     from orchestrator.optimize import build_scope, test_vacuity
 
     monkeypatch.setattr(build_scope, "_git", lambda *a, **k: None)
+    legacy = tmp_path / "gone"
+    legacy.mkdir()
+    (legacy / ".git").write_text("gitdir: /nowhere\n")    # a worktree-style mutant
     with caplog.at_level(logging.WARNING, logger="orchestrator.optimize.test_vacuity"):
-        test_vacuity.remove_mutant(tmp_path, tmp_path / "gone")
+        test_vacuity.remove_mutant(tmp_path, legacy)
     assert "could not remove mutant worktree" in caplog.text

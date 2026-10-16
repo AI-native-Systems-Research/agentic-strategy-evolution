@@ -64,6 +64,7 @@ NOT_DERIVED = frozenset({
     "authored_tests.json", "build_scope.json", "adapter_contract.json",
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
+    "clean_tree.manifest.json",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
@@ -71,7 +72,7 @@ NOT_DERIVED = frozenset({
 CARRIED_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json",
                    "authored_tests.json", "build_scope.json", "build_review.json",
                    "clean_tree.json", "mechanism.clean.patch", "gate_records.seal",
-                   ".nous_gate_key", "build_isolation.json")
+                   "build_isolation.json", "clean_tree.manifest.json")
 
 #: Bookkeeping files outside the analysis (engine state, ledgers, logs).
 IGNORED = frozenset({
@@ -374,6 +375,21 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
                              campaign=_detached(campaigns[min(campaigns)]))
         # build_review.json is a record of a human decision that report.json's
         # provenance.waivers reads; it is carried, not re-derived.
+        # The seal key lives outside the work_dir (gate_records.key_path); the
+        # scratch work_dir gets a copy so the carried records verify there too.
+        from orchestrator.optimize import gate_records as _grk
+
+        if _grk.key_path(orig).exists():
+            kp = _grk.key_path(new)
+            kp.parent.mkdir(parents=True, exist_ok=True)
+            if kp.exists():
+                kp.unlink()
+            fd = os.open(kp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as fh:
+                fh.write(_grk.key_path(orig).read_bytes())
+            scratch_key = kp
+        else:
+            scratch_key = None
         for name in ("mechanism.sha256", "mechanism.patch", *CARRIED_RECORDS):
             if (orig / name).exists():
                 shutil.copy2(orig / name, new / name)
@@ -469,6 +485,11 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
             os.environ["NOUS_CAMPAIGN_PARENT"] = prior
         if not keep:
             shutil.rmtree(parent, ignore_errors=True)
+            try:
+                if scratch_key is not None:
+                    scratch_key.unlink()
+            except (NameError, OSError):
+                pass
     return result
 
 

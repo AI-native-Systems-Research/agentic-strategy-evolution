@@ -12,15 +12,18 @@ Two defences, neither of which trusts the work_dir alone:
   OUTSIDE the target repo (``NOUS_CAMPAIGN_PARENT``): the agent's cwd, and every
   target command's cwd, is the repo or a checkout of it.
 * **HMAC seal.** Each record is sealed with HMAC-SHA256 under a per-campaign
-  random key (``.nous_gate_key``, mode 0600, in the work_dir). A record edited
+  random key kept OUTSIDE the work_dir and the clean tree
+  (``key_path``: ``~/.nous/keys/<hash>``, mode 0600, checked on every read). A record edited
   without the key no longer verifies. ``load`` reads every record ONCE, at the
   top of verify and before any target code runs; the oracles then use those
   in-memory copies, so a rewrite during verify's own test run changes nothing
   they read.
 
-Limits, stated: a process that can read ``.nous_gate_key`` can forge a seal. The
-key never enters the repo or a target command's environment, but the build agent
-runs as the same OS user, so this raises the bar rather than closing it; the
+Limits, stated: a process that can read the key file can forge a seal. No path
+relative to the repo, the work_dir or the clean tree reaches it, and no target
+command's environment names it; but the build agent and target code run as the
+same OS user, so code that knows Nous's layout can still find ``~/.nous/keys``.
+This raises the bar rather than closing it; the
 clean-checkout model (``clean_tree.py``) is what makes the MEASUREMENTS
 independent of anything the agent left behind.
 """
@@ -33,10 +36,10 @@ import os
 import secrets
 from pathlib import Path
 
-KEY_FILE = ".nous_gate_key"
 SEAL_FILE = "gate_records.seal"
 BUILD_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json", "build_scope.json",
-                 "clean_tree.json", "mechanism.clean.patch")
+                 "clean_tree.json", "mechanism.clean.patch", "mechanism.sha256",
+                 "build_isolation.json")
 VERIFY_RECORDS = ("authored_tests.json", "build_review.json")
 
 
@@ -44,15 +47,34 @@ class GateRecordError(RuntimeError):
     """A build-gate record is missing, unsealed, or fails its seal."""
 
 
+def key_path(work_dir: Path) -> Path:
+    """The seal key's location: under the Nous state home (``NOUS_STATE_HOME``,
+    default ``~/.nous``) in ``keys/``, named by a hash of the work_dir. NOT in
+    the work_dir and not in the clean tree, so no relative path from either
+    reaches it, and the target environment carries no path to it."""
+    from orchestrator.work_dir_resolver import STATE_HOME_ENV
+
+    home = os.environ.get(STATE_HOME_ENV)
+    base = (Path(home).expanduser() if home else Path.home() / ".nous") / "keys"
+    tag = hashlib.sha256(str(Path(work_dir).resolve()).encode()).hexdigest()[:24]
+    return base / tag
+
+
 def _key(work_dir: Path, *, create: bool = False) -> bytes:
-    p = Path(work_dir) / KEY_FILE
+    p = key_path(work_dir)
     if not p.exists():
         if not create:
-            raise GateRecordError(f"{KEY_FILE} is missing from the work_dir: the build "
-                                  f"records cannot be verified")
+            raise GateRecordError(f"the seal key for this work_dir ({p}) is missing: the "
+                                  f"build records cannot be verified")
+        p.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(p.parent, 0o700)
         fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as fh:
             fh.write(secrets.token_hex(32))
+    mode = p.stat().st_mode & 0o777
+    if mode & 0o077:
+        raise GateRecordError(f"the seal key {p} is readable by others (mode "
+                              f"{oct(mode)}); it must be 0600")
     return bytes.fromhex(p.read_text().strip())
 
 
