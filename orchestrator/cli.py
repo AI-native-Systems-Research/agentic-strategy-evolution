@@ -2561,6 +2561,29 @@ def _cmd_replay(args):
             print("  Worktree cleaned up.")
 
 
+def _cmd_reanalyze(args):
+    """Re-derive a kind:optimization campaign's analysis from its recorded rows
+    and diff it against disk (audit Q7). Zero tokens, zero measurements."""
+    import json as _json
+    import logging
+
+    from orchestrator.optimize.reanalyze import format_result, reanalyze
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.ERROR)
+    work_dir = resolve_work_dir(args.target)
+    campaign = None
+    if args.target.endswith((".yaml", ".yml")):
+        campaign = yaml.safe_load(Path(args.target).read_text())
+    try:
+        res = reanalyze(Path(work_dir), campaign=campaign, keep=args.keep)
+    except (ValueError, OSError) as exc:
+        print(f"reanalyze: {exc}", file=sys.stderr)
+        sys.exit(2)
+    print(_json.dumps(res.to_dict(), indent=2, default=str) if args.json
+          else format_result(res))
+    sys.exit(0 if res.identical else 1)
+
+
 def _cmd_create_campaign(args):
     """Scaffold a heavily-commented campaign.yaml (issue #89)."""
     from orchestrator.create_campaign import scaffold_campaign
@@ -3152,6 +3175,19 @@ def build_parser():
     p_replay.add_argument("target")
     p_replay.add_argument("--iter", required=True, type=int)
     p_replay.set_defaults(func=_cmd_replay)
+
+    p_reanalyze = subparsers.add_parser(
+        "reanalyze",
+        help="kind:optimization: recompute every fit, recommendation, "
+             "confirmation and the report from the recorded runs.jsonl (no "
+             "measurement, no LLM) and diff against what is on disk. Exit 0 "
+             "when identical, 1 when anything differs.",
+    )
+    p_reanalyze.add_argument("target", help="campaign.yaml or work_dir")
+    p_reanalyze.add_argument("--keep", action="store_true",
+                             help="keep the re-derived scratch work_dir")
+    p_reanalyze.add_argument("--json", action="store_true")
+    p_reanalyze.set_defaults(func=_cmd_reanalyze)
 
     p_reports = subparsers.add_parser(
         "reports",
