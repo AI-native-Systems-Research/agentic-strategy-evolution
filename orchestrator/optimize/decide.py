@@ -114,12 +114,18 @@ class CandidateSpace:
     #: because no admissible point was found (enumerated: none EXISTS;
     #: searched: neither the search nor the feasibility ascent found one).
     constraint_models_applied: bool | None = None
+    #: Measured configurations offered as search seeds that could not be
+    #: placed on the axes (a fitted factor missing, a choice level off the
+    #: axis, a level that cannot be coded) and so seeded nothing. Counted
+    #: rather than dropped silently; 0 when enumerated (nothing is seeded).
+    seeds_dropped: int = 0
 
     def as_dict(self) -> dict:
         return {"exhaustive": self.exhaustive, "size": int(self.size),
                 "evaluated": int(self.evaluated), "method": self.method,
                 "seed": self.seed,
-                "constraint_models_applied": self.constraint_models_applied}
+                "constraint_models_applied": self.constraint_models_applied,
+                "seeds_dropped": int(self.seeds_dropped)}
 
 
 class Scored(list):
@@ -303,7 +309,8 @@ def _snap(levels: dict, ids, axes, by_id) -> tuple | None:
     A choice level must match exactly; a numeric one goes to the axis point
     nearest its coding (a CCD axial point beyond the screen range, an
     off-grid level), ties to the lower index. A configuration missing a
-    fitted factor, or with a level that cannot be coded, seeds nothing.
+    fitted factor, or with a level that cannot be coded, seeds nothing --
+    and ``_scored`` counts it in ``CandidateSpace.seeds_dropped``.
     """
     out = []
     for fid, axis in zip(ids, axes):
@@ -636,8 +643,10 @@ def _scored(fit: Fit, factors, *, fitted_ids, held_fixed: dict,
     unfiltered = (scored_of(i for i in visited
                             if not _excluded(build(i).levels, exclude_levels))
                   if modelled else out)
+    dropped = sum(1 for lv in seed_levels or () if _snap(lv, ids, axes, by_id) is None)
     return Scored(out, CandidateSpace(False, size, len(visited),
-                                      "sampled_coordinate_ascent", seed, applied),
+                                      "sampled_coordinate_ascent", seed, applied,
+                                      seeds_dropped=dropped),
                   unfiltered=unfiltered)
 
 

@@ -622,3 +622,22 @@ def test_an_enumerated_report_has_no_candidate_space(tmp_path):
     report = json.loads((Path(res.work_dir) / "report.json").read_text())
     assert "candidate_space" not in report
     assert check_candidate_space(_latest_rec(res.work_dir), report) == []
+
+
+# ─── stage-0 review: an unplaceable measured seed is counted (A9) ───────────
+
+
+def test_measured_seeds_that_cannot_be_placed_are_counted_not_dropped_silently():
+    """A seed missing a fitted factor, or with a level that cannot be coded,
+    seeds nothing; the record says how many."""
+    k = 12
+    fs = _factors(k)
+    fit = _random_quadratic(k, random.Random(4))
+    good = {fid: 9 for fid in _ids(k)}
+    missing = {fid: 9 for fid in _ids(k)[1:]}
+    bad_level = {**good, "X03": "not-a-number"}
+    kw = dict(direction="maximize", fitted_ids=_ids(k), held_fixed={}, top=None)
+    r = decide.ranked(fit, fs, seed_levels=[good, missing, bad_level], **kw)
+    assert r.space.seeds_dropped == 2
+    assert r.space.as_dict()["seeds_dropped"] == 2
+    assert decide.ranked(fit, fs, seed_levels=[good], **kw).space.seeds_dropped == 0

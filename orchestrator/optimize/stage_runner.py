@@ -3873,9 +3873,12 @@ def run_stage(
     # ── the candidate space: enumerated, or searched above the cap ─────────
     #
     # Above `decide.CANDIDATE_CAP` the space is searched, not enumerated
-    # (`decide._scored`), and the search is seeded with every configuration
-    # this epoch measured -- the fitted rows and every other row on disk -- so
-    # the best MEASURED region is always a start. Multi-objective campaigns
+    # (`decide._scored`), and the search POOL is seeded with every
+    # configuration this epoch measured -- the fitted rows and every other row
+    # on disk. The ascent STARTS are the best-predicted pool points, so a
+    # measured configuration is a start only when the fit rates it among
+    # them; one that cannot be placed on the axes is counted in
+    # `candidate_space.seeds_dropped`. Multi-objective campaigns
     # fit their objective models first so the search also climbs every
     # objective and a spread of their weighted sums: the predicted front taken
     # over `scored` then reaches its extremes and interior. Under the cap none
@@ -3918,6 +3921,11 @@ def run_stage(
             "argmax over X_valid.", stage_name, candidate_space.size,
             decide.CANDIDATE_CAP, candidate_space.evaluated,
             candidate_space.method, candidate_space.seed)
+        if candidate_space.seeds_dropped:
+            logger.warning(
+                "%s: %d measured configuration(s) could not be placed on the "
+                "candidate axes and seeded nothing (candidate_space.seeds_dropped).",
+                stage_name, candidate_space.seeds_dropped)
     # `top_candidates` is not only a human-readable "how close was the
     # runner-up" — it is the POOL `_confirm_rows` draws the terminal shortlist
     # from, including the round-r top-up after finalists are excluded. Capping
