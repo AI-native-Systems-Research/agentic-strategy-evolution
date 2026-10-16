@@ -603,7 +603,7 @@ one-factor-at-a-time search.
 | `factor_ids` | Which factors (by id) form the matrix's columns |
 | `kind` | Design family (e.g. fractional factorial, central composite) |
 | `resolution` | Achieved resolution (III/IV/V) for a fractional design |
-| `generators` | The published generator columns used to build the fraction |
+| `generators` | The generator columns used to build the fraction (textbook for 4-8 factors, constructed otherwise) |
 | `aliases` | Named aliased effect pairs, if any — the honest cost of resolution < V |
 | `rows` | The matrix rows themselves, in coded (±1) space |
 | `run_order` / `run_order_seed` | Randomized execution order plus the seed that reproduces it — immune to time-ordered drift a sequential grid can't rule out |
