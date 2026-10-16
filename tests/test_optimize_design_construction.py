@@ -355,3 +355,54 @@ def test_resolution_five_at_a_hundred_knobs_is_within_two_doublings_and_cached()
     assert min_runs_for(100, 5) == first
     assert time.process_time() - t < max(0.05, cold / 10), "the second ask is cached"
     assert first <= 4 * D._counting_bound_runs(100, 5)
+
+
+# ── B7: the composite is estimable on the points that actually RAN ──────────
+
+def test_the_composite_is_estimable_on_the_as_run_points(tmp_path):
+    """Refine over five factors uses a 16-run resolution-V cube with axial
+    points at alpha = 2, which the declared ranges CLAMP to +-1; two factors
+    are log-scaled and every level snaps to an integer grid. Rebuild the full
+    quadratic model matrix from design_matrix.json's levels via
+    ``code_actual`` -- the coordinates the fit uses -- and require full rank."""
+    import json
+    import math
+    from pathlib import Path
+
+    from orchestrator.optimize.factors import code_actual, parse_factors
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import Surface, _numeric
+
+    def fac(fid, levels, log=False):
+        f = _numeric(fid, levels=levels, grid=1)
+        if log:
+            f["scale"] = "log"
+        return f
+
+    def fn(lv):
+        a, b = math.log2(lv["INT"] / 16.0), math.log2(lv["BUF"] / 4096.0)
+        return (100 - 2 * a * a - 2 * b * b - 0.3 * (lv["P"] - 12) ** 2
+                - 0.3 * (lv["Q"] - 11) ** 2 - 0.3 * (lv["R"] - 5) ** 2)
+
+    decl = (fac("INT", (1, 8, 64), True), fac("BUF", (256, 2048, 16384), True),
+            fac("P", (2, 4, 8, 16)), fac("Q", (2, 4, 8, 16)), fac("R", (2, 4, 8, 16)))
+    res = run_synthetic_campaign(Surface(name="b7", noise_sd=0.1, fn=fn, factors=decl),
+                                 seed=1, parent_dir=tmp_path)
+    assert "refine" in res.path
+    refine = [p for p in Path(res.work_dir).glob("runs/iter-*/design_matrix.json")
+              if any(r["role"] == "axial" for r in json.loads(p.read_text())["rows"])]
+    (dm,) = refine
+    rows = json.loads(dm.read_text())["rows"]
+    by_id = {f.id: f for f in parse_factors(list(decl))}
+    ids = sorted(by_id)
+    X = np.array([[code_actual(by_id[i], r["levels"][i]) for i in ids] for r in rows])
+    assert sum(r["role"] == "corner" for r in rows) == 16
+    axial = X[[r["role"] == "axial" for r in rows]]
+    assert np.isclose(np.abs(axial).max(), 1.0), "alpha = 2 is clamped to the range"
+    assert all(float(r["levels"][i]).is_integer() for r in rows for i in ids)
+    k = len(ids)
+    cols = [np.ones(len(X))] + [X[:, i] for i in range(k)]
+    cols += [X[:, i] * X[:, j] for i, j in itertools.combinations(range(k), 2)]
+    cols += [X[:, i] ** 2 for i in range(k)]
+    M = np.column_stack(cols)
+    assert np.linalg.matrix_rank(M) == 1 + 2 * k + k * (k - 1) // 2
