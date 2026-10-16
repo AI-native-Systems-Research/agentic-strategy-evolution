@@ -1267,6 +1267,7 @@ def built_factor_ids(factors, ran: set) -> set[str]:
 
 def _check_tests_failed_before_build(
     campaign: dict, work_dir: Path, factors, test_results: dict | None,
+    *, records: dict | None = None,
 ) -> None:
     """Oracle 2(b): a correctness test that already passed proves nothing.
 
@@ -1289,7 +1290,7 @@ def _check_tests_failed_before_build(
     check, exactly as it does for the drift oracle.
     """
     path = Path(work_dir) / "pre_build_tests.json"
-    if not path.exists():
+    if records is None and not path.exists():
         return
     if _build_checks(campaign).get("allow_preexisting_tests"):
         logger.info(
@@ -1298,7 +1299,10 @@ def _check_tests_failed_before_build(
         )
         return
     try:
-        pre = json.loads(path.read_text())
+        # The sealed, in-memory copy read before any target code ran, when
+        # verify has one (gate_records.load); the file otherwise.
+        pre = (records["pre_build_tests.json"] if records is not None
+               else json.loads(path.read_text()))
     except (OSError, ValueError) as exc:
         raise OptimizationGateFailed(
             f"pre_build_tests.json exists but could not be read ({exc}). It is "
@@ -1340,17 +1344,19 @@ def _check_tests_failed_before_build(
 
 
 def _check_authored_tests_discriminate(campaign: dict, work_dir: Path, factors,
-                                       iteration: int) -> None:
+                                       iteration: int, *, records: dict | None = None
+                                       ) -> None:
     """Oracle 2(d) (``test_vacuity.py``): every declared correctness test of a
     built factor must be shown to observe the mechanism, not merely the
     existence of a name. No-op when no build ran."""
     from orchestrator.optimize import test_vacuity
 
     pre_path = Path(work_dir) / "pre_build_tests.json"
-    if not pre_path.exists():
+    if records is None and not pre_path.exists():
         return
     try:
-        pre = json.loads(pre_path.read_text())
+        pre = (records["pre_build_tests.json"] if records is not None
+               else json.loads(pre_path.read_text()))
     except (OSError, ValueError) as exc:
         # Not "2(b) already failed": with allow_preexisting_tests 2(b) never
         # reads the file, so this is the oracle that must fail closed.
@@ -1371,13 +1377,15 @@ def _check_authored_tests_discriminate(campaign: dict, work_dir: Path, factors,
         test_vacuity.check(
             campaign, work_dir, factors, repo=Path(repo) if repo else None,
             run_tests=run_tests,
-            built_ids=built_factor_ids(factors, set(pre.get("ran") or ())))
+            built_ids=built_factor_ids(factors, set(pre.get("ran") or ())),
+            records=records)
     except ValueError as exc:
         raise OptimizationGateFailed(str(exc)) from exc
 
 
 def _check_baseline_equivalence(
     campaign: dict, work_dir: Path, factors, config_runner: Callable | None,
+    *, records: dict | None = None,
 ) -> None:
     """Oracle 2(c): ``control == known_valid_baseline`` after the build.
 
@@ -1412,16 +1420,17 @@ def _check_baseline_equivalence(
     ran when nothing did.
     """
     path = Path(work_dir) / "baseline_equivalence.json"
-    if not path.exists():
-        # A build ran (its pre-build record exists) but no control was even
-        # attempted: unarmed, and a gate like every other unarmed path.
-        if (Path(work_dir) / "pre_build_tests.json").exists():
+    sealed = records.get("baseline_equivalence.json") if records is not None else None
+    if (records is not None and sealed is None) or (records is None and not path.exists()):
+        # A build ran but no control was even attempted: unarmed, and a gate
+        # like every other unarmed path.
+        if records is not None or (Path(work_dir) / "pre_build_tests.json").exists():
             _baseline_unarmed(campaign, path, {},
                               "no pre-build control measurement was attempted "
                               "(no known_valid_baseline, or no runner at build)")
         return
     try:
-        rec = json.loads(path.read_text())
+        rec = dict(sealed) if sealed is not None else json.loads(path.read_text())
     except (OSError, ValueError) as exc:
         raise OptimizationGateFailed(
             f"baseline_equivalence.json exists but could not be read ({exc}). It "
@@ -1561,7 +1570,7 @@ def _baseline_unarmed(campaign: dict, path: Path, rec: dict, why: str) -> None:
     )
 
 
-def _review_build(gate, work_dir: Path) -> None:
+def _review_build(gate, work_dir: Path, *, built: bool | None = None) -> None:
     """THE HUMAN GATE FOR A BUILT MECHANISM (audit Q10).
 
     After a build, and after every automatic build oracle passed, but BEFORE the
@@ -1574,7 +1583,7 @@ def _review_build(gate, work_dir: Path) -> None:
     A reject or abort ends the campaign. Not consulted when no build ran.
     """
     wd = Path(work_dir)
-    if not (wd / "pre_build_tests.json").exists():
+    if built is False or (built is None and not (wd / "pre_build_tests.json").exists()):
         return
     files = [str(wd / n) for n in ("mechanism.patch", "build_scope.json",
                                    "authored_tests.json", "baseline_equivalence.json",
@@ -2494,6 +2503,7 @@ def run_stage(
     gate=None,
     model: str | None = None,
     sdk_runner: Callable | None = None,
+    reanalysis: bool = False,
     **_ignored,
 ):
     """Run one optimization-kind iteration and return an ``IterationOutcome``.
@@ -2554,6 +2564,21 @@ def run_stage(
     # Set only when the test command runs HERE; None when verdicts were injected.
     test_run: "runner.NativeTestResults | None" = None
 
+    # THE BUILD RECORDS ARE READ ONCE, HERE, before any target code runs at
+    # verify (the test command below executes agent-authored code). The oracles
+    # use these sealed in-memory copies (gate_records.py).
+    _gate = None
+    if stage_name == Stage.VERIFY.value and not reanalysis:
+        from orchestrator.optimize import build_scope as _bs
+        from orchestrator.optimize import gate_records as _gr
+
+        if _bs.build_declared(campaign) or (Path(work_dir) / "pre_build_tests.json").exists():
+            try:
+                _gr.require_outside_repo(work_dir, Path(repo) if repo else None)
+                _gate = _gr.load(work_dir)
+            except _gr.GateRecordError as exc:
+                raise OptimizationGateFailed(str(exc)) from exc
+
     if test_results is None and opt.get("test_command") and repo:
         # Runs on the BUILD iteration too, and deliberately so (oracle 2(b),
         # spec §3.7). An earlier version skipped it here on the grounds that
@@ -2611,8 +2636,14 @@ def run_stage(
         # verify rejects, and `ran` is what distinguishes "the test existed and
         # failed" (the shape a build is supposed to have) from "the test command
         # never mentioned it", which is the fail-closed case verify already owns.
-        from orchestrator.optimize import test_vacuity
+        from orchestrator.optimize import gate_records, test_vacuity
 
+        # Gate records live OUTSIDE the repo and are sealed (gate_records.py).
+        try:
+            gate_records.require_outside_repo(work_dir, Path(repo) if repo else None)
+        except gate_records.GateRecordError as exc:
+            raise OptimizationGateFailed(str(exc)) from exc
+        gate_records.ensure_key(work_dir)
         _write_json(Path(work_dir) / "pre_build_tests.json", {
             "passed": sorted(t for t, ok in (test_results or {}).items() if ok),
             "ran": sorted(test_results or {}),
@@ -2736,6 +2767,7 @@ def run_stage(
                                   pre_ran=sorted(test_results or {}))
             except build_scope.BuildScopeViolation as exc:
                 raise OptimizationGateFailed(str(exc)) from exc
+        gate_records.seal(work_dir, gate_records.BUILD_RECORDS)
         # Pre-register WHICH CODE the epoch will measure. `verify` compiles the
         # policy one iteration later and stamps this hash into it; every epoch
         # iteration re-checks it (below). Snapshot here rather than at verify
@@ -2928,22 +2960,24 @@ def run_stage(
         # experiment on disk for a later resume to pick up.
         # The build's gate records must exist and be the ones written at build
         # time; "a build ran" is decided from the campaign, not from a file the
-        # build agent could delete (build_scope.verify_records).
+        # build agent could delete; the records were loaded and their seals
+        # verified at the top of run_stage (gate_records.load).
         #
         # `nous reanalyze` (reanalyze.py) re-derives the ANALYSIS from recorded
         # rows; these gates are measurements of the target tree and were
         # decided when the campaign ran, so a reanalysis carries their records
         # instead of re-running them.
-        if not _ignored.get("reanalysis"):
-            from orchestrator.optimize import build_scope as _bscope
-            try:
-                _bscope.verify_records(campaign, work_dir)
-            except _bscope.BuildScopeViolation as exc:
-                raise OptimizationGateFailed(str(exc)) from exc
-            _check_tests_failed_before_build(campaign, work_dir, factors, test_results)
-            _check_authored_tests_discriminate(campaign, work_dir, factors, iteration)
-            _check_baseline_equivalence(campaign, work_dir, factors, config_runner)
-            _review_build(gate, work_dir)
+        if not reanalysis:
+            _check_tests_failed_before_build(campaign, work_dir, factors, test_results,
+                                             records=_gate)
+            _check_authored_tests_discriminate(campaign, work_dir, factors, iteration,
+                                               records=_gate)
+            _check_baseline_equivalence(campaign, work_dir, factors, config_runner,
+                                        records=_gate)
+            _review_build(gate, work_dir, built=_gate is not None)
+            if _gate is not None:
+                from orchestrator.optimize import gate_records as _gr
+                _gr.seal(work_dir, ("baseline_equivalence.json", *_gr.VERIFY_RECORDS))
         # The apparatus is certified, so pre-register the epoch's policy: a
         # JSON document hashed BEFORE the first benchmark run is what makes
         # the path a pre-registration rather than a story told afterwards.

@@ -235,12 +235,14 @@ def waivers(work_dir: Path, campaign: dict | None) -> list[dict]:
         except (OSError, ValueError):
             return None, "unreadable"
 
-    try:
-        from orchestrator.optimize.build_scope import build_declared
+    from orchestrator.optimize.build_scope import build_declared
 
+    try:
         built = build_declared(campaign or {}) or (wd / "pre_build_tests.json").exists()
-    except Exception:  # noqa: BLE001 -- a malformed campaign is not a build
-        built = (wd / "pre_build_tests.json").exists()
+    except (TypeError, ValueError, AttributeError):
+        # A campaign that cannot be read cannot rule a build out: assume one ran,
+        # so every missing record is listed rather than silently omitted (C7).
+        built = True
     if built:
         for name, gate in (("baseline_equivalence.json", "oracle_2c_baseline"),
                            ("authored_tests.json", "oracle_2d_authored_tests"),
@@ -256,6 +258,13 @@ def waivers(work_dir: Path, campaign: dict | None) -> list[dict]:
                             "note": "waived by the campaign"
                                     + ("" if any(bc.get(k) == doc["waived"] for k in WAIVER_KEYS)
                                        else " (the waiver is not in this campaign's build_checks)")})
+        from orchestrator.optimize import gate_records as _gr
+
+        for name in (*_gr.BUILD_RECORDS, *_gr.VERIFY_RECORDS):
+            st = _gr.check(wd, name)
+            if st not in ("ok", "absent"):
+                out.append({"gate": "gate_record_seal", "reason": f"{name} seal {st}",
+                            "note": "the record cannot be shown to be what Nous wrote"})
         be, _ = _read("baseline_equivalence.json")
         if be and be.get("armed") is False and not be.get("waived"):
             out.append({"gate": "oracle_2c_baseline", "reason": "not armed",

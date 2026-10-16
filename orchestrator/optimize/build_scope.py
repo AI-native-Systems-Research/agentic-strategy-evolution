@@ -32,7 +32,8 @@ names or lives under a directory / module it names, and every pre-existing
 declared test file), unless listed by exact path in ``mechanism_paths``.
 ``build_checks.allow_out_of_scope_writes: "<why>"`` waives the PATH rules only,
 never the integrity rules. ``build_scope.json`` records everything, including
-the gate-record digests ``verify_records`` re-checks at verify.
+the gate-record digests taken around the agent call; the records themselves
+are sealed and re-verified at verify by ``gate_records``.
 
 What it cannot see: writes outside the repo (a ``$HOME`` config, a system
 library), changes the agent makes and reverts within its own call, and edits
@@ -352,41 +353,6 @@ def build_declared(campaign: dict) -> bool:
     from orchestrator.optimize.policy import pre_epoch_stages
 
     return "build" in pre_epoch_stages(campaign)
-
-
-def verify_records(campaign: dict, work_dir: Path) -> None:
-    """At verify: decide "a build ran" from the CAMPAIGN, not from a file the
-    agent could delete, and require every gate record intact. Raises
-    :class:`BuildScopeViolation`; no-op for a campaign with no build stage and
-    no build records."""
-    wd = Path(work_dir)
-    declared = build_declared(campaign)
-    if not declared and not (wd / "pre_build_tests.json").exists():
-        return
-    missing = [n for n in ("pre_build_tests.json", "build_scope.json")
-               if not (wd / n).exists()]
-    if missing:
-        raise BuildScopeViolation(
-            f"the campaign declares a build stage but its gate record(s) {missing} "
-            f"are missing from the work_dir. Every build oracle (2(b), 2(c), 2(d), "
-            f"the write scope and the build review) reads them; without them none "
-            f"can run, and a missing record is not a passed check. Re-run the "
-            f"build stage in a fresh work_dir.")
-    try:
-        json.loads((wd / "pre_build_tests.json").read_text())
-        scope = json.loads((wd / "build_scope.json").read_text())
-    except (OSError, ValueError) as exc:
-        raise BuildScopeViolation(
-            f"a build gate record is unreadable ({exc}); re-run the build stage.") from exc
-    recorded = scope.get("gate_records") or {}
-    for name in GATE_RECORDS:
-        now = record_digest(wd, name)
-        if recorded.get(name) != now:
-            raise BuildScopeViolation(
-                f"{name} no longer matches the digest recorded right after the build "
-                f"({recorded.get(name)} -> {now}): the evidence the build oracles read "
-                f"was edited, added or removed after it was written. Re-run the build "
-                f"stage in a fresh work_dir.")
 
 
 def validation_findings(campaign: dict) -> list[str]:

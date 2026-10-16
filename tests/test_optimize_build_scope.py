@@ -251,7 +251,7 @@ def test_a_record_edited_between_build_and_verify_fails_verify(tmp_path, monkeyp
     rec = json.loads(p.read_text())
     rec["failure_kinds"] = {t: "behavioral" for t in rec["ran"]}
     p.write_text(json.dumps(rec))
-    with pytest.raises(OptimizationAborted, match="no longer matches"):
+    with pytest.raises(OptimizationAborted, match="is broken"):
         verify()
 
 
@@ -264,7 +264,7 @@ def test_verify_of_a_build_campaign_with_no_build_records_fails_closed(tmp_path,
     repo = _git_repo(tmp_path)
     s, c = _build_campaign(tmp_path, repo)
     wd = setup_work_dir("nobuild", repo_path=str(repo), campaign=c)
-    with pytest.raises(OptimizationAborted, match="declares a build stage"):
+    with pytest.raises(OptimizationAborted, match="unsealed"):
         run_stage(c, wd, iteration=2, stage="verify",
                   config_runner=make_synthetic_runner(s, seed=1),
                   test_results={t: True for t in _declared_ids(c)})
@@ -400,3 +400,45 @@ def test_humangate_reports_whether_it_is_automatic():
 
     assert HumanGate(auto_response="approve").is_automatic is True
     assert HumanGate().is_automatic is False
+
+
+
+# ─── round 2: records out of reach and sealed (A2) ───────────────────────────
+
+
+def test_forging_a_record_and_its_digest_together_fails_the_seal(tmp_path, monkeypatch):
+    """The round-1 forgery: edit pre_build_tests.json AND update the digest
+    build_scope.json keeps for it. Without the HMAC key the seal breaks."""
+    from orchestrator.optimize.build_scope import record_digest
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+
+    wd, build, verify = _adversarial(
+        tmp_path, monkeypatch, lambda repo, wd: (repo / "mech.py").write_text("X = 2\n"))
+    build()
+    p = Path(wd) / "pre_build_tests.json"
+    rec = json.loads(p.read_text())
+    rec["failure_kinds"] = {t: "behavioral" for t in rec["ran"]}
+    p.write_text(json.dumps(rec))
+    sp = Path(wd) / "build_scope.json"
+    scope = json.loads(sp.read_text())
+    scope["gate_records"]["pre_build_tests.json"] = record_digest(Path(wd), "pre_build_tests.json")
+    sp.write_text(json.dumps(scope))
+    with pytest.raises(OptimizationAborted, match="is broken"):
+        verify()
+
+
+def test_a_build_with_its_work_dir_inside_the_repo_is_refused(tmp_path, monkeypatch):
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+
+    repo = _git_repo(tmp_path)
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(repo / ".nous"))
+    s, c = _build_campaign(tmp_path, repo)
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["mech.py"]}
+    wd = setup_work_dir("inside", repo_path=str(repo), campaign=c)
+    with pytest.raises(OptimizationAborted, match="INSIDE the target repo"):
+        run_stage(c, wd, iteration=1, stage="build",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: False for t in _declared_ids(c)},
+                  sdk_runner=_fake_build({"mech.py": "X = 2\n"}))

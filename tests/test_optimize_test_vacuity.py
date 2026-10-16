@@ -228,3 +228,27 @@ def test_a_corrupt_record_with_allow_preexisting_tests_fails_closed(tmp_path):
     camp = {"optimization": {"build_checks": {"allow_preexisting_tests": True}}}
     with pytest.raises(OptimizationAborted, match="unreadable"):
         _check_authored_tests_discriminate(camp, tmp_path, [], 2)
+
+
+def test_agent_code_rewriting_a_record_during_verify_changes_no_verdict(tmp_path, monkeypatch):
+    """Records are read ONCE before any target code runs (A2). This test file
+    is agent-authored code: when verify runs it, it rewrites the pre-build
+    record to claim a behavioural pre-build failure. The verdict must still be
+    the one the sealed record supports."""
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+
+    wd = tmp_path / "vac"
+    forged = json.dumps({"ran": [TEST_ID], "passed": [], "output_recorded": True,
+                         "failure_kinds": {TEST_ID: "behavioral"}})
+    test_src = (
+        "import json, pathlib, mech\n"
+        f"P = pathlib.Path({str(wd / 'pre_build_tests.json')!r})\n"
+        "def test_mech():\n"
+        f"    if P.exists(): P.write_text({forged!r})\n"
+        "    assert mech.boost\n")
+    with pytest.raises(OptimizationAborted, match="does not observe the mechanism"):
+        _run(tmp_path, monkeypatch, {
+            "mech.py": "def boost(x):\n    return 2 * x\n",
+            "calc.py": "import mech\n\ndef scale(x):\n    return mech.boost(x)\n",
+            "tests/test_mech.py": test_src,
+        })

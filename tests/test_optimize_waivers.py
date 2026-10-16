@@ -74,3 +74,13 @@ def test_a_campaign_waiver_key_alone_does_not_appear_without_the_artifact(tmp_pa
     ws = _report(tmp_path, monkeypatch,
                  build_checks={"allow_out_of_scope_writes": "never needed"})
     assert not any(w["reason"] == "never needed" for w in ws), ws
+
+
+def test_a_record_edited_after_verify_shows_as_a_broken_seal_in_the_report(tmp_path, monkeypatch):
+    def tamper(wd):
+        p = wd / "authored_tests.json"
+        rec = json.loads(p.read_text())
+        rec["ok"] = True
+        p.write_text(json.dumps(rec) + " ")
+    ws = _report(tmp_path, monkeypatch, tamper=tamper)
+    assert ("gate_record_seal", "authored_tests.json seal broken") in _gates(ws)

@@ -262,12 +262,13 @@ def remove_mutant(repo: Path, dest: Path) -> None:
 
 def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
           run_tests: Callable[[Path], tuple[dict, str | None]] | None,
-          built_ids: set[str]) -> dict:
+          built_ids: set[str], records: dict | None = None) -> dict:
     """Evaluate oracle 2(d); write ``authored_tests.json``; return the record.
     Raises ``ValueError`` (the caller converts it to a gate failure) when a
     test lacks evidence and the oracle is not waived."""
     wd = Path(work_dir)
-    pre = json.loads((wd / "pre_build_tests.json").read_text())
+    pre = (records["pre_build_tests.json"] if records is not None
+           else json.loads((wd / "pre_build_tests.json").read_text()))
     ran, passed = set(pre.get("ran") or ()), set(pre.get("passed") or ())
     kinds = dict(pre.get("failure_kinds") or {})
     tests = sorted({r["native_test"] for f in factors
@@ -299,7 +300,10 @@ def check(campaign: dict, work_dir: Path, factors, *, repo: Path | None,
     mutant_info: dict = {}
     if need_mutant:
         scope = wd / "build_scope.json"
-        written = (json.loads(scope.read_text()).get("written") or []) if scope.exists() else None
+        if records is not None:
+            written = (records.get("build_scope.json") or {}).get("written")
+        else:
+            written = (json.loads(scope.read_text()).get("written") or []) if scope.exists() else None
         if repo is None or run_tests is None or written is None:
             mutant_info["unavailable"] = (
                 "no git target, no test_command, or no record of what the build wrote")
