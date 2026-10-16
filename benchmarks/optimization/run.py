@@ -107,16 +107,51 @@ def _base_job(a):
     return run_baseline(*a)
 
 
-def run_suite(names, mults, seeds, methods, workers, scratch):
+def _cached_map(fn, jobs, workers, cache: Path | None, key):
+    """``[fn(j) for j in jobs]`` in a process pool, with every finished result
+    appended to ``cache`` (JSONL) as it lands, and results already in the
+    cache reused: a killed run resumes where it stopped."""
+    from concurrent.futures import as_completed
+
+    done: dict[str, dict] = {}
+    if cache is not None and cache.exists():
+        for ln in cache.read_text().splitlines():
+            if ln.strip():
+                try:
+                    r = json.loads(ln)
+                except json.JSONDecodeError:
+                    continue  # a torn last line from a kill
+                done[r["_key"]] = r
+    todo = [j for j in jobs if key(j) not in done]
+    if todo:
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(fn, j): j for j in todo}
+            for f in as_completed(futs):
+                r = {**f.result(), "_key": key(futs[f])}
+                done[r["_key"]] = r
+                if cache is not None:
+                    with open(cache, "a") as fh:
+                        fh.write(json.dumps(r, default=str) + "\n")
+    out = []
+    for j in jobs:
+        r = dict(done[key(j)])
+        r.pop("_key", None)
+        out.append(r)
+    return out
+
+
+def run_suite(names, mults, seeds, methods, workers, scratch, cache_dir: Path | None = None):
     jobs = [(n, m, s, scratch) for n in names for m in mults for s in seeds]
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        nous = list(ex.map(_nous_job, jobs, chunksize=1))
+    nous = _cached_map(_nous_job, jobs, workers,
+                       cache_dir / "nous.jsonl" if cache_dir else None,
+                       key=lambda j: f"{j[0]}|{j[1]}|{j[2]}")
     bjobs = [(meth, r["surface"], r["mult"], r["seed"], r["budget"])
              for r in nous if "error" not in r for meth in methods]
     # Longest (GP-BO on the biggest budgets) first, for load balance.
     bjobs.sort(key=lambda j: -(j[4] * (10 if j[0] == "GP-BO" else 1)))
-    with ProcessPoolExecutor(max_workers=workers) as ex:
-        base = list(ex.map(_base_job, bjobs, chunksize=1))
+    base = _cached_map(_base_job, bjobs, workers,
+                       cache_dir / "baselines.jsonl" if cache_dir else None,
+                       key=lambda j: f"{j[0]}|{j[1]}|{j[2]}|{j[3]}|{j[4]}")
     return nous, base
 
 
@@ -277,6 +312,9 @@ def main(argv=None):
     ap.add_argument("--audit-repro", action="store_true",
                     help="the stage-0 audit's Q6 setup: its 9 surfaces, seeds 1-20, noise x1/x8")
     ap.add_argument("--no-markdown", action="store_true")
+    ap.add_argument("--cache-dir", type=Path, default=None,
+                    help="resume directory: finished campaigns are appended "
+                         "here and reused by a re-run with the same arguments")
     a = ap.parse_args(argv)
     if a.audit_repro:
         names, seeds, mults, section = AUDIT_SURFACES, list(range(1, 21)), [1.0, 8.0], "audit-repro"
@@ -285,7 +323,11 @@ def main(argv=None):
     a.out.mkdir(parents=True, exist_ok=True)
     scratch = tempfile.mkdtemp(prefix="nous-bench-")
     t0 = time.time()
-    nous, base = run_suite(names, mults, seeds, a.methods, a.workers, scratch)
+    cache_dir = None
+    if a.cache_dir is not None:
+        cache_dir = a.cache_dir / section
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    nous, base = run_suite(names, mults, seeds, a.methods, a.workers, scratch, cache_dir)
     summary = summarize(nous, base, a.methods)
     meta = {**_meta(argv, seeds, mults), "elapsed_s": time.time() - t0,
             "excluded": EXCLUDED, "primary_rule": PRIMARY_RULE}
