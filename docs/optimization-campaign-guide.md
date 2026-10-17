@@ -2799,6 +2799,11 @@ recorded in `anchors.json`), and any mismatch makes its verdict NOT identical.
 when no anchor exists. No anchor means the pre-registration is self-attested,
 and every output says so rather than reporting a match.
 
+The state-home copy is on the machine that ran the campaign. A third party who
+receives only the work dir sees `provenance.anchor` as written, but cannot
+re-check it. Give them the `--out` file (`nous anchor <work_dir> --verify
+--file anchor.json`) or the pushed ref.
+
 **What an anchor protects against depends on where it is.** The state-home copy,
 an `--out` file and an unpushed git ref can all be rewritten by any process
 running as your OS user. A same-user agent that knows this layout can rewrite

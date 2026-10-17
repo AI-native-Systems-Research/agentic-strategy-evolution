@@ -38,12 +38,32 @@ def _cli(monkeypatch, *argv):
 
 
 def _forge_policy(work_dir):
-    """The attack the anchor exists for: rewrite policy.json AND its sidecar."""
+    """The attack the anchor exists for: rewrite the REGISTRATION consistently --
+    the campaign each epoch registered, the policy recompiled from it, its
+    sidecar, and the policy hash every transition and report records. A
+    policy-only edit was already caught pre-fix (reanalyze recompiles from
+    campaign.epoch-1.yaml); this one leaves every in-work_dir record agreeing."""
+    import yaml
+
+    cp = work_dir / "campaign.epoch-1.yaml"
+    camp = yaml.safe_load(cp.read_text())
+    camp["optimization"].setdefault("policy", {})["delta_terminal"] = 0.4
+    cp.write_text(yaml.safe_dump(camp, sort_keys=False))
     p = work_dir / "policy.json"
+    old = json.loads(p.read_text())
     pol = json.loads(p.read_text())
     pol["objective"]["delta_terminal"] = 0.4
+    import hashlib
+
+    pol["compiled_from"]["campaign_hash"] = hashlib.sha256(
+        policy_mod._canonical(camp["optimization"]).encode()).hexdigest()
     p.write_text(json.dumps(pol, indent=2, sort_keys=True))
-    (work_dir / "policy.sha256").write_text(policy_mod.policy_hash(pol) + "\n")
+    new_h, old_h = policy_mod.policy_hash(pol), policy_mod.policy_hash(old)
+    (work_dir / "policy.sha256").write_text(new_h + "\n")
+    for f in [work_dir / "transitions.jsonl", work_dir / "report.json",
+              *work_dir.glob("runs/iter-*/design_matrix.json")]:
+        if f.exists():
+            f.write_text(f.read_text().replace(old_h, new_h))
 
 
 def test_compile_anchors_the_registration_outside_the_work_dir(campaign):
@@ -66,6 +86,8 @@ def test_a_consistently_forged_policy_is_caught_by_the_anchor(campaign, monkeypa
     """Pre-fix this input passed: the sidecar matches the forged policy."""
     _forge_policy(campaign.work_dir)
     assert policy_mod.verify_policy_registration(campaign.work_dir) == []  # in-dir check fooled
+    v_reg = anchor_mod.verify(campaign.work_dir)["mismatches"]
+    assert any("campaign.epoch-1.yaml changed" in m for m in v_reg)
     v = anchor_mod.verify(campaign.work_dir)
     assert v["matches"] is False
     assert any("policy.json now hashes" in m for m in v["mismatches"])
@@ -73,6 +95,27 @@ def test_a_consistently_forged_policy_is_caught_by_the_anchor(campaign, monkeypa
     assert not res.identical and res.anchor["matches"] is False
     assert _cli(monkeypatch, str(campaign.work_dir), "--verify") == 1
     assert "ANCHOR MISMATCH" in capsys.readouterr().out
+
+
+def _replace_with_a_consistent_forgery(campaign, tmp_path):
+    """The forgery NO in-work_dir check can see: the whole work_dir replaced by
+    a genuine run of a REVISED registration (delta_terminal 0.4), every
+    artifact derived from it and mutually consistent. Pre-fix, `nous
+    reanalyze` reports it identical; only an anchor written at the original
+    compile, outside the work_dir, still remembers what was registered."""
+    forged = run_synthetic_campaign(
+        SURFACES["bowl"](), seed=7, parent_dir=tmp_path / "forged",
+        campaign_overrides={"policy": {"delta_terminal": 0.4}})
+    shutil.rmtree(campaign.work_dir)
+    shutil.copytree(forged.work_dir, campaign.work_dir)
+
+
+def test_a_fully_consistent_forged_work_dir_is_caught_only_by_the_anchor(campaign, tmp_path):
+    _replace_with_a_consistent_forgery(campaign, tmp_path)
+    res = reanalyze(campaign.work_dir)
+    assert not res.differences and not res.input_changes   # every in-dir record agrees
+    assert res.anchor["matches"] is False and not res.identical
+    assert any("policy.json now hashes" in m for m in res.anchor["mismatches"])
 
 
 def test_an_edited_pre_compile_input_is_caught(campaign):

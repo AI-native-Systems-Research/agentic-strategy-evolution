@@ -210,6 +210,9 @@ def input_hashes(work_dir: Path) -> dict[str, str]:
     # The campaign each epoch registered: the analysis is a function of it too.
     for p in sorted(Path(work_dir).glob("campaign.epoch-*.yaml")):
         out[p.name] = sha256_file(p)
+    # Held-out-seed rows (#321): measured after the decisions, before report.json.
+    for p in sorted(Path(work_dir).glob("held_out_seeds.epoch-*.jsonl")):
+        out[p.name] = sha256_file(p)
     return out
 
 

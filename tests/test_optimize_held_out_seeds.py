@@ -114,6 +114,18 @@ def test_reanalysis_replays_the_block_and_executes_nothing(tmp_path, monkeypatch
     assert any(f.startswith("held_out_seeds.epoch-") for f in res.not_rederived)
 
 
+def test_an_edited_held_out_row_is_an_input_change(tmp_path, monkeypatch):
+    r = _run(tmp_path, monkeypatch)
+    name = r.report["held_out_seeds"]["file"]
+    assert name in r.report["provenance"]["inputs"]
+    p = r.work_dir / name
+    rows = [json.loads(ln) for ln in p.read_text().splitlines()]
+    rows[0]["response"]["m"] += 1.0
+    p.write_text("".join(json.dumps(x, sort_keys=True) + "\n" for x in rows))
+    res = reanalyze(r.work_dir)
+    assert any(c["file"] == name for c in res.input_changes)
+
+
 def test_a_reanalysis_without_the_rows_declines_by_name(tmp_path, monkeypatch):
     r = _run(tmp_path, monkeypatch)
     (r.work_dir / r.report["held_out_seeds"]["file"]).unlink()
