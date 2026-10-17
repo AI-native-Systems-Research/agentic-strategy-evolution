@@ -347,7 +347,12 @@ def test_confirm_declines_a_round_the_budget_cannot_finish(tmp_path):
             "response": {"primary": {"metric": "m", "direction": "maximize"},
                          "constraints": [{"metric": "p99_ms", "op": "<=", "value": 40}]},
             "policy": {"confirm_max_rounds": 3},
-            "design": {"max_runs": 40},
+            # Budget arithmetic, not certification: 3 replicates keep the
+            # pre-#321-P3 round cost this budget was sized for.
+            "design": {"max_runs": 40,
+                       "screen": {"resolution": 5, "center_points": 4},
+                       "refine": {"kind": "central_composite", "center_points": 4},
+                       "confirm": {"replicates": 3}},
         },
         max_iterations=12,
     )

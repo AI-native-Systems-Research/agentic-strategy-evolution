@@ -1058,8 +1058,8 @@ def _rule32_confirm_replicate_floor(opt: dict) -> list[str]:
 
     try:
         floor = replicate_floor(opt)
-    except (TypeError, ValueError):
-        return []
+    except (TypeError, ValueError, ZeroDivisionError):
+        return []      # an invalid delta is rule 14's to report
     design = opt.get("design") or {}
     confirm = design.get("confirm") or {}
     declared = confirm.get("replicates")
@@ -1078,7 +1078,7 @@ def _rule32_confirm_replicate_floor(opt: dict) -> list[str]:
         1 if opt.get("known_valid_baseline") else 0)
     if isinstance(mr, int) and not isinstance(mr, bool) and mr > 0 and mr < seats * reps:
         out.append(
-            f"design.max_runs={mr} cannot cover one confirm round: {seats} seat(s) x "
+            f"design.max_runs ({mr}) cannot cover one confirm round: {seats} seat(s) x "
             f"{reps} replicate(s) = {seats * reps} runs, before any screen run. "
             f"Raise max_runs, or reduce design.confirm.shortlist_size.")
     return out

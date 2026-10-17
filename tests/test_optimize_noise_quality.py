@@ -115,7 +115,12 @@ def test_a_pre_p3_policy_reanalyzes_identically(tmp_path):
 
     tok = policy_mod.LEGACY_PRE_P3.set(True)
     try:
-        r = run_synthetic_campaign(SURFACES["bowl"](), seed=7, parent_dir=tmp_path)
+        r = run_synthetic_campaign(SURFACES["bowl"](), seed=7, parent_dir=tmp_path,
+                                   campaign_overrides={"design": {
+                                       "screen": {"resolution": 5, "center_points": 4},
+                                       "refine": {"kind": "central_composite",
+                                                  "center_points": 4},
+                                       "confirm": {"replicates": 3}}})
     finally:
         policy_mod.LEGACY_PRE_P3.reset(tok)
     pol = json.loads((r.work_dir / "policy.json").read_text())

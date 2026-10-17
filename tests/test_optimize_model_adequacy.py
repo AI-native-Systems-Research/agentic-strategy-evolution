@@ -251,7 +251,7 @@ _REUSE = {"design": {"screen": {"resolution": 5, "center_points": 4},
                                 "reuse_screen": True},
                      # #321 P3: the confirm default is the A5 floor; the arms
                      # compared below must share it.
-                     "confirm": {}}}
+                     "confirm": {"replicates": 6}}}
 
 
 def _fresh_runs(work_dir) -> int:
