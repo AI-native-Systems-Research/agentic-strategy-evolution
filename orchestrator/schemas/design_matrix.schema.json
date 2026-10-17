@@ -57,6 +57,7 @@
         "foldover",
         "shortlist_replicate",
         "validation_replicate",
+        "inertness_replicate",
         "mixed_fraction",
         "mixed_full",
         "mixed_level_full"

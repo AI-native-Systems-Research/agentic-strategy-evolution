@@ -263,8 +263,13 @@ pure error (M3).
 3. **M1 is checked, not proved.** The global bound inherits the response
    class. WP-B's checks have local power only (its limits 1-12).
 4. **The constraint-exclusion δ** is in the stated sum since #321 (§6).
-5. **Seat flips for held factors** are not implemented (§4). The scope is
-   recorded instead.
+5. **Seat flips for held factors: rejected (#321); inertness checks
+   instead.** Certifying the declared space through held factors needs a
+   model, and a model half, per slice, which is exponential in the held
+   factors. `design.inertness` (opt-in) runs TOST of each held-factor flip
+   against the winner at a declared margin, with Bonferroni over flips at
+   δ_terminal, and records `certificate_scope.inertness`. That is a local
+   equivalence at the winner, not a certificate over the other slices.
 6. **Post-selection validation block: opt-in since #321** (§5,
    `design.validate`). It is registered as a `validate` state that every
    `confirm -> report` exit passes through, and it costs `replicates × 2`

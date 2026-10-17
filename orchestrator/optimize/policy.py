@@ -288,6 +288,16 @@ VALIDATE_ACCOUNTING = (
 )
 
 
+INERTNESS_ACCOUNTING = (
+    "held-factor inertness (#321): TOST (Schuirmann 1987) of each held-factor "
+    "flip vs the winner at a declared margin; each flip's two one-sided tests "
+    "at delta_terminal / F (F flips, Bonferroni, so the family of 'shown "
+    "inert' verdicts is wrong with probability <= delta_terminal; each TOST is "
+    "an intersection-union test, so its size is its one-sided level); widens "
+    "the certificate's scope statement only, decides no certificate"
+)
+
+
 def _constraint_exclusion_registered(opt: dict) -> bool:
     """Can a constraint model exclude candidates in this epoch? True when a
     declared constraint has a violating side (``<``, ``<=``, ``>``, ``>=``)
@@ -680,6 +690,35 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                             "sum_e share_e <= total (union bound over epochs)"}
         if not exhausted:
             _ds, _dt, _dc = _ds * scale, _dt * scale, _dc * scale
+
+    # ── #321 item 8: held-factor inertness checks (opt-in) ─────────────────
+    inert_cfg = design.get("inertness") or {}
+    inert_on = (confirm_on and inert_cfg.get("replicates") is not None
+                and mo is None)
+    if inert_on:
+        states["inertness"] = {
+            "spends": True,
+            "design": {"kind": "inertness_replicate",
+                       "replicates": int(inert_cfg["replicates"]),
+                       "margin": dict(inert_cfg.get("margin") or {"pct": 2.0})},
+            "estimator": ("paired differences flip - winner on fresh replicates "
+                          "sharing workload seeds; TOST (Schuirmann 1987) at the "
+                          "declared margin, each one-sided test at delta_terminal"),
+            "accounting": INERTNESS_ACCOUNTING,
+        }
+        # Every exit to `report` from confirm or validate passes through it.
+        for t in transitions:
+            if t.get("from") in ("confirm", "validate") and (
+                    t.get("to") == "report" or t.get("default") == "report"):
+                if "to" in t:
+                    t["to"] = "inertness"
+                else:
+                    t["default"] = "inertness"
+        transitions += [
+            {"from": "inertness", "when": {"nan_response": True}, "to": "exception",
+             "accounting": sem},
+            {"from": "inertness", "default": "report"},
+        ]
 
     policy = {
         "policy_version": 1,

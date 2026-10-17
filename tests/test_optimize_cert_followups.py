@@ -400,3 +400,59 @@ def test_campaign_delta_is_validated():
     assert _rule14_policy_ranges({"policy": {"campaign_delta": {"total": 0.1,
                                                                 "schedule": [0.08, 0.05]}}})
     assert not _rule14_policy_ranges({"policy": {"campaign_delta": {"total": 0.1}}})
+
+
+# ── item 8: held-factor inertness (TOST) ─────────────────────────────────────
+
+_INERT_OV = {"design": {"screen": {"resolution": 5, "center_points": 4},
+                        "refine": {"kind": "central_composite", "center_points": 4},
+                        "confirm": {"replicates": 3},
+                        "inertness": {"replicates": 6, "margin": {"pct": 2}}}}
+
+
+def _inert_c():
+    from orchestrator.optimize.synthetic import Surface, _choice, _numeric
+
+    return Surface(name="inert_c", noise_sd=0.05,
+                   factors=(_numeric("A"), _numeric("B"), _choice("C")),
+                   fn=lambda lv: 20 - 0.05 * (lv["A"] - 9) ** 2 - 0.05 * (lv["B"] - 11) ** 2
+                   + (0.01 if lv["C"] == "on" else 0.0))
+
+
+def test_an_inert_held_factor_is_shown_inert_and_a_live_one_is_not(tmp_path):
+    """Before #321 certificate_scope could only say a held factor's other
+    levels were NOT covered. With design.inertness, refine's held choice
+    factor C is flipped at the winner: on `additive` (C worth 2.0, margin
+    ~0.3) TOST refuses equivalence; on a surface where C is worth 0.01 it is
+    shown inert, and the scope statement says so -- as a local equivalence,
+    not a certificate over the other slice."""
+    from orchestrator.optimize.synthetic import SURFACES
+
+    live = run_synthetic_campaign(SURFACES["additive"](), seed=1,
+                                  parent_dir=tmp_path / "live", campaign_overrides=_INERT_OV)
+    sc = live.report["certificate_scope"]
+    assert sc["held_fixed"] == {"C": "on"}
+    assert sc["inertness"]["not_shown_inert"] == ["C"]
+    shown = 0
+    for seed in (1, 2, 3):
+        r = run_synthetic_campaign(_inert_c(), seed=seed, parent_dir=tmp_path / str(seed),
+                                   campaign_overrides=_INERT_OV)
+        sc = r.report["certificate_scope"]
+        if sc.get("held_fixed"):
+            shown += sc["inertness"]["shown_inert"] == ["C"]
+            if sc["inertness"]["shown_inert"]:
+                assert "local equivalence" in sc["statement"]
+    assert shown >= 2
+
+
+def test_tost_is_an_equivalence_test_of_size_alpha():
+    """TOST's size at the margin boundary is at most alpha (Schuirmann 1987;
+    Berger 1982): true difference exactly = margin, n = 6, 4000 trials."""
+    import random
+
+    from orchestrator.optimize.stage_runner import tost
+
+    rng = random.Random(3)
+    wrong = sum(bool(tost([rng.gauss(1.0, 1.0) for _ in range(6)], margin=1.0,
+                          alpha=0.05, paired=True)["equivalent"]) for _ in range(4000))
+    assert wrong / 4000 <= 0.05 + 0.01

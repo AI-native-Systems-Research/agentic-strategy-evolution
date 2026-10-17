@@ -277,6 +277,19 @@ def build_preview(
             f"fresh paired replicate(s) = replicates x 2 (#321)",
         ))
 
+    if "inertness" in states:
+        _ir = int(states["inertness"]["design"]["replicates"])
+        from orchestrator.optimize.factors import is_refinable as _isr
+        _held = [f for f in factors if not _isr(f)] if "refine" in states else []
+        _nf = sum(len(f.levels) - 1 for f in _held)
+        if _nf:
+            pv.stages.append(StageRuns(
+                "inertness", _ir * (1 + _nf), _ir * (1 + _nf), True,
+                f"held-factor inertness: winner + {_nf} flip(s) x {_ir} paired "
+                f"replicate(s) = replicates x (1 + F) (#321; runs only if refine "
+                f"holds factors)",
+            ))
+
     # B3: D-efficiency of each fitting stage's planned model matrix.
     from orchestrator.optimize import adequacy as _adq
     from orchestrator.optimize.effects import model_matrix as _mm
@@ -323,6 +336,8 @@ def build_preview(
                 n = s.max_runs if use_max else (0 if s.conditional else s.runs)
                 if s.stage == "validate" and n:
                     total += (n // 2) * _ceil_div(2, pv.confirm_width) * per
+                elif s.stage == "inertness" and n:
+                    total += _ceil_div(n, pv.confirm_width) * per
                 elif s.stage == "confirm" and n:
                     d = states["confirm"]["design"]
                     width = int(d["shortlist_size"]) + base_seat

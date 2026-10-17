@@ -377,7 +377,8 @@ def resolve_max_parallel(opt: dict | None, *, stage_name: str,
 #: States whose rows are REPLICATE BLOCKS of named configurations rather than
 #: a design over the factor space: no held-fixed merge, workload seeds keyed per
 #: replicate (CRN), never reused across attempts, scheduled as blocks.
-_REPLICATE_STATES = frozenset({Stage.CONFIRM.value, Stage.VALIDATE.value})
+_REPLICATE_STATES = frozenset({Stage.CONFIRM.value, Stage.VALIDATE.value,
+                               Stage.INERTNESS.value})
 
 
 def resolve_concurrency(opt: dict | None, *, stage_name: str, measured=None):
@@ -390,8 +391,8 @@ def resolve_concurrency(opt: dict | None, *, stage_name: str, measured=None):
     projects it to an int for the call sites that only schedule.
     """
     return concurrency.resolve(
-        opt, stage_name=(Stage.CONFIRM.value if stage_name == Stage.VALIDATE.value
-                         else stage_name),
+        opt, stage_name=(Stage.CONFIRM.value if stage_name in (
+            Stage.VALIDATE.value, Stage.INERTNESS.value) else stage_name),
         confirm_stage=Stage.CONFIRM.value, measured=measured,
     )
 
@@ -2524,7 +2525,10 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # bound and candidate space are then over that SLICE only; a
         # certificate there says nothing about the other levels (measured:
         # ridge_cubic certified C=on while the optimum has C=off).
-        "certificate_scope": _certificate_scope(_epoch_rec, boundary_block),
+        "certificate_scope": _certificate_scope(
+            _epoch_rec, boundary_block,
+            _latest_inertness(work_dir) if "inertness" in (pol.get("states") or {})
+            else None),
         **({"gain_over_baseline": dict(conf["gain_over_baseline"])}
            if conf and conf.get("gain_over_baseline") else {}),
         # #321 item 2: the post-selection validation block, when registered.
@@ -3357,6 +3361,12 @@ def _run_stage_body(
         if not rows:
             return _skip_validate(engine, campaign, work_dir, iter_dir, iteration,
                                   pol, payload)
+    elif stage_name == Stage.INERTNESS.value:
+        rows, payload = _inertness_rows(pol, work_dir, factors, iteration)
+        if not rows:
+            return _skip_validate(engine, campaign, work_dir, iter_dir, iteration,
+                                  pol, payload, state=Stage.INERTNESS.value,
+                                  record="inertness.json")
     elif stage_name == Stage.FOLDOVER.value:
         # ── the registered foldover: a real block of runs, spent to resolve
         # ── an alias the screen showed could change the answer.
@@ -4131,6 +4141,10 @@ def _run_stage_body(
         if fit_blocks:
             fit_blocks = [fit_blocks[i] for i in _ki]
 
+    if stage_name == Stage.INERTNESS.value:
+        return _finish_inertness(engine, campaign, iteration, iter_dir, work_dir,
+                                 rows, outcomes, ys, factors, test_results, pol,
+                                 payload)
     if stage_name == Stage.VALIDATE.value:
         return _finish_validate(engine, campaign, iteration, iter_dir, work_dir,
                                 rows, outcomes, ys, factors, test_results, pol,
@@ -6469,38 +6483,253 @@ def _finish_validate(engine, campaign, iteration, iter_dir, work_dir, rows,
         recommendation_levels=summary["winner"] or None)
 
 
-def _skip_validate(engine, campaign, work_dir, iter_dir, iteration, pol, payload):
-    """No validation block (no winner, winner == baseline, unaffordable):
-    record why in ``validation.json`` and go to ``report``."""
+def _skip_validate(engine, campaign, work_dir, iter_dir, iteration, pol, payload,
+                   *, state: str = Stage.VALIDATE.value,
+                   record: str = "validation.json"):
+    """No block to measure (validate: no winner, winner == baseline,
+    unaffordable; inertness: no held factor, no winner, unaffordable): record
+    why in ``record`` and route on."""
     from orchestrator.iteration import _enter_phase, finalize_iteration
     from orchestrator.ledger import append_ledger_row
 
     iter_dir.mkdir(parents=True, exist_ok=True)
-    _write_json(iter_dir / "validation.json", {
+    _write_json(iter_dir / record, {
         "iteration": iteration, "skipped": payload.get("skipped"),
-        "winner": payload["finalists"][0]["levels"],
-        "baseline": payload["finalists"][1]["levels"],
-        "accounting": policy_mod.VALIDATE_ACCOUNTING})
+        "winner": payload["finalists"][0]["levels"] if payload.get("finalists") else {},
+        **({"baseline": payload["finalists"][1]["levels"]}
+           if state == Stage.VALIDATE.value else {}),
+        "accounting": (policy_mod.VALIDATE_ACCOUNTING if state == Stage.VALIDATE.value
+                       else policy_mod.INERTNESS_ACCOUNTING)})
     _write_json(iter_dir / "findings.json", {
-        "iteration": iteration, "bundle_ref": f"runs/iter-{iteration}/validation.json",
+        "iteration": iteration, "bundle_ref": f"runs/iter-{iteration}/{record}",
         "experiment_valid": False,
-        "discrepancy_analysis": f"Post-selection validation skipped: {payload.get('skipped')}.",
+        "discrepancy_analysis": f"{state} block skipped: {payload.get('skipped')}.",
         "arms": [{"arm_type": "h-main", "predicted": "a validation block runs",
                   "observed": f"skipped: {payload.get('skipped')}",
                   "status": "PARTIALLY_CONFIRMED", "error_type": None,
-                  "diagnostic_note": f"runs/iter-{iteration}/validation.json"}]})
+                  "diagnostic_note": f"runs/iter-{iteration}/{record}"}]})
     _write_json(iter_dir / "principle_updates.json", [])
     for ph in ("DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE"):
         _enter_phase(engine, ph, work_dir)
     finalize_iteration(work_dir=work_dir, iter_dir=iter_dir, iteration=iteration,
                        campaign=campaign)
     append_ledger_row(work_dir, iteration)
-    logger.info("validate: skipped -- %s", payload.get("skipped"))
+    logger.info("%s: skipped -- %s", state, payload.get("skipped"))
     return _close_iteration(
-        engine, campaign, work_dir, iter_dir, iteration, Stage.VALIDATE.value, pol,
+        engine, campaign, work_dir, iter_dir, iteration, state, pol,
         {"correctness_failed": False, "nan_response": False,
          "budget_remaining": _budget_remaining(pol, work_dir)},
         recommendation_levels=None)
+
+
+def _inertness_rows(pol: dict, work_dir: Path, factors, iteration: int):
+    """``inertness``'s rows (#321 item 8): the confirm winner and, for every
+    factor this epoch's latest fitting stage HELD FIXED, the winner with that
+    one factor flipped to each alternative declared level -- ``replicates``
+    fresh blocks of ``1 + F`` (randomized within a block, CRN seeds shared).
+
+    F, the flip list and the margin are fixed before any of these rows exists
+    (they depend on the declaration, the fitting record and confirm's winner),
+    so the Bonferroni divisor and the margin are not chosen from these data.
+    """
+    from orchestrator.optimize.matrix import ConfigRow, randomized_run_order, render_apply
+
+    cfg = (pol["states"]["inertness"] or {})["design"]
+    r = max(2, int(cfg.get("replicates", 3)))
+    conf = _latest_confirmation(work_dir) or {}
+    win = dict(conf.get("confirmed_at_levels") or {}) if conf.get("best") else {}
+    rec = (_epoch_recommendations(work_dir) or [{}])[-1]
+    held = dict(rec.get("held_fixed") or {})
+    by_id = {f.id: f for f in factors}
+    flips = []
+    for fid in sorted(held):
+        f = by_id.get(fid)
+        if f is None or not win:
+            continue
+        for lv in f.levels:
+            if lv != win.get(fid):
+                flips.append({"factor": fid, "level": lv,
+                              "levels": {**win, fid: lv}})
+    barred = _barred_levels(work_dir)
+    flips = [fl for fl in flips if not _names_barred_level(fl["levels"], barred)
+             and not _measured_infeasible_contains(work_dir, fl["levels"])]
+    why = None
+    if not win:
+        why = "confirm produced no admissible winner"
+    elif not held:
+        why = "the latest fitting stage held no factor fixed: the scope is already the declared space"
+    elif not flips:
+        why = "every alternative level of the held factors is barred or measured inadmissible"
+    elif _budget_remaining(pol, work_dir) < r * (1 + len(flips)):
+        why = (f"the block needs {r * (1 + len(flips))} run(s) and only "
+               f"{_budget_remaining(pol, work_dir)} remain")
+    configs = [{"key": "w", "levels": win, "why": "confirm winner"}] + [
+        {"key": f"x{j}", "levels": fl["levels"], "why": f"flip {fl['factor']}={fl['level']!r}",
+         "factor": fl["factor"], "level": fl["level"]} for j, fl in enumerate(flips)]
+    payload = {"factor_ids": [f.id for f in factors], "kind": "inertness_replicate",
+               "resolution": None, "generators": [], "aliases": [],
+               "run_order": [], "run_order_seed": iteration, "round": 1,
+               "finalists": [{k: c[k] for k in ("key", "levels", "why")} for c in configs],
+               "flips": [{k: c[k] for k in ("key", "factor", "level")} for c in configs[1:]],
+               "held_fixed": held, "rows": []}
+    if why:
+        payload["skipped"] = why
+        return [], payload
+    rows, idx = [], 0
+    for i in range(r):
+        for j in randomized_run_order(len(configs), seed=iteration * 1000 + 700 + i):
+            lv = configs[j]["levels"]
+            rows.append(ConfigRow(row_index=idx, levels=dict(lv), role="confirm",
+                                  replicate=i,
+                                  apply={**render_apply(factors, lv), "finalist": j}))
+            idx += 1
+    payload["run_order"] = list(range(len(rows)))
+    payload["rows"] = [{"row_index": x.row_index, "levels": dict(x.levels),
+                        "role": x.role, "replicate": x.replicate, "apply": x.apply}
+                       for x in rows]
+    return rows, payload
+
+
+def tost(diffs_or_pair, *, margin: float, alpha: float, paired: bool) -> dict:
+    """Two one-sided tests (Schuirmann 1987) of ``|mu| < margin``.
+
+    ``diffs_or_pair`` is the list of paired differences (``paired``) or the
+    pair ``(x, w)`` of independent samples (Welch). Equivalence is declared iff
+    BOTH one-sided ``1 - alpha`` bounds lie strictly inside ``(-margin,
+    margin)``, i.e. the ``1 - 2 alpha`` two-sided interval does. An
+    intersection-union test, so its size is ``alpha`` (Berger 1982). ``None``
+    estimable fields when there is no variance estimate (unknown is not zero).
+    """
+    from statistics import mean, variance
+
+    from scipy.stats import t as student_t
+
+    if paired:
+        d = list(diffs_or_pair)
+        if len(d) < 2:
+            return {"equivalent": None, "reason": "fewer than two pairs"}
+        vd = variance(d)
+        if not math.sqrt(max(vd, 0.0)) > 1e-9 * max(1.0, abs(mean(d))):
+            return {"equivalent": None, "estimate": mean(d),
+                    "reason": "paired differences carry zero spread"}
+        est, se, df, method = mean(d), math.sqrt(vd / len(d)), float(len(d) - 1), "paired_t"
+    else:
+        x, w = diffs_or_pair
+        if len(x) < 2 or len(w) < 2:
+            return {"equivalent": None, "reason": "fewer than two replicates"}
+        vx, vw = variance(x) / len(x), variance(w) / len(w)
+        den = vx ** 2 / (len(x) - 1) + vw ** 2 / (len(w) - 1)
+        if not den > 0.0:
+            return {"equivalent": None, "reason": "no variance estimate"}
+        est, se = mean(x) - mean(w), math.sqrt(vx + vw)
+        df, method = (vx + vw) ** 2 / den, "welch_t"
+    tc = float(student_t.ppf(1.0 - alpha, max(df, 1.0)))
+    lo, hi = est - tc * se, est + tc * se
+    return {"equivalent": bool(lo > -margin and hi < margin), "estimate": est,
+            "low": lo, "high": hi, "margin": margin, "alpha": alpha, "df": df,
+            "method": f"tost_{method}"}
+
+
+def _finish_inertness(engine, campaign, iteration, iter_dir, work_dir, rows,
+                      outcomes, ys, factors, test_results, pol, payload):
+    """Write ``inertness.json`` (one TOST verdict per flip) and route on."""
+    from orchestrator.iteration import _enter_phase, finalize_iteration
+    from orchestrator.ledger import append_ledger_row
+    from orchestrator.optimize import artifacts, relations
+
+    keys = [c["key"] for c in payload["finalists"]]
+    samples = {k: [] for k in keys}
+    status = {k: "ok" for k in keys}
+    by_idx = {r.row_index: r for r in rows}
+    for o, y in zip(outcomes, ys):
+        row = by_idx.get(o.row_index)
+        if row is None:
+            continue
+        k = keys[int((row.apply or {}).get("finalist", 0))]
+        if o.status != "complete" or y != y:
+            if status[k] != "infeasible":
+                status[k] = ("infeasible" if o.status in ("infeasible", "rejected")
+                             else "unmeasured")
+        else:
+            samples[k].append(float(y))
+    cfg = pol["states"]["inertness"]["design"]
+    conf = _latest_confirmation(work_dir) or {}
+    ref = conf.get("mean")
+    mspec = dict(cfg.get("margin") or {"pct": 2.0})
+    # The margin is resolved against confirm's winner mean: known before
+    # these replicates, so not chosen from them.
+    margin = (float(mspec["abs"]) if "abs" in mspec else
+              (abs(float(ref)) * float(mspec.get("pct", 2.0)) / 100.0 if ref else None))
+    nflip = max(1, len(payload.get("flips") or []))
+    alpha = float(pol["objective"]["delta_terminal"]) / nflip
+    paired = bool(payload.get("paired"))
+    sign = 1.0 if pol["objective"]["direction"] != "minimize" else -1.0
+    verdicts = []
+    for fl in payload.get("flips") or []:
+        k = fl["key"]
+        v = {"factor": fl["factor"], "level": fl["level"], "n": len(samples[k]),
+             "status": status[k]}
+        if status[k] != "ok" or status["w"] != "ok" or margin is None:
+            v.update(equivalent=None, reason=("inadmissible or unusable replicate"
+                                              if margin is not None else
+                                              "margin unknown (pct of a zero mean)"))
+        elif paired and len(samples[k]) == len(samples["w"]):
+            v.update(tost([sign * (a - b) for a, b in zip(samples[k], samples["w"])],
+                          margin=margin, alpha=alpha, paired=True))
+        else:
+            v.update(tost(([sign * a for a in samples[k]], [sign * b for b in samples["w"]]),
+                          margin=margin, alpha=alpha, paired=False))
+        verdicts.append(v)
+    by_factor: dict = {}
+    for v in verdicts:
+        by_factor.setdefault(v["factor"], []).append(v.get("equivalent"))
+    shown = sorted(f for f, vs in by_factor.items() if vs and all(x is True for x in vs))
+    summary = {"iteration": iteration, "winner": payload["finalists"][0]["levels"],
+               "held_fixed": payload.get("held_fixed") or {}, "margin": margin,
+               "margin_spec": mspec, "alpha_per_flip": alpha, "flips": verdicts,
+               "shown_inert": shown,
+               "not_shown_inert": sorted(set(by_factor) - set(shown)),
+               "paired": paired, "samples": samples,
+               "accounting": policy_mod.INERTNESS_ACCOUNTING}
+    _write_json(iter_dir / "inertness.json", summary)
+    _write_json(iter_dir / "findings.json", {
+        "iteration": iteration, "bundle_ref": f"runs/iter-{iteration}/inertness.json",
+        "experiment_valid": any(v.get("equivalent") is not None for v in verdicts),
+        "discrepancy_analysis": (
+            "Held-factor inertness: at the confirm winner each held factor was "
+            "flipped to every alternative level and compared on fresh paired "
+            "replicates by TOST at the declared margin."),
+        "arms": [{"arm_type": "h-main",
+                  "predicted": "the held factors are inert at the winner",
+                  "observed": f"shown inert: {shown}; not shown: {summary['not_shown_inert']}",
+                  "status": ("CONFIRMED" if not summary["not_shown_inert"] else
+                             "PARTIALLY_CONFIRMED" if shown else "REFUTED"),
+                  "error_type": None,
+                  "diagnostic_note": f"runs/iter-{iteration}/inertness.json"}]})
+    _write_json(iter_dir / "principle_updates.json", [])
+    artifacts.write_relations(iter_dir, relations.reconcile(factors, test_results or {}))
+    _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
+    finalize_iteration(work_dir=work_dir, iter_dir=iter_dir, iteration=iteration,
+                       campaign=campaign)
+    append_ledger_row(work_dir, iteration)
+    logger.info("inertness: shown inert %s, not shown %s (margin %s, alpha/flip %s)",
+                shown, summary["not_shown_inert"], margin, alpha)
+    return _close_iteration(
+        engine, campaign, work_dir, iter_dir, iteration, Stage.INERTNESS.value, pol,
+        {"correctness_failed": False, "nan_response": False,
+         "budget_remaining": _budget_remaining(pol, work_dir)},
+        recommendation_levels=summary["winner"] or None)
+
+
+def _latest_inertness(work_dir) -> dict | None:
+    for d in reversed(_this_epoch_dirs(work_dir)):
+        p = d / "inertness.json"
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except (OSError, json.JSONDecodeError):
+                return None
+    return None
 
 
 def _latest_validation(work_dir) -> dict | None:
@@ -7820,7 +8049,8 @@ def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict
                        "difference on the selecting replicates (biased upward).")}
 
 
-def _certificate_scope(rec: dict, boundary: dict | None) -> dict:
+def _certificate_scope(rec: dict, boundary: dict | None,
+                       inertness: dict | None = None) -> dict:
     """``report.json["certificate_scope"]`` (WP-A A4, spec
     2026-10-17-certification-soundness.md section 4): the region the model
     half of the certificate ranged over, read from this epoch's latest
@@ -7846,6 +8076,22 @@ def _certificate_scope(rec: dict, boundary: dict | None) -> dict:
          + " held fixed; the other levels of those factors are NOT covered")
         if held else
         "epsilon-optimal over the declared ranges of every factor")
+    if inertness is not None and held:
+        # #321 item 8: what the inertness check showed. A factor shown inert
+        # changes the response AT THE WINNER by less than the margin at every
+        # alternative level -- a local statement, NOT a certificate over the
+        # other slices (that would need a model per slice).
+        out["inertness"] = {k: inertness.get(k) for k in (
+            "shown_inert", "not_shown_inert", "margin", "alpha_per_flip", "skipped")
+            if k in inertness}
+        if inertness.get("shown_inert"):
+            out["statement"] += (
+                "; at the recommended configuration, flipping "
+                + ", ".join(inertness["shown_inert"])
+                + f" to any other level changes the response by less than "
+                f"{inertness.get('margin')!r} (TOST, Bonferroni over flips at "
+                f"delta_terminal) -- a local equivalence, not a certificate over "
+                f"those slices")
     return out
 
 

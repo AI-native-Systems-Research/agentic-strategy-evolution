@@ -2709,6 +2709,26 @@ level. A certificate after refine therefore covers that SLICE only:
 `declared_space` means every factor varied. No certificate reaches past the
 declared ranges.
 
+**Held factors: inertness checks, not seat flips (#321).** A certificate over
+the whole declared space would need a fitted model, and its own model half, for
+every slice of the held factors. That cost is exponential in the number of
+held factors (a slice per level combination), so full-space certification is
+deliberately not offered. Instead, declare
+`design.inertness: {replicates: r, margin: {pct: 2}}`. At the confirm winner,
+each held factor is flipped to each alternative level and paired with the
+winner on `r` fresh blocks. That costs `r × (1 + F)` runs for F flips, which
+the preview shows. Equivalence is tested by TOST (two one-sided tests,
+Schuirmann 1987) at the margin, which is resolved against confirm's winner
+mean, so it is fixed before these data. Each flip's two one-sided tests run at
+`delta_terminal / F` (Bonferroni over flips), and each TOST is an
+intersection-union test of that size (Berger 1982). `certificate_scope.inertness`
+lists `shown_inert` and `not_shown_inert`, and the statement adds a LOCAL
+equivalence: at the recommended configuration, those factors move the
+response by less than the margin. It does not say the other slices'
+optima are covered. Measured: on `additive` (C worth 2.0) C is not shown inert;
+on a surface where C is worth 0.01 it is shown inert on at least 2 of 3 seeds
+at `r = 6`. Size at the margin boundary: at most 0.05 (4000-trial Monte Carlo).
+
 `report.json` carries each bound's *value*; the full record — `challenger`,
 `delta`, `method`, `detail` — is in `recommendation.json` (model) and
 `confirmation.json` / `shortlist.json` (terminal). A `null` bound means the

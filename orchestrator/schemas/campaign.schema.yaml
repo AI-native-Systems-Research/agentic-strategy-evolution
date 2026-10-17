@@ -1325,6 +1325,25 @@ properties:
                 type: integer
                 minimum: 2
                 description: "Fresh paired blocks (each = one winner run + one baseline run)."
+          inertness:
+            type: object
+            required: [replicates]
+            additionalProperties: false
+            description: >
+              HELD-FACTOR INERTNESS checks (#321; opt-in). At the confirm
+              winner, flip each factor the fitting stage held fixed to each
+              alternative level and compare with the winner on ``replicates``
+              fresh paired blocks (``replicates x (1 + F)`` runs, F flips);
+              TOST at ``margin`` says which held factors were shown inert.
+              report.json ``certificate_scope.inertness``. Full-space
+              certification over held slices is NOT offered: it would need a
+              fitted model per slice, exponential in the held factors.
+              Single-objective only.
+            properties:
+              replicates: {type: integer, minimum: 2}
+              margin:
+                type: object
+                description: "Equivalence margin: {abs: a} or {pct: p} of the confirm winner's mean (default {pct: 2})."
           max_runs:
             type: integer
             minimum: 1
