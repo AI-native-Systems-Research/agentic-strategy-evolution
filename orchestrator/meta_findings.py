@@ -201,6 +201,14 @@ def _detect_target_system_asks(
             })
 
     target = campaign.get("target_system", {}) if isinstance(campaign, dict) else {}
+    from orchestrator.validate import campaign_kind
+
+    if isinstance(campaign, dict) and campaign_kind(campaign) == "optimization":
+        # This kind has no planner discovering metrics or knobs: the response
+        # metrics and the factors are declared in `optimization`, and validate
+        # refuses a campaign without them. The two asks below would tell the
+        # author about a design phase the kind does not have.
+        return asks
     if not target.get("observable_metrics"):
         asks.append({
             "ask": (

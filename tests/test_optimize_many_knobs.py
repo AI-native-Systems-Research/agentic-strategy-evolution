@@ -1,0 +1,110 @@
+"""Many knobs, end to end: a 12- or 16-knob campaign runs in seconds and
+finds the optimum.
+
+Before: the screen fell back to a 2^k full factorial past 8 knobs and the
+candidate search enumerated 9^k points, so 7 knobs did not finish in nine
+minutes. These drive the real policy end to end on a sparse surface (three
+active knobs among k) and judge against the noiseless truth.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import json
+import time
+from pathlib import Path
+
+import pytest
+
+from orchestrator.optimize.harness import run_synthetic_campaign
+from orchestrator.optimize.synthetic import sparse_knobs, true_optimum
+
+
+def _runs(work_dir) -> int:
+    return sum(sum(1 for ln in p.read_text().splitlines() if ln.strip())
+               for p in Path(work_dir).glob("runs/iter-*/runs.jsonl"))
+
+
+def test_the_active_factor_oracle_equals_full_enumeration():
+    """The shortcut must be the truth, not an approximation of it."""
+    s = sparse_knobs(4)
+    full = dataclasses.replace(s, active=())
+    assert true_optimum(s) == true_optimum(full)
+
+
+@pytest.mark.parametrize("k,resolution,screen_corners", [
+    (12, 5, 256), (16, 5, 256), (16, 4, 32)])
+def test_a_many_knob_campaign_finds_the_optimum_in_seconds(tmp_path, k, resolution,
+                                                          screen_corners):
+    t = time.process_time()
+    res = run_synthetic_campaign(
+        sparse_knobs(k), seed=1, parent_dir=tmp_path,
+        campaign_overrides={"design": {
+            "screen": {"resolution": resolution, "center_points": 4},
+            "refine": {"kind": "central_composite", "center_points": 4},
+            "confirm": {"replicates": 3}}})
+    elapsed = time.process_time() - t
+    assert res.path[-1] == "report", res.path
+    assert res.true_gap == pytest.approx(0.0, abs=1e-9), (res.recommendation,
+                                                           res.true_optimum)
+    screen = json.loads((Path(res.work_dir) / "runs" / "iter-2" /
+                         "design_matrix.json").read_text())
+    corners = sum(1 for r in screen["rows"] if r.get("role", "corner") == "corner")
+    assert corners == screen_corners, "the screen is a fraction, not 2^k"
+    assert _runs(res.work_dir) < 2 ** k
+    # CPU seconds, not wall clock (the machine is shared). Measured 3.4 / 5.8 /
+    # 9.1 s CPU for 12@V / 16@V / 16@IV; 16@IV was ~37 s before the searched
+    # alias test's work was bounded. Generous: the point is "seconds, not hours".
+    assert elapsed < 120, f"{k} knobs took {elapsed:.0f}s of CPU"
+
+
+def test_the_oracle_refuses_a_grid_that_would_exhaust_memory():
+    """Eight parallel benchmark workers once each materialised a 10^8-point
+    oracle grid (26-39 GB apiece) and froze the machine. A surface that does
+    not declare its active factors must be refused, not enumerated."""
+    s = dataclasses.replace(sparse_knobs(8), active=())
+    with pytest.raises(ValueError, match="declare Surface.active"):
+        true_optimum(s)
+    assert true_optimum(sparse_knobs(8))  # with active factors: exact and cheap
+
+
+def _judged(s, lv) -> tuple:
+    """Everything the oracle judges a configuration by, deterministically."""
+    import random
+
+    out = [s.fn(lv), s.extra_observables(lv)]
+    for f in (s.invalid, s.fails_at):
+        out.append(None if f is None else f(lv))
+    ex = s.exception_at
+    out.append(None if ex is None else all(lv.get(i) == v for i, v in ex.items()))
+    if s.noisy_observables is not None:
+        out.append(s.noisy_observables(lv, random.Random(0)))
+    out += [o["fn"](lv) for o in s.objectives]
+    return tuple(out)
+
+
+def _inert_changes_something(s, *, trials: int = 200, seed: int = 0) -> bool:
+    import random
+
+    rng = random.Random(seed)
+    levels = {f["id"]: list(f["levels"]) for f in s.factors}
+    inert = [i for i in levels if i not in s.active]
+    for _ in range(trials):
+        lv = {i: rng.choice(v) for i, v in levels.items()}
+        moved = {**lv, **{i: rng.choice(levels[i]) for i in inert}}
+        if _judged(s, lv) != _judged(s, moved):
+            return True
+    return False
+
+
+@pytest.mark.parametrize("k", [4, 8, 16])
+def test_perturbing_inert_factors_changes_nothing_the_oracle_judges(k):
+    """B8: ``Surface.active`` is a CLAIM the oracle's shortcut rests on (it
+    enumerates only the active grid). Property: moving every inert factor
+    leaves the response, the observables and every validity predicate
+    unchanged -- and a surface whose declared ``active`` omits a live factor
+    is caught by the same check."""
+    s = sparse_knobs(k)
+    assert s.active and not _inert_changes_something(s)
+    lying = dataclasses.replace(s, active=s.active[:2])  # X02 is live
+    assert _inert_changes_something(lying)

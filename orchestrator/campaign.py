@@ -30,6 +30,7 @@ import argparse
 import json
 import logging
 import sys
+import time
 from pathlib import Path
 
 import jsonschema
@@ -42,6 +43,7 @@ from orchestrator.util import atomic_write
 from orchestrator.ledger import append_failed_row, append_ledger_row
 from orchestrator.llm_dispatch import LLMDispatcher
 from orchestrator.metrics import summarize_metrics
+from orchestrator.optimize import progress as _progress
 from orchestrator.iteration import (
     DEFAULTS_PATH,
     IterationOutcome,
@@ -53,11 +55,34 @@ from orchestrator.iteration import (
 logger = logging.getLogger(__name__)
 
 
+#: Model used for EVERY phase of a ``kind: optimization`` campaign.
+#:
+#: This kind's only model calls are the opt-in ``plan`` (designs the mechanism)
+#: and ``build`` (authors the mechanism every later stage measures) —
+#: verify/screen/refine/confirm/report are tokenless, and gate summaries and
+#: report.md are rendered from artifacts with zero tokens. Because the tokenless stages carry the
+#: bulk of the work, the marginal cost of using the strongest model for all of
+#: them is small, while the downside of a weaker model on the build call is that
+#: every downstream number describes worse code. Reflective keeps its own
+#: per-phase defaults, which are tuned for a different call profile.
+OPTIMIZATION_MODEL = "claude-opus-5"
+
+
 def _resolve_model(campaign: dict, phase_key: str, cli_model: str | None) -> str:
-    """Resolve model: campaign.models > defaults.yaml > --model flag."""
+    """Resolve model: campaign.models > kind default > defaults.yaml > --model.
+
+    An explicit ``campaign.models[phase]`` always wins, so a campaign can still
+    pin a cheaper model per phase. Absent that, ``kind: optimization`` resolves
+    every phase to :data:`OPTIMIZATION_MODEL`.
+    """
     campaign_models = campaign.get("models", {})
     if campaign_models.get(phase_key):
         return campaign_models[phase_key]
+
+    from orchestrator.validate import campaign_kind
+    if campaign_kind(campaign) == "optimization":
+        return OPTIMIZATION_MODEL
+
     if DEFAULTS_PATH.exists():
         defaults = yaml.safe_load(DEFAULTS_PATH.read_text()) or {}
         default_model = defaults.get("models", {}).get(phase_key)
@@ -152,11 +177,72 @@ def _write_metrics_summary(work_dir: Path) -> None:
         print(f"\n  Warning: could not write metrics summary: {exc}")
 
 
+def _optimization_stage_of(campaign: dict, iteration: int) -> str:
+    """The pre-epoch stage iteration ``iteration`` ran, else ``"epoch"``.
+
+    Pre-epoch stages (plan / build / verify) are selected by iteration index;
+    epoch states by the compiled policy, which records no transition for a
+    failed iteration -- so "epoch" is the most a caller can say there.
+    """
+    from orchestrator.optimize.policy import pre_epoch_stages
+
+    pre = pre_epoch_stages(campaign)
+    return pre[iteration - 1] if 1 <= iteration <= len(pre) else "epoch"
+
+
+def _optimization_halt_reason(campaign: dict, iteration: int,
+                              exc: BaseException) -> dict | None:
+    """``halt.json`` payload when this failure must stop the campaign, else None.
+
+    Two cases, both regardless of auto-approve:
+      * a hard gate (``OptimizationGateFailed``) -- retrying cannot legitimately
+        pass it; the apparatus is not the one pre-registered;
+      * ANY failure of a pre-epoch stage -- the next index would skip it.
+    Everything else (a plain ``OptimizationAborted`` such as too few usable
+    rows) keeps the retry-then-circuit-breaker path, which re-enters the same
+    epoch state and reuses the rows already measured.
+    """
+    from orchestrator.optimize.stage_runner import OptimizationGateFailed
+
+    stage = _optimization_stage_of(campaign, iteration)
+    if isinstance(exc, OptimizationGateFailed):
+        kind = "gate_failed"
+    elif stage != "epoch":
+        kind = "pre_epoch_stage_failed"
+    else:
+        return None
+    return {
+        "kind": kind,
+        "stage": stage,
+        "stopped_at_iteration": iteration,
+        "error_type": type(exc).__name__,
+        "reason": (
+            f"{stage} {'gate' if kind == 'gate_failed' else 'stage'} failed at "
+            f"iteration {iteration}: {exc}. Nothing after it ran. Fix the cause, "
+            f"then resume with `nous resume <campaign.yaml>`."
+        ),
+    }
+
+
 def _generate_report(
     campaign: dict, work_dir: Path, model: str | None,
     agent: str = "sdk", timeout: int = 1800,
 ) -> None:
     """Generate report.md summarizing the campaign."""
+    from orchestrator.validate import campaign_kind
+
+    if campaign_kind(campaign) == "optimization":
+        # Rendered from report.json, not written by a model: the kind's only
+        # model calls are plan and build, and an LLMDispatcher call here both
+        # spends unbudgeted tokens and routes through OPENAI_* (#304).
+        from orchestrator.optimize.report_md import write_report_markdown
+
+        try:
+            print(f"  -> {write_report_markdown(work_dir)}")
+        except OSError as exc:
+            logger.warning("Report rendering failed: %s", exc)
+            print(f"  Report rendering skipped: {exc}")
+        return
     try:
         resolved = _resolve_model(campaign, "report", model)
         if agent == "inline":
@@ -230,7 +316,37 @@ def read_persisted_max_iterations(work_dir: Path) -> int | None:
     return val
 
 
-def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
+def _failed_epoch_iteration(work_dir: Path, campaign: dict | None, iteration: int) -> bool:
+    """True when ``iteration`` is a FAILED kind: optimization EPOCH iteration.
+
+    Such an iteration must be retried as the NEXT iteration, never re-entered:
+    re-entering it re-ran its stage into the same ``runs/iter-N/`` and APPENDED
+    to the runs.jsonl already there, which the design-fidelity gate then refused
+    as duplicate rows -- so a campaign halted mid-epoch could never be resumed
+    (found resuming a real campaign after a fix). As iteration N+1 the stage
+    re-registers the same design and row reuse carries the measured rows
+    forward under the same pre-registration. Pre-epoch stages (plan / build /
+    verify) are chosen by iteration INDEX, so those are re-entered as before.
+    """
+    if not isinstance(campaign, dict):
+        return False
+    from orchestrator.validate import campaign_kind
+
+    if campaign_kind(campaign) != "optimization":
+        return False
+    if _optimization_stage_of(campaign, iteration) != "epoch":
+        return False
+    try:
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    return any(isinstance(r, dict) and r.get("iteration") == iteration
+               and r.get("status") == "FAILED"
+               for r in (ledger.get("iterations") or []))
+
+
+def _resume_completed_campaign(work_dir: Path, max_iterations: int,
+                               campaign: dict | None = None) -> int:
     """Decide where to resume a campaign and, if DONE, advance it.
 
     Returns the iteration number to start the campaign loop from:
@@ -268,6 +384,14 @@ def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
                 start, max_iterations,
             )
             return start
+        if _failed_epoch_iteration(work_dir, campaign, start):
+            logger.info(
+                "iteration %d failed mid-epoch; resuming at iteration %d, which "
+                "re-registers the same design and reuses the rows already "
+                "measured", start, start + 1,
+            )
+            engine.force_phase("DESIGN")
+            return start + 1
         logger.info(
             "Resuming mid-flight campaign at iteration %d "
             "(phase=%s, max_iterations=%d)",
@@ -372,17 +496,121 @@ def run_campaign(
         )
         preflight_dispatcher.preflight_check()
 
+    # An optimization campaign's length is a property of its COMPILED POLICY,
+    # not of the caller's default. The longest registered path (plus each
+    # spending state's registered self-loop rounds) is how many iterations the
+    # epoch can legitimately need, so a lower max_iterations would truncate a
+    # pre-registered path mid-epoch — the campaign would stop with no `report`
+    # and no `exception`, which is the one outcome the policy does not register.
+    # Raise to the floor rather than lowering the cap: the caller's value still
+    # wins whenever it is larger.
+    from orchestrator.validate import campaign_kind
+
+    if campaign_kind(campaign) == "optimization":
+        from orchestrator.optimize import policy as _policy
+
+        floor = (len(_policy.pre_epoch_stages(campaign))
+                 + _policy.longest_path(_policy.compile_policy(campaign)))
+        if floor > max_iterations:
+            logger.info(
+                "optimization kind: raising max_iterations %d -> %d "
+                "(longest registered path)", max_iterations, floor,
+            )
+            max_iterations = floor
+
     # #197: persist effective max_iterations into state.json so a later
     # `nous resume` (without --max-iterations) honors the original cap
     # instead of silently defaulting to 10. The state file is the single
     # source of truth across run/resume invocations.
     _persist_max_iterations(work_dir, max_iterations)
 
-    start_iter = _resume_completed_campaign(work_dir, max_iterations)
+    start_iter = _resume_completed_campaign(work_dir, max_iterations, campaign)
+
+    # ── campaign-loop robustness: the breaker, the budget, the progress file ──
+    #
+    # THIS LAYER, not the compiled policy, and the distinction is load-bearing.
+    # The policy decides which STATE runs next given this iteration's
+    # OBSERVATIONS. These three ask whether the LOOP should continue at all,
+    # and their inputs are iteration FAILURES — the absence of an observation.
+    # A failed iteration records no transition (which is why it repeats the
+    # same state), so there is no observation for a policy branch to fire on;
+    # the decision cannot live there even in principle. See
+    # ``orchestrator.optimize.progress``' module docstring.
+    _is_optimization = campaign_kind(campaign) == "optimization"
+    _opt_block = campaign.get("optimization") or {}
+    _budget_hours = _opt_block.get("max_wall_clock_hours")
+    _breaker_threshold = int(
+        _opt_block.get("max_identical_failures")
+        or _progress.DEFAULT_MAX_IDENTICAL_FAILURES,
+    )
+    _campaign_started = time.time()
+    if _is_optimization:
+        # A previous halt is history once the campaign runs again: left in
+        # place, every progress line of the resumed run read "HALTED
+        # gate_failed" right through to a completed report (found resuming a
+        # real campaign). Archived, not deleted -- why it stopped is audit.
+        if start_iter <= max_iterations:
+            _progress.archive_halt(work_dir)
+        _progress.write_progress(work_dir)
 
     max_redesigns = 3
     for i in range(start_iter, max_iterations + 1):
         is_last = (i == max_iterations)
+
+        if _is_optimization:
+            # ── the wall-clock budget, checked BETWEEN iterations ──
+            # Never inside one: killing a running measurement leaves a
+            # half-measured row and produces no report, and the fallback
+            # ladder's guarantee that the report always names an action depends
+            # on the epoch ending through its normal terminal path. So this
+            # declines to START another iteration and lets the terminal
+            # machinery below produce the recommendation from what was
+            # measured.
+            _bud = _progress.check_budget(
+                budget_hours=_budget_hours, started_at=_campaign_started,
+            )
+            if _bud.exhausted:
+                logger.warning("wall-clock budget exhausted: %s", _bud.reason)
+                print(f"\n  CAMPAIGN BUDGET EXHAUSTED — {_bud.reason}")
+                _progress.write_halt(work_dir, {
+                    "kind": "wall_clock_budget",
+                    "reason": _bud.reason,
+                    "stopped_before_iteration": i,
+                    "budget": _bud.as_dict(),
+                })
+                _progress.write_progress(work_dir)
+                _emit_meta_findings(work_dir, campaign)
+                _write_repo_cache(work_dir, campaign)
+                # Through the SAME terminal path a clean stop takes, so the
+                # report is written and `recommendation.basis` names the rung
+                # the answer rests on.
+                _generate_report(campaign, work_dir, model, agent=agent,
+                                 timeout=timeout)
+                _write_metrics_summary(work_dir)
+                return
+
+            # ── the repeated-failure circuit breaker ──
+            _verdict = _progress.check_breaker(
+                _progress.failures_from_ledger(
+                    work_dir,
+                    stage_of=lambda it: _optimization_stage_of(campaign, it),
+                ),
+                threshold=_breaker_threshold,
+            )
+            if _verdict.tripped:
+                logger.error("circuit breaker tripped: %s", _verdict.reason)
+                print(f"\n  CAMPAIGN HALTED — {_verdict.reason}")
+                _progress.write_halt(work_dir, {
+                    "kind": "repeated_failure",
+                    "reason": _verdict.reason,
+                    "stopped_before_iteration": i,
+                    "breaker": _verdict.as_dict(),
+                })
+                _progress.write_progress(work_dir)
+                _emit_meta_findings(work_dir, campaign)
+                _write_repo_cache(work_dir, campaign)
+                _write_metrics_summary(work_dir)
+                return
 
         for redesign_attempt in range(max_redesigns + 1):
             print(f"\n{'#'*60}")
@@ -435,7 +663,35 @@ def run_campaign(
             except Exception as exc:
                 logger.error("Iteration %d failed permanently: %s", i, exc)
                 print(f"\n  Iteration {i} FAILED: {exc}")
-                append_failed_row(work_dir, i, str(exc))
+                # The exception TYPE is prefixed into the recorded error, not
+                # dropped. The circuit breaker fingerprints on (type, stage,
+                # normalized message), and two different defects whose prose
+                # normalizes alike must stay distinguishable — an
+                # `OptimizationAborted` and a `KeyError` are not the same
+                # failure mode even when their text collapses to the same
+                # shape. `ledger.json`'s `error` is a free-text field and this
+                # is additive to it.
+                append_failed_row(
+                    work_dir, i, f"{type(exc).__name__}: {exc}",
+                )
+                if _is_optimization:
+                    _progress.write_progress(work_dir)
+                    halt = _optimization_halt_reason(campaign, i, exc)
+                    if halt is not None:
+                        # A gate, or a pre-epoch stage, cannot be advanced past:
+                        # the next iteration index would run the NEXT stage on an
+                        # apparatus this one just refused (screen after a failed
+                        # verify, build after a rejected plan). Halt through the
+                        # same terminal path the breaker uses.
+                        print(f"\n  CAMPAIGN HALTED — {halt['reason']}")
+                        _progress.write_halt(work_dir, halt)
+                        _progress.write_progress(work_dir)
+                        _emit_meta_findings(work_dir, campaign)
+                        _write_repo_cache(work_dir, campaign)
+                        _generate_report(campaign, work_dir, model, agent=agent,
+                                         timeout=timeout)
+                        _write_metrics_summary(work_dir)
+                        return
                 outcome = None
                 break
 
@@ -465,6 +721,11 @@ def run_campaign(
         if outcome == IterationOutcome.COMPLETED:
             append_ledger_row(work_dir, i)
             print(f"\n  Campaign complete after {i} iteration(s).")
+            # A final, accurate snapshot: a reader coming to a FINISHED campaign
+            # should not find a progress.json describing its second-to-last
+            # iteration.
+            if _is_optimization:
+                _progress.write_progress(work_dir)
             _emit_meta_findings(work_dir, campaign)
             _write_repo_cache(work_dir, campaign)
             _generate_report(campaign, work_dir, model, agent=agent, timeout=timeout)
@@ -474,6 +735,10 @@ def run_campaign(
         if outcome == IterationOutcome.ABORTED:
             print(f"\n  Campaign aborted at iteration {i}.")
             print("  Engine state preserved for potential resume.")
+            # The state is preserved for a resume, so the progress surface a
+            # human consults before resuming must describe where it stopped.
+            if _is_optimization:
+                _progress.write_progress(work_dir)
             _emit_meta_findings(work_dir, campaign)
             _write_repo_cache(work_dir, campaign)
             _write_metrics_summary(work_dir)
@@ -486,27 +751,43 @@ def run_campaign(
         # Post-iteration: ledger
         append_ledger_row(work_dir, i)
 
+        # ... and refresh progress.json. Written on the SUCCESS path too, not
+        # only at the failure and halt paths: a long healthy campaign is exactly
+        # the case where a supervising human is left guessing, and a
+        # progress.json that only advanced when something went wrong would go
+        # stale for hours while the campaign was fine. Written AFTER the ledger
+        # row so the completed/failed iteration counts it reads are current.
+        if _is_optimization:
+            _progress.write_progress(work_dir)
+
         iter_dir = work_dir / "runs" / f"iter-{i}"
 
         # Generate continue gate summary
         gate_summary_path = iter_dir / "gate_summary_continue.json"
         try:
-            resolved = _resolve_model(campaign, "report", model)
-            if agent == "inline":
-                dispatcher = InlineDispatcher(
-                    work_dir=work_dir, campaign=campaign, timeout=timeout,
-                )
+            if _is_optimization:
+                # Zero-token: rendered from the progress snapshot (see
+                # orchestrator.optimize.report_md for why not a model call).
+                from orchestrator.optimize.report_md import write_gate_summary
+
+                gate_summary_path = write_gate_summary(work_dir, i)
             else:
-                dispatcher = LLMDispatcher(
-                    work_dir=work_dir, campaign=campaign,
-                    model=resolved,
+                resolved = _resolve_model(campaign, "report", model)
+                if agent == "inline":
+                    dispatcher = InlineDispatcher(
+                        work_dir=work_dir, campaign=campaign, timeout=timeout,
+                    )
+                else:
+                    dispatcher = LLMDispatcher(
+                        work_dir=work_dir, campaign=campaign,
+                        model=resolved,
+                    )
+                dispatcher.dispatch(
+                    "summarizer", "summarize-gate",
+                    output_path=gate_summary_path,
+                    iteration=i,
+                    perspective="continue",
                 )
-            dispatcher.dispatch(
-                "summarizer", "summarize-gate",
-                output_path=gate_summary_path,
-                iteration=i,
-                perspective="continue",
-            )
         except (RuntimeError, FileNotFoundError, OSError) as exc:
             logger.warning("Continue gate summary generation failed: %s", exc)
             print(f"  (Continue gate summary skipped: {exc})")

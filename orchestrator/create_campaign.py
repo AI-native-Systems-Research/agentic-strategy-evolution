@@ -336,3 +336,439 @@ def scaffold_campaign(
     )
     target_path.write_text(content)
     return target_path
+
+
+# ─────────────────────────────────────────────────────────────────────────
+# kind: optimization scaffold
+# ─────────────────────────────────────────────────────────────────────────
+#
+# Design choice: the scaffold is STRUCTURALLY complete and schema-valid, but
+# every value only the author can know is a ``TODO-...`` token. ``nous validate
+# campaign`` reports each one by field path (``find_placeholders`` below), and
+# ``nous run`` refuses an optimization campaign that still carries one — so an
+# agent cannot launch the scaffold unedited, and the validator's list IS the
+# fill-in checklist. Making it schema-INVALID instead would hide every other
+# problem behind schema noise; making it fully valid would mean inventing a
+# target. Neither helps an author converge.
+
+#: The token every placeholder starts with. One spelling, so the scanner and
+#: the template cannot drift.
+PLACEHOLDER_TOKEN = "TODO-"
+
+#: How an author reaches the quickstart from ANY install. The repo path is not
+#: enough: a pip-installed `nous` ships no `docs/` tree, so pointing a user (or a
+#: Claude session) outside the checkout at a relative path was a dead end.
+QUICKSTART_DOC = "`nous docs quickstart`"
+
+_OPT_TEMPLATE = """\
+# ─────────────────────────────────────────────────────────────────────────
+# Nous kind: optimization campaign — scaffolded by
+# `nous create-campaign --kind optimization`.
+#
+# Read first: {quickstart}
+#
+# Every value starting with TODO- is a placeholder only you can fill.
+# `nous validate campaign THIS_FILE` lists every one still present, by
+# field path, and `nous run` refuses this file until none remain.
+#
+# THE LOOP (iterate until each step is clean, then move on):
+#   1. fill every TODO-                 (this file + your adapter script)
+#   2. nous validate campaign FILE              # static, 0 runs
+#   3. nous validate campaign FILE --smoke      # tests + 1 config
+#   4. nous validate campaign FILE --liveness   # every level once + noise
+#                                               # floor + DESIGN PREVIEW
+#   5. NOUS_CAMPAIGN_PARENT=~/nous-campaigns nous run FILE
+#   6. monitor from any shell: nous progress FILE   (--json for tools,
+#      --line for one line); results: report.md / report.json in the
+#      work_dir, halt.json if a gate stopped it
+#
+# Model calls: ZERO unless you enable the opt-in `plan`/`build` stages
+# (bottom of file). Factors are declared HERE by you; no model proposes them.
+# report.md and gate summaries are rendered from artifacts, zero tokens.
+# ─────────────────────────────────────────────────────────────────────────
+
+kind: optimization
+
+run_id: {run_id}
+
+research_question: >
+  {research_question}
+
+prompts:
+  methodology_layer: "prompts/methodology/"
+  domain_adapter_layer: null
+
+target_system:
+  name: {target_name}
+  # Read by NO stage unless plan/build are enabled. Describe the target and
+  # what the adapter measures, for human readers and for build.
+  description: >
+    {target_description}
+  # Absolute path. run_command/test_command run with cwd = this directory.
+  # Keep campaign artifacts OUT of it: export NOUS_CAMPAIGN_PARENT.
+  repo_path: {repo_path}
+
+# Knobs that must NOT change across rows (workload size, model, dataset...).
+# A lock is only ENFORCED when optimization.locked_observables says where the
+# adapter reports the value it actually used (validate warns otherwise).
+locked_parameters:
+  TODO-locked-knob: TODO-locked-value
+
+optimization:
+  # argv, NOT a shell line: split with shlex, run with cwd=repo_path. No `cd`,
+  # `&&`, pipes, redirects, globs, or leading VAR=value (use `env VAR=v ...`).
+  # The interpreter you name must have your dependencies installed — use the
+  # target's own venv path, e.g. ".venv/bin/python".
+  # Each factor's rendered `apply` argument is APPENDED to this command.
+  # Contract (`nous docs targets`): print ONE JSON object last on stdout, echo the
+  # EFFECTIVE value of every factor under cfg.* on EVERY row (never omit a
+  # field at some corners), read NOUS_WORKLOAD_SEED, write files only under
+  # NOUS_RUN_DIR, exit non-zero on any failed measurement.
+  # `nous create-campaign --kind optimization --adapter-stub PATH` writes one.
+  run_command: "TODO-python TODO-path/to/adapter.py"
+
+  # Runs every declared native_test once at verify. Must print PER-TEST
+  # results (pytest -v / go test -v). Paths RELATIVE to repo_path. The target's
+  # own pytest config (addopts like `-n auto --cov --cov-fail-under=...`)
+  # applies here too: install its test deps in this interpreter, or override
+  # (`-p no:cacheprovider --no-cov -n 0`), and watch --smoke for
+  # "unrecognized arguments". Prefer the target's own FAST relation tests.
+  test_command: "TODO-python -m pytest -v TODO-tests/test_relations.py"
+
+  # Ceilings, seconds. Size run_timeout_sec from the SLOWEST corner (>= 2x
+  # its measured wall clock; --liveness measures per-level times for you).
+  test_timeout_sec: 900
+  run_timeout_sec: 600
+
+  # Optional cap on total wall clock; --liveness compares its preview to it.
+  # max_wall_clock_hours: 8
+
+  # Where the adapter reports each locked value (dotted path into its JSON).
+  locked_observables:
+    TODO-locked-knob: TODO-cfg.locked_knob
+
+  # A configuration you KNOW runs. Every factor, each at one of its DECLARED
+  # levels. --liveness varies one factor at a time around it.
+  known_valid_baseline: {{A: 4, B: "off"}}
+
+  # Declare when the target is stochastic: replicate i of every finalist then
+  # shares one seed, so confirm's comparison is PAIRED (much tighter). The
+  # adapter must actually read this variable (`nous docs targets` §3).
+  workload:
+    seed_env: NOUS_WORKLOAD_SEED
+
+  policy:
+    # Indifference width: "we would not reship for less than this". Must be
+    # ABOVE the screen's minimum detectable effect (--liveness prints it), or
+    # certification rests on confirm's paired replicates alone.
+    epsilon: {{pct: 2.0}}         # or {{abs: 0.5}} in the metric's units
+    delta_screen: 0.05
+    delta_terminal: 0.05
+
+  response:
+    primary: {{metric: TODO-primary-metric, direction: maximize}}
+    # SLA / budget limits: a row violating one is INFEASIBLE (kept as data,
+    # never the winner). Delete the list if you have none.
+    constraints:
+      - {{metric: TODO-constraint-metric, op: "<=", value: 0}}
+    # Invariants of the MEASUREMENT ITSELF (the run completed, nothing was
+    # censored) — a violation means the row measured something else.
+    self_check:
+      - {{metric: TODO-completed-flag, op: "==", value: true}}
+    # Recorded on every row and summarised in report.json; NEVER optimized,
+    # fitted or ranked on -- the generalization check. Delete if none.
+    held_out: [TODO-held-out-metric]
+    # Run-to-run noise of the primary metric, percent (measure it:
+    # --liveness prints the CV of repeated baseline runs).
+    noise_estimate_pct: 2.0
+
+  factors:
+    # Numeric factor. Integer-valued levels NEED `grid: 1`, or refine/centre
+    # points may ask for 2.5. Levels must bracket the baseline (4 here).
+    # `scale: log` for a GEOMETRIC knob (a size, batch, interval spanning
+    # orders of magnitude): the centre point is then the geometric mean.
+    # Delete it for an additive knob (a ratio, a threshold).
+    # A knob that runs ONLY at listed values (powers of two, a menu of sizes)
+    # takes `levels_only: true` INSTEAD of `grid`: every point refine runs and
+    # every recommendation is then one of the declared levels.
+    - id: A
+      name: TODO-numeric-knob-name
+      type: numeric
+      levels: [1, 2, 4, 8]
+      grid: 1
+      scale: log
+      apply: "--TODO-numeric-flag={{level}}"
+      # What the adapter ECHOES (a number, not "4"). Never trivially true.
+      manipulation: {{observable: TODO-cfg.numeric_knob, op: "==", value: "{{level}}"}}
+      relations:
+        - id: R_A
+          kind: correctness
+          statement: "TODO: what must stay correct at every level of this knob"
+          # The id EXACTLY as the test runner prints it, relative to repo_path.
+          native_test: "TODO-tests/test_relations.py::test_numeric_knob"
+    # Choice factor: levels are exact strings the adapter echoes back.
+    - id: B
+      name: TODO-choice-knob-name
+      type: choice
+      levels: ["off", "on"]
+      apply: "--TODO-choice-flag={{level}}"
+      manipulation: {{observable: TODO-cfg.choice_knob, op: "==", value: "{{level}}"}}
+      relations:
+        - id: R_B
+          kind: correctness
+          statement: "TODO: what must stay correct with this choice on and off"
+          native_test: "TODO-tests/test_relations.py::test_choice_knob"
+
+  design:
+    # Resolution 5: no main effect or 2-factor interaction is aliased with
+    # another. Centre points buy the pure-error df the screen's tests use.
+    # They cycle each choice factor through its levels (so curvature is
+    # checked under every level), each centre configuration replicated at
+    # least twice: df = center_points - #configurations. With the one
+    # two-level choice factor below, 4 centres -> 2 configurations -> df=2
+    # (t=4.30, a coarse screen); `nous validate` warns if a level gets none.
+    screen: {{resolution: 5, center_points: 4}}
+    # refine fits curvature and NEEDS >= 2 numeric factors with > 2 levels;
+    # this scaffold has one, so it is off. Enable by adding a second such
+    # factor, uncommenting this, and adding `refine` to stages.
+    # refine: {{center_points: 4}}
+    # Terminal discrimination: shortlist finalists, each re-measured.
+    confirm: {{replicates: 3, shortlist_size: 3}}
+    max_runs: 60
+
+  stages: [verify, screen, confirm]
+  # OPT-IN MODEL STAGES — only when the mechanism under study does NOT exist
+  # in the target yet: `plan` designs it, `build` authors it plus the native
+  # tests your relations declare. Each is one agent call. Enable with:
+  # stages: [plan, build, verify, screen, confirm]
+  # guidance:
+  #   factor_nomination: >
+  #     Read ONLY by plan/build: what the authoring agent must know.
+
+  # Literal repo-relative paths of the mechanism's code (not globs); the drift
+  # oracle watches them.
+  # build_checks:
+  #   mechanism_paths: ["src/TODO-mechanism.py"]
+"""
+
+
+_SINGLE_RQ = (
+    "TODO-which configuration of the declared knobs maximizes the "
+    "primary metric, subject to the constraints?"
+)
+_MULTI_RQ = (
+    "TODO-what is the trade-off frontier between the objectives over the "
+    "declared knobs, subject to the constraints?"
+)
+
+_PRIMARY_LINE = "    primary: {metric: TODO-primary-metric, direction: maximize}\n"
+_NOISE_COMMENT = (
+    "    # Run-to-run noise of the primary metric, percent (measure it:\n"
+    "    # --liveness prints the CV of repeated baseline runs).\n"
+)
+_EPSILON_COMMENT = (
+    "    # Indifference width: \"we would not reship for less than this\". Must be\n"
+    "    # ABOVE the screen's minimum detectable effect (--liveness prints it), or\n"
+    "    # certification rests on confirm's paired replicates alone.\n"
+    "    epsilon: {pct: 2.0}         # or {abs: 0.5} in the metric's units\n"
+)
+
+
+def _multi_objective_response(content: str, n: int) -> str:
+    """Rewrite the single-objective template's response for ``n`` objectives.
+
+    Applied to the RENDERED template rather than kept as a second template, so
+    the two scaffolds cannot drift anywhere except the lines this replaces --
+    and each replaced line must be present exactly once, or the template has
+    moved under this function and that is a bug to surface, not to paper over.
+    """
+    lines = [
+        "    # Two or more objectives: the campaign reports the TRADE-OFF FRONT\n",
+        "    # (configurations no other one beats on every objective at once) and\n",
+        "    # recommends one point of it by `preference`. Directions: maximize |\n",
+        "    # minimize -- CHECK each. An objective may not also be a constraint,\n",
+        "    # held_out or self_check metric: if you already know the acceptable\n",
+        "    # bound, make it a constraint instead (`nous docs guide`,\n",
+        "    # \"Multi-objective: finding the trade-off frontier\").\n",
+        "    objectives:\n",
+    ]
+    for i in range(1, n + 1):
+        direction = "maximize" if i == 1 else "minimize"
+        lines.append(f"      - {{metric: TODO-objective-{i}-metric, "
+                     f"direction: {direction}}}\n")
+    lines += [
+        "    # How ONE recommended configuration is chosen from the front. Default\n",
+        "    # knee (best bang for the buck; needs no weights). Or:\n",
+        "    # preference:\n",
+        "    #   method: weights          # knee | weights | lexicographic\n",
+        "    #   weights: {"
+        + ", ".join(f"TODO-objective-{i}-metric: 1.0" for i in range(1, n + 1))
+        + "}\n",
+        "    #   # method: lexicographic -> order: ["
+        + ", ".join(f"TODO-objective-{i}-metric" for i in range(1, n + 1))
+        + "]\n",
+    ]
+    replacements = [
+        (_PRIMARY_LINE, "".join(lines)),
+        (_NOISE_COMMENT,
+         "    # Run-to-run noise of EACH objective, percent (one number for all,\n"
+         "    # or a map objective metric -> pct; --liveness prints each CV).\n"),
+        (_EPSILON_COMMENT,
+         "    # Indifference width PER OBJECTIVE: a difference smaller than it is\n"
+         "    # not dominance. One spec for every objective, or a map objective\n"
+         "    # metric -> spec when units differ, e.g.\n"
+         "    # {TODO-objective-1-metric: {pct: 2.0}, TODO-objective-2-metric: {abs: 5}}.\n"
+         "    # --liveness prints each objective's screen MDE against it.\n"
+         "    epsilon: {pct: 2.0}\n"),
+    ]
+    for old, new in replacements:
+        if content.count(old) != 1:
+            raise RuntimeError(
+                f"optimization template changed: expected exactly one "
+                f"{old.strip()[:40]!r}")
+        content = content.replace(old, new)
+    return content
+
+
+def scaffold_optimization_campaign(
+    target_path: Path,
+    *,
+    target_name: str = "TODO-target-name",
+    target_description: str = (
+        "TODO-describe the target and what one run of the adapter measures."
+    ),
+    research_question: str = (
+        "TODO-which configuration of the declared knobs maximizes the "
+        "primary metric, subject to the constraints?"
+    ),
+    run_id: str = "TODO-run-id",
+    target_repo_path: Path | str | None = None,
+    force: bool = False,
+    objectives: int = 1,
+) -> Path:
+    """Write a structurally complete ``kind: optimization`` campaign.yaml.
+
+    Schema-valid, but carrying ``TODO-`` placeholders that
+    ``find_placeholders`` reports by path, so validation fails naming them and
+    ``nous run`` refuses it until they are filled.
+
+    ``objectives`` = 1 (default) writes ``response.primary`` -- byte-identical
+    to the template before multi-objective support existed. ``objectives`` >= 2
+    writes a ``response.objectives`` block of that many ``TODO-`` metrics plus
+    a commented ``preference`` block (see :func:`_multi_objective_response`).
+    """
+    if not isinstance(objectives, int) or objectives < 1:
+        raise ValueError(f"objectives must be an integer >= 1, got {objectives!r}")
+    if objectives >= 2 and research_question == _SINGLE_RQ:
+        research_question = _MULTI_RQ
+    target_path = Path(target_path)
+    if target_path.exists() and not force:
+        raise FileExistsError(
+            f"campaign.yaml already exists at {target_path}; pass force=True "
+            f"to overwrite",
+        )
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    repo = Path.cwd() if target_repo_path is None else Path(target_repo_path)
+    content = _OPT_TEMPLATE.format(
+        quickstart=QUICKSTART_DOC,
+        run_id=run_id,
+        research_question=research_question.replace("\n", "\n  "),
+        target_name=target_name,
+        target_description=target_description.replace("\n", "\n    "),
+        repo_path=str(repo.resolve()),
+    )
+    if objectives >= 2:
+        content = _multi_objective_response(content, objectives)
+    target_path.write_text(content)
+    return target_path
+
+
+_ADAPTER_STUB = '''\
+#!/usr/bin/env python3
+"""Nous run_command adapter skeleton (contract: `nous docs targets`).
+
+Nous invokes:  <run_command argv> + each factor's rendered `apply` argument,
+with cwd = target_system.repo_path. This script must:
+
+  * run ONE configuration of the target and print ONE JSON object LAST on
+    stdout (progress logs may go to stderr);
+  * echo the EFFECTIVE value of EVERY factor under "cfg" on EVERY run — what
+    the target actually used, never just what was requested, and never omit
+    a key at some configurations (the output contract is frozen at row 1);
+  * read the workload seed from NOUS_WORKLOAD_SEED (when declared);
+  * write any file only under NOUS_RUN_DIR (private per run);
+  * exit NON-ZERO on any failed measurement — never print a 0 or null for a
+    number it did not measure.
+
+Edit every TODO. Then: nous validate campaign FILE --smoke
+"""
+import argparse
+import json
+import os
+import sys
+import tempfile
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    # One flag per factor, matching each factor's `apply` template.
+    ap.add_argument("--TODO-numeric-flag", dest="numeric_knob", type=int, required=True)
+    ap.add_argument("--TODO-choice-flag", dest="choice_knob", choices=["off", "on"], required=True)
+    args = ap.parse_args()
+
+    seed = int(os.environ.get("NOUS_WORKLOAD_SEED", "0"))
+    run_dir = os.environ.get("NOUS_RUN_DIR") or tempfile.mkdtemp(prefix="nous-run-")
+
+    # TODO: run the target with these settings, under run_dir, seeded by seed.
+    # Raise / return non-zero on ANY failure.
+    result = {"TODO_primary_metric": None}
+    effective = {
+        "numeric_knob": args.numeric_knob,   # TODO: read back from the target
+        "choice_knob": args.choice_knob,     # TODO: read back from the target
+    }
+
+    if any(v is None for v in result.values()):
+        print("measurement incomplete; refusing to emit a partial row", file=sys.stderr)
+        return 1
+    print(json.dumps({**result, "seed": seed, "cfg": effective}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+'''
+
+
+def write_adapter_stub(path: Path, *, force: bool = False) -> Path:
+    """Write the minimal adapter skeleton honouring the `nous docs targets` contract."""
+    path = Path(path)
+    if path.exists() and not force:
+        raise FileExistsError(
+            f"adapter stub already exists at {path}; pass --force to overwrite",
+        )
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_ADAPTER_STUB)
+    path.chmod(path.stat().st_mode | 0o111)
+    return path
+
+
+def find_placeholders(doc, _path: str = "") -> list[tuple[str, str]]:
+    """Every ``(field_path, value)`` whose key or string value carries a
+    ``TODO-``/``TODO:`` placeholder. Pure; order is document order."""
+    found: list[tuple[str, str]] = []
+    if isinstance(doc, dict):
+        for k, v in doc.items():
+            here = f"{_path}.{k}" if _path else str(k)
+            if _is_placeholder(str(k)):
+                found.append((here, f"(key) {k}"))
+            found.extend(find_placeholders(v, here))
+    elif isinstance(doc, list):
+        for i, v in enumerate(doc):
+            found.extend(find_placeholders(v, f"{_path}[{i}]"))
+    elif isinstance(doc, str) and _is_placeholder(doc):
+        found.append((_path, doc))
+    return found
+
+
+def _is_placeholder(text: str) -> bool:
+    return PLACEHOLDER_TOKEN in text or "TODO:" in text

@@ -577,6 +577,153 @@ def _default_sdk_runner_factory() -> SDKRunner:
     return _runner
 
 
+def resume_hint(prompt: str, original_prompt: str, kind: str) -> str:
+    """Annotate ``original_prompt`` (once) with a continue-don't-restart note.
+
+    Mirrors CLIDispatcher: tells the agent that the prior attempt was
+    interrupted so it picks up from existing artifacts rather than
+    starting fresh. Idempotent — a prompt already carrying the note is
+    returned unchanged.
+    """
+    marker = "\nNote: Your previous attempt was interrupted"
+    if marker in prompt:
+        return prompt
+    return (
+        f"{original_prompt}\n\n---\n"
+        f"Note: Your previous attempt was interrupted ({kind}). "
+        f"Check the working directory for artifacts from your prior "
+        f"attempt and continue from where you left off."
+    )
+
+
+def retries_exhausted(failure_count: int, max_retries: int | None) -> bool:
+    """True once ``failure_count`` failures exceed the retry budget.
+
+    ``max_retries=None`` is "unbounded", which still honours an absolute
+    safety cap so a permanent error can't loop forever (#279 review).
+    """
+    if max_retries is None:
+        return failure_count > _UNBOUNDED_RETRY_SAFETY_CAP
+    return failure_count > max_retries
+
+
+class SDKCallFailed(RuntimeError):
+    """:func:`call_sdk_with_retry` gave up.
+
+    ``attempts`` is how many runner calls were made; ``retryable`` is False
+    when the last failure was classified as not worth retrying (so the
+    caller can word its own error accordingly). Subclasses RuntimeError so
+    callers that caught the pre-extraction RuntimeError are unaffected.
+    """
+
+    def __init__(self, message: str, *, attempts: int, retryable: bool,
+                 last_error: str) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.retryable = retryable
+        self.last_error = last_error
+
+
+def _always_retryable(_result: "SDKResult") -> bool:
+    return True
+
+
+def call_sdk_with_retry(
+    runner: Callable,
+    *,
+    prompt: str,
+    runner_kwargs: dict,
+    max_retries: int | None,
+    metrics_path: Path,
+    retry_context: dict,
+    on_result: Callable[["SDKResult"], None],
+    is_retryable_error: Callable[["SDKResult"], bool] = _always_retryable,
+    sleep: Callable[[float], None] | None = None,
+) -> "SDKResult":
+    """Run one SDK turn with bounded retry. Return the first non-error result.
+
+    The single retry loop behind ``SDKDispatcher._call_claude`` and the
+    ``kind: optimization`` plan/build calls, so both behave identically:
+
+    * :class:`SDKTransientError` from the runner (network blip, live
+      silence-watchdog trip) is retried.
+    * ``result.is_error`` is retried when ``is_retryable_error(result)``
+      (default: always); otherwise it fails fast.
+    * ``on_result`` is called for EVERY completed attempt, error or not,
+      so the cost axis sees tokens spent on failed attempts.
+    * every failure appends a ``retry_log.jsonl`` row (``retry_context``
+      merged with ``failure_type`` / ``attempt`` / ``error``).
+    * retries re-send the original prompt with a one-time resume hint, so
+      an agent that edits a repo continues rather than restarts.
+    * ``max_retries`` retries (``max_retries + 1`` attempts); ``None``
+      means unbounded up to ``_UNBOUNDED_RETRY_SAFETY_CAP``.
+    * ``sleep`` (default ``time.sleep``, looked up per call) receives the
+      ``_backoff_for`` delay — injectable so tests never sleep.
+
+    Raises :class:`SDKCallFailed` on exhaustion or a non-retryable error.
+    """
+    do_sleep = sleep if sleep is not None else time.sleep
+
+    def _log(kind: str, attempt: int, err: str) -> None:
+        log_retry_event(metrics_path, {
+            **retry_context,
+            "failure_type": kind,
+            "attempt": attempt,
+            "error": err[:500],
+        })
+
+    failure_count = 0
+    original_prompt = prompt
+    while True:
+        try:
+            result = runner(prompt=prompt, **runner_kwargs)
+        except SDKTransientError as exc:
+            failure_count += 1
+            _log("transient", failure_count, str(exc))
+            if retries_exhausted(failure_count, max_retries):
+                raise SDKCallFailed(
+                    f"SDK still failing after {failure_count} attempt(s): {exc}",
+                    attempts=failure_count, retryable=True, last_error=str(exc),
+                ) from exc
+            delay = _backoff_for(failure_count)
+            logger.warning(
+                "SDK transient failure (attempt %d): %s — retrying in %.0fs",
+                failure_count, exc, delay,
+            )
+            do_sleep(delay)
+            prompt = resume_hint(prompt, original_prompt, "transient")
+            continue
+
+        on_result(result)
+
+        if result.is_error:
+            failure_count += 1
+            msg = result.error_message
+            if not is_retryable_error(result):
+                _log("api_error_fatal", failure_count, msg)
+                raise SDKCallFailed(
+                    f"SDK returned a non-retryable error on attempt "
+                    f"{failure_count}: {msg}",
+                    attempts=failure_count, retryable=False, last_error=msg,
+                )
+            _log("api_error", failure_count, msg)
+            if retries_exhausted(failure_count, max_retries):
+                raise SDKCallFailed(
+                    f"SDK returned error after {failure_count} attempt(s): {msg}",
+                    attempts=failure_count, retryable=True, last_error=msg,
+                )
+            delay = _backoff_for(failure_count)
+            logger.warning(
+                "SDK error result (attempt %d): %s — retrying in %.0fs",
+                failure_count, msg[:200], delay,
+            )
+            do_sleep(delay)
+            prompt = resume_hint(prompt, original_prompt, "api_error")
+            continue
+
+        return result
+
+
 class SDKDispatcher(CLIDispatcher):
     """Dispatch agent roles via the Claude Agent SDK.
 
@@ -844,70 +991,35 @@ class SDKDispatcher(CLIDispatcher):
             "SDK turn (model=%s, cwd=%s, max_turns=%d)", self.model, cwd, turns,
         )
 
-        failure_count = 0
-        original_prompt = prompt
-        while True:
-            try:
-                result = self._sdk_runner(
-                    prompt=prompt,
-                    model=self.model,
-                    cwd=cwd,
-                    max_turns=turns,
-                    system_prompt=self._system_prompt,
-                    settings_path=self._settings_path,
-                    event_log_path=self._event_log_path,
-                    permission_mode=self._permission_mode,
-                    turn_silence_threshold=self._turn_silence_threshold,
-                    effort=self._effort,
-                )
-            except SDKTransientError as exc:
-                failure_count += 1
-                self._log_retry("transient", failure_count, exc)
-                if self._exhausted(failure_count):
-                    raise RuntimeError(
-                        f"SDK still failing after {failure_count} attempt(s): {exc}"
-                    ) from exc
-                time.sleep(_backoff_for(failure_count))
-                prompt = self._maybe_resume_hint(prompt, original_prompt, "transient")
-                continue
-
-            self._log_metrics_row(result)
-
-            if result.is_error:
-                failure_count += 1
-                self._log_retry(
-                    "api_error", failure_count, RuntimeError(result.error_message),
-                )
-                if self._exhausted(failure_count):
-                    raise RuntimeError(
-                        f"SDK returned error after {failure_count} attempt(s): "
-                        f"{result.error_message}"
-                    )
-                time.sleep(_backoff_for(failure_count))
-                prompt = self._maybe_resume_hint(prompt, original_prompt, "api_error")
-                continue
-
-            return result.text
+        result = call_sdk_with_retry(
+            self._sdk_runner,
+            prompt=prompt,
+            runner_kwargs=dict(
+                model=self.model,
+                cwd=cwd,
+                max_turns=turns,
+                system_prompt=self._system_prompt,
+                settings_path=self._settings_path,
+                event_log_path=self._event_log_path,
+                permission_mode=self._permission_mode,
+                turn_silence_threshold=self._turn_silence_threshold,
+                effort=self._effort,
+            ),
+            max_retries=self.max_retries,
+            metrics_path=self._metrics_path,
+            retry_context={
+                "role": self._current_role, "phase": self._current_phase,
+            },
+            on_result=self._log_metrics_row,
+        )
+        return result.text
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
     def _exhausted(self, failure_count: int) -> bool:
-        if self.max_retries is None:
-            # Unbounded mode still honours an absolute safety cap so a
-            # permanent error can't loop forever (#279 review).
-            return failure_count > _UNBOUNDED_RETRY_SAFETY_CAP
-        return failure_count > self.max_retries
-
-    def _log_retry(self, kind: str, attempt: int, exc: BaseException) -> None:
-        log_retry_event(self._metrics_path, {
-            "role": self._current_role,
-            "phase": self._current_phase,
-            "failure_type": kind,
-            "attempt": attempt,
-            "error": str(exc)[:500],
-        })
+        return retries_exhausted(failure_count, self.max_retries)
 
     def _log_metrics_row(self, result: SDKResult) -> None:
         log_metrics(self._metrics_path, {
@@ -932,12 +1044,4 @@ class SDKDispatcher(CLIDispatcher):
         interrupted so it picks up from existing artifacts rather than
         starting fresh.
         """
-        marker = "\nNote: Your previous attempt was interrupted"
-        if marker in prompt:
-            return prompt
-        return (
-            f"{original_prompt}\n\n---\n"
-            f"Note: Your previous attempt was interrupted ({kind}). "
-            f"Check the working directory for artifacts from your prior "
-            f"attempt and continue from where you left off."
-        )
+        return resume_hint(prompt, original_prompt, kind)

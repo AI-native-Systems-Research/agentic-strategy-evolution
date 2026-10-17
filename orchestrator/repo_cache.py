@@ -160,6 +160,9 @@ def write_repo_cache(
     """
     repo_path = Path(repo_path)
     cache_dir = cache_dir_for(repo_path)
+    from orchestrator.work_dir_resolver import ensure_self_ignored
+
+    ensure_self_ignored(cache_dir.parent)
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     if exploration:

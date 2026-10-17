@@ -1,0 +1,567 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/report.schema.json",
+  "title": "Optimization Campaign Report",
+  "description": "report.json (design spec 3.6, 3.9) -- the end of a kind:optimization campaign: the recommended configuration, WHICH RUNG of the fallback ladder produced it, and the residual-regret certificate. Written by orchestrator.optimize.stage_runner._run_report at the compiled epoch's `report` state AND on the way out of a semantic exception, so every field must be expressible when the strongest rungs were unavailable. THE TWO REGRET BOUNDS ARE NEVER COLLAPSED (design spec 3.5): residual_regret_model and residual_regret_terminal are separate, independently required, independently nullable properties, and this schema declares no relationship, default, or derived combination between them -- collapsing them would advertise the assumption-light terminal guarantee while delivering the model-dependent one. There is deliberately no combined-regret property to add a value to.",
+  "type": "object",
+  "required": [
+    "recommendation",
+    "residual_regret_model",
+    "residual_regret_terminal",
+    "epsilon",
+    "delta_screen",
+    "delta_terminal",
+    "certified",
+    "finalists",
+    "known_valid_baseline",
+    "path",
+    "epoch",
+    "policy_hash",
+    "iteration"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "provenance": {
+      "type": "object",
+      "required": [
+        "nous",
+        "policy_hash",
+        "inputs",
+        "analysis_constants"
+      ],
+      "additionalProperties": false,
+      "description": "What this report rests on (audit Q7), written by provenance.build_provenance: the Nous package version and git commit, the sha256 of every runs/iter-*/runs.jsonl, design_matrix.json and relations.json and of every campaign.epoch-*.yaml on disk when the report was written (source_sha256 covers the scope named in nous.source_scope), the policy hash, the analysis constants and switches that change the analysis without changing the policy hash, and every hard gate the campaign explicitly waived. `nous reanalyze` checks the input hashes before re-deriving the report. Optional only so reports written before the field existed still validate.",
+      "properties": {
+        "nous": {
+          "type": "object",
+          "properties": {
+            "package_version": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "git_commit": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "source_sha256": {
+              "type": "string"
+            }
+          }
+        },
+        "runtime": {
+          "type": "object",
+          "description": "Python and numerical-library versions the analysis ran under."
+        },
+        "policy_hash": {
+          "type": "string"
+        },
+        "inputs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[0-9a-f]{64}$"
+          }
+        },
+        "analysis_constants": {
+          "type": "object"
+        },
+        "waivers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "gate",
+              "reason"
+            ]
+          }
+        }
+      }
+    },
+    "error_budget": {
+      "type": "object",
+      "required": [
+        "epochs",
+        "cumulative",
+        "cumulative_is_lower_bound"
+      ],
+      "description": "The cross-epoch error budget (audit Q7): each epoch spends delta_screen + delta_terminal, and epochs after the first were compiled after earlier epochs' data were seen, so `cumulative` is the union (Bonferroni) bound on the probability that ANY epoch's decision is wrong. Informational: `certified` is still judged per epoch at that epoch's deltas.",
+      "properties": {
+        "epochs": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "this_epoch": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "cumulative": {
+          "type": "number"
+        },
+        "cumulative_is_lower_bound": {
+          "type": "boolean"
+        },
+        "unrecovered_epochs": {
+          "type": "array",
+          "items": {
+            "type": "integer"
+          }
+        },
+        "accounting": {
+          "type": "string"
+        }
+      }
+    },
+    "recommendation": {
+      "type": "object",
+      "required": ["levels", "basis"],
+      "additionalProperties": false,
+      "description": "The configuration the campaign returns. ALWAYS PRESENT: a finite-budget system that cannot certify must still act (design spec 3.6), so this object exists even when every rung above `none` was unavailable.",
+      "properties": {
+        "levels": {
+          "type": "object",
+          "description": "The recommended factor levels. Empty ONLY under basis `none`, where no legal configuration existed to return."
+        },
+        "basis": {
+          "type": "string",
+          "enum": ["certified", "terminal_best", "model", "measured", "baseline", "none"],
+          "description": "Which rung of the fallback ladder (design spec 3.6) produced this recommendation, strongest first. certified: terminal discrimination ran and R_terminal <= epsilon. terminal_best: terminal discrimination ran but the bound was too wide -- still a measured winner against measured rivals. model: no terminal stage ran; the fitted argmax stands on its model bound, and this is the ONE rung suppressed when epoch_ended is present, because a semantic exception is evidence against the fitted surface. measured: the best measured VALID configuration (complete rows only, never the largest noisy observation). baseline: the author's known_valid_baseline. none: NOT a rung -- no baseline was declared and nothing else survived, so there is genuinely nothing legal to return. A reader must be able to tell a certificate from a fallback without reading the log, which is why this enum is closed."
+        },
+        "value": {
+          "type": ["number", "null"],
+          "description": "The recommended configuration's objective value: the confirmed mean under certified/terminal_best, the model's prediction under `model`, the measurement under `measured`. ABSENT (not null) under `baseline` and `none`, where no value is known -- _run_report only includes the key when the value is not None, so a reader can distinguish `no value known` from `a value of null`."
+        }
+      }
+    },
+    "residual_regret_model": {
+      "type": ["number", "null"],
+      "description": "R_delta(x) from the FITTED surface at delta_screen (design spec 3.5), copied from the latest recommendation.json's residual_regret_model.value. Rests on the registered response class. It is the bound AT THE FITTED ARGMAX (recommendation.json.levels), which may differ from recommendation.levels here -- a fallback rung can recommend a different configuration -- and it is not a bound on the recommendation when the fit was judged inadequate. Null when no fitting stage ran, or when the bound was not computable (pure error exactly zero). SEPARATE FROM residual_regret_terminal BY CONSTRUCTION: the two rest on different assumptions and are computed from disjoint inputs (fitted coefficients and their standard errors vs finalist sample means and variances), so one is never the other under a different key."
+    },
+    "residual_regret_terminal": {
+      "type": ["number", "null"],
+      "description": "R_delta(x) from TERMINAL DISCRIMINATION at delta_terminal (design spec 3.5), copied from the latest confirmation.json. Carries nothing but the fresh measurements of the realized shortlist -- no response model. Null when no confirm state ran, when no finalist produced a valid measurement, when the bound was not estimable, or when any admissible finalist went unmeasured (an unknown rival makes the max unknown, and an unknown is not a zero; confirmation.json's terminal_bound_measured_only keeps the survivors-only number). SEPARATE FROM residual_regret_model BY CONSTRUCTION; see that property."
+    },
+    "epsilon": {
+      "type": ["number", "null"],
+      "description": "The resolved epsilon-optimality tolerance the bounds are compared against, from confirmation.json when a terminal stage ran, else from recommendation.json. Null when neither exists (e.g. an exception ended the epoch before any fit)."
+    },
+    "epsilon_reference": {
+      "type": ["object", "null"],
+      "description": "Copied from confirmation.json's epsilon_reference: which reference a percentage epsilon was resolved against (best_finalist / best_observed / recommendation / declared_abs / none). Null when no terminal stage ran (epsilon then comes from recommendation.json)."
+    },
+    "delta_screen": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 0.5,
+      "description": "The screening risk from the compiled policy's objective. Reported next to residual_regret_model because a bound without its delta is not a bound. The two deltas are what Pr(wrong global decision) <= delta_screen + delta_terminal sums, and keeping them apart here is the report-level half of the 3.5 obligation."
+    },
+    "delta_terminal": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 0.5,
+      "description": "The terminal-discrimination risk from the compiled policy's objective, the delta residual_regret_terminal is stated at."
+    },
+    "certified": {
+      "type": "boolean",
+      "description": "True only when terminal discrimination ran AND certified globally. A bound at or below epsilon is NOT enough: an inadmissible or unmeasured finalist, a fit whose exclusions were level-correlated, or a fitting stage whose lack-of-fit test rejected the model (model_inadequate), withholds certification -- certification_withheld names which."
+    },
+    "certification_withheld": {
+      "type": "array",
+      "items": { "type": "string", "enum": ["bound_above_epsilon", "bound_not_computable", "finalist_measured_infeasible", "finalist_unmeasured", "fit_exclusions_level_correlated", "model_inadequate", "no_admissible_finalist", "no_terminal_discrimination", "reason_not_recorded", "front_point_possibly_dominated", "no_front_point", "no_feasible_rival", "shortlist_refilled", "epsilon_unknown", "lack_of_fit_not_computable", "curvature_untested", "curvature_not_isolated", "screen_rejection_unresolved", "model_adequacy_unknown", "model_bound_above_epsilon", "model_bound_not_computable", "model_bound_not_exhaustive", "model_recommendation_not_compared", "model_recommendation_infeasible"] },
+      "description": "Why `certified` is false, so the report never pairs an unexplained `certified: false` with bounds that look as though they should certify. Empty exactly when certified is true. Copied from the latest confirmation.json's certification_withheld (see confirmation.schema.json for each reason); `no_terminal_discrimination` when no confirm state ran, so no certificate was attempted. `reason_not_recorded` when the confirmation.json it reads predates the reasons field. `no_admissible_finalist` when every finalist was measured inadmissible (see confirmation.schema.json). `model_inadequate` when the shortlist rests on a fit the lack-of-fit test rejected (see confirmation.schema.json). Optional here only so reports written before the field existed still validate; _run_report always writes it."
+    },
+    "finalists": {
+      "type": "array",
+      "description": "The realized terminal shortlist carried forward from confirmation.json, each entry as written there. Empty when no confirm state ran.",
+      "items": { "type": "object" }
+    },
+    "known_valid_baseline": {
+      "type": ["object", "null"],
+      "description": "The author's declared known-good configuration, from the compiled policy. Null when none was declared -- which is exactly what makes basis `none` reachable."
+    },
+    "path": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The states this EPOCH passed through, read back from transitions.jsonl scoped to this epoch (policy.epoch_transitions). Epoch-scoped deliberately: an unfiltered read would splice a previous epoch's rows in and name a transition this epoch never made."
+    },
+    "epoch": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Which compiled epoch this report describes. A semantic exception ends an epoch; a recompilation from a revised campaign starts the next one."
+    },
+    "epoch_ended": {
+      "type": "string",
+      "minLength": 1,
+      "description": "GENUINELY OPTIONAL, not nullable: _run_report includes this key ONLY when a semantic exception ended the epoch, and its value is the guard that fired (state plus the `when` clause). Its mere PRESENCE is the signal -- a reader can tell an ordinary report from one written on the way out of a failed epoch without reading the log, and epoch_end-<epoch>.json carries the full record next to it. Its presence also suppresses the `model` rung of the ladder."
+    },
+    "model_adequate": {"type": ["null", "boolean"], "enum": [null, false], "description": "Present only when the latest fitting stage's model adequacy is UNKNOWN (null; stage-1b N4) or REJECTED (false; stage-1c P4 -- visible even when confirm never ran); see recommendation.schema.json."},
+    "all_levels_inadmissible": {"type": "array", "items": {"type": "string"}, "description": "Copied from the latest recommendation.json: Categoricals whose lost and inadmissible levels together cover EVERY level: only the lost levels are excluded, the inadmissible ones (measured) stay candidates -- excluding them would leave none. A rejected row counts as inadmissible (stage-1b N8, stage-1d Q2)."},
+    "recommendation_names_barred_level": {"type": "object", "description": "Present only when the report's recommended configuration names a lost or inadmissible categorical level -- possible only through the author-declared known_valid_baseline, which is exempt from that bar (stage-1d Q4)."},
+    "aliases_not_assessed": {"type": "array", "items": {"type": "string"}, "description": "Copied from the latest recommendation.json: span-aliased 2fi alias_consequential cannot assess (stage-1c P8)."},
+    "model_rejected_by": {"type": "array", "items": {"type": "string"}, "description": "Present only with model_adequate false and a WP-B adequacy record: every test that rejected a model in this epoch's fitting stages (lack_of_fit, validation_prediction, validation_prediction:<objective>). report.md names them and says the surface is not well approximated (spec 2026-10-17)."},
+    "model_adequate_basis": {"enum": ["lack_of_fit_not_computable", "curvature_untested", "curvature_not_isolated", "screen_rejection_unresolved", null]},
+    "curvature_untested_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Copied from the latest recommendation.json when non-empty: choice levels the curvature check never looked under."},
+    "lost_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Copied from the latest recommendation.json when non-empty: categorical levels with no retained run, never recommended."},
+    "inadmissible_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Copied from the latest recommendation.json when non-empty: categorical levels inadmissible wherever measured. Never recommended, EXCEPT for a factor listed in all_levels_inadmissible (lost and inadmissible levels together cover every level), whose inadmissible levels stay candidates, and except through the exempt known_valid_baseline."},
+    "candidate_space": {"type": "object", "required": ["exhaustive", "size", "evaluated", "method", "seed", "constraint_models_applied"], "additionalProperties": false, "description": "GENUINELY OPTIONAL: present exactly when the recommendation.json residual_regret_model is copied from had a candidate_space, i.e. its candidate space was SEARCHED rather than enumerated (above decide.CANDIDATE_CAP). A verbatim copy of that record, so a reader of report.json alone knows the model bound and the fitted argmax are over the search's evaluated set, not a proven optimum over X_valid (INV-STAT18). Absent means that space was enumerated exactly.", "properties": {"exhaustive": {"const": false, "description": "Always false when present: the evaluated set is a subset of the space."}, "size": {"type": "integer", "minimum": 1, "description": "The product of the fitted factors' axis sizes: the full candidate space, before exclusions."}, "evaluated": {"type": "integer", "minimum": 1, "description": "Distinct configurations the search scored (before measured-inadmissible and confidently-infeasible exclusions)."}, "method": {"const": "sampled_coordinate_ascent"}, "seed": {"type": "integer", "description": "The search seed (decide.SEARCH_SEED): the same fit and exclusions always reproduce the same evaluated set."}, "constraint_models_applied": {"type": ["boolean", "null"], "description": "Whether confidently-infeasible candidates were excluded. null: no constraint was modelled. true: applied at every evaluated point. false: dropped because neither the search nor a feasibility-seeking descent (on the total constraint violation, the hinge sum of the per-constraint margins) found an admissible point -- the searched analogue of the enumerated rule 'drop only when the whole space is confidently infeasible'. constraint_models[].applied agrees with it, and constraint_models[].excluded_confidently_infeasible counts over the evaluated set."}, "seeds_dropped": {"type": "integer", "minimum": 0, "description": "Measured configurations offered as search seeds that could not be placed on the candidate axes (a fitted factor missing, a choice level off the axis, an uncodable level) and so seeded nothing -- counted, not dropped silently."}}},
+    "gain_over_baseline": {"type": "object", "additionalProperties": false, "required": ["baseline", "estimate", "low", "high", "delta", "method", "detail"], "description": "WP-A A3 (spec 2026-10-17-certification-soundness.md section 5), single-objective campaigns declaring known_valid_baseline: the winner's gain over the baseline, which confirm seats in EVERY round as a permanent reference finalist (outside shortlist_size, sharing the round's workload seeds, so CRN-paired under workload.seed_env). Signed in the campaign's direction (positive = better than the baseline). [low, high] is a two-sided interval at delta, Bonferroni over every finalist vs the baseline, so it covers the data-SELECTED winner's true gain with probability >= 1 - delta (selection-proof). `estimate` is the winner's mean difference on the same replicates that selected it and is biased upward; the interval is the claim. null estimate: the baseline produced no admissible measurement, or no variance estimate.", "properties": {"baseline": {"type": "object"}, "baseline_key": {"type": "string"}, "winner_key": {"type": "string"}, "estimate": {"type": ["number", "null"]}, "low": {"type": ["number", "null"]}, "high": {"type": ["number", "null"]}, "delta": {"type": "number"}, "delta_per_look": {"type": "number"}, "delta_guaranteed": {"type": "number", "description": "The coverage the interval GUARANTEES as reported: 1 - delta_guaranteed, where delta_guaranteed is the declared delta_terminal. The interval is computed at the per-look level, but the reported round is the one the campaign stopped at, so optional stopping over the registered looks leaves only the union bound."}, "method": {"type": "string"}, "simultaneous_over": {"type": "integer"}, "detail": {"type": "string"}}},
+    "certificate_scope": {"type": "object", "additionalProperties": false, "required": ["region", "held_fixed", "fitting_stage", "searched", "within_declared_ranges", "statement"], "description": "WP-A A4 (spec 2026-10-17-certification-soundness.md section 4): the region the certificate's model half ranged over, from this epoch's latest fitting record. `slice`: that stage held the factors in held_fixed at one level (refine holds every non-refinable factor at the screen's best), so a certificate covers only the slice with those levels -- never call it global. `declared_space`: every factor varied over its declared levels. `none`: no fitting stage ran. searched: the candidate space was sampled above decide.CANDIDATE_CAP. boundary_axes: present with boundary_optimum.", "properties": {"region": {"enum": ["slice", "declared_space", "none"]}, "held_fixed": {"type": "object"}, "fitting_stage": {"type": ["string", "null"]}, "searched": {"type": "boolean"}, "within_declared_ranges": {"const": true}, "boundary_axes": {"type": "array", "items": {"type": "string"}}, "statement": {"type": "string"}}},
+    "boundary_optimum": {
+      "type": "object",
+      "required": ["axes", "certificate_scope"],
+      "additionalProperties": false,
+      "description": "GENUINELY OPTIONAL: present only when refine's fitted optimum lay OUTSIDE the declared ranges and the policy's registered boundary branch (optimization.policy.out_of_hull: confirm, the default) confirmed the best configuration inside them. Any certificate in this report is scoped to the declared ranges; `axes` are the factors whose stationary coordinate lay past [-1, 1] -- widen them (report.md says to what) unless the edge is a hard limit of the system.",
+      "properties": {
+        "axes": {"type": "array", "items": {"type": "string"}},
+        "certificate_scope": {"const": "declared_ranges"}
+      }
+    },
+    "held_out": {
+      "type": "object",
+      "required": ["metrics", "recommendation", "finalists"],
+      "additionalProperties": false,
+      "description": "GENUINELY OPTIONAL: present only when response.held_out is declared. The generalization check, READ after every decision in this report was made and fed to none of them (orchestrator/optimize/held_out.py). For the recommendation and each finalist: the held-out metric's mean over this epoch's complete rows at exactly those levels, and the primary metric's mean over the SAME rows, so the two are compared on equal footing. n = 0 means no complete row measured that configuration -- not a zero.",
+      "properties": {
+        "metrics": {"type": "array", "items": {"type": "string"}},
+        "recommendation": {"$ref": "#/$defs/held_out_entry"},
+        "finalists": {"type": "array", "items": {"$ref": "#/$defs/held_out_entry"}}
+      }
+    },
+    "pareto": {
+      "type": "object",
+      "description": "Multi-objective campaigns only (spec 2026-10-15-pareto-front-design.md steps 5-8): the MEASURED front over every admissible configuration the campaign measured (confirm finalists and fitting-stage rows, means over complete rows), each point's dominance status, the preferred point, the hypervolume and the remaining gaps.",
+      "required": [
+        "objectives",
+        "front",
+        "hypervolume",
+        "preference",
+        "rounds",
+        "gaps_remaining"
+      ],
+      "properties": {
+        "objectives": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": [
+              "metric",
+              "direction"
+            ],
+            "properties": {
+              "metric": {
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "maximize",
+                  "minimize"
+                ]
+              }
+            }
+          }
+        },
+        "front": {
+          "type": "array",
+          "description": "Points no other measured point eps-dominates in point estimate, sorted best-first by the first objective. `confidently_nondominated`: for EVERY other measured point some objective's one-sided upper bound on its advantage is below that objective's epsilon (pooled pure-error variance, Bonferroni over rivals x objectives at delta_front), and no adequate-model prediction beats it by epsilon on every objective. Otherwise `possibly_dominated`, and `dominated_by` names who could not be ruled out.",
+          "items": {
+            "type": "object",
+            "required": [
+              "levels",
+              "n",
+              "mean",
+              "ci",
+              "status",
+              "dominated_by",
+              "source"
+            ],
+            "properties": {
+              "levels": {
+                "type": "object"
+              },
+              "n": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "mean": {
+                "type": "object"
+              },
+              "ci": {
+                "type": "object"
+              },
+              "status": {
+                "enum": [
+                  "confidently_nondominated",
+                  "possibly_dominated"
+                ]
+              },
+              "dominated_by": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "levels",
+                    "kind"
+                  ],
+                  "properties": {
+                    "levels": {
+                      "type": "object"
+                    },
+                    "kind": {
+                      "enum": [
+                        "measured",
+                        "predicted"
+                      ]
+                    }
+                  }
+                }
+              },
+              "source": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "hypervolume": {
+          "type": "object",
+          "required": [
+            "value",
+            "reference",
+            "normalized"
+          ],
+          "properties": {
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "null (with `reason`) when no point is confidently_nondominated: undefined, not zero."
+            },
+            "n_points": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reason": {
+              "type": "string"
+            },
+            "reference": {
+              "type": "object"
+            },
+            "normalized": {
+              "type": "boolean"
+            },
+            "method": {
+              "type": "string"
+            },
+            "over": {
+              "type": "string"
+            }
+          }
+        },
+        "preference": {
+          "type": "object",
+          "required": [
+            "method",
+            "chosen"
+          ],
+          "properties": {
+            "method": {
+              "enum": [
+                "knee",
+                "weights",
+                "lexicographic"
+              ]
+            },
+            "chosen": {
+              "type": "object"
+            },
+            "chosen_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "chosen_status_at_certification": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scalar_regret": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "scalar_epsilon": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "scalar_regret_method": {
+              "type": "string"
+            }
+          }
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gaps_remaining": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "between",
+              "size"
+            ],
+            "properties": {
+              "between": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "size": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "gap_threshold": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "null when no objective's epsilon is known: no gap can be called large."
+        },
+        "epsilon_unknown": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Objectives whose epsilon has no reference (null in `epsilon`); certification is withheld (epsilon_unknown)."
+        },
+        "predicted_rivals": {
+          "type": "object",
+          "required": [
+            "considered",
+            "reason"
+          ],
+          "properties": {
+            "considered": {
+              "type": "boolean"
+            },
+            "n": {
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "description": "Whether predicted-front candidates were checked as rivals of measured points (only when every objective model is adequate)."
+        },
+        "excluded_incomplete": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "levels",
+              "missing"
+            ],
+            "properties": {
+              "levels": {
+                "type": "object"
+              },
+              "missing": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "source": {
+                "type": "string"
+              }
+            }
+          },
+          "description": "Measured admissible configurations left out of the front because a complete row lacked a usable value for some objective (missing, null, NaN or non-numeric). A confirm finalist among them is unmeasured and blocks certification."
+        },
+        "front_gap_large": {
+          "type": "boolean"
+        },
+        "epsilon": {
+          "type": "object"
+        },
+        "delta_front": {
+          "type": "number"
+        },
+        "pooled_variance": {
+          "type": "object"
+        },
+        "frame": {
+          "type": "object"
+        },
+        "n_measured_configurations": {
+          "type": "integer"
+        },
+        "dominance_method": {
+          "type": "string"
+        }
+      }
+    },
+    "certification_caveats": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "finalist_measured_infeasible"
+        ]
+      },
+      "description": "Facts that weaken the certificate's premise without withholding it. Present only when non-empty. `finalist_measured_infeasible`: a finalist was measured inadmissible but at least two admissible finalists remained, their simultaneous bound is within epsilon and the model was adequate (stage_runner._INFEASIBLE_FINALIST_CAVEAT)."
+    },
+    "policy_hash": {
+      "type": "string",
+      "description": "Content hash of the compiled policy this epoch ran under -- the pre-registration this report is accountable to. Joins to transitions.jsonl's rows and to policy.sha256."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The iteration index at which the report was written. May be LATER than the confirm it describes (a budget-exhausted route to `report`, or a resumed work_dir), which is why the terminal rungs read confirmation.json off disk rather than trusting a threaded argument."
+    }
+  },
+  "$defs": {
+    "held_out_entry": {
+      "type": "object",
+      "required": ["levels", "n_rows", "metrics"],
+      "additionalProperties": false,
+      "properties": {
+        "key": {"type": ["string", "null"]},
+        "levels": {"type": "object"},
+        "n_rows": {"type": "integer", "minimum": 0},
+        "metrics": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "required": ["n", "mean", "primary_mean_same_rows"],
+            "additionalProperties": false,
+            "properties": {
+              "n": {"type": "integer", "minimum": 0},
+              "mean": {"type": ["number", "null"]},
+              "primary_mean_same_rows": {"type": ["number", "null"]}
+            }
+          }
+        }
+      }
+    }
+  }
+}

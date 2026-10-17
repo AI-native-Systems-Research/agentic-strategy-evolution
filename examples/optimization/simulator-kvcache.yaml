@@ -1,0 +1,163 @@
+# Discrete-event simulator KV-cache knobs — the PARALLEL SPENDING STAGE example.
+#
+# The other three examples in this directory (vllm-batching, qdrant-hnsw,
+# knative-autoscale) all target real systems whose objective is a throughput or a
+# tail latency measured from the machine. Those are load-DEPENDENT, so their
+# spending stages must stay sequential and `max_parallel` applies only to their
+# confirm blocks (see qdrant-hnsw.yaml's comment on exactly that).
+#
+# THIS example is the other case, and it is the one that actually buys wall clock:
+# the target is a discrete-event SIMULATOR. Its "p90 latency" is simulated time
+# accumulated from a declared service-time model -- it reads no wall clock and
+# spawns no threads -- so a co-scheduled neighbour can make the process take
+# longer to FINISH without moving the number it prints by a single bit. An 18-row
+# screen that took 4 hours sequentially finishes in about one at width 4.
+#
+# Run `nous validate campaign FILE --smoke --liveness` before launching. See
+# docs/optimization-campaign-guide.md and docs/targets.md for the adapter
+# contract this assumes.
+kind: optimization
+run_id: sim-kvcache-rsm
+research_question: >
+  Which combination of KV-offload tier knobs minimizes simulated p90 request
+  latency at a fixed cache-hit floor, without inflating modelled device
+  bandwidth beyond the NVMe budget?
+prompts:
+  methodology_layer: prompts/methodology
+  domain_adapter_layer: null
+target_system:
+  name: inference-sim
+  repo_path: /path/to/inference-sim
+  description: >
+    A discrete-event inference simulator. `bench/nous_bench.py` runs one
+    simulated workload to completion under the given knobs and prints a single
+    JSON object {p90_latency_ms, cache_hit_rate, device_bw_gbps, cfg:{...}}.
+    The simulation core contains no goroutines and reads no wall clock: for a
+    fixed seed and fixed knobs it emits bit-identical output. That property is
+    what licenses the `concurrency` block below, and it is worth re-verifying
+    whenever the simulator gains real parallelism.
+
+optimization:
+  run_command: "go run ./cmd/bench --requests 4000 --prefix-tokens 512"
+  test_command: "go test ./sim/... -json"
+  known_valid_baseline: {DEV: nvme_gen4, CPUB: 8, THR: 4, PROMPT: "false"}
+  workload: {seed_env: NOUS_WORKLOAD_SEED}
+  policy: {epsilon: {pct: 2.0}, delta_screen: 0.05, delta_terminal: 0.05, confirm_max_rounds: 2}
+
+  response:
+    primary: {metric: p90_latency_ms, direction: minimize}
+    constraints:
+      - {metric: cache_hit_rate, op: ">=", value: 0.30}
+      - {metric: device_bw_gbps, op: "<=", value: 7.0}
+    noise_estimate_pct: 0.0
+    # The simulator is deterministic per seed, so a re-read of the same
+    # configuration must reproduce its own numbers exactly. Declaring the
+    # self-check makes a future change that introduces real concurrency (and
+    # therefore real nondeterminism) fail a ROW rather than silently invalidate
+    # the `concurrency` declaration below.
+    self_check:
+      - {metric: cache_hit_rate, op: "<=", value: 1.0}
+
+  # ── THE POINT OF THIS EXAMPLE ─────────────────────────────────────────────
+  #
+  # `max_parallel` alone never licenses the spending stages; this block is what
+  # does. Two ways to declare it, and this campaign shows BOTH -- pick exactly
+  # one, since declaring both is refused (two bases for one width would leave a
+  # reader unable to audit which the rows rested on).
+  #
+  # (A) DECLARATION, used here. `load_independent: true` asserts that the
+  #     objective is not a function of machine load. That is true of this target
+  #     structurally: simulated time is computed from a model, not measured. It
+  #     is recorded in design_matrix.json as
+  #     `concurrency_basis: load_independent` -- as the AUTHOR's claim, not as
+  #     something Nous measured -- and it is falsified for free afterwards: if
+  #     two rows with identical levels and the same workload seed report
+  #     different objectives, the stage says so.
+  #
+  #     Do NOT declare this for a throughput, a queue depth, or a latency
+  #     percentile measured under real load. Use (B) instead.
+  #
+  # (B) MEASUREMENT, the alternative. Comment out `load_independent` and
+  #     uncomment `contention_probe_levels` to have Nous measure a CONTENTION
+  #     FLOOR before the first spending stage writes its matrix: it runs that
+  #     corner serially several times for the target's own noise floor, then at
+  #     the declared width, and certifies the width only if the objective moved
+  #     less than 2x that floor. The certified width is recorded as
+  #     `concurrency_certified_width`; a floor measured at 2 never licenses 8.
+  #
+  #     NAME THE HEAVIEST CORNER, never the baseline. Contention inflation grows
+  #     with load: for a soft-knee throughput with co-scheduling costing 10% of
+  #     capacity, inflation is 1.0% at a light corner but 9.2% at saturation, so
+  #     a floor measured at `known_valid_baseline` would pass a 2x-noise gate and
+  #     certify the very design it gets wrong at the corners that matter.
+  concurrency:
+    load_independent: true
+    # contention_probe_levels: {DEV: sata_ssd, CPUB: 32, THR: 64, PROMPT: "false"}
+
+  # Applies to the spending stages (licensed above) AND to confirm blocks. Sized
+  # from CORES, not from rows. Omit it and a declared basis resolves to
+  # min(4, cpu_count - 2), which is a deliberately modest default: the ADAPTER's
+  # own internal fan-out multiplies this, and Nous cannot see it. A real campaign
+  # whose adapter itself spawned 4 concurrent probes per row would have put 16
+  # processes on a 10-CPU box at width 4.
+  #
+  # ALSO give the adapter a private scratch path. Nous exports NOUS_RUN_DIR (plus
+  # NOUS_ROW_INDEX / NOUS_RUN_SLOT) into every run at every width including 1 --
+  # have `go build -o` and any metrics file write UNDER it. Two rows sharing one
+  # build output path is a real defect that produced plausible numbers from the
+  # wrong binary.
+  max_parallel: 4
+
+  design:
+    screen: {resolution: 5, center_points: 3}
+    refine: {kind: central_composite, center_points: 3}
+    confirm: {replicates: 5}
+
+  factors:
+    - id: DEV
+      name: device_class
+      type: choice
+      levels: [sata_ssd, nvme_gen4]
+      apply: "--kv-offload-device-class={level}"
+      manipulation: {observable: "cfg.device_class", op: "==", value: "{level}"}
+      relations:
+        - id: DEV-R1
+          kind: correctness
+          statement: "device class selects a modelled bandwidth/latency triple"
+          native_test: "sim/kv_offload_config_test.go::TestDeviceClassResolves"
+
+    - id: CPUB
+      name: cpu_bytes_to_use
+      type: numeric
+      levels: [4, 8, 16, 32]
+      apply: "--kv-offload-cpu-gib={level}"
+      manipulation: {observable: "cfg.cpu_gib", op: "==", value: "{level}"}
+      relations:
+        - id: CPUB-R1
+          kind: correctness
+          statement: "a larger CPU tier never lowers the cache hit rate"
+          native_test: "sim/kv/offload_chain_test.go::TestTierMonotonic"
+
+    - id: THR
+      name: n_read_threads
+      type: numeric
+      levels: [1, 4, 16, 64]
+      apply: "--kv-offload-read-threads={level}"
+      manipulation: {observable: "cfg.n_read_threads", op: "==", value: "{level}"}
+      relations:
+        - id: THR-R1
+          kind: correctness
+          statement: "read-thread count is a modelled concurrency bound, not real threads"
+          native_test: "sim/kv/offload_chain_test.go::TestReadThreadsModelled"
+
+    - id: PROMPT
+      name: offload_prompt_only
+      type: choice
+      levels: ["false", "true"]
+      apply: "--kv-offload-prompt-only={level}"
+      manipulation: {observable: "cfg.offload_prompt_only", op: "==", value: "{level}"}
+      relations:
+        - id: PROMPT-R1
+          kind: correctness
+          statement: "prompt-only offload clamps offloadable tokens to the prompt"
+          native_test: "sim/kv/mirror_test.go::TestPromptOnlyClamp"

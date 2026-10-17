@@ -1,0 +1,679 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/confirmation.schema.json",
+  "title": "Optimization Terminal Discrimination Record",
+  "description": "runs/iter-N/confirmation.json (design spec 3.3, 3.5) -- the record of ONE round of TERMINAL DISCRIMINATION. The paper's Figure 1 names this state `discriminate`; this branch calls it `confirm`, and the behaviour here is the paper's: a shortlist S subset of X_valid is measured FRESHLY and its members are compared against each other, so the final comparison does not rest on the fitted response at all. Written by orchestrator.optimize.stage_runner._finish_confirm. shortlist.json is written next to it as a POINTER to this file (see shortlist.schema.json) so the finalists and their measurements have exactly one source of truth. This is the assumption-light half of the two-bound obligation: residual_regret_terminal lives here at delta_terminal, residual_regret_model lives in recommendation.json at delta_screen, and no artifact carries a combined number.",
+  "type": "object",
+  "required": [
+    "stage",
+    "iteration",
+    "round",
+    "finalists",
+    "best",
+    "bounds",
+    "epsilon",
+    "residual_regret_terminal",
+    "terminal_bound",
+    "certified",
+    "paired",
+    "delta_terminal",
+    "excluded_infeasible",
+    "excluded_unmeasured",
+    "confirmed_at_levels",
+    "replicates",
+    "usable_replicates",
+    "mean",
+    "spread",
+    "observations"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "stage": {
+      "type": "string",
+      "const": "confirm",
+      "description": "The terminal-discrimination state's name in this branch. Constant because no other state writes this artifact."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The iteration index this round ran at. The terminal state can SELF-LOOP, so successive rounds land in successive iterations."
+    },
+    "round": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Which terminal round this is. Round r > 1 keeps the previous winner plus every challenger whose bound still exceeded epsilon -- exactly those that could still change the epsilon-optimal decision. The registered round cap and the budget guard are what terminate the loop; the interpreter never decides it."
+    },
+    "finalists": {
+      "type": "array",
+      "minItems": 1,
+      "description": "The REALIZED shortlist and its fresh measurements, one entry per finalist that was scheduled.",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "levels",
+          "why",
+          "samples",
+          "mean",
+          "n",
+          "status"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "key": {
+            "type": "string",
+            "description": "Stable per-round finalist handle (f0, f1, ...). `bounds` and `terminal_bound.challenger` reference finalists by this key rather than repeating their levels."
+          },
+          "levels": {
+            "type": "object",
+            "minProperties": 1
+          },
+          "why": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Which rung of the seeding ladder seated this finalist -- the model's answer, the best measured valid configuration, a model top candidate, a round-r carry-over, or known_valid_baseline. Recorded so a reader can tell what the shortlist was PUTTING ON TRIAL from what it was TRUSTING."
+          },
+          "samples": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "This finalist's usable fresh replicate values. Empty when every replicate was excluded."
+          },
+          "mean": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "n": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "means": {
+            "type": "object",
+            "description": "Multi-objective campaigns only: this finalist's mean over its usable replicates, per objective metric (`mean` stays the first objective's, for single-objective consumers). null for an objective with no usable replicate.",
+            "additionalProperties": {
+              "type": [
+                "number",
+                "null"
+              ]
+            }
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "ok",
+              "infeasible",
+              "unmeasured"
+            ],
+            "description": "Why this finalist left the running, not merely that it did. MEASURED INVALIDITY TRUMPS PREDICTION: a single measured violation excludes the finalist outright rather than being averaged away over its surviving replicates, because a configuration that is admissible only sometimes is not admissible. `infeasible` means a replicate was measured inadmissible (or rejected) -- real information about the design space, and the configuration should be struck off. `unmeasured` means the instrument could not measure an ADMISSIBLE configuration (timeout, crash, unparseable output) -- a re-run with a larger budget may recover it, and striking it off would be wrong. The two were one value (`excluded`) until a timed-out finalist was reported as though it had violated a constraint."
+          }
+        }
+      }
+    },
+    "best": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "The winning finalist's `key`, or null when no finalist produced a valid measurement at all (which is a real outcome, not an error -- the report ladder then falls to `baseline` or `none`)."
+    },
+    "bounds": {
+      "type": "object",
+      "additionalProperties": {
+        "type": [
+          "number",
+          "null"
+        ]
+      },
+      "description": "PER-CHALLENGER upper bounds against the winner alone, keyed by finalist key, each computed at delta_terminal with M=1. That is the right level for a `keep measuring this one?` screening decision and the WRONG level for a certificate -- the certified verdict reads terminal_bound.value (the simultaneous max) and never these. Round r+1 reads this to decide who is still in contention."
+    },
+    "epsilon": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "The resolved epsilon-optimality tolerance residual_regret_terminal is compared against: the declared `pct` of the reference named by epsilon_reference (or the declared `abs`). Null only when there is no reference at all -- unknown, never 0."
+    },
+    "epsilon_reference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source",
+        "levels",
+        "value"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "best_finalist",
+            "best_observed",
+            "recommendation",
+            "declared_abs",
+            "none"
+          ]
+        },
+        "levels": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "description": "WHICH reference a percentage epsilon was resolved against. `best_finalist`: the winning admissible finalist's fresh mean (the normal case). `best_observed`: no finalist was admissible, so the best measured ADMISSIBLE configuration so far (per-configuration feasibility; `levels`/`value` name it). `recommendation`: nothing admissible was measured, so the epsilon the fitting stage resolved in recommendation.json. `declared_abs`: an absolute epsilon needs no reference. `none`: nothing to take a percentage of, so epsilon is null (unknown) -- never 0, which can never certify and is not what the author declared."
+    },
+    "residual_regret_terminal": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "R_delta(x) from terminal discrimination at delta_terminal (design spec 3.5) -- the simultaneous max over the ADMISSIBLE members of the realized shortlist, carrying nothing but their fresh measurements. Null when no finalist produced a valid measurement, when the bound was not estimable, or when ANY admissible finalist went unmeasured: that rival's U_t is unknown, so the max over the shortlist is unknown, and an unknown is not a zero (INV-SEM02) -- a survivors-only max would UNDERSTATE the regret against exactly the rival nobody measured. The survivors-only number is then recorded as terminal_bound_measured_only. UNAFFECTED by an INADMISSIBLE finalist: that one is outside X_valid, the bound over the admissible shortlist is still valid, and it is `certified` that the exclusion suppresses. Never collapsed with recommendation.json's residual_regret_model, which is a different number at a different delta from disjoint inputs."
+    },
+    "terminal_bound": {
+      "type": "object",
+      "required": [
+        "value",
+        "challenger",
+        "delta",
+        "method",
+        "detail"
+      ],
+      "additionalProperties": false,
+      "description": "The full record behind residual_regret_terminal, including WHICH arithmetic ran. Recorded so a reader can tell which bound they are looking at rather than inferring it from the branch date: pairing that reached only the artifact would leave the campaign reporting the wider bound while claiming the narrower method.",
+      "properties": {
+        "value": {
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "challenger": {
+          "type": [
+            "string",
+            "object",
+            "null"
+          ],
+          "description": "The finalist KEY that attains the bound (a levels dict at the model stage). A key rather than a dict because this file already records every finalist's levels against its key, and two representations of one fact can drift apart."
+        },
+        "delta": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 0.5
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "description": "bonferroni_one_sided_t_paired when common random numbers were actually shared (design spec 3.8), bonferroni_one_sided_welch_t otherwise. A campaign with no declared workload seed gets Welch deliberately: the paired form stays VALID when the seeds were not shared but loses efficiency, and worse, would record a paired method about an experiment that paired nothing."
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "certification_withheld": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "bound_above_epsilon",
+          "bound_not_computable",
+          "finalist_measured_infeasible",
+          "finalist_unmeasured",
+          "fit_exclusions_level_correlated",
+          "model_inadequate",
+          "no_admissible_finalist",
+          "front_point_possibly_dominated",
+          "no_front_point",
+          "no_feasible_rival",
+          "shortlist_refilled",
+          "epsilon_unknown",
+          "lack_of_fit_not_computable",
+          "curvature_untested",
+          "curvature_not_isolated",
+          "screen_rejection_unresolved",
+          "model_adequacy_unknown",
+          "model_bound_above_epsilon",
+          "model_bound_not_computable",
+          "model_bound_not_exhaustive",
+          "model_recommendation_not_compared",
+          "model_recommendation_infeasible"
+        ]
+      },
+      "description": "Why `certified` is false, as named reasons rather than an unexplained boolean -- so a reader can tell a bound that was simply too wide from a GLOBAL claim withheld because the delta_screen premise was broken, or from a shortlist that was never fully compared. Empty exactly when certified is true. `finalist_measured_infeasible` and `fit_exclusions_level_correlated` are the two premise-breaking reasons: both are evidence that the model's ranking is not tracking the constrained objective, so epsilon-optimality over X_valid is unearned even though residual_regret_terminal (a number over the admissible shortlist resting on fresh measurements and no model) remains valid and is still reported. `finalist_unmeasured` means an admissible finalist produced no usable measurement (timeout, crash, unparseable output): the comparison is incomplete, residual_regret_terminal is null, and the remedy is to re-run it rather than strike it off. `no_admissible_finalist` means EVERY finalist was measured inadmissible (each had at least one replicate violating a declared constraint): the measurements are valid and complete, there is simply no admissible configuration in this shortlist to bound, so it replaces `bound_not_computable` (which means too little data to estimate a bound) and is distinct from a NaN response (an instrumentation defect). `model_inadequate` means the latest fitting stage's lack-of-fit F on pure error rejected the registered response class (recommendation.json model_adequate: false): the shortlist was seeded from measured leaders and the ranking of a rejected surface, so nothing supports the delta_screen premise that screening did not exclude the winner (design spec 3.6 rung 3 sits below certification). The within-shortlist bound is still reported. `lack_of_fit_not_computable`, `curvature_untested` and `curvature_not_isolated` mean the latest fitting stage's model adequacy is UNKNOWN (recommendation.json model_adequate: null, model_adequate_basis names which): the lack-of-fit test could not be computed, a choice level was never measured at the centre, or a mixed fit could not separate curvature from its coefficients. The shortlist is built as for an adequate model, but the global claim is withheld. WP-A A1 (spec 2026-10-17-certification-soundness.md): `model_bound_above_epsilon` -- R_model_outside + R_terminal > epsilon (global_bound), so a configuration screening did not shortlist may still beat the winner by more than epsilon; `model_bound_not_computable` -- no model bound exists (no fitting stage this epoch, or no pure error); `model_bound_not_exhaustive` -- the candidate space was SEARCHED, so R_model is silent about unevaluated candidates; `model_recommendation_not_compared` -- the fitted argmax x_hat was not measured admissibly in this round, so the model bound cannot be linked to the winner; `model_recommendation_infeasible` -- x_hat was measured inadmissible, so the step f(x_hat) <= f(best admissible finalist) fails and nothing links the model bound to the winner. Single-objective only.",
+      "default": []
+    },
+    "global_bound": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "residual_regret_model", "residual_regret_model_outside", "residual_regret_terminal", "x_hat", "x_hat_key", "delta_screen", "delta_terminal_per_look", "rule"],
+      "description": "Single-objective only (WP-A A1, spec 2026-10-17-certification-soundness.md section 2): G = R_model_outside + R_terminal, which certification requires to be <= epsilon. R_model_outside is the fitting stage's simultaneous model bound against its argmax x_hat, maxed over the candidates OUTSIDE this round's measured shortlist (delta_screen); R_terminal is this round's terminal bound (delta_terminal_per_look). The sum bounds f(x*) - f(w) through f(x_hat) <= f(best admissible finalist), so x_hat must be measured admissibly this round (x_hat_key). value is null when that link or a model bound is missing; certification_withheld names why.",
+      "properties": {"value": {"type": ["number", "null"]}, "residual_regret_model": {"type": ["number", "null"]}, "residual_regret_model_outside": {"type": ["number", "null"]}, "residual_regret_terminal": {"type": ["number", "null"]}, "x_hat": {"type": "object"}, "x_hat_key": {"type": ["string", "null"]}, "delta_screen": {"type": "number"}, "delta_terminal_per_look": {"type": "number"}, "rule": {"type": "string"}}
+    },
+    "gain_over_baseline": {"type": "object", "additionalProperties": false, "required": ["baseline", "estimate", "low", "high", "delta", "method", "detail"], "description": "WP-A A3 (spec 2026-10-17-certification-soundness.md section 5), single-objective campaigns declaring known_valid_baseline: the winner's gain over the baseline, which confirm seats in EVERY round as a permanent reference finalist (outside shortlist_size, sharing the round's workload seeds, so CRN-paired under workload.seed_env). Signed in the campaign's direction (positive = better than the baseline). [low, high] is a two-sided interval at delta, Bonferroni over every finalist vs the baseline, so it covers the data-SELECTED winner's true gain with probability >= 1 - delta (selection-proof). `estimate` is the winner's mean difference on the same replicates that selected it and is biased upward; the interval is the claim. null estimate: the baseline produced no admissible measurement, or no variance estimate.", "properties": {"baseline": {"type": "object"}, "baseline_key": {"type": "string"}, "winner_key": {"type": "string"}, "estimate": {"type": ["number", "null"]}, "low": {"type": ["number", "null"]}, "high": {"type": ["number", "null"]}, "delta": {"type": "number"}, "delta_per_look": {"type": "number"}, "delta_guaranteed": {"type": "number", "description": "The coverage the interval GUARANTEES as reported: 1 - delta_guaranteed, where delta_guaranteed is the declared delta_terminal. The interval is computed at the per-look level, but the reported round is the one the campaign stopped at, so optional stopping over the registered looks leaves only the union bound."}, "method": {"type": "string"}, "simultaneous_over": {"type": "integer"}, "detail": {"type": "string"}}},
+    "alpha_spending": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delta_terminal_declared", "looks", "per_look", "rule"],
+      "description": "WP-A A2: Bonferroni alpha-spending over the epoch's confirm LOOKS. Every round evaluates `certified` and stops on it, so each round is a look, judged at per_look = delta_terminal_declared / looks with looks = confirm_max_rounds, plus one when the refill branch is registered. delta_terminal in this file is per_look.",
+      "properties": {"delta_terminal_declared": {"type": "number"}, "looks": {"type": "integer", "minimum": 1}, "per_look": {"type": "number"}, "rule": {"type": "string"}}
+    },
+    "certified": {
+      "type": "boolean",
+      "description": "The GLOBAL epsilon-optimality verdict over X_valid, which rests on Pr(wrong global decision) <= delta_screen + delta_terminal. False whenever ANY finalist was measured inadmissible, even if the within-shortlist bound came in at or below epsilon: an inadmissible finalist is direct evidence that the model's ranking is not tracking the CONSTRAINED objective, so the delta_screen premise (screening did not exclude the true optimum) does not hold and the sum bound is unearned. The within-shortlist number stays reported; only the global label is withheld."
+    },
+    "pareto": {
+      "type": "object",
+      "description": "Multi-objective campaigns only (spec 2026-10-15-pareto-front-design.md steps 5-8): the MEASURED front over every admissible configuration the campaign measured (confirm finalists and fitting-stage rows, means over complete rows), each point's dominance status, the preferred point, the hypervolume and the remaining gaps.",
+      "required": [
+        "objectives",
+        "front",
+        "hypervolume",
+        "preference",
+        "rounds",
+        "gaps_remaining"
+      ],
+      "properties": {
+        "objectives": {
+          "type": "array",
+          "minItems": 2,
+          "items": {
+            "type": "object",
+            "required": [
+              "metric",
+              "direction"
+            ],
+            "properties": {
+              "metric": {
+                "type": "string"
+              },
+              "direction": {
+                "enum": [
+                  "maximize",
+                  "minimize"
+                ]
+              }
+            }
+          }
+        },
+        "front": {
+          "type": "array",
+          "description": "Points no other measured point eps-dominates in point estimate, sorted best-first by the first objective. `confidently_nondominated`: for EVERY other measured point some objective's one-sided upper bound on its advantage is below that objective's epsilon (pooled pure-error variance, Bonferroni over rivals x objectives at delta_front), and no adequate-model prediction beats it by epsilon on every objective. Otherwise `possibly_dominated`, and `dominated_by` names who could not be ruled out.",
+          "items": {
+            "type": "object",
+            "required": [
+              "levels",
+              "n",
+              "mean",
+              "ci",
+              "status",
+              "dominated_by",
+              "source"
+            ],
+            "properties": {
+              "levels": {
+                "type": "object"
+              },
+              "n": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "mean": {
+                "type": "object"
+              },
+              "ci": {
+                "type": "object"
+              },
+              "status": {
+                "enum": [
+                  "confidently_nondominated",
+                  "possibly_dominated"
+                ]
+              },
+              "dominated_by": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "levels",
+                    "kind"
+                  ],
+                  "properties": {
+                    "levels": {
+                      "type": "object"
+                    },
+                    "kind": {
+                      "enum": [
+                        "measured",
+                        "predicted"
+                      ]
+                    }
+                  }
+                }
+              },
+              "source": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "hypervolume": {
+          "type": "object",
+          "required": [
+            "value",
+            "reference",
+            "normalized"
+          ],
+          "properties": {
+            "value": {
+              "type": [
+                "number",
+                "null"
+              ],
+              "minimum": 0,
+              "description": "null (with `reason`) when no point is confidently_nondominated: undefined, not zero."
+            },
+            "n_points": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reason": {
+              "type": "string"
+            },
+            "reference": {
+              "type": "object"
+            },
+            "normalized": {
+              "type": "boolean"
+            },
+            "method": {
+              "type": "string"
+            },
+            "over": {
+              "type": "string"
+            }
+          }
+        },
+        "preference": {
+          "type": "object",
+          "required": [
+            "method",
+            "chosen"
+          ],
+          "properties": {
+            "method": {
+              "enum": [
+                "knee",
+                "weights",
+                "lexicographic"
+              ]
+            },
+            "chosen": {
+              "type": "object"
+            },
+            "chosen_status": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "chosen_status_at_certification": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "scalar_regret": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "scalar_epsilon": {
+              "type": [
+                "number",
+                "null"
+              ]
+            },
+            "scalar_regret_method": {
+              "type": "string"
+            }
+          }
+        },
+        "rounds": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "gaps_remaining": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "between",
+              "size"
+            ],
+            "properties": {
+              "between": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "minItems": 2,
+                "maxItems": 2
+              },
+              "size": {
+                "type": "number"
+              }
+            }
+          }
+        },
+        "gap_threshold": {
+          "type": [
+            "number",
+            "null"
+          ],
+          "description": "null when no objective's epsilon is known: no gap can be called large."
+        },
+        "epsilon_unknown": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Objectives whose epsilon has no reference (null in `epsilon`); certification is withheld (epsilon_unknown)."
+        },
+        "predicted_rivals": {
+          "type": "object",
+          "required": [
+            "considered",
+            "reason"
+          ],
+          "properties": {
+            "considered": {
+              "type": "boolean"
+            },
+            "n": {
+              "type": "integer"
+            },
+            "reason": {
+              "type": "string"
+            }
+          },
+          "description": "Whether predicted-front candidates were checked as rivals of measured points (only when every objective model is adequate)."
+        },
+        "excluded_incomplete": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "levels",
+              "missing"
+            ],
+            "properties": {
+              "levels": {
+                "type": "object"
+              },
+              "missing": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "source": {
+                "type": "string"
+              },
+              "dropped": {
+                "type": "boolean",
+                "description": "true: no usable row remains on some objective, so the configuration is left out of the front (a confirm finalist among these is unmeasured and blocks certification). false: only some rows were unusable; the configuration is measured on its usable rows."
+              }
+            }
+          },
+          "description": "Measured admissible configurations with a complete row that lacked a usable value for some objective (missing, null, NaN or non-numeric). See `dropped` for whether the configuration itself left the front."
+        },
+        "front_gap_large": {
+          "type": "boolean"
+        },
+        "epsilon": {
+          "type": "object"
+        },
+        "delta_front": {
+          "type": "number"
+        },
+        "pooled_variance": {
+          "type": "object"
+        },
+        "frame": {
+          "type": "object"
+        },
+        "n_measured_configurations": {
+          "type": "integer"
+        },
+        "dominance_method": {
+          "type": "string"
+        }
+      }
+    },
+    "certification_caveats": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "finalist_measured_infeasible"
+        ]
+      },
+      "description": "Facts that weaken the certificate's premise without withholding it. Present only when non-empty. `finalist_measured_infeasible`: a finalist was measured inadmissible but at least two admissible finalists remained, their simultaneous bound is within epsilon and the model was adequate (stage_runner._INFEASIBLE_FINALIST_CAVEAT)."
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Inputs this round could not read or use (a missing or corrupt refill_pool.json, an uncodeable level), each also logged at WARNING. Present only when non-empty."
+    },
+    "paired": {
+      "type": "boolean",
+      "description": "Whether replicate i of every finalist actually ran the same workload seed (common random numbers, design spec 3.8), set from the campaign's declared optimization.workload.seed_env. Forwarded to the bound computation, not merely recorded: the paired form works on DIFFERENCES so the workload's contribution cancels and the bound shrinks substantially."
+    },
+    "delta_terminal": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 0.5,
+      "description": "The PER-LOOK terminal risk this file's bound is stated at (WP-A A2: the compiled policy's delta_terminal divided by the epoch's registered confirm looks; see alpha_spending), kept distinct from delta_screen throughout."
+    },
+    "excluded_infeasible": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "The levels of every finalist measured INADMISSIBLE (or rejected). Non-empty is what withholds `certified` above, so it is recorded rather than derived. The name predates the infeasible/unmeasured split and is kept for existing readers; it now contains only genuinely inadmissible finalists."
+    },
+    "excluded_unmeasured": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      },
+      "description": "The levels of every finalist whose MEASUREMENT failed -- timeout, crash, unparseable output -- rather than being inadmissible. Also withholds `certified`, because the terminal comparison has no fresh samples for it either, but it carries the opposite authoring consequence from `excluded_infeasible`: re-run with a larger budget rather than strike the configuration off."
+    },
+    "confirmed_at_levels": {
+      "type": "object",
+      "description": "The WINNING finalist's levels. A legacy single-point field kept because readers of it exist (the harness's recommendation fallback, the guide's worked output, the report ladder's terminal rungs); it now names the winner rather than the only configuration run. Empty when there is no winner."
+    },
+    "replicates": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total replicate runs scheduled this round, across all finalists."
+    },
+    "usable_replicates": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many of those produced a usable measurement. The gap between this and `replicates` is what an exclusion looks like in aggregate."
+    },
+    "mean": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "description": "The winner's mean over its fresh replicates -- a MEASUREMENT, unlike recommendation.json's `predicted`. Null when there is no winner."
+    },
+    "spread": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Population standard deviation of the winner's replicates; 0.0 with fewer than two of them."
+    },
+    "observations": {
+      "type": "array",
+      "items": {
+        "type": "number"
+      },
+      "description": "The winner's individual replicate values, so the mean and spread above are auditable rather than asserted. Empty when there is no winner."
+    },
+    "best_observed": {
+      "type": "object",
+      "required": [
+        "levels"
+      ],
+      "description": "OPTIONAL and present only when there is both a winner and a best measured valid configuration to compare it against. Two keys: `levels`, and the campaign's own PRIMARY METRIC NAME carrying that configuration's value -- so the second key is campaign-dependent and cannot be enumerated here, which is why this object stays open. `the best finalist` and `the best configuration found` are different claims, and recording both keeps the artifact honest when they disagree -- a mis-specified surface can leave the winner below a corner an earlier state measured.",
+      "properties": {
+        "levels": {
+          "type": "object",
+          "minProperties": 1
+        }
+      }
+    },
+    "confirmed_is_best_observed": {
+      "type": "boolean",
+      "description": "OPTIONAL, written alongside best_observed: whether the winner actually matched or beat it."
+    },
+    "regression_vs_best_observed": {
+      "type": "object",
+      "required": [
+        "absolute",
+        "percent"
+      ],
+      "additionalProperties": false,
+      "description": "OPTIONAL, written ONLY when confirmed_is_best_observed is false -- the size of the shortfall. Its presence is the signal that the observed corner, not the winner, is the campaign's real answer and the surface is mis-specified -- UNLESS within_epsilon is true: a single earlier row is an upward-biased estimate of its configuration, and a gap inside the campaign's own indifference width is recorded rather than raised. Never written when the best observed row belongs to the winning configuration itself.",
+      "properties": {
+        "within_epsilon": {
+          "type": "boolean"
+        },
+        "absolute": {
+          "type": "number"
+        },
+        "percent": {
+          "type": "number"
+        }
+      }
+    },
+    "terminal_bound_measured_only": {
+      "$ref": "#/properties/terminal_bound",
+      "description": "PRESENT ONLY when a finalist went unmeasured while the measured finalists still yielded a bound: that bound, over the measured finalists alone. Recorded because the comparison among the survivors genuinely happened; NOT residual_regret_terminal, because it is silent about the unmeasured rival(s) and would understate the regret."
+    }
+  }
+}

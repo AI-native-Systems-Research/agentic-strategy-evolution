@@ -10,7 +10,61 @@ type: object
 required: [target_system, research_question, prompts]
 additionalProperties: false
 
+$defs:
+  epsilon_spec:
+    type: object
+    additionalProperties: false
+    description: "One indifference width: EXACTLY ONE of abs or pct (the validator enforces 'exactly one')."
+    properties:
+      abs: { type: number, description: "Absolute width, in the objective metric's units." }
+      pct: { type: number, exclusiveMinimum: 0, description: "Width as a percent of the recommendation's value." }
+  comparison:
+    type: object
+    required: [op, value]
+    additionalProperties: false
+    description: >
+      One comparison vocabulary shared by ``optimization.factors[].manipulation``,
+      ``optimization.response.constraints``, and
+      ``optimization.design_space.invariants``: ``{observable | metric,
+      op, value}``, with optional ``when`` / ``when_not`` level guards
+      (supplying both is a validation error). ``value: "{level}"`` is the
+      one interpolation token in the whole spec -- it substitutes the
+      level under test.
+    properties:
+      observable: { type: string, minLength: 1, description: "Dotted path into the run observation (e.g. 'telemetry.queue_count')." }
+      metric: { type: string, minLength: 1, description: "Alternate name for 'observable' when the comparison is over a response metric." }
+      op: { type: string, enum: ["==", "!=", ">", ">=", "<", "<="] }
+      value: {}
+      when:
+        description: "Restrict this check to only these level(s). Mutually exclusive with when_not."
+      when_not:
+        description: "Restrict this check to every level EXCEPT these. Mutually exclusive with when."
+
 properties:
+  kind:
+    type: string
+    enum: [reflective, optimization]
+    default: reflective
+    description: >
+      Campaign type. ``reflective`` (default) is the existing
+      mechanism-discovery flow: an LLM designs each iteration, runs it,
+      and interprets the result to build causal claims. ``optimization``
+      is a factorial/response-surface flow (see
+      ``nous docs quickstart`` and
+      ``nous docs guide``): the campaign AUTHOR (a
+      human, or an AI writing this YAML) declares the factors and their
+      levels; ``verify`` runs the declared native tests and compiles a
+      content-hashed policy; Python drives the pre-registered design
+      through screen -> [foldover] -> [refine] -> confirm; and report.json,
+      report.md, gate summaries and the deployment verdict are RENDERED
+      from the artifacts with zero model tokens. The only model calls the
+      kind makes are the opt-in ``plan`` and ``build`` stages (before the
+      epoch); without them a campaign makes zero model calls. Omitting this field
+      is identical to ``kind: reflective`` -- every campaign written
+      before this field existed is unaffected. ``kind: optimization``
+      requires the top-level ``optimization`` block; ``kind: reflective``
+      (or absent) forbids one.
+
   research_question:
     type: string
     minLength: 1
@@ -92,7 +146,11 @@ properties:
         uniqueItems: true
         description: >
           Paths (relative to repo_path) to symlink into each experiment
-          worktree on creation (#229). Use this for gitignored assets
+          worktree on creation (#229). For a ``kind: optimization`` campaign
+          with a ``build`` stage they are COPIED (never symlinked) into the
+          clean checkout the epoch is measured in, with every copied file
+          hashed into clean_tree.extras.json; extras must be ignored assets,
+          not tracked files or mechanism paths. Use this for gitignored assets
           the executor needs from main — virtualenvs, pre-fetched data
           dirs, prior-iteration outputs, build artifacts. Without this
           mechanism, executors discover that the worktree is missing
@@ -118,6 +176,25 @@ properties:
       design: { type: string, description: "Model for DESIGN phase (claude -p). Default: claude-opus-4-6." }
       execute_analyze: { type: string, description: "Model for EXECUTE_ANALYZE phase (claude -p). Default: claude-sonnet-4-6." }
       report: { type: string, description: "Model for report generation (LLM API). Default: claude-sonnet-4-6." }
+      plan:
+        type: string
+        description: >
+          Model for the ``plan`` stage of a ``kind: optimization`` campaign.
+          ``_resolve_model`` reads this key; without it declared here the schema
+          rejected the documented override. Defaults to OPTIMIZATION_MODEL.
+      build:
+        type: string
+        description: >
+          Model for the ``build`` stage of a ``kind: optimization`` campaign.
+          ``_resolve_model`` reads this key; without it declared here the schema
+          rejected the documented override, so the ONE substantive call of the
+          kind could not be pinned to a different model from the rest. That
+          matters beyond cost: a build authoring a large mechanism plus its
+          native tests in a single call, with no compaction available, can
+          exhaust a 200K context window, and the remedy is a longer-context
+          variant of the same model (e.g. ``claude-opus-5[1m]``) rather than
+          fewer turns -- fewer turns truncates the work instead.
+          Defaults to OPTIMIZATION_MODEL.
 
   sdk_timeouts:
     type: object
@@ -156,11 +233,18 @@ properties:
               design: { type: number, minimum: 0 }
               execute_analyze: { type: number, minimum: 0 }
               report: { type: number, minimum: 0 }
+              plan: { type: number, minimum: 0 }
+              build: { type: number, minimum: 0 }
         description: >
           Live mid-turn watchdog (#205). Scalar form applies globally.
           Map form applies per-phase — default when unset: 600s for all
           phases. Phases not listed in the map fall back to
           ``silence_threshold_seconds`` (or 600 if also unset).
+          ``plan`` / ``build`` key the ``kind: optimization`` agent calls.
+          Unlisted, ``plan`` defaults to 600s (the DESIGN value) and
+          ``build`` to max(600, optimization.test_timeout_sec + 120): the
+          build verifies itself with ``test_command``, and a foreground test
+          run streams no events until it returns.
 
   sandbox:
     type: string
@@ -222,6 +306,23 @@ properties:
       budgets — a 50-arm fanout may need 200+ design turns while a
       probe-only campaign fits in 30.
     properties:
+      plan:
+        type: integer
+        minimum: 1
+        description: >
+          Max turns for the ``plan`` stage of a ``kind: optimization``
+          campaign (pricing the mechanism before ``build`` authors it; reads
+          and reasons, writes no code). Read by
+          ``stage_runner._plan_max_turns``. Ignored by ``kind: reflective``,
+          which has no plan stage. Defaults to
+          ``orchestrator.optimize.plan.DEFAULT_MAX_TURNS`` (60).
+      build:
+        type: integer
+        minimum: 1
+        description: >
+          Max turns for the ``build`` stage of a ``kind: optimization``
+          campaign (authoring the mechanism plus its native tests). Ignored
+          by ``kind: reflective``, which has no build stage. Defaults to 120.
       design:
         type: integer
         minimum: 1
@@ -617,3 +718,1379 @@ properties:
           type: object
           additionalProperties: true
           description: "Optional extra HTTP headers for a ``webhook`` channel."
+
+  optimization:
+    type: object
+    required: [response, factors, design]
+    additionalProperties: false
+    description: >
+      The ``kind: optimization`` authoring surface: a factorial /
+      response-surface campaign spec. The AUTHOR declares ``factors``
+      (no model proposes them); ``verify`` certifies the declared relations
+      and compiles the policy; Python then drives ``screen`` -> ``refine``
+      -> ``confirm`` with zero LLM calls, expanding a
+      pre-registered design matrix, applying levels mechanically via each
+      factor's ``apply``, and checking ``manipulation`` /
+      ``design_space.invariants`` / ``response.constraints`` on every
+      run. See ``nous docs guide`` for the field-by-
+      field walkthrough and worked examples. Cross-field rules this
+      schema cannot express (leakage, refinability, resolution feasibility,
+      trivial predicates, ...) are enforced by
+      ``orchestrator.validate.validate_optimization_campaign``.
+    properties:
+      response:
+        type: object
+        additionalProperties: false
+        oneOf:
+          - required: [primary]
+          - required: [objectives]
+        description: >
+          What the campaign is optimizing, and the guardrails that keep a
+          winning candidate honest. Declare EXACTLY ONE of ``primary`` (one
+          objective) or ``objectives`` (two or more: the campaign reports
+          the trade-off frontier between them). Example: ``primary: {metric:
+          train_score, direction: maximize}`` plus a
+          ``constraints`` entry so a config that turns a feature off
+          entirely (and thereby "wins" trivially) is excluded.
+        properties:
+          primary:
+            type: object
+            required: [metric, direction]
+            additionalProperties: false
+            description: >
+              The single response the design matrix fits. Example:
+              {metric: throughput_gbps, direction: maximize}. Mutually
+              exclusive with ``objectives``.
+            properties:
+              metric:
+                type: string
+                minLength: 1
+                description: "Metric name as it appears in the run observation (e.g. 'throughput_gbps')."
+              direction:
+                type: string
+                enum: [maximize, minimize]
+                description: "Whether the fitted surface is climbed or descended."
+          objectives:
+            type: array
+            minItems: 2
+            description: >
+              Two or more responses optimized TOGETHER, for a campaign whose
+              question is "what can I buy with what?" -- throughput vs
+              memory, compression ratio vs speed, latency vs cost -- rather
+              than "which configuration maximizes one number?". Mutually
+              exclusive with ``primary``. The design matrices are unchanged
+              (a factorial design measures every response it is given);
+              every objective is fitted on the same rows, and the epoch
+              reports the measured PARETO FRONT: the configurations no other
+              measured configuration beats on every objective at once, each
+              with a status (``confidently_nondominated`` only when that
+              claim survives the measurement uncertainty). A single
+              recommended configuration is still produced, chosen from the
+              front by ``preference``. Metrics must be distinct and may not
+              also appear in ``constraints``, ``held_out`` or
+              ``self_check``. Prefer a CONSTRAINT to an objective when you
+              already know the acceptable bound (an SLA, a memory budget):
+              a constraint answers "is this admissible?", an objective
+              answers "what does it cost to get more of the other one?".
+              Example: ``[{metric: ops_per_cpu_s, direction: maximize},
+              {metric: peak_rss_mib, direction: minimize}]``. See
+              ``nous docs guide`` ("Multi-objective: finding the trade-off
+              frontier").
+            items:
+              type: object
+              required: [metric, direction]
+              additionalProperties: false
+              properties:
+                metric:
+                  type: string
+                  minLength: 1
+                  description: "Metric name as it appears in the run observation (e.g. 'peak_rss_mib')."
+                direction:
+                  type: string
+                  enum: [maximize, minimize]
+                  description: "Whether more (maximize) or less (minimize) of this objective is better."
+          preference:
+            type: object
+            required: [method]
+            additionalProperties: false
+            description: >
+              Only with ``objectives``. How ONE configuration is chosen from
+              the measured front for ``recommendation.json`` /
+              ``report.json`` (the front itself is reported regardless).
+              Default ``{method: knee}``. ``knee``: the front point
+              furthest (normalized) from the line joining the two extreme
+              points -- the "best bang for the buck" corner, which needs no
+              weights and also reaches concave regions of the front;
+              for three or more objectives, the point maximizing the
+              minimum normalized improvement over the baseline.
+              ``weights``: maximize the weighted sum of normalized
+              objectives (requires ``weights``; note a weighted sum can
+              never select a point in a concave region of the front).
+              ``lexicographic``: best on ``order[0]``, ties (within that
+              objective's epsilon) broken by ``order[1]``, and so on
+              (requires ``order``). Example: ``{method: weights, weights:
+              {ops_per_cpu_s: 1.0, peak_rss_mib: 0.5}}``.
+            properties:
+              method:
+                type: string
+                enum: [knee, weights, lexicographic]
+                description: "Rule that picks the recommended point of the front."
+              weights:
+                type: object
+                minProperties: 1
+                additionalProperties:
+                  type: number
+                  exclusiveMinimum: 0
+                description: >
+                  ``method: weights`` only. Objective metric -> weight > 0,
+                  applied to objectives normalized by their measured range.
+                  Keys must be objective metrics.
+              order:
+                type: array
+                minItems: 2
+                items: { type: string, minLength: 1 }
+                description: >
+                  ``method: lexicographic`` only. A permutation of the
+                  objective metrics, most important first.
+          constraints:
+            type: array
+            minItems: 1
+            description: >
+              Admissibility filters over the SAME observation each config
+              produces. A config violating any constraint is marked
+              infeasible: excluded from fitting, retained in
+              ``runs.jsonl`` as real data about the space. Example:
+              ``{metric: trigger_rate_pct, op: ">", value: 0.0}`` rejects
+              a config that "wins" by turning the feature off.
+            items: { "$ref": "#/$defs/comparison" }
+          regimes:
+            type: array
+            minItems: 1
+            description: >
+              A conjunction that must hold in EVERY named regime, for
+              responses that are constrained trade-offs rather than a
+              scalar (issue: a scalar objective lets an optimizer win on
+              the average while failing one regime entirely). Example:
+              ``{id: burst, metric: improvement_burst_pct, op: ">",
+              value: 0}`` alongside a matching ``steady`` entry.
+            items:
+              type: object
+              required: [id, metric, op, value]
+              additionalProperties: false
+              description: "One regime's pass condition, same comparison shape as constraints plus a stable id for reporting."
+              properties:
+                id: { type: string, minLength: 1, description: "Stable regime identifier (e.g. 'burst')." }
+                metric: { type: string, minLength: 1 }
+                op: { type: string, enum: ["==", "!=", ">", ">=", "<", "<="] }
+                value: {}
+                when: {}
+                when_not: {}
+          self_check:
+            type: array
+            minItems: 1
+            description: >
+              Invariants the row's OWN response must satisfy for its
+              reported objective to BE the objective. Same
+              ``{observable | metric, op, value}`` shape as
+              ``constraints``, and a DIFFERENT question: a constraint asks
+              "is this configuration admissible?" (a violation is
+              ``infeasible`` -- real data about the space, retained), while
+              a self-check asks "does this row contradict itself?" (a
+              violation is ``failed`` -- the row is not a measurement of
+              anything and is excluded from the fit). Nous cannot know an
+              objective's semantics, so it cannot detect a
+              self-contradictory row on its own; declaring the invariant is
+              what makes it enforceable. Declare one whenever the objective
+              is defined by a PREDICATE OVER A DIAGNOSTIC -- "the largest
+              rate that was sustained", "the smallest setting that still
+              converges", "the highest load meeting a bound". In each case
+              the objective is the EXTREMUM OF A FEASIBLE SET, so the
+              adapter had to decide membership, and a self-check is that
+              decision restated where Nous can check it. A solver whose
+              answer fails its own acceptance test has a bug in the search,
+              not a number worth fitting. Two shapes:
+              ``{metric: residual_norm, op: "<=", value: 1.0e-8}`` beside
+              ``primary: {metric: coarsest_mesh, direction: maximize}``
+              (the coarsest mesh that still converged), and
+              ``{metric: queue_growth_slope, op: "<=", value: 0.06}`` beside
+              ``primary: {metric: max_sustained_rate, direction: maximize}``
+              (the highest arrival rate whose backlog was not growing). On a
+              real campaign the second line would have failed 8 of 12 rows at
+              the moment each was measured; without it, every one reported a
+              flattering number whose own recorded diagnostic said it was
+              invalid, and the epoch's fit was believed. Evaluated per row with no level guard, and also by
+              ``nous validate campaign --smoke`` / ``--liveness`` on the
+              configurations they run, so a violated invariant surfaces
+              BEFORE the policy hash is written. See
+              ``nous docs guide`` §7.7.
+            items: { "$ref": "#/$defs/comparison" }
+          constant_fields:
+            type: array
+            minItems: 1
+            items: { type: string, minLength: 1 }
+            description: >
+              Response fields that legitimately never vary across rows -- a
+              schema version, a host name, a workload identifier, a build
+              tag. Excluded from the OUTPUT FRESHNESS guard's comparison,
+              which fails a row whose entire response object is
+              byte-identical to the immediately preceding row's while the
+              factor levels differ (the signature of an adapter serving a
+              cached or stale result). Declaring these makes that check
+              STRICTER on what remains, not weaker: the surviving fields
+              are exactly the ones that should have varied. Example:
+              ``[schema_version, host]``.
+          held_out:
+            type: array
+            minItems: 1
+            items: { type: string, minLength: 1 }
+            description: >
+              Metric name(s) reserved as a pure generalization check:
+              recorded on every row but structurally split off the
+              response, so NEVER an input to fitting, ranking or
+              certification, and summarised in ``report.json``'s
+              ``held_out`` block for the recommendation and each finalist.
+              Example: ``[held_out_score]``. The validator
+              hard-fails if any held_out metric also equals
+              ``response.primary.metric`` (or any ``response.objectives``
+              metric) or appears in ``constraints``
+              / ``regimes`` -- that is the leakage class that let
+              ``holdout-selection`` optimize against its own
+              generalization check.
+          ceiling:
+            type: object
+            required: [metric, value]
+            additionalProperties: false
+            description: >
+              Optional physical bound on the primary metric (e.g. a
+              hardware bandwidth limit). A response above ceiling
+              hard-fails that config -- exceeding it means the
+              instrumentation is lying, not that the campaign found a
+              miracle. Example: {metric: achieved_bandwidth_gbps, value: 21.1}.
+            properties:
+              metric: { type: string, minLength: 1 }
+              value: { type: number }
+          noise_estimate_pct:
+            oneOf:
+              - type: number
+                minimum: 0
+              - type: object
+                minProperties: 1
+                additionalProperties:
+                  type: number
+                  minimum: 0
+            description: >
+              Rough expected measurement noise as a percent of the
+              primary metric, used to size replicate counts (via
+              ``power.required_seeds``). Example: 3.0 for ~3% run-to-run
+              variance. With ``objectives``, a single number applies to
+              every objective, or give a map objective metric -> percent
+              when they differ (e.g. ``{ops_per_cpu_s: 3.0, peak_rss_mib:
+              0.5}``); map keys must be objective metrics, and the map
+              form is accepted only with ``objectives``.
+
+      factors:
+        type: array
+        minItems: 1
+        description: >
+          The knobs the campaign varies. Each becomes one column of the
+          design matrix. Example: a ``numeric`` factor ``queue_count``
+          with ``levels: [2, 4, 8, 16]``, or a ``choice`` factor
+          ``batching`` with ``levels: [off, on]``. See
+          ``nous docs guide`` for the full
+          "declare as factor vs lock" inventory.
+        items:
+          type: object
+          required: [id, name, type, levels, apply, manipulation, relations]
+          additionalProperties: false
+          properties:
+            id:
+              type: string
+              minLength: 1
+              description: "Short stable identifier used in the design matrix and effect reports (e.g. 'L1')."
+            name:
+              type: string
+              minLength: 1
+              description: "Human-readable name (e.g. 'queue_count')."
+            type:
+              type: string
+              enum: [numeric, choice]
+              description: >
+                A domain question, not a statistics question: are values
+                BETWEEN the declared levels runnable? ``numeric`` --
+                interpolation is meaningful (thresholds, ratios, counts);
+                refinement may report an interior optimum. ``choice`` --
+                nothing lives between the levels (policies, mechanisms,
+                on/off). The retired ``continuous`` / ``ordinal`` /
+                ``categorical`` vocabulary is not accepted.
+            levels:
+              type: array
+              minItems: 2
+              description: >
+                Every runnable setting for this factor, as a flat list.
+                Example: ``[2, 4, 8, 16]`` or ``[off, on]``. A numeric
+                factor is screened at ``screen_levels`` (default: first and
+                last) and its interior levels are explored only in
+                ``refine``. A ``choice`` factor with more than two levels is
+                screened at EVERY level by the method of replacement
+                (ceil(log2 L) pseudo-factor columns), fitted with L-1 df,
+                and every level is a candidate for the recommendation.
+              items: {}
+            grid:
+              type: number
+              exclusiveMinimum: 0
+              description: >
+                For ``numeric`` factors only: snaps a fitted interior
+                optimum to the nearest multiple of this step, so
+                ``confirm`` never tries to run a value the target can't
+                actually take (e.g. K=4.7). Example: ``grid: 1`` for an
+                integer-valued knob. Omit when any real value ships
+                (thresholds, ratios). Ignored for ``type: choice``.
+            scale:
+              type: string
+              enum: [linear, log]
+              default: linear
+              description: >
+                For ``numeric`` factors: the space the design's ±1 coding is
+                linear in. Declare ``log`` for a geometric knob -- a cache or
+                buffer size, a batch size, an interval or rate that spans
+                orders of magnitude (levels like ``[1, 8, 64]`` or
+                ``[256, 2048, 16384]``). The centre point is then the
+                geometric mean (8, not 32.5), axial and refine points are
+                equal RATIOS apart, and the fitted surface is a function of
+                log(level), which is how such knobs usually act. Levels must
+                be strictly positive. ``nous validate`` warns when a numeric
+                factor's levels look geometric and no scale is declared.
+            levels_only:
+              type: boolean
+              default: false
+              description: >
+                For ``numeric`` factors: only the declared ``levels`` are
+                runnable, although they are ORDERED (powers of two, a fixed
+                menu of sizes: ``[64, 128, 256, 1024]``). Every value Nous
+                derives from the fitted model -- refine's centre and axial
+                points, the candidate space, the recommendation and confirm's
+                finalists -- is then the nearest DECLARED level in the
+                factor's axis space (log space under ``scale: log``; ties go
+                to the lower level), and the fit is coded at the level that
+                actually ran. Without it a ``grid: 1`` knob can be asked to
+                run 181. Not with ``grid`` (both declare the runnable set and
+                can disagree -- a hard error) and not on ``type: choice``
+                (already runs only its levels). Changes nothing on a
+                two-level factor.
+            screen_levels:
+              type: array
+              minItems: 2
+              maxItems: 2
+              description: >
+                The two levels the 2-level screening design uses for this
+                factor. Must both be members of ``levels``. Default (when
+                omitted): ``levels[0]`` and ``levels[-1]``. Declare this
+                only when the extremes are known-pathological and the
+                screen should bracket a narrower span. Not allowed on a
+                ``choice`` factor with more than two levels (every level is
+                screened).
+              items: {}
+            apply:
+              description: >
+                The seam that removes the LLM from the inner loop: how a
+                level becomes a runnable configuration, with zero model
+                involvement. A bare string is CLI-flag shorthand, e.g.
+                ``"--queues={level}"``. The long forms are ``{kind:
+                cli_flag, template: ...}``, ``{kind: env_var, name: ...,
+                value: ...}``, and ``{kind: config_patch, path: ...,
+                pointer: ..., value: ...}``. ``{level}`` is the only
+                interpolation token in the entire spec.
+
+                ``config_patch`` patches a PER-RUN COPY of ``path`` (the
+                author's file is never mutated) and substitutes the copy's
+                path for every occurrence of ``path`` in the assembled
+                command -- so ``path`` MUST appear as an argument value in
+                ``optimization.run_command``, or there is nothing to
+                substitute and the run would read the unpatched file. That
+                is a hard validation error. ``pointer`` is an RFC 6901
+                JSON pointer (``/cache/policy``, ``/tiers/0/bytes``, with
+                ``~0``/``~1`` escapes) and must address an EXISTING field.
+                ``.json``/``.yaml``/``.yml`` only. The level's type is
+                preserved exactly -- an int lands as an int, a bool as the
+                format's native boolean.
+              oneOf:
+                - type: string
+                  minLength: 1
+                - type: object
+                  required: [kind]
+                  additionalProperties: true
+                  properties:
+                    kind:
+                      type: string
+                      enum: [cli_flag, env_var, config_patch]
+            manipulation:
+              "$ref": "#/$defs/comparison"
+              description: >
+                Family A: did the lever actually engage? Checked on every
+                run of this factor.
+
+                TWO NAMESPACES are addressable. Prefer the target's own
+                telemetry when it reports the relevant state --
+                ``{observable: telemetry.queue_count, op: "==", value:
+                "{level}"}`` -- because that is evidence the lever was
+                RECEIVED, not merely sent. When the target emits metrics
+                only and never echoes its configuration back (the common
+                case: BLIS/inference-sim and most benchmark harnesses),
+                assert against the rendered configuration instead:
+                ``{observable: applied.MAXRUN, op: "==", value:
+                "{level}"}``, where ``applied.<FACTOR_ID>`` is the level
+                this run was launched with. ``applied_args``,
+                ``applied_env`` and ``applied_patches`` expose the rendered
+                CLI arguments, environment, and realized config-file
+                patches for the same purpose. ``applied_patches`` reports
+                what was DONE rather than what was requested, KEYED BY
+                FACTOR ID -- ``{observable: applied_patches.P1.value, op:
+                "==", value: "{level}"}`` -- and each entry also carries the
+                patched copy's ``materialized_path`` and the
+                ``delivered_command`` that consumed it. Keyed rather than a
+                list because a predicate's observable is a dotted path
+                through mappings: there is no list-index token and no
+                ``contains`` operator, so a list would be addressable by
+                nothing.
+
+                Without ``applied.*`` a target that does not echo its own
+                config back cannot satisfy this REQUIRED field at all --
+                verified on a live run where all 115 executed
+                configurations failed their manipulation check with "the
+                target did not emit it", producing zero usable
+                measurements.
+
+                The validator rejects trivially-true predicates (bare
+                ``> 0``, ``!= null``) -- a lazy check manufactures false
+                confidence.
+            relations:
+              type: array
+              minItems: 1
+              description: >
+                Family B: is the mechanism correct? At least one
+                ``correctness`` relation is required -- a ``behavioral``
+                relation alone is not enough, because behavioral
+                violations are recorded as findings and never fail the
+                campaign, so nothing would catch a broken lever. Example:
+                a ``correctness`` relation asserting the factor's
+                baseline level reproduces the recorded baseline run
+                within noise.
+              items:
+                type: object
+                required: [id, kind, statement, native_test]
+                additionalProperties: false
+                properties:
+                  id:
+                    type: string
+                    minLength: 1
+                    description: "Stable identifier (e.g. 'R1')."
+                  kind:
+                    type: string
+                    enum: [correctness, behavioral]
+                    description: >
+                      ``correctness`` -- a violation hard-fails the
+                      campaign (the apparatus is broken; measurements are
+                      meaningless). ``behavioral`` -- a violation is
+                      recorded as a finding and the campaign continues.
+                      Monotonicity claims MUST be ``behavioral``, never
+                      ``correctness``: a non-monotonic result can be the
+                      campaign's headline discovery, not a bug.
+                  statement:
+                    type: string
+                    minLength: 1
+                    description: "Plain-English statement of the relation (e.g. 'batching=off is byte-identical to baseline')."
+                  native_test:
+                    type: string
+                    minLength: 1
+                    description: >
+                      Identifier of the property/metamorphic test living
+                      in the TARGET repo's own test tree, run by its own
+                      runner (e.g. 'tests/prop_batch.py::test_off_is_noop').
+                      Nous's role is a contract check: this test ran
+                      under ``test_command`` and exited clean.
+
+      design:
+        type: object
+        additionalProperties: false
+        description: >
+          How the design matrix is sized and staged. Run counts are
+          derived from ``screen.resolution`` and the factor count, not
+          chosen freely -- see ``orchestrator.optimize.design``.
+        properties:
+          screen:
+            type: object
+            required: [resolution]
+            additionalProperties: false
+            description: >
+              The 2-level screening stage. Example: ``{resolution: 5,
+              center_points: 4}``. Default resolution is V (estimates all
+              two-factor interactions unconfounded); the validator warns
+              -- but does not block -- resolution < 5 with more than one
+              factor, because main-effects-only screening is the
+              one-factor-at-a-time failure mode in disguise.
+            properties:
+              resolution:
+                type: integer
+                minimum: 3
+                description: "Target design resolution (III, IV, or V). Any factor count gets a regular fraction of at least this resolution: textbook generators for 5-8 factors at V, 4-8 at IV and 7 at III, constructed otherwise (orchestrator.optimize.design.generators_for; resolution V and above refused past 100 factors); the full factorial only where it is already the smallest such design."
+              center_points:
+                type: integer
+                minimum: 0
+                description: "Replicated center-point runs, giving a pure-error estimate for the lack-of-fit test. Default: 0."
+          refine:
+            type: object
+            required: [kind]
+            additionalProperties: false
+            description: >
+              The response-surface refinement stage, run only when >=2
+              ``numeric`` factors with more than 2 levels survive
+              screening. Example: ``{kind: central_composite,
+              center_points: 5}``.
+            properties:
+              kind:
+                type: string
+                enum: [central_composite]
+                description: "Response-surface design family."
+              center_points:
+                type: integer
+                minimum: 0
+                description: "Replicated center-point runs at the refine stage."
+              validation_points:
+                type: integer
+                minimum: 0
+                description: >
+                  Off-lattice VALIDATION runs refine registers (default 4;
+                  WP-B, spec 2026-10-17-model-adequacy-design.md): coded
+                  +-0.5 on every refinable axis, chosen by a seeded greedy
+                  maximin, executed as their own block after the composite,
+                  held OUT of the fit and checked against its predictions
+                  (joint predictive F at alpha 0.05). A rejection makes the
+                  model inadequate. 0 turns the check off; then refine cannot
+                  overturn an earlier stage's lack-of-fit rejection
+                  (screen_rejection_unresolved).
+              validation_seed:
+                type: integer
+                description: "Seed of the maximin tie-breaks (default 0)."
+              reuse_screen:
+                type: boolean
+                description: >
+                  Sequential assembly (WP-B B4; default false): refine cube
+                  corners the screen already measured at identical levels
+                  (held factors included) are not re-run, and the screen's
+                  centre rows join as block-1 centres; the fit carries a
+                  block (drift) term. Refused silently when a choice factor
+                  is declared or the screen ran under another policy.
+          confirm:
+            type: object
+            required: [replicates]
+            additionalProperties: false
+            description: >
+              The terminal DISCRIMINATION stage (the paper's ``discriminate``;
+              ``confirm`` is this schema's older name for it). It takes a
+              shortlist of finalists and measures each of them
+              ``replicates`` times FRESHLY, then compares them with each
+              other — so the campaign's final comparison does not rest on
+              the fitted response surface at all. Example:
+              ``{replicates: 5, shortlist_size: 3}``. ``held_out`` metrics
+              are evaluated here.
+            properties:
+              replicates:
+                type: integer
+                minimum: 1
+                description: "Fresh runs per finalist. Total runs at this stage are shortlist_size * replicates."
+              shortlist_size:
+                type: integer
+                minimum: 1
+                description: >
+                  Finalists compared with fresh replicates at confirm
+                  (paper: terminal discrimination). Default 3; ``1``
+                  reproduces single-point confirmation, which measures only
+                  how REPEATABLE one configuration is and leaves "is it the
+                  best?" as a claim about the fitted model.
+          max_runs:
+            type: integer
+            minimum: 1
+            description: >
+              The author's run budget. The validator fails -- offering
+              the two honest options (raise this budget, or accept a
+              lower resolution and its named aliasing) -- rather than
+              silently downgrading resolution when the requested design
+              would exceed it. Example: ``120``.
+
+      design_space:
+        type: object
+        required: [invariants]
+        additionalProperties: false
+        description: >
+          Properties Python enforces on EVERY configuration, in every
+          stage -- including ``screen`` and ``refine``, which make zero
+          LLM calls and so cannot honor a directive that exists only as
+          prose. Where a violation is statically determinable from the
+          matrix row, the row is rejected before it runs; otherwise it
+          hard-fails after running. See
+          ``nous docs guide``'s "would you be upset
+          to find this violated after 60 runs?" test for what belongs
+          here versus in ``guidance``.
+        properties:
+          invariants:
+            type: array
+            minItems: 1
+            description: >
+              Example: ``{id: I1, statement: "connector is peer-to-peer,
+              never staged through host memory", observable:
+              telemetry.transfer_path, op: "==", value: p2p}``.
+            items:
+              type: object
+              required: [id, statement, observable, op, value]
+              additionalProperties: false
+              properties:
+                id: { type: string, minLength: 1, description: "Stable identifier (e.g. 'I1')." }
+                statement: { type: string, minLength: 1, description: "Plain-English statement of the invariant." }
+                observable: { type: string, minLength: 1, description: "Dotted path into the run observation." }
+                op: { type: string, enum: ["==", "!=", ">", ">=", "<", "<="] }
+                value: {}
+
+      locked_observables:
+        type: object
+        minProperties: 1
+        additionalProperties: { type: string, minLength: 1 }
+        description: >
+          Issue #246 (F1) on the matrix path: WHERE the target reports the
+          value it actually used for each top-level ``locked_parameters``
+          entry, as ``{locked_parameter: <dotted path into the run
+          observation>}``. The value stays in ``locked_parameters`` (one
+          source of truth); this map only says where to read it back.
+          Every measured row is compared with ``==`` (the same comparator
+          and dotted-path convention as ``manipulation``), and a deviation
+          -- or a declared path the target does not emit -- is a HARD
+          ABORT of the campaign regardless of ``--auto-approve``, because
+          every row would otherwise measure a different experiment than
+          the one pre-registered. ``nous validate campaign --smoke``
+          evaluates the same check on the configuration it runs. A key
+          that is not in ``locked_parameters`` is a validation error (a
+          typo would leave the intended lock unenforced); a locked
+          parameter with no entry here CANNOT be enforced at run time, so
+          validation REJECTS it unless ``unverified_locks`` names it with a
+          reason. Example:
+          ``{max_seq_len: engine.max_seq_len, model: config.model}``.
+      unverified_locks:
+        type: object
+        minProperties: 1
+        additionalProperties: { type: string, minLength: 1 }
+        description: >
+          ``{locked_parameter: <reason>}`` for every lock the target does
+          NOT report back, so Nous cannot verify it was honoured (e.g. a
+          dataset name passed on the run_command line that the target never
+          echoes). Without an entry here such a lock is a validation ERROR:
+          a lock that cannot be enforced must not read as one that was. With
+          an entry, validation warns and report.json records the lock under
+          ``provenance.waivers`` as declared-but-unverified. A key that is
+          not in ``locked_parameters``, or that also has a
+          ``locked_observables`` entry, is an error.
+
+      guidance:
+        type: object
+        additionalProperties: false
+        description: >
+          Author prose for the opt-in model-facing stages (``plan`` /
+          ``build``). Without either stage no model reads it at all. Contrast
+          with ``design_space.invariants``: guidance can only steer what a
+          ``plan``/``build`` agent AUTHORS, invariants bound what Python
+          EXECUTES. An enforceable directive belongs in ``invariants``, not
+          here -- prose here is never read during ``verify`` / ``screen`` /
+          ``refine`` / ``confirm`` / ``report``.
+        properties:
+          factor_nomination:
+            type: string
+            minLength: 1
+            description: >
+              Passed to the ``plan`` and ``build`` prompts (the only
+              readers; see ``orchestrator/optimize/plan.py`` and
+              ``build.py``) as the author's steer on the MECHANISM those
+              stages design and author. Factors and levels are always
+              author-declared; no model proposes them. Without a ``plan`` or
+              ``build`` stage this field reaches no model. Example: "Scheduling policy is the highest-value
+              axis here. Consider at minimum: shortest-job-first, FCFS,
+              EA-WFQ, priority-FCFS."
+          interpretation:
+            type: string
+            minLength: 1
+            description: >
+              NOT READ BY ANY STAGE today. No model runs at ``confirm`` or
+              ``report`` (both are pure Python), and ``plan``/``build``
+              withhold it deliberately so the authoring agent is not steered
+              by how results will be read. Accepted so an author can record
+              the interpretation rule beside the pre-registration; it
+              changes no behaviour. Example: "A win that depends on multi-tier
+              workloads is out of scope for this campaign; report it as
+              a lead, not a result."
+
+      known_valid_baseline:
+        type: object
+        minProperties: 1
+        additionalProperties: true
+        description: >
+          Factor id -> level of a configuration KNOWN to be valid: the
+          bottom rung of the report's fallback ladder (spec §3.6). A
+          finite-budget campaign must still act when it cannot certify,
+          and when nothing measured survives the correctness gates this is
+          what ``report.json`` returns rather than nothing. It is also the
+          shortlist's last-resort finalist. Example: ``{QUEUES: 2,
+          BATCHING: off}``. Every id must name a declared factor and every
+          level must be one of that factor's ``levels`` — the validator
+          hard-fails otherwise, because a baseline outside the declared
+          space is not a configuration the campaign is allowed to run.
+          Required when the ``build`` stage is declared: the mechanism
+          being authored has to leave a known-good control unchanged.
+
+      policy:
+        type: object
+        additionalProperties: false
+        description: >
+          The registered decision parameters of the compiled epoch — the
+          numbers that decide when the campaign stops, pre-declared so
+          they cannot be chosen after seeing a result. Compiled verbatim
+          into ``policy.json``'s ``objective`` block and hashed with it.
+        properties:
+          epsilon:
+            anyOf:
+              - { "$ref": "#/$defs/epsilon_spec" }
+              - type: object
+                minProperties: 1
+                additionalProperties: { "$ref": "#/$defs/epsilon_spec" }
+            description: >
+              The indifference width: how much better a challenger would
+              have to be for the campaign to care. Declare EXACTLY ONE of
+              ``abs`` (in the metric's own units) or ``pct`` (a percentage
+              of the recommendation's value). Default ``{pct: 2.0}``.
+              Certification is ``R_delta <= epsilon``, so an epsilon of
+              zero can never be met and one wider than the whole response
+              range certifies immediately. With ``response.objectives``,
+              epsilon is EACH objective's indifference width: a difference
+              smaller than it is not dominance. Either one spec applied to
+              every objective, or a map objective metric -> spec when the
+              objectives live in different units (``{ops_per_cpu_s: {pct:
+              2}, peak_rss_mib: {abs: 5}}``). Map keys must be objective
+              metrics; an objective the map omits takes ``{pct: 2.0}``
+              (the validator warns); the map form is accepted only with
+              ``objectives``.
+          delta_screen:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 0.5
+            description: >
+              Error budget for the MODEL bound (screen/refine). Default
+              0.05. Reported separately from ``delta_terminal`` because
+              the two bounds rest on different assumptions;
+              ``Pr(wrong global decision) <= delta_screen +
+              delta_terminal`` (spec §3.5).
+          delta_terminal:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 0.5
+            description: >
+              Error budget for the TERMINAL bound, computed from fresh
+              finalist measurements only. Default 0.05.
+          out_of_hull:
+            type: string
+            enum: [confirm, end_epoch]
+            description: >
+              What refine does when the fitted optimum lies OUTSIDE the
+              declared ranges. ``confirm`` (default) confirms the best
+              configuration INSIDE them: a boundary optimum is still an
+              answer, and the certificate is scoped to the declared ranges;
+              report.md names the axes to widen. ``end_epoch`` treats it as
+              a semantic exception: the epoch ends uncertified so the ranges
+              can be widened first.
+          confirm_max_rounds:
+            type: integer
+            minimum: 1
+            description: >
+              How many rounds of terminal discrimination the epoch may
+              spend before reporting uncertified. Default 1. Each further
+              round re-measures the winner plus every finalist whose bound
+              still exceeded epsilon.
+          foldover:
+            type: boolean
+            description: >
+              Whether the registered foldover is available at all. Default
+              true, which is almost always right: the branch is registered
+              and then gated at RUNTIME by ``alias_consequential`` and
+              ``foldover_affordable``, so on a screen that aliases nothing
+              it simply never fires. Set false only to remove the state and
+              its branch TOGETHER — which is what a campaign that would
+              rather never spend the extra block wants, because a registered
+              branch that can never fire is worse than an absent one:
+              ``enumerate_paths`` would otherwise report a path the campaign
+              cannot take. Deliberately not inferred from
+              ``design.screen.resolution``, which would put the same fact in
+              two places and let them drift.
+
+      run_command:
+        type: string
+        minLength: 1
+        description: >
+          Command that runs ONE configuration of the target and emits
+          the response metrics as JSON on stdout. NOT run in a shell: it is
+          split into an argv by ``shlex.split`` and executed with
+          ``cwd=target_system.repo_path``, so ``cd``, ``&&``, pipes,
+          redirects, globs and a leading ``VAR=value`` reach the program as
+          literal arguments (``nous validate campaign`` rejects them; use
+          ``env VAR=value ...``, or ``sh -c '...'`` when a shell is really
+          needed). Each factor's rendered
+          ``apply`` arguments are appended to this command, so it carries
+          only the invariant part. Example: "./blis run --model qwen/qwen3-14b
+          --num-instances 4 --seed 42". Without it, ``run_stage`` has no way
+          to execute the design matrix and aborts asking for a
+          ``config_runner`` — the campaign is not runnable.
+
+      test_command:
+        type: string
+        minLength: 1
+        description: >
+          Command that runs every declared relation's ``native_test`` and
+          exits clean iff all pass. Example: "python -m pytest
+          tests/test_props.py -v". Like ``run_command`` it is NOT run in a
+          shell: an argv parsed by ``shlex.split``, executed with
+          ``cwd=target_system.repo_path``. Pass test paths RELATIVE to that
+          directory -- runners print identifiers relative to how they were
+          invoked, and ``native_test`` is matched against what is printed.
+          A glob such as ``tests/prop_*.py`` is not expanded.
+
+          Must emit PER-TEST results, not just a package-level pass: use
+          ``-v`` for ``go test`` or ``--json-report`` for pytest. A green
+          exit code with no per-test output is not evidence that a specific
+          relation's test ran, so it fails closed — every declared relation
+          reconciles as "declared but not executed", which aborts the
+          campaign at its verify stage.
+
+          Runs under ``test_timeout_sec`` (default 900). A killed run is
+          reported as KILLED, never as unmatched identifiers.
+
+      test_timeout_sec:
+        type: integer
+        minimum: 1
+        description: >
+          Wall-clock ceiling, in seconds, on ONE invocation of
+          ``test_command`` -- at ``nous validate campaign --smoke`` and at
+          the verify gate alike. Defaults to 900 when absent, which is what
+          every campaign authored before this field existed ran at.
+
+          Raise it when the relation suite legitimately takes longer: the
+          natural correctness relation for a performance knob is "this
+          lever moves the measured quantity", which RUNS the target, so a
+          suite's cost is a multiple of one measurement and grows with the
+          number of factors. Prefer first to make each relation cheap -- it
+          proves a lever moves the response, not by how much, so it can run
+          at the cheapest operating point that still exercises the
+          mechanism.
+
+          Like ``run_timeout_sec`` the ceiling is a hard failure, not a
+          budget: a killed suite certifies nothing (tests it reported before
+          the kill do NOT count), so every declared relation fails closed
+          and verify aborts naming the timeout. The partial output is kept
+          in the iteration's ``test_output.log``.
+
+      run_timeout_sec:
+        type: integer
+        minimum: 1
+        description: >
+          Wall-clock ceiling, in seconds, on ONE invocation of
+          ``run_command`` -- one row of the design matrix, one measurement.
+          Defaults to 600 when absent, which is what every campaign
+          authored before this field existed ran at.
+
+          Raise it when the target's single LEGITIMATE measurement is a
+          COMPOUND one: an objective evaluation that is itself a bisection,
+          a sweep to saturation, or a multi-replicate average inside the
+          target's own harness. The alternatives all degrade the
+          measurement rather than the schedule -- a shorter horizon buys
+          the ceiling with a noisier slope statistic, a looser bisection
+          tolerance buys it with a coarser objective value, and caching
+          results across invocations buys it with a covert channel between
+          arms the design registered as independent. Declaring the real
+          ceiling is the only option that leaves the science alone.
+
+          The ceiling is a hard failure, not a budget: a run that exceeds
+          it records a ``failed`` row naming the timeout and the epoch
+          continues with that row excluded from the fit (spec §4 D2). It is
+          never a partial measurement. Sizing it far above the true
+          duration therefore costs nothing per successful row but does
+          raise the campaign's worst-case wall clock to
+          ``run_timeout_sec x runs``, which ``nous validate campaign``
+          warns about above 3600. Example: 5400 for a capacity bisection
+          over ~5 simulator runs.
+
+          The resolved value (declared or defaulted) is echoed into each
+          iteration's ``design_matrix.json`` as ``run_timeout_sec``, beside
+          ``workload_seeds`` and ``policy_hash``, so a reader of a
+          timed-out row can tell which ceiling produced it.
+
+      reuse_measured_rows:
+        type: boolean
+        description: >
+          Whether a retried iteration REUSES rows a previous attempt already
+          measured under the same pre-registration. Defaults to true.
+
+          Opt-OUT rather than opt-in, because re-measuring a row that was
+          already validly measured under the identical pre-registration is
+          never more correct, only slower -- on a real campaign 15 valid rows
+          were re-measured four times, which was most of a 14-hour run that
+          produced nothing. Reuse is refused automatically whenever it would
+          NOT be sound: a differing ``policy.sha256``, a changed adapter
+          contract (an apparatus change is an epoch boundary, not an edit), a
+          differing applied configuration INCLUDING the workload seed, a
+          different epoch, or a ``failed`` status (a measurement failure a
+          re-run repairs, so it is always re-measured).
+
+          Set false to force full re-measurement -- e.g. to reproduce a
+          historical run byte-for-byte. The decision, including every refusal
+          and its reason, is recorded per iteration in
+          ``runs/iter-N/reuse_manifest.json``, and each reused row carries a
+          ``reused_from`` marker in ``runs.jsonl`` so a reader can never
+          mistake reuse for fresh measurement.
+
+      agent_retries:
+        type: integer
+        minimum: 0
+        description: >
+          Retries (beyond the first attempt) for the ``plan`` and ``build``
+          agent calls. Defaults to 2 (three attempts). Retried: transient
+          SDK failures (network drops, a live silence-watchdog trip) and
+          ``is_error`` results that report context exhaustion ("Prompt is
+          too long") or provider overload / 5xx. Every other error (auth,
+          invalid request, quota, max turns) fails fast. Each retry is a
+          fresh session told to continue from the repo's current state, and
+          every attempt's tokens are logged to ``llm_metrics.jsonl``. Kept
+          small on purpose: one build attempt can cost tens of dollars.
+
+      max_wall_clock_hours:
+        type: number
+        exclusiveMinimum: 0
+        description: >
+          Optional ceiling, in HOURS, on the campaign's total wall clock.
+          Absent means unbounded, which is what every campaign authored before
+          this field existed runs at -- the field is opt-in precisely so that
+          adding it cannot shorten an existing campaign.
+
+          WHY IT EXISTS. ``design.max_runs`` bounds the run COUNT and
+          ``run_timeout_sec`` bounds ONE row, but nothing bounded the total, so
+          a mis-sized ``run_timeout_sec`` could burn a whole night: a real
+          campaign spent ~14 hours and produced zero usable output. Rule 18
+          warns when ``run_timeout_sec x runs`` commits a large worst case;
+          this is the field that lets an author CAP that exposure rather than
+          only be warned about it.
+
+          IT IS NOT A KILL SWITCH. The budget is checked BETWEEN iterations,
+          never inside one: killing a running measurement would leave a
+          half-measured row on disk and produce no report at all. On exhaustion
+          the campaign declines to START another iteration and ends through the
+          same terminal path a clean stop takes, so ``report.json`` is still
+          written and ``recommendation.basis`` still names which rung of the
+          fallback ladder the answer rests on (certified / terminal_best /
+          model / measured / baseline / none). The reason is recorded in
+          ``halt.json`` at the work-dir root.
+
+          Size it above the honest worst case for the rows you expect to
+          measure, not as a target: a budget that expires mid-screen buys a
+          report resting on a partial design.
+
+      max_identical_failures:
+        type: integer
+        minimum: 1
+        description: >
+          How many CONSECUTIVE iterations may fail the same way before the
+          campaign loop stops. Defaults to 3.
+
+          A failed optimization iteration records no transition, so
+          ``policy.current_state`` still returns the state it was on and the
+          next iteration legitimately re-registers the same design. That is
+          correct retry behaviour, and it is also an infinite loop when the
+          cause is deterministic: a real campaign failed identically four
+          times over ~14 hours. This bounds the retrying.
+
+          "The same way" is a fingerprint over (exception type, failing stage,
+          error message with per-attempt indices and tallies normalized away),
+          so a changed row count does not read as a new failure while two
+          genuinely different defects stay distinct. Counting is CONSECUTIVE,
+          not cumulative: an intervening different failure resets the run, so a
+          campaign that is still making progress through a flaky apparatus is
+          not stopped. The verdict lands in ``halt.json``, which records the
+          fingerprint, the failing iterations, and the messages verbatim.
+
+      max_parallel:
+        type: integer
+        minimum: 1
+        description: >
+          Ceiling on SIMULTANEOUS in-flight ``run_command`` invocations, and
+          the ONLY concurrency the epoch offers. Defaults to 1, which is
+          strictly sequential execution -- exactly what every campaign
+          authored before this field existed ran at.
+
+          IT APPLIES TO ``confirm`` REPLICATE BLOCKS ONLY. The spending
+          stages (``screen`` / ``foldover`` / ``refine``) stay strictly
+          sequential whatever this says, because they FIT A SURFACE over
+          distinct configurations and co-scheduled rows contend for machine
+          resources: a row's measured response would then depend on which
+          OTHER rows happened to run beside it, and the fitted coefficients
+          would absorb that contention as a factor effect. Run-order
+          randomization exists to keep drift (a warming cache, a thermally
+          throttling machine, a background job) from masquerading as an
+          effect; co-scheduling reintroduces the same confound in a form
+          randomization cannot average away. For an objective that measures
+          where a system SATURATES that is first-order, not a rounding
+          error.
+
+          A confirm replicate block is different in kind, not in degree.
+          Within one block every finalist is measured exactly once, so
+          whatever contention exists is symmetric across exactly the things
+          being compared -- which is the same argument that puts confirm's
+          run-order shuffle INSIDE a block rather than across the whole
+          matrix. Blocks remain a barrier: replicate *i* of every finalist
+          completes before replicate *i+1* starts.
+
+          Row-level concurrency at the spending stages is reachable only by
+          CLOSING the confound rather than ignoring it -- each concurrent row
+          pinned to a disjoint CPU set, with the pinning recorded in the
+          artifact -- and this field deliberately does not enable it.
+
+          Size it from CORES, not from rows: more in-flight runs than the
+          machine has CPUs means the runs time-slice against each other and a
+          finalist's response starts depending on the scheduler, so
+          ``nous validate campaign`` warns above ``os.cpu_count()``. The
+          warning is advisory because a run that mostly WAITS on a remote
+          service holds no core while it waits, and only the author knows
+          which their target is.
+
+          The EFFECTIVE value (1 at a spending stage even when this says 4)
+          is echoed into each iteration's ``design_matrix.json`` as
+          ``max_parallel``, beside ``run_order_seed``: a pre-registration
+          asserting randomized run order while executing concurrently would
+          be claiming a guarantee it did not provide.
+
+      concurrency:
+        type: object
+        additionalProperties: false
+        description: >
+          Opt-in license for concurrency at the SPENDING stages (``screen`` /
+          ``foldover`` / ``refine``). Declaring this block is what makes an
+          18-row screen finish in hours rather than most of a day; ``confirm``
+          is already parallel via ``max_parallel`` and needs nothing here.
+
+          WHY A LICENSE IS NEEDED AT ALL. The spending stages fit a surface over
+          DISTINCT configurations, so co-scheduled rows contend for machine
+          resources and a row's measured response comes to depend on which other
+          rows ran beside it. Contention lands UNEVENLY across a design -- a slow
+          corner runs beside different neighbours than a fast one -- and the
+          fitted coefficients absorb that as though it were a factor effect.
+          Run-order randomization does not help: a permutation spreads a TIME
+          trend across the design, and this is a NEIGHBOUR effect. For an
+          objective that measures where a system SATURATES, contention is the
+          measurement rather than noise around it.
+
+          But that is a property of LOAD-DEPENDENT objectives only. A solver's
+          iteration count, a compiler's output size, a simulated latency from a
+          discrete-event model: none is a function of how busy the machine was.
+          So declare ONE of the two fields below -- never both, since that would
+          record two different bases for one width.
+
+          When ``max_parallel`` is omitted, declaring this block resolves the
+          width to ``min(4, cpu_count - 2)`` rather than 1. The cap is modest on
+          purpose: an adapter's OWN internal fan-out multiplies it, and Nous
+          cannot see that. In the field campaign each row itself spawned 4
+          concurrent subprocess probes, so 4 rows meant 16 processes on a 10-CPU
+          box. Raise it knowing your adapter's internal width.
+
+          ISOLATION IS SEPARATE AND UNCONDITIONAL. Every run gets a private
+          ``NOUS_RUN_DIR`` (plus ``NOUS_ROW_INDEX`` / ``NOUS_RUN_SLOT``) at every
+          width including 1, and ``config_patch`` factors already materialise a
+          per-run copy of each patched file. Have the adapter write its build
+          output, metrics file and temp data under ``NOUS_RUN_DIR``: two rows
+          sharing one ``go build -o`` path is a real defect that produced
+          plausible numbers from the wrong binary. See ``nous docs targets``.
+
+          CPU PINNING IS DELIBERATELY NOT OFFERED. A disjoint cpu set partitions
+          time slices and per-core L1/L2 and leaves L3, memory bandwidth, disk
+          queues, page cache, NIC queues, thermal budget and the GPU shared -- so
+          for the throughput and tail-latency objectives these campaigns declare
+          it isolates almost nothing the objective reads, while an artifact
+          recording a per-row cpu set would testify to an isolation the
+          measurement never had.
+        properties:
+          load_independent:
+            type: boolean
+            description: >
+              Declare ``true`` to assert that the objective is NOT a function of
+              machine load -- an iteration count, an allocation count, an output
+              size, a bit-identical checksum, a simulated time from a
+              discrete-event model that reads no wall clock. Such a target has no
+              contention problem, so the spending stages run at full width with
+              NO measurement required.
+
+              This is recorded in ``design_matrix.json`` as
+              ``concurrency_basis: load_independent`` -- as YOUR claim, not as
+              something Nous measured. Nous cannot verify it up front without
+              spending the runs the declaration exists to save, but it IS
+              falsified for free afterwards: if two rows with identical levels
+              and the same workload seed report different objectives, the
+              claim is contradicted and the stage says so.
+
+              Do NOT declare this for a throughput, a queue depth, a latency
+              percentile under load, or anything whose value moves when the
+              machine gets busy. Use ``contention_probe_levels`` instead and let
+              the measurement decide.
+          contention_probe_levels:
+            type: object
+            description: >
+              The configuration the CONTENTION FLOOR is measured at: a mapping of
+              factor id to level, naming the design's most heavily loaded corner.
+              Before the first spending stage writes its matrix, Nous runs this
+              corner serially several times to get the target's own noise floor,
+              then runs it at the declared width, and certifies the width only if
+              the objective moved LESS than 2x that noise floor. The certified
+              width is recorded as ``concurrency_certified_width``; a floor
+              measured at 2 never licenses 8.
+
+              NAME THE HEAVIEST CORNER, not the baseline. This is the one place
+              the obvious choice is unsound. Contention inflation grows with
+              load, so with a soft-knee throughput and co-scheduling costing 10%
+              of capacity, inflation is 1.0% at a light corner, 5.3% at mid load
+              and 9.2% at saturation. A floor measured at
+              ``known_valid_baseline`` would therefore PASS a 2x-noise gate and
+              certify the very design whose interesting corners it gets wrong by
+              9%. That is why this field is explicit and is not defaulted.
+
+              Any failure -- a refuted floor, a raising run, a non-numeric
+              response, too few samples -- leaves the stage SERIAL rather than
+              aborting. A target that genuinely contends should fail this, and
+              then the epoch runs exactly as it did before the field existed.
+            additionalProperties:
+              type: [string, number, boolean]
+
+      integrity_command:
+        type: string
+        minLength: 1
+        description: >
+          Optional shell command that verifies apparatus integrity
+          independent of any single relation (e.g. a checksum or
+          reconciliation script). Example: "./scripts/verify_integrity.sh".
+
+      stages:
+        type: array
+        minItems: 1
+        description: >
+          Optional override of the default iteration -> stage mapping
+          (1=verify, 2=screen, 3=refine, 4=confirm). Example: ``[verify,
+          screen, confirm]`` to skip refine entirely for a campaign whose
+          factors are all ``choice``. An iteration index beyond the list
+          resolves to ``confirm`` (never a fresh screen, which would
+          re-spend the screening budget).
+
+          ``build`` is opt-in and NOT in the default order. Declare it first
+          --- ``[build, verify, screen, confirm]`` --- when the mechanism
+          under study does not exist in the target yet and the campaign must
+          author it (a new flag, policy, or algorithm) along with the native
+          tests its ``relations`` declare. It spends exactly one agent call
+          and makes no correctness judgement; ``verify`` remains the gate, so
+          the stage that writes the code is never the stage that certifies
+          it. Omit ``build`` when every factor maps to a knob the target
+          already exposes --- then the campaign makes ZERO model calls
+          (``plan``, also opt-in, is the only other model-facing stage).
+        items:
+          type: string
+          enum: [plan, build, verify, screen, refine, confirm]
+
+      workload:
+        type: object
+        additionalProperties: false
+        required: [seed_env]
+        description: >
+          How the campaign controls the target's workload randomness
+          (spec §3.7 oracle 3, §3.8). Declare this whenever the target is
+          stochastic — a queue, a cache, an autoscaler, a sampler, anything
+          whose run-to-run variance is comparable to the effect under study.
+
+          Two things follow from declaring it. Every measurement row gets a
+          deterministic seed exported into the run subprocess's environment
+          under ``seed_env``, recorded in that iteration's
+          ``design_matrix.json`` as ``workload_seeds`` — so a surprising row
+          can be re-measured exactly rather than argued about. And the
+          terminal ``confirm`` comparison uses COMMON RANDOM NUMBERS:
+          replicate *i* of every finalist runs the SAME seed, so the seed's
+          contribution cancels out of the finalist-to-finalist difference and
+          the residual-regret bound is computed on paired differences
+          (``bonferroni_one_sided_t_paired``) instead of Welch-combining two
+          independent variances. On a noisy target that is the difference
+          between certifying inside the run budget and not: an unpaired
+          comparison needs roughly an order of magnitude more runs for the
+          same bound.
+
+          The target must actually READ the variable. Nous exports it and
+          records it; it cannot make a benchmark honour it. A target that
+          ignores ``seed_env`` still gets a recorded seed and a paired bound
+          computed over differences whose shared term never cancelled. That
+          bound is still VALID — its variance is estimated from the observed
+          differences, so a cancellation that never occurred never narrows
+          them — but it buys nothing: it is typically LESS efficient than the
+          unpaired form (fewer degrees of freedom spent on a common term that
+          was not common), and the certificate on disk records
+          ``bonferroni_one_sided_t_paired`` for an experiment that paired
+          nothing. That is a provenance problem, not an unsound number. Wire
+          the variable into the workload generator's seed before declaring
+          this block, and verify it took effect: same seed twice should
+          reproduce the trace, different seeds should measurably change it
+          (see ``nous docs targets``).
+        properties:
+          seed_env:
+            type: string
+            minLength: 1
+            description: >
+              Environment-variable name the per-row seed is exported under,
+              e.g. ``NOUS_WORKLOAD_SEED``. Must be a legal shell/POSIX
+              environment identifier (``^[A-Z_][A-Z0-9_]*$``) — the validator
+              rejects anything else, because a name with a space or a lowercase
+              letter is silently unreadable from most shells and the failure
+              surfaces as "the seed had no effect" rather than as an error.
+          seeds:
+            type: array
+            minItems: 1
+            items:
+              type: integer
+            description: >
+              An explicit seed set, taken modulo the index (row index at the
+              spending stages, REPLICATE index at ``confirm``). Declare it to
+              reproduce a specific set of workload draws — the same traces a
+              paper reported, or a previous epoch's. Omit it and seeds are
+              derived deterministically from the iteration and the
+              pre-registered run-order seed, which is reproducible from the
+              artifacts but not chosen by the author.
+
+      build_checks:
+        type: object
+        additionalProperties: false
+        description: >
+          Tuning for the two oracles that check what the ``build`` stage
+          actually produced (spec §3.7, oracle 2). Both are on by default
+          and both HARD-FAIL at ``verify``; this block exists to move
+          their thresholds, not to switch them off casually.
+          ``allow_preexisting_tests``, ``baseline_replicates`` and
+          ``baseline_tolerance_pct`` are ignored entirely when ``build``
+          is not in ``stages``. ``mechanism_paths`` is the ONE
+          EXCEPTION: it scopes the drift oracle, which is armed by the
+          presence of ``mechanism.sha256`` rather than by the ``build``
+          stage, so it applies to every optimization campaign. Entries
+          are literal repo-relative paths; globs are rejected by the
+          validator (see that field's own description).
+        properties:
+          allow_unarmed_baseline:
+            type: string
+            minLength: 1
+            description: >
+              A WAIVER, written as the reason. Oracle 2(c) (the control is
+              unchanged across the build) is a hard gate: when it cannot run
+              -- the control could not be measured before the build, or no
+              runner exists to re-measure it -- ``verify`` aborts. Set this
+              only when the target truly cannot run the control before the
+              build; the reason is recorded in baseline_equivalence.json and
+              in report.json ``provenance.waivers``.
+          allow_nondiscriminating_tests:
+            type: string
+            minLength: 1
+            description: >
+              A WAIVER, written as the reason, for oracle 2(d): every declared
+              correctness test of a built factor must be shown to discriminate
+              the mechanism (fail before it, or against a mechanism-reverted
+              mutant, for a reason other than a missing symbol). Recorded in
+              authored_tests.json and report.json ``provenance.waivers``.
+          allow_out_of_scope_writes:
+            type: string
+            minLength: 1
+            description: >
+              A WAIVER, written as the reason, for the build write-scope gate
+              (writes outside ``mechanism_paths``, or to the benchmark harness
+              / a pre-existing test). Recorded in build_scope.json and
+              report.json ``provenance.waivers``.
+          allow_preexisting_tests:
+            type: boolean
+            description: >
+              Default false. When false, ``verify`` aborts if any
+              declared ``correctness`` relation's ``native_test`` ALREADY
+              PASSED before the build ran: a test green against a tree
+              without the mechanism is green for some other reason, and
+              it stays green if the build wires the mechanism to nothing.
+              Set true only when the relation genuinely covers
+              pre-existing behaviour — a backward-compatibility test
+              asserting an existing default did not change is the
+              legitimate case. It also skips oracle 2(d) for the tests that
+              passed before the build; report.json lists that under
+              provenance.waivers, so say why in a comment beside it.
+          baseline_replicates:
+            type: integer
+            minimum: 1
+            description: >
+              How many times the ``known_valid_baseline`` configuration
+              is measured before the build and again at ``verify``.
+              Default 3 — the smallest count whose mean is not one
+              outlier away from either verdict. Raise it on a noisy
+              target instead of widening the tolerance.
+          baseline_tolerance_pct:
+            type: number
+            exclusiveMinimum: 0
+            description: >
+              Allowed relative shift of the control's mean across the
+              build, as a percent: the campaign aborts when
+              ``|post_mean - pre_mean| / |pre_mean|`` exceeds it.
+              Defaults to ``3 x response.noise_estimate_pct`` when that
+              is declared, else 5.0. Prefer declaring
+              ``noise_estimate_pct`` — it is a fact about the target that
+              several other calculations use — and set this only when the
+              control's variance genuinely differs from the response's.
+          mechanism_paths:
+            type: array
+            minItems: 1
+            items:
+              type: string
+              minLength: 1
+            description: >
+              Which files ARE the mechanism, as repo-relative paths. Scopes
+              the drift oracle: every epoch iteration re-hashes the target's
+              tree and hard-aborts if it no longer matches
+              ``mechanism.sha256``, and this is what that hash covers.
+              Example: ``["src/batching.py", "tests/prop_batch.py"]``.
+              Matching is a plain path-component prefix, not a glob —
+              ``"src/batching.py"`` is that file, ``"src/"`` is everything
+              under that directory, and ``"src/batch"`` matches NEITHER
+              (a partial component never matches).
+
+              Glob-shaped entries are REJECTED by the validator rather
+              than expanded: ``"src/*"``, ``"*.py"``, ``"mech?.py"``,
+              ``"src/[ab].py"`` and the whole-tree shorthand ``"."`` all
+              hard-fail ``nous validate campaign``. Git's pathspec would
+              expand them for the tracked half of the hash while the
+              untracked half matched nothing — which is precisely where
+              a newly authored mechanism module lives — so an accepted
+              glob would leave half the oracle silently disarmed.
+              ``nous validate campaign --smoke`` additionally reports an
+              entry that resolves to nothing under the target tree
+              (skipped when ``build`` is declared, since that stage is
+              what authors the file).
+
+              DECLARE THIS. The default, when it is omitted, hashes the
+              ENTIRE working tree — every tracked edit plus every untracked
+              file git does not ignore. Nous runs the target's own
+              ``test_command`` and ``run_command`` with the repo as the
+              working directory, so anything they leave behind that is not
+              gitignored (a ``.pytest_cache/``, a ``run.log``, a coverage
+              file) changes that hash, and the next iteration aborts with
+              "mechanism drifted since compile" — a false positive that
+              reads exactly like a real one. Naming the mechanism's files
+              here removes the whole class of failure.
+
+              The whole-tree default is kept for backward compatibility
+              (an existing campaign's recorded hash stays valid), not
+              because it is the better setting.
+
+              Unlike the rest of this block, this field is NOT limited to
+              campaigns that declare ``build``: the drift oracle is armed by
+              the presence of ``mechanism.sha256``, which a campaign may also
+              write by hand.

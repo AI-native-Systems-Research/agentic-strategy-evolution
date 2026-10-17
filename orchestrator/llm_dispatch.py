@@ -191,6 +191,42 @@ def _format_results_summary(work_dir: Path) -> str:
     if not iter_dirs:
         return "No iteration directories found."
     for iter_dir in iter_dirs:
+        # `kind: optimization` stores measurements as runs.jsonl (one JSON
+        # object per configuration) rather than as a results/ directory, so
+        # walking only results/ reported "absent" for every iteration of a
+        # campaign that had in fact measured everything it planned. Observed
+        # for real: a completed campaign's report announced a
+        # "storage/persistence gap in the apparatus" and marked every effect
+        # low-confidence, while 19 rows of per-configuration telemetry sat in
+        # runs.jsonl beside it. That is precisely the search-orientation
+        # failure (#214) this function exists to prevent, reintroduced for a
+        # layout it did not know about — so enumerate both layouts.
+        opt_runs = iter_dir / "runs.jsonl"
+        if opt_runs.is_file():
+            n_total = n_complete = 0
+            try:
+                with opt_runs.open() as fh:
+                    for line in fh:
+                        if not line.strip():
+                            continue
+                        n_total += 1
+                        try:
+                            if json.loads(line).get("status") == "complete":
+                                n_complete += 1
+                        except json.JSONDecodeError:
+                            pass
+            except OSError:
+                n_total = n_complete = -1
+            lines.append(
+                f"- {iter_dir.name}: {opt_runs.name} with {n_total} measured "
+                f"configuration(s), {n_complete} complete, at {opt_runs}"
+            )
+            for extra in ("design_matrix.json", "effects.json",
+                          "confirmation.json", "relations.json"):
+                if (iter_dir / extra).is_file():
+                    lines.append(f"  - {extra}")
+            continue
+
         results_dir = iter_dir / "results"
         if not results_dir.is_dir():
             lines.append(f"- {iter_dir.name}: results/ directory absent")

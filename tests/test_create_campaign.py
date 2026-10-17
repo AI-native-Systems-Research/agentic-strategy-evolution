@@ -12,7 +12,7 @@ silently warned-and-ignored). Three lines of defense:
   3. The runtime warning in llm_dispatch when the field is set is
      loud and points at the create-campaign skill.
 
-A campaign-authoring skill (``plugin/nous/skills/nous-create-campaign.md``)
+A campaign-authoring skill (``plugin/nous/skills/nous-create-campaign/SKILL.md``)
 walks the LLM through the protocol when a user asks Claude Code to
 help create a campaign.
 
@@ -210,11 +210,11 @@ class TestRuntimeWarningIsDirective:
 
 class TestSkillFileExists:
     def test_skill_file_present(self) -> None:
-        skill = SKILLS_DIR / "nous-create-campaign.md"
+        skill = SKILLS_DIR / "nous-create-campaign" / "SKILL.md"
         assert skill.exists(), f"missing skill file at {skill}"
 
     def test_skill_has_frontmatter(self) -> None:
-        skill = SKILLS_DIR / "nous-create-campaign.md"
+        skill = SKILLS_DIR / "nous-create-campaign" / "SKILL.md"
         text = skill.read_text()
         # All plugin skills use frontmatter with name + description.
         assert text.startswith("---"), "skill must start with frontmatter"
@@ -222,7 +222,7 @@ class TestSkillFileExists:
         assert "\ndescription:" in text[:500]
 
     def test_skill_describes_reachable_fields(self) -> None:
-        skill = SKILLS_DIR / "nous-create-campaign.md"
+        skill = SKILLS_DIR / "nous-create-campaign" / "SKILL.md"
         text = skill.read_text()
         for field in REACHABLE_FIELDS:
             assert field in text, (
@@ -230,7 +230,7 @@ class TestSkillFileExists:
             )
 
     def test_skill_warns_about_domain_adapter_layer(self) -> None:
-        skill = SKILLS_DIR / "nous-create-campaign.md"
+        skill = SKILLS_DIR / "nous-create-campaign" / "SKILL.md"
         text = skill.read_text().lower()
         assert "domain_adapter_layer" in text
         assert "not yet implemented" in text or "not implemented" in text
@@ -238,7 +238,7 @@ class TestSkillFileExists:
     def test_skill_includes_checklist(self) -> None:
         """The skill must walk the LLM through the four-item checklist
         from #89: schema gotchas, statistical guardrails, paths, baselines."""
-        skill = SKILLS_DIR / "nous-create-campaign.md"
+        skill = SKILLS_DIR / "nous-create-campaign" / "SKILL.md"
         text = skill.read_text().lower()
         assert "checklist" in text or "before you" in text
         assert "baseline" in text

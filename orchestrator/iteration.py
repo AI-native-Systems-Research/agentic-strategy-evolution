@@ -764,7 +764,12 @@ def _capture_runtime_meta(repo_path: str | None) -> dict:
                 meta["target_repo"] = remote.split("github.com/")[-1].removesuffix(".git")
             else:
                 meta["target_repo"] = remote or None
-        except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        except subprocess.CalledProcessError:
+            # A repository with no `origin` remote (a local experiment, a fresh
+            # `git init`) is a normal state, not a fault: record it at INFO so
+            # a WARNING still means something went wrong.
+            logger.info("No origin remote at %s; target_repo not recorded", repo_path)
+        except (FileNotFoundError, OSError):
             logger.warning("Could not capture target_repo from %s", repo_path)
 
     # Nous version: prefer package metadata, fall back to git SHA
@@ -833,6 +838,14 @@ def setup_work_dir(
     from orchestrator.work_dir_resolver import ENV_VAR, resolve_work_dir
 
     work_dir = resolve_work_dir(run_id, repo_path)
+    from orchestrator.work_dir_resolver import record_work_dir
+
+    record_work_dir(run_id, repo_path, work_dir)
+    if work_dir.parent.name == ".nous":
+        # The legacy layout puts the work_dir inside the target repo.
+        from orchestrator.work_dir_resolver import ensure_self_ignored
+
+        ensure_self_ignored(work_dir.parent)
 
     # #239 D1: collision detection. If state.json already exists with a
     # different recorded repo_path, the user has accidentally collided
@@ -1146,6 +1159,21 @@ def run_iteration(
             f"Unknown agent backend: {agent!r}. Valid values: 'sdk', 'inline'."
         )
 
+    # ``kind: optimization`` delegates the whole iteration to the factorial
+    # stage runner. Everything below this branch is the reflective path and
+    # is reached only when ``kind`` is absent or ``reflective`` — that is the
+    # architectural guarantee the optimization kind rests on, and
+    # tests/test_optimize_no_regression.py exists to prove it.
+    from orchestrator.validate import campaign_kind
+    if campaign_kind(campaign) == "optimization":
+        from orchestrator.optimize.stage_runner import run_stage
+        return run_stage(
+            campaign, work_dir,
+            iteration=iteration,
+            model=model, timeout=timeout, agent=agent,
+            auto_approve=auto_approve, max_cli_retries=max_cli_retries,
+        )
+
     # Validate the campaign once, up front. The staticmethod on LLMDispatcher
     # is also called from its constructor, but inline-agent mode never builds
     # an LLMDispatcher — without this call, a non-bool `live_target` value
@@ -1350,6 +1378,14 @@ def run_iteration(
         # Issue #159: render complexity-tier panel from the bundle so tier
         # escalations are surfaced for human review (deterministic Python,
         # no LLM cost).
+        #
+        # Reflective kind ONLY. The optimization kind returns early at the
+        # top of run_iteration, so it never reaches here — and it must not:
+        # the graded-complexity tier ladder is scoped to reflective
+        # campaigns (spec §7.2), because a pre-registered design matrix
+        # strengthens the anti-p-hacking property the ladder protects
+        # rather than needing it. Do not add a second call for that path;
+        # validate.py rule 9 rejects tier fields under kind: optimization.
         try:
             from orchestrator.complexity_tier import format_tier_summary
             tier_panel = format_tier_summary(
