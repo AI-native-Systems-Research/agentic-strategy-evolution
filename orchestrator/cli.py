@@ -2986,8 +2986,9 @@ def build_parser():
     )
     p_run.add_argument(
         "--timeout", type=int, default=1800,
-        help="Per-phase wall-clock timeout in seconds (default 1800 = "
-             "30 minutes).",
+        help="Seconds the inline agent has to answer one prompt (default "
+             "1800). SDK turns are bounded by campaign "
+             "sdk_timeouts.phase_wall_clock_seconds instead (#303).",
     )
     p_run.add_argument(
         "--max-cli-retries", type=int, default=10,
