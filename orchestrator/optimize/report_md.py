@@ -119,6 +119,8 @@ WITHHELD_MEANING = {
                                                  "front point on every objective "
                                                  "(the objective models cannot "
                                                  "rule it out)",
+    "campaign_delta_exceeded": "the error spent across epochs exceeds the "
+                               "campaign-wide budget first declared",
     "campaign_delta_exhausted": "the declared campaign-wide error budget "
                                 "(policy.campaign_delta) has no share left for "
                                 "this epoch, so it certifies nothing",

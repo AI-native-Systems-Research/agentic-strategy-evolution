@@ -370,6 +370,37 @@ def record_continue_gate_stop(work_dir: Path, *, iteration: int) -> None:
         fh.write(json.dumps(row, sort_keys=True) + "\n")
 
 
+def _declared_campaign_totals(work_dir: Path, current: int, cd: dict | None) -> dict:
+    """``{epoch: total}`` for every epoch that declared ``campaign_delta``,
+    read from the campaigns each epoch registered (declarations, not data)."""
+    out: dict[int, float] = {}
+    for e in range(1, current):
+        p = Path(work_dir) / f"campaign.epoch-{e}.yaml"
+        if not p.exists():
+            continue
+        try:
+            import yaml
+
+            c = yaml.safe_load(p.read_text()) or {}
+            spec = (((c.get("optimization") or {}).get("policy") or {})
+                    .get("campaign_delta"))
+            if spec and spec.get("total") is not None:
+                out[e] = float(spec["total"])
+        except Exception as exc:  # noqa: BLE001 -- recorded, not hidden
+            logger.warning("could not read epoch %d's campaign_delta from %s: %s",
+                           e, p.name, exc)
+    if cd and cd.get("total") is not None:
+        out[current] = float(cd["total"])
+    return out
+
+
+def campaign_delta_exceeded(work_dir: Path, pol: dict) -> bool:
+    """True when a charged campaign-wide budget is declared and the cumulative
+    spend exceeds it: the epoch then certifies nothing (P2 review M2)."""
+    eb = error_budget(work_dir, pol)
+    return eb.get("mode") == "charged" and not eb.get("within_total", True)
+
+
 def error_budget(work_dir: Path, pol: dict) -> dict:
     """The cumulative (union-bound) error budget over every epoch so far."""
     current = int(pol.get("epoch", 1))
@@ -395,8 +426,13 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
                                        else f"campaign.epoch-{e}.yaml recompiled by "
                                             f"the current Nous")})
     cd = (pol.get("objective") or {}).get("campaign_delta")
+    declared = _declared_campaign_totals(work_dir, current, cd)
     charged = {}
-    if cd:
+    if declared:
+        # P2 review M2: the mode, once declared in ANY epoch, stays charged,
+        # and binds at the SMALLEST total ever declared -- a later epoch
+        # cannot raise it or drop the block to escape it.
+        binding_total = min(declared.values())
         # #321 item 7: the CHARGED mode. Each epoch's share is spent when the
         # epoch is compiled (pre-registered), whatever happens after: an epoch
         # that certified, ended on an exception, or was STOPPED at a continue
@@ -412,11 +448,12 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
                 if row.get("event") == "stopped_at_continue_gate":
                     stops.append(row)
         charged = {"mode": "charged", "binding": True,
-                   "campaign_total": float(cd["total"]),
-                   "schedule": cd.get("schedule", "geometric"),
-                   "within_total": total <= float(cd["total"]) + 1e-12,
+                   "campaign_total": binding_total,
+                   "declared_totals": {str(k): v for k, v in sorted(declared.items())},
+                   "schedule": (cd or {}).get("schedule", "geometric"),
+                   "within_total": total <= binding_total + 1e-12,
                    "stops_at_continue_gate": stops,
-                   "exhausted": bool(cd.get("exhausted"))}
+                   "exhausted": bool((cd or {}).get("exhausted"))}
     return {
         "epochs": epochs,
         "this_epoch": epochs[-1]["spent"] if epochs else None,

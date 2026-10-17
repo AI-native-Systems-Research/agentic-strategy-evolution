@@ -2870,8 +2870,18 @@ What a certificate does NOT cover (spec
    with min(Bonferroni, Scheffé), against 0.010 / 0.037 / 0.25 with
    Bonferroni alone. Lack of fit rejects most of those fits (pass rate 256 /
    172 / 39 of 300). Counting only fits where it passes (the only ones that
-   can certify), the misses are 0.007 / 0.023 / 0.040 of all fits, within δ.
-   A heteroscedasticity check (#321, Brown-Forsythe) is not implemented.
+   can certify), the joint rate Pr(lack of fit passes AND the bound misses)
+   is 0.007 / 0.023 / 0.040 -- but that joint rate is not what an author who
+   has SEEN lack of fit pass faces. Conditional on passing, the miss rate is
+   0.14 at h = 8 with 3 centre points, and 0.24 at h = 10 with 4 (independent
+   review, 300 to 600 fits). A miss is not yet a false certificate, which also
+   needs the bound to fall below ε while the true gap is above it, and none
+   was observed; but under strong heteroscedasticity the model half's δ is
+   not delivered. A heteroscedasticity check on pure error (Brown-Forsythe) is
+   the remedy; see the noise-diagnostics section for whether it is enabled.
+   The post-selection validation gain interval and the inertness TOST verdicts
+   are each separate claims at `delta_terminal`, outside the certificate's
+   union bound.
 4. **The simultaneous constants are conservative.** The terminal family is
    Bonferroni over the finalists. The model family takes the smaller of
    Bonferroni and Scheffé, and Scheffé covers every contrast in the model
