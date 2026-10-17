@@ -82,8 +82,12 @@ def boundary_path(work_dir: Path, epoch: int) -> Path:
     """The planned epoch-boundary record. ``stage_runner._epoch_index`` counts
     ``epoch_end*.json``, so this file is what makes the next ``nous resume``
     recompile into epoch ``epoch + 1``. Its name deliberately does not match
-    ``epoch_end-<e>.json``, which means a semantic exception."""
-    return Path(work_dir) / f"epoch_end.planned-{epoch}.json"
+    ``epoch_end-<e>.json``, which means a semantic exception. The reader on
+    the report path is ``provenance.planner_provenance``, which never imports
+    this module."""
+    from orchestrator.optimize.provenance import planned_boundary_path
+
+    return planned_boundary_path(work_dir, epoch)
 
 
 # ── reading the finished epoch ───────────────────────────────────────────────
@@ -731,7 +735,8 @@ def _value(ep: dict, cands, frame) -> dict:
     al = allocate.score([{"levels": lv, "source": "region"} for lv, _c in cands],
                         fits=ep["fits"], objectives=objs, factors=ep["factors"],
                         fitted_ids=ep["fitted_ids"], held_fixed=ep["held_fixed"],
-                        measured=ep["measured"], model_adequate=True, replicates=1,
+                        measured=ep["measured"], model_adequate=ep["model_adequate"],
+                        replicates=1,
                         max_coded=max(1.0, max(max((abs(x) for x in c.values()), default=0)
                                                for _l, c in cands)),
                         frame=frame)
@@ -802,6 +807,13 @@ def _next_epoch_budget(campaign: dict, ep: dict, bstate: dict) -> dict:
         out.update({"binding_total": binding, "remaining_before": remaining,
                     "share_exhausted": bool((cd or {}).get("exhausted")),
                     "fits": (d <= remaining + 1e-12) and not (cd or {}).get("exhausted")})
+        if bstate.get("cumulative_is_lower_bound"):
+            # An earlier epoch's deltas could not be recovered, so the spend is
+            # a lower bound and `remaining` an upper one: never plan into it.
+            out["fits"] = False
+            out["note"] = ("the cumulative spend is a lower bound (an earlier epoch's "
+                           "deltas are unrecovered), so the remaining charged budget "
+                           "cannot be shown to cover the next epoch")
         if not cd:
             out["note"] = ("the next campaign does not declare campaign_delta, but the "
                            "charged mode stays binding once declared (P2): the next epoch "
@@ -997,6 +1009,11 @@ def _assumptions(ep: dict) -> list[str]:
         "a widened axis is scored past its fitted edge out to |coded| <= "
         f"{WIDEN_MAX_CODED:g} (extrapolated: true on that option)",
         "objectives independent (multi-objective EHVI)",
+        "a 'dead' knob (pin_dead) is one the screen found no main effect for at alpha=0.05 "
+        "on every objective, or one the certificate's TOST showed inert: non-significance "
+        "is effect sparsity (Box & Meyer 1986), not proof of inertness; the next epoch's "
+        "certificate is scoped to the pinned value",
+        "a widened edge is assumed not to be a hard limit of the system",
         "cost is the next epoch's worst-case run count from the design preview "
         "(every registered branch taken, every confirm round)",
         "the planner chooses only WHERE the next epoch looks; the next epoch is compiled, "
@@ -1126,27 +1143,6 @@ def accept(work_dir: Path, campaign_path: Path) -> dict:
     cp.write_text(text)
     boundary_path(wd, e).write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
     return rec
-
-
-def planner_provenance(work_dir: Path, pol: dict) -> dict | None:
-    """``report.json`` ``provenance.planner`` for an epoch that a plan-next
-    decision started: what was chosen and why (an override with its reason),
-    and whether the compiled campaign is the accepted one."""
-    e = int(pol.get("epoch", 1))
-    p = boundary_path(Path(work_dir), e - 1)
-    if e < 2 or not p.exists():
-        return None
-    try:
-        rec = json.loads(p.read_text())
-    except ValueError as exc:
-        return {"record": p.name, "unreadable": str(exc)}
-    compiled = (pol.get("compiled_from") or {}).get("campaign_hash")
-    return {"record": p.name, "planned_in_epoch": e - 1, "chosen": rec.get("chosen"),
-            "scored_choice": rec.get("scored_choice"),
-            "decision_basis": rec.get("decision_basis"), "override": rec.get("override"),
-            "decision": rec.get("decision"), "decision_sha256": rec.get("decision_sha256"),
-            "compiled_matches_accepted": (compiled == rec.get("proposed_campaign_hash")
-                                          if rec.get("proposed_campaign_hash") else None)}
 
 
 def summary_lines(d: dict) -> list[str]:

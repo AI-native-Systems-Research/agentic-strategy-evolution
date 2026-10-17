@@ -224,6 +224,12 @@ def test_accept_writes_the_proposal_and_the_next_epoch_records_the_override(tmp_
     assert pl["compiled_matches_accepted"] is True
     assert "epoch_end.planned-1.json" in rep["provenance"]["inputs"]
     assert len(rep["error_budget"]["epochs"]) == 2
+    # The analysis of both epochs re-derives from the rows: the planned
+    # boundary is an input, carried, never re-derived.
+    from orchestrator.optimize.reanalyze import reanalyze
+
+    ra = reanalyze(wd)
+    assert ra.identical, ra.differences[:5]
 
 
 def test_an_override_needs_a_reason_and_a_known_option(converged):
@@ -285,3 +291,22 @@ def test_a_dead_knob_is_pinned_into_run_command(tmp_path):
                       .read_text())["held_fixed"]["D"]
     assert c["optimization"]["run_command"] == f"bench --x --d={held}"
     assert pin["region"]["pinned"] == {"D": held}
+
+
+def test_an_unrecoverable_earlier_epoch_makes_a_charged_plan_infeasible():
+    """A cumulative spend that is only a lower bound can never certify that
+    the remaining charged budget covers the next epoch."""
+    ep = {"epoch": 2}
+    import copy as _c
+
+    from orchestrator.optimize.harness import synthetic_campaign
+
+    camp = synthetic_campaign(SURFACES["bowl"](), policy={"campaign_delta": {"total": 0.5}})
+    fits = planner._next_epoch_budget(
+        _c.deepcopy(camp), ep, {"mode": "charged", "campaign_total": 0.5, "cumulative": 0.1,
+                                "cumulative_is_lower_bound": False})
+    assert fits["fits"] is True
+    lb = planner._next_epoch_budget(
+        _c.deepcopy(camp), ep, {"mode": "charged", "campaign_total": 0.5, "cumulative": 0.1,
+                                "cumulative_is_lower_bound": True})
+    assert lb["fits"] is False and "lower bound" in lb["note"]

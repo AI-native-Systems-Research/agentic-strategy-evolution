@@ -336,15 +336,39 @@ def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None 
     return out
 
 
+def planned_boundary_path(work_dir: Path, epoch: int) -> Path:
+    """``epoch_end.planned-<e>.json``: an accepted ``nous plan-next`` decision
+    ending epoch ``e`` (WP-D D2). Counted by ``stage_runner._epoch_index`` like
+    every ``epoch_end*.json``; NOT ``epoch_end-<e>.json`` (a semantic exception)."""
+    return Path(work_dir) / f"epoch_end.planned-{epoch}.json"
+
+
 def _planner_provenance(work_dir: Path) -> dict | None:
+    """``report.json`` ``provenance.planner`` for an epoch that an accepted
+    plan-next decision started: the choice, the scored choice, the basis, any
+    override with its reason, and whether the compiled campaign is the accepted
+    proposal. A read of a JSON record only: the report path never imports the
+    planner (tests/test_optimize_bo_proposer.py enforces it)."""
     from orchestrator.optimize.policy import read_policy
 
     pol = read_policy(Path(work_dir))
     if pol is None or int(pol.get("epoch", 1)) < 2:
         return None
-    from orchestrator.optimize.planner import planner_provenance
-
-    return planner_provenance(Path(work_dir), pol)
+    e = int(pol["epoch"])
+    p = planned_boundary_path(work_dir, e - 1)
+    if not p.exists():
+        return None
+    try:
+        rec = json.loads(p.read_text())
+    except ValueError as exc:
+        return {"record": p.name, "chosen": None, "unreadable": str(exc)}
+    compiled = (pol.get("compiled_from") or {}).get("campaign_hash")
+    return {"record": p.name, "planned_in_epoch": e - 1, "chosen": rec.get("chosen"),
+            "scored_choice": rec.get("scored_choice"),
+            "decision_basis": rec.get("decision_basis"), "override": rec.get("override"),
+            "decision": rec.get("decision"), "decision_sha256": rec.get("decision_sha256"),
+            "compiled_matches_accepted": (compiled == rec.get("proposed_campaign_hash")
+                                          if rec.get("proposed_campaign_hash") else None)}
 
 
 def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[float, float, float] | None:
