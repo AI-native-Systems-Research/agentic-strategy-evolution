@@ -688,7 +688,11 @@ def test_a_balanced_loss_does_not_withhold_certification(tmp_path):
         },
         max_iterations=12,
     )
-    assert res.basis == "certified", res.report["recommendation"]
+    # WP-A A1 now withholds this campaign for a model-side reason (the fitted
+    # argmax was measured inadmissible: model_recommendation_infeasible), so
+    # what this test pins is that the BIAS reason never fires.
+    assert "fit_exclusions_level_correlated" not in res.report["certification_withheld"]
+    assert res.report["certification_withheld"] == ["model_recommendation_infeasible"]
     for it in _iter_dirs(res.work_dir):
         eb = (_read(it / "effects.json") or {}).get("exclusion_balance")
         if eb is None:
@@ -1211,13 +1215,17 @@ def test_a_level_correlated_fit_alone_withholds_global_certification(
         # control arm. The treatment arm injects the verdict a level-correlated
         # partial screen would have written, leaving every measurement identical.
         assert "exclusion_balance" not in rec, "control arm is not clean"
+        # BOTH arms: a zero model bound, so WP-A A1's delta_s half is met and
+        # the terminal half plus the bias bit are the only things that differ.
+        rec["residual_regret_model"]["value"] = 0.0
+        rec.pop("residual_regret_model_profile", None)
         if inject_bias:
             rec["exclusion_balance"] = {
                 "n_rows": 12, "n_excluded": 1, "n_bias_excluded": 1,
                 "level_correlated": True, "flagged_factors": ["C"],
                 "factors": [], "cells": [],
             }
-            rec_path.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
+        rec_path.write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
 
         eng = Engine(wd)
         if eng.phase != "DONE":

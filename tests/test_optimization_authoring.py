@@ -238,8 +238,10 @@ def test_liveness_prints_preview_with_the_screen_run_count(tmp_path, capsys, mon
     assert re.search(r"screen\s+8\s+— 4 corners \(the full factorial, already the "
                      r"smallest design of this resolution\) \+ 4 centre point\(s\) "
                      r"in 2 configuration", out), out
-    # confirm: 3 finalists x 3 replicates, 1 round.
-    assert re.search(r"confirm\s+9\s+— 3 finalist", out), out
+    # confirm: (3 finalists + the known_valid_baseline reference seat, WP-A
+    # A3) x 3 replicates, 1 round. The preview states the seat's cost.
+    assert re.search(r"confirm\s+12\s+— 3 finalist\(s\) \+ the known_valid_baseline "
+                     r"reference seat", out), out
     assert "refine" not in out.split("DESIGN PREVIEW", 1)[1].split("total")[0]
     assert "wall clock:" in out
     assert "screen MDE: t(0.975, df=2)=4.303" in out

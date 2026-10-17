@@ -879,6 +879,10 @@ def test_confirm_writes_a_confirmation_record_and_no_effects(tmp_path, work_dir)
 def test_confirm_findings_validate_and_report_reproduction(tmp_path, work_dir):
     """A single-finalist confirm cannot CERTIFY, and must not claim to.
 
+    (Since WP-A A1 this campaign is withheld for an earlier reason: its
+    deterministic screen has no pure error, so no model bound exists. The
+    trivial-bound assertion below is what this test pins.)
+
     At ``shortlist_size: 1`` there is no challenger, so the terminal bound is
     ``0.0`` by the trivial branch and ``0.0 <= epsilon`` holds — which certifies
     on the strength of having nothing to compare against. That is honest as far
@@ -911,11 +915,15 @@ def test_confirm_findings_validate_and_report_reproduction(tmp_path, work_dir):
     schema = json.loads(Path("orchestrator/schemas/findings.schema.json").read_text())
     jsonschema.validate(findings, schema)
     assert findings["experiment_valid"] is True
-    assert findings["arms"][0]["status"] == "CONFIRMED"
-    assert "fresh runs" in findings["arms"][0]["observed"]
     conf = json.loads(
         (Path(wd) / "runs" / "iter-4" / "confirmation.json").read_text(),
     )
+    # WP-A A1: this deterministic runner gives the screen zero pure error, so
+    # there is NO model bound, and the delta_s half of the certificate is
+    # unknown -- withheld and named, never certified on the terminal half.
+    assert conf["certification_withheld"] == ["model_bound_not_computable"]
+    assert findings["arms"][0]["status"] == "PARTIALLY_CONFIRMED"
+    assert "fresh runs" in findings["arms"][0]["observed"]
     assert conf["terminal_bound"]["method"] == "trivial", (
         "a one-member shortlist has no challenger; the bound must say so rather "
         "than looking like a measured comparison"

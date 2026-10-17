@@ -413,7 +413,11 @@ def test_an_infeasible_finalist_still_withholds_certification(tmp_path, monkeypa
                                       campaign_overrides=ov)
 
     caveat = run(True, "caveat")
-    assert caveat.report["certified"] and surface.invalid(caveat.recommendation)
+    # WP-A A1 now ALSO withholds this certificate (the fitted argmax is never
+    # compared admissibly here), so the caveat no longer reproduces the false
+    # certificate; the veto stays as the independent, model-free reason.
+    assert not (caveat.report["certified"] and surface.invalid(caveat.recommendation))
+    assert any(r.startswith("model_") for r in caveat.report["certification_withheld"])
     today = run(False, "today")
     assert not (today.report["certified"] and surface.invalid(today.recommendation))
 

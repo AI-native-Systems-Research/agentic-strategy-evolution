@@ -148,8 +148,15 @@ def _strip(o):
 @pytest.mark.parametrize("seed", SEEDS)
 def test_nothing_vacated_means_nothing_changes(seed, tmp_path, monkeypatch):
     """Metamorphic: on ``infeasible_corner_interior`` no finalist is vacated,
-    so every artifact is identical with and without the branch except the
-    compiled policy (one more registered rule) and the hash that cites it."""
+    so every MEASUREMENT, shortlist and transition is identical with and
+    without the branch. What differs is the compiled policy (one more
+    registered rule), the hash that cites it, and -- since WP-A A2 -- the
+    per-look terminal level: registering the refill branch pre-registers one
+    more possible confirm look, so each look is judged at delta_terminal /
+    (rounds + 1) whether or not the refill fires (a per-look level must be
+    fixed before the data decide how many looks there are). Every value that
+    level feeds (bounds, the certificate, the routing observations) is
+    therefore compared separately below."""
     runs = {}
     for refill in (False, True):
         res = _run("infeasible_corner_interior", seed, CORNER, tmp_path,
@@ -165,7 +172,25 @@ def test_nothing_vacated_means_nothing_changes(seed, tmp_path, monkeypatch):
                 out[rel] = [_strip(json.loads(ln)) for ln in p.read_text().splitlines()
                             if ln.strip()]
         runs[refill] = out
-    assert runs[False] == runs[True]
+    level_fed = ("alpha_spending", "delta_terminal", "terminal_bound", "bounds",
+                 "residual_regret_terminal", "global_bound", "certified",
+                 "certification_withheld", "observations", "rule", "to",
+                 "recommendation", "basis", "error_budget", "provenance",
+                 "statement", "metadata", "discrepancy_analysis", "arms",
+                 "winner_estimate", "gain_over_baseline")
+
+    def _drop(o):
+        if isinstance(o, dict):
+            return {k: _drop(v) for k, v in o.items() if k not in level_fed}
+        if isinstance(o, list):
+            return [_drop(v) for v in o]
+        return o
+    assert _drop(runs[False]) == _drop(runs[True])
+    for rel, conf in runs[False].items():
+        if rel.endswith("confirmation.json"):
+            on = runs[True][rel]
+            assert conf["alpha_spending"]["looks"] + 1 == on["alpha_spending"]["looks"]
+            assert on["delta_terminal"] < conf["delta_terminal"]
 
 
 def test_only_a_constrained_policy_registers_the_branch_and_it_comes_first():

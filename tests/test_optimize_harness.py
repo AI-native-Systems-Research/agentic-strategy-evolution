@@ -302,7 +302,13 @@ def test_sla_surface_never_recommends_an_invalid_point(tmp_path):
     )
     assert not s.invalid(res.recommendation), res.recommendation
     assert _gap_pct(res) <= 2.0, (res.recommendation, res.true_optimum)
-    assert res.basis == "certified", res.report["recommendation"]
+    # WP-A A1 (spec 2026-10-17-certification-soundness.md): the four rounds
+    # still REACH B=7, but it is no longer certified. The model bound is
+    # taken against the fitted argmax, and here that argmax (A=16, B=14) was
+    # measured INADMISSIBLE, so nothing links the model bound to the winner
+    # and the delta_s half of the certificate is unearned. Named, not silent.
+    assert res.basis == "terminal_best", res.report["recommendation"]
+    assert "model_recommendation_infeasible" in res.report["certification_withheld"]
 
     # One round is not enough on this surface, and the report must say so rather
     # than certifying the lone survivor of its own exclusions.

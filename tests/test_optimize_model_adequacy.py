@@ -62,11 +62,18 @@ def test_non_quadratic_surfaces_are_never_falsely_certified(name, tmp_path):
     assert caught == len(SEEDS)
 
 
-@pytest.mark.parametrize("name", ["bowl", "saddle", "geometric_knob_log"])
+@pytest.mark.parametrize("name", ["bowl", "geometric_knob_log"])
 def test_smooth_surfaces_keep_their_power(name, tmp_path):
     """The validation check is not a certificate tax on surfaces the model
     represents: before WP-B these certified 6/8 at seeds 1-8, and they still
-    do, with every recommendation within epsilon of the truth."""
+    do, with every recommendation within epsilon of the truth.
+
+    ``saddle`` left this list with WP-A A1 (spec
+    2026-10-17-certification-soundness.md): its two near-equal ridges leave a
+    model bound of ~0.4-0.7 against an epsilon of 0.25 (pure-error df 3,
+    Bonferroni over 80 challengers), so the delta_s half of the certificate
+    is genuinely unearned there; ``test_saddle_withholds_on_the_model_bound``
+    pins that."""
     certified = 0
     for seed in SEEDS:
         r = run_synthetic_campaign(SURFACES[name](), seed=seed,
@@ -74,6 +81,19 @@ def test_smooth_surfaces_keep_their_power(name, tmp_path):
         certified += bool(r.report.get("certified"))
         assert not _false_cert(r)
     assert certified >= 6
+
+
+def test_saddle_withholds_on_the_model_bound(tmp_path):
+    """WP-A A1: on saddle the terminal bound alone certified 6/8, while the
+    model bound over the unshortlisted candidates exceeded epsilon on every
+    one of them. Now withheld, named, and never wrong."""
+    for seed in SEEDS:
+        r = run_synthetic_campaign(SURFACES["saddle"](), seed=seed,
+                                   parent_dir=tmp_path / str(seed))
+        assert not _false_cert(r)
+        w = r.report.get("certification_withheld") or []
+        assert not r.report.get("certified")
+        assert "model_bound_above_epsilon" in w or "model_inadequate" in w, w
 
 
 def test_validation_rows_are_registered_held_out_and_reconciled(tmp_path):

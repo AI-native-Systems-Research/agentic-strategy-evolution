@@ -246,6 +246,7 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_candidate_space",
         "check_recommendation_avoids_lost_levels",
         "check_adequacy_determination",
+        "check_certificate_global_bound",
     }
     registered = {i.checker.__name__ for i in inv.checkable()}
     assert registered <= exercised, (
@@ -1705,3 +1706,17 @@ def test_deleting_the_policy_pair_recompiles_and_shows_only_in_the_hash_trail(tm
     pol = _load_or_compile_policy(synthetic_campaign(SURFACES["bowl"]()), wd)
     from orchestrator.optimize.policy import policy_hash
     assert policy_hash(pol) == before == rows[0]["policy_hash"]
+
+
+def test_inv_sem20_certificate_global_bound_has_teeth():
+    """INV-SEM20: teeth (the oracle half is in test_optimize_certification_soundness)."""
+    good = {"certified": True, "epsilon": 0.4, "delta_terminal": 0.025,
+            "alpha_spending": {"delta_terminal_declared": 0.05, "looks": 2,
+                               "per_look": 0.025, "rule": ""},
+            "global_bound": {"value": 0.3, "residual_regret_model_outside": 0.2,
+                             "residual_regret_terminal": 0.1, "x_hat_key": "f0"}}
+    chk = inv.check_certificate_global_bound
+    assert chk(good) == []
+    assert chk({**good, "global_bound": {**good["global_bound"], "value": 0.45,
+                                         "residual_regret_model_outside": 0.35}})
+    assert chk({**good, "global_bound": {**good["global_bound"], "value": 0.1}})

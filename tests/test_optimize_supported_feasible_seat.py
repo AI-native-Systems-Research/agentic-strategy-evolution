@@ -375,5 +375,7 @@ def test_round_r_top_up_seats_the_next_supported_candidate_not_a_retired_one(tmp
     fins = payload["finalists"]
     lvs = [x["levels"] for x in fins]
     assert _SUPPORTED not in lvs
-    assert lvs[:2] == [_LEADER, second], lvs
-    assert "supported-feasible" in fins[1]["why"]
+    # WP-A A1: the fitted argmax stays seated every round (it links the model
+    # bound to the winner), then the next supported candidate.
+    assert lvs[:3] == [_LEADER, {"A": 16, "B": 16, "C": 64}, second], lvs
+    assert "supported-feasible" in fins[2]["why"]
