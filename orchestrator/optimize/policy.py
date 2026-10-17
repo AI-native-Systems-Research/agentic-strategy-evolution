@@ -760,6 +760,15 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         "states": states,
         "transitions": transitions,
     }
+    # WP-D D3 (#320): an optional BO proposer's configuration is compiled
+    # into the policy and hashed with it, so its seed and sampler are fixed
+    # before any data. Present only when declared, so every other policy is
+    # byte-identical. It proposes candidates only; nothing certifies from it.
+    _bo = (opt.get("planner") or {}).get("bo")
+    if _bo is not None:
+        policy["planner"] = {"bo": {"sampler": str(_bo.get("sampler", "tpe")),
+                                    "n_startup": int(_bo.get("n_startup", 10)),
+                                    "seed": int(_bo.get("seed", 0))}}
     _sanity = {t["from"] for t in transitions if "default" in t}
     assert {s for s, v in states.items() if not v.get("terminal")} <= _sanity
     from orchestrator.optimize.invariants import (

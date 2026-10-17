@@ -48,6 +48,17 @@
     },
     "budget": {"type": "object", "required": ["max_runs"], "properties": {"max_runs": {"type": ["integer", "null"]}}},
     "known_valid_baseline": {"type": ["object", "null"]},
+    "planner": {
+      "type": "object", "additionalProperties": false,
+      "description": "WP-D (#320): optional planning-tool configuration compiled from optimization.planner and hashed with the policy. It proposes candidates only (allocate.py pool, plan-next bo_block); it is never used for inference or certification.",
+      "properties": {
+        "bo": {"type": "object", "additionalProperties": false,
+               "required": ["sampler", "n_startup", "seed"],
+               "properties": {"sampler": {"type": "string", "enum": ["tpe"]},
+                              "n_startup": {"type": "integer", "minimum": 0},
+                              "seed": {"type": "integer", "minimum": 0}}}
+      }
+    },
     "workload": {"type": ["object", "null"]},
     "initial": {"type": "string"},
     "states": {

@@ -1595,6 +1595,28 @@ properties:
               ``design.screen.resolution``, which would put the same fact in
               two places and let them drift.
 
+      planner:
+        type: object
+        additionalProperties: false
+        description: >
+          WP-D (#320): configuration of the planning tools (``nous
+          plan-next`` and the D1 allocator). Compiled into ``policy.json``
+          and hashed, so it is fixed before any data. Proposes candidates
+          only; nothing certifies from it.
+        properties:
+          bo:
+            type: object
+            additionalProperties: false
+            description: >
+              The optional Bayesian-optimization proposer (the ``nous[bo]``
+              extra, Optuna TPE). Absent means no BO. The study is rebuilt
+              deterministically from the epoch's measured rows on every
+              call; proposals go to the recombination pool and, when the
+              RSM model is inadequate, to plan-next's model-free block.
+            properties:
+              sampler: {type: string, enum: [tpe]}
+              n_startup: {type: integer, minimum: 0}
+              seed: {type: integer, minimum: 0}
       run_command:
         type: string
         minLength: 1

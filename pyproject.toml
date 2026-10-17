@@ -17,6 +17,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# WP-D D3 (#320): the optional Bayesian-optimization proposer for
+# `kind: optimization` planning (orchestrator/optimize/bo_proposer.py). It is
+# imported lazily; the core install never needs it.
+bo = ["optuna>=3.0"]
 dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",
