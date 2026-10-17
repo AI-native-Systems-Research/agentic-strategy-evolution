@@ -70,6 +70,7 @@ nothing.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 from dataclasses import dataclass
 from statistics import mean, variance
@@ -105,6 +106,9 @@ class RegretBound:
     delta: float
     method: str
     detail: str
+    #: Model flavour only, on request: the largest per-challenger bounds and
+    #: the max over the rest (``model_bound_outside``). Not part of as_dict.
+    profile: dict | None = None
 
     def as_dict(self) -> dict:
         """The JSON shape written into ``recommendation.json`` / ``report.json``."""
@@ -141,7 +145,8 @@ def _challenger_bounds(
 
 
 def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
-                       delta: float, direction: str) -> RegretBound:
+                       delta: float, direction: str,
+                       profile: int = 0) -> RegretBound:
     """``max_z U_delta(z, x_hat)`` under the fitted response model.
 
     ``cands`` should be the WHOLE valid candidate space (``decide.ranked(...,
@@ -155,6 +160,11 @@ def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
     fitted response, so ``est <= 0`` for every challenger, and the running max
     starts at ``0.0`` — which is the correct floor, since the gap to the true
     optimum cannot be below zero.
+
+    ``profile > 0`` also records the ``profile`` largest per-challenger bounds
+    (levels and value) and the max over the rest, so a later stage can take
+    the max over the challengers OUTSIDE a shortlist (``model_bound_outside``)
+    without the fit.
     """
     terms = list(fit.effects) + list(fit.quadratic)
     if fit.pure_error_df <= 0 or any(e.se is None for e in terms):
@@ -185,9 +195,45 @@ def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
     bounds = _challenger_bounds(others, contrast, delta=delta)
     arg = max(bounds, key=lambda i: bounds[i])
     tcrit = float(student_t.ppf(1 - delta / len(others), fit.pure_error_df))
-    return RegretBound(max(0.0, bounds[arg]), others[arg].levels, delta,
-                       "bonferroni_one_sided_t",
-                       f"M={len(others)} challengers, df={fit.pure_error_df}, t={tcrit:.3f}")
+    out = RegretBound(max(0.0, bounds[arg]), others[arg].levels, delta,
+                      "bonferroni_one_sided_t",
+                      f"M={len(others)} challengers, df={fit.pure_error_df}, t={tcrit:.3f}")
+    if profile:
+        order = sorted(bounds, key=lambda i: -bounds[i])
+        head, tail = order[:profile], order[profile:]
+        out = dataclasses.replace(out, profile={
+            "top": [{"levels": others[i].levels, "bound": bounds[i]} for i in head],
+            "rest": max((bounds[i] for i in tail), default=None),
+            "challengers": len(others)})
+    return out
+
+
+def model_bound_outside(profile: dict | None, inside: list[dict]) -> float | None:
+    """``max_{z not in S} U_m(z, x_hat)`` from a recorded model-bound profile.
+
+    Every member of the model family holds SIMULTANEOUSLY (Bonferroni over all
+    ``M`` challengers), so restricting the max to the challengers OUTSIDE a
+    data-chosen set ``S`` keeps its level: the family's coverage event does not
+    depend on which members are read. Challengers inside ``S`` are measured
+    freshly and bounded by the terminal family instead (spec
+    2026-10-17-certification-soundness.md section 2). Floors at 0 like the
+    full bound. ``None`` when no profile was recorded.
+    """
+    if not profile:
+        return None
+
+    def _same(a, b):
+        return set(a) == set(b) and all(
+            (isinstance(a[k], (int, float)) and isinstance(b[k], (int, float))
+             and not isinstance(a[k], bool) and math.isclose(float(a[k]), float(b[k]),
+                                                             rel_tol=1e-9, abs_tol=1e-12))
+            or a[k] == b[k] for k in a)
+
+    vals = [float(e["bound"]) for e in profile.get("top") or []
+            if not any(_same(dict(e["levels"]), dict(s)) for s in inside)]
+    if profile.get("rest") is not None:
+        vals.append(float(profile["rest"]))
+    return max([0.0] + vals)
 
 
 def terminal_regret_bound(samples: dict[str, list[float]], best: str, *,
@@ -226,6 +272,74 @@ def terminal_regret_bound(samples: dict[str, list[float]], best: str, *,
     if any(len(v) < 2 for v in samples.values()):
         return RegretBound(None, None, delta, "none",
                            "need >= 2 replicates per finalist for a variance estimate")
+    bounds, not_estimable, use_paired = _terminal_family(
+        samples, best, delta=delta, direction=direction, paired=paired)
+    if not_estimable:
+        return RegretBound(
+            None, None, delta, "none",
+            f"no variance estimate for challenger(s) "
+            f"{sorted(set(not_estimable))}: the replicates carry zero spread "
+            f"(a deterministic target, or a constant offset between finalists), "
+            f"so a t-interval would collapse to its point estimate and report "
+            f"exact epsilon-optimality from no information. An unknown is not a "
+            f"zero -- the report's fallback ladder names the winner as "
+            f"`terminal_best` instead of certifying it.",
+        )
+    arg = max(bounds, key=lambda i: bounds[i])
+    return RegretBound(
+        max(0.0, bounds[arg]), others[arg], delta,
+        "bonferroni_one_sided_t_paired" if use_paired
+        else "bonferroni_one_sided_welch_t",
+        f"M={len(others)} challengers over fresh replicates "
+        f"(n={ {k: len(v) for k, v in samples.items()} })",
+    )
+
+
+def simultaneous_gain_interval(samples: dict[str, list[float]], winner: str,
+                               reference: str, *, delta: float,
+                               paired: bool) -> dict | None:
+    """Two-sided CI on ``f(winner) - f(reference)``, valid AFTER selection.
+
+    ``winner`` was chosen as the argmax of these same replicates, so a plain
+    interval for it would not cover at its nominal level. Bonferroni over
+    every finalist other than ``reference`` (``M``) at two-sided level
+    ``delta / M`` covers ALL of ``f(i) - f(reference)`` simultaneously with
+    probability ``>= 1 - delta``, hence the data-selected one too
+    (simultaneous inference is selection-proof; Hsu 1996, ch. 1). The point
+    estimate is the winner's selection-biased mean difference and is
+    labelled as such by the caller. Paired t on CRN differences when the
+    replicate counts match, Welch otherwise. ``None`` when not estimable.
+    """
+    if winner not in samples or reference not in samples:
+        return None
+    m = max(1, sum(1 for k in samples if k != reference))
+    xw, xr = samples[winner], samples[reference]
+    if winner == reference:
+        return {"estimate": 0.0, "low": 0.0, "high": 0.0, "method": "identity",
+                "simultaneous_over": m}
+    if len(xw) < 2 or len(xr) < 2:
+        return None
+    if paired and len(xw) == len(xr):
+        d = [a - b for a, b in zip(xw, xr)]
+        vd = variance(d)
+        if not vd > 0.0:
+            return None
+        est, se, df, method = mean(d), math.sqrt(vd / len(d)), float(len(d) - 1), "paired_t"
+    else:
+        vw, vr = variance(xw) / len(xw), variance(xr) / len(xr)
+        den = vw ** 2 / (len(xw) - 1) + vr ** 2 / (len(xr) - 1)
+        if not den > 0.0:
+            return None
+        est, se = mean(xw) - mean(xr), math.sqrt(vw + vr)
+        df, method = (vw + vr) ** 2 / den, "welch_t"
+    tcrit = float(student_t.ppf(1 - delta / (2 * m), max(df, 1.0)))
+    return {"estimate": est, "low": est - tcrit * se, "high": est + tcrit * se,
+            "method": method, "simultaneous_over": m}
+
+
+def _terminal_family(samples, best, *, delta, direction, paired):
+    """The simultaneous terminal family: ``({i: U_i}, not_estimable, paired)``."""
+    others = [k for k in samples if k != best]
     sign = 1.0 if direction != "minimize" else -1.0
     xb = samples[best]
     use_paired = paired and all(len(samples[k]) == len(xb) for k in others)
@@ -279,25 +393,7 @@ def terminal_regret_bound(samples: dict[str, list[float]], best: str, *,
         return est, se, df
 
     bounds = _challenger_bounds(others, contrast, delta=delta)
-    if not_estimable:
-        return RegretBound(
-            None, None, delta, "none",
-            f"no variance estimate for challenger(s) "
-            f"{sorted(set(not_estimable))}: the replicates carry zero spread "
-            f"(a deterministic target, or a constant offset between finalists), "
-            f"so a t-interval would collapse to its point estimate and report "
-            f"exact epsilon-optimality from no information. An unknown is not a "
-            f"zero -- the report's fallback ladder names the winner as "
-            f"`terminal_best` instead of certifying it.",
-        )
-    arg = max(bounds, key=lambda i: bounds[i])
-    return RegretBound(
-        max(0.0, bounds[arg]), others[arg], delta,
-        "bonferroni_one_sided_t_paired" if use_paired
-        else "bonferroni_one_sided_welch_t",
-        f"M={len(others)} challengers over fresh replicates "
-        f"(n={ {k: len(v) for k, v in samples.items()} })",
-    )
+    return bounds, not_estimable, use_paired
 
 
 def resolve_epsilon(spec: dict, reference: float) -> float:

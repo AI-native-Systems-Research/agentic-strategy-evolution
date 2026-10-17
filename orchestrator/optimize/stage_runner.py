@@ -2503,6 +2503,14 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         **({"certification_caveats": list(conf["certification_caveats"])}
            if conf and conf.get("certification_caveats") else {}),
         **({"boundary_optimum": boundary_block} if boundary_block else {}),
+        # WP-A A4: WHICH region a certificate covers. Refine holds every
+        # non-refinable factor (choice, two-level) at one level, and the model
+        # bound and candidate space are then over that SLICE only; a
+        # certificate there says nothing about the other levels (measured:
+        # ridge_cubic certified C=on while the optimum has C=off).
+        "certificate_scope": _certificate_scope(_epoch_rec, boundary_block),
+        **({"gain_over_baseline": dict(conf["gain_over_baseline"])}
+           if conf and conf.get("gain_over_baseline") else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
         # What this report rests on (audit Q7): code version, input hashes,
@@ -4842,6 +4850,10 @@ def _run_stage_body(
     rb = certificate.model_regret_bound(
         fit, scored, rec, delta=pol["objective"]["delta_screen"],
         direction=direction,
+        # WP-A A1: enough of the per-challenger profile to cover every seat a
+        # confirm round can fill from this record (top_candidates, the best
+        # measured, the supported-feasible seat) with headroom.
+        profile=3 * _shortlist + 5,
     )
     if not candidate_space.exhaustive:
         # Above the cap the max in eq. (2) ran over the EVALUATED set only, so
@@ -4976,6 +4988,9 @@ def _run_stage_body(
         **({"supported_feasible_candidate": supported_record}
            if supported_record is not None else {}),
         "residual_regret_model": rb.as_dict(),
+        # WP-A A1: the largest per-challenger model bounds and the max over the
+        # rest, so confirm can bound what screening left OUTSIDE its shortlist.
+        **({"residual_regret_model_profile": rb.profile} if rb.profile else {}),
         "epsilon": epsilon,
         "alias_consequential": [list(p) for p in alias_pairs_consequential],
         # 2fi NOT fitted because their corner column lies in the span of kept
@@ -5853,6 +5868,14 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
 
     refill = rnd > 1 and _refill_round(pol, work_dir)
 
+    def _seat_max_bound(rec: dict) -> None:
+        """Seat the largest-model-bound challenger not yet seated (WP-A A1)."""
+        for e in ((rec.get("residual_regret_model_profile") or {}).get("top") or []):
+            lv = dict(e.get("levels") or {})
+            if lv and not any(_same_levels(f, lv) for f in finalists):
+                _add(lv, "largest model-bound challenger")
+                return
+
     def _seat_refill_pool() -> None:
         """The REFILL branch's seats: ``_refill_candidates``, best first."""
         for lv_ in _refill_candidates(work_dir, factors):
@@ -5892,6 +5915,14 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         winner = by_key.get(prev.get("best") or "")
         if winner:
             _add(winner.get("levels"), "previous round's best", measured=True)
+        # The fitted argmax stays on every round's shortlist (WP-A A1): the
+        # certificate links the model bound to the winner through x_hat's
+        # admissible measurement in THIS round, so retiring x_hat would make
+        # every later round uncertifiable (model_recommendation_not_compared).
+        _rec_now = _read_recommendation(work_dir) or {}
+        if _rec_now.get("model_adequate", True) is not False:
+            _add(_rec_now.get("levels"), "fitted argmax (links the model bound)",
+                 measured=True)
         for f in prev.get("finalists") or []:
             bound = (prev.get("bounds") or {}).get(f["key"])
             # `None` is UNKNOWN, not "small": a challenger whose bound could
@@ -6002,6 +6033,14 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # After the anchors, BEFORE the model's ranking fills the rest: the
         # reserved seat for a candidate whose feasibility the evidence supports.
         _seat_supported(rec, "best supported-feasible candidate", displace=True)
+        # WP-A A1: the challenger whose MODEL bound is largest gets the next
+        # seat. The certificate needs the model bound over the candidates
+        # OUTSIDE the shortlist to be within epsilon, and this is the one
+        # candidate that keeps it largest (spec section 3.6 rung 2: "the point
+        # the next experiment should be directed at"); measuring it moves its
+        # term from the model family to the model-free terminal family.
+        if model_ok:
+            _seat_max_bound(rec)
         for c in rec.get("top_candidates") or []:
             _add(c.get("levels"), "model top candidate")
         if not finalists:
@@ -6088,6 +6127,24 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
               "campaign always has one configuration it may legally return, or "
               "relax the constraint that rejected everything.",
         )
+
+    # ── WP-A A3: the known_valid_baseline is a PERMANENT reference finalist ──
+    #
+    # Single-objective only, every round, ONE seat beyond `shortlist_size` when
+    # it is not already a finalist. Its replicates share the round's workload
+    # seeds (replicate i of every finalist runs draw i), so under
+    # `workload.seed_env` the gain over it is a CRN-paired comparison, and
+    # report.json's `gain_over_baseline` is a selection-proof simultaneous
+    # interval over these fresh replicates (spec 2026-10-17-certification-
+    # soundness.md section 5). It competes like any finalist: if it wins, it is
+    # the answer. Exempt from the lost/inadmissible bar like every other
+    # baseline seat.
+    _base = pol.get("known_valid_baseline")
+    if (_base and finalists and not pareto_stage.objectives(pol)
+            and not any(_same_levels(dict(f), dict(_base)) for f in finalists)):
+        finalists.append(dict(_base))
+        provenance.append("known_valid_baseline (permanent reference seat)")
+        measured_seat.append(True)
 
     # Every finalist must name a level for EVERY declared factor.
     # `render_apply` renders nothing for an id it is not given, so a partial
@@ -6396,13 +6453,19 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     from orchestrator.ledger import append_ledger_row
     from orchestrator.optimize import artifacts, relations
 
-    delta_t = pol["objective"]["delta_terminal"]
-    # BONFERRONI OVER THE ROUNDS ACTUALLY SPENT, once the registered refill
-    # branch has run (policy.REFILL_ACCOUNTING): a refill is an extra look the
-    # round cap did not pay for, so the round it buys is judged at
-    # delta_terminal / rounds. Unchanged for every epoch that never refilled.
-    if _refills_spent(pol, work_dir):
-        delta_t = delta_t / max(1, int(payload.get("round") or 1))
+    # ALPHA-SPENDING OVER CONFIRM LOOKS (WP-A A2, spec
+    # 2026-10-17-certification-soundness.md). Every round evaluates
+    # `certified` and stops on it, so every round is a look; judging each at
+    # the full delta_terminal let 4 rounds certify wrongly at 0.108 against a
+    # nominal 0.05. Each look is taken at delta_terminal / confirm_looks (the
+    # registered round cap, plus the one refill look when that branch is
+    # registered), so by the union bound the probability that ANY look's
+    # simultaneous family fails is <= delta_terminal. The max with the round
+    # number is a backstop: no round is ever judged at more than
+    # delta_terminal / rounds spent. Multi-objective uses the same divisor.
+    delta_t_declared = float(pol["objective"]["delta_terminal"])
+    looks = policy_mod.confirm_looks(pol)
+    delta_t = delta_t_declared / max(1, looks, int(payload.get("round") or 1))
     direction = pol["objective"]["direction"]
     sign = 1.0 if direction != "minimize" else -1.0
     paired = bool(payload.get("paired"))
@@ -6679,11 +6742,39 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # REFILL round itself is barred: a later registered round (round cap
     # permitting) re-ranks and tops up as it always did, and can certify.
     refilled = _refill_round(pol, work_dir)
+    # ── THE delta_s HALF OF THE CERTIFICATE (WP-A A1) ──────────────────────
+    #
+    # `R_terminal <= eps` says the winner w is eps-optimal WITHIN the
+    # shortlist S. The global claim also needs the model half, linked to w
+    # (spec 2026-10-17-certification-soundness.md section 2). Let x* be the
+    # best candidate of the fitted space, x_hat the fitted argmax, i* the
+    # best admissible finalist. E_s: every comparison of x* against another
+    # candidate is covered by the model family (Bonferroni over all M
+    # challengers, so it holds for the data-chosen x_hat; Hsu's MCB argument),
+    # Pr >= 1 - delta_screen under the registered response class. E_t: every
+    # comparison of i* against another finalist is covered by this look's
+    # terminal family, Pr >= 1 - delta_terminal / looks. On E_s and E_t:
+    #   x* in S:      f(x*) - f(w) <= f(i*) - f(w) <= R_terminal
+    #   x* not in S:  f(x*) - f(w) = [f(x*) - f(x_hat)] + [f(x_hat) - f(w)]
+    #                 <= R_model_out + R_terminal       (x_hat admissible in S)
+    # where R_model_out is the model bound over the candidates OUTSIDE S.
+    # So `certified` requires G = R_model_out + R_terminal <= eps, and x_hat
+    # MEASURED admissibly this round (else withheld, named). Not computed when
+    # the model is already rejected or of unknown adequacy (those withhold on
+    # their own). Measured before this: 17 of 621 certificates wrong on the
+    # stage-0 noise sweep, every one with R_model far above eps.
+    global_bound, model_reasons = _global_bound(
+        _rec_for_bias, fin, status, ok, best, bound, eps, delta_t=delta_t,
+        skip=model_inadequate or adequacy_unknown,
+        delta_s=float(pol["objective"]["delta_screen"]),
+        xhat_measured_infeasible=bool(_rec_for_bias.get("levels")) and
+        _measured_infeasible_contains(work_dir, dict(_rec_for_bias["levels"])))
     certified = (
         bound.value is not None and eps is not None and bound.value <= eps
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
         and not fit_bias and not model_inadequate and not refilled
         and not adequacy_unknown
+        and (bool(pareto_stage.objectives(pol)) or not model_reasons)
     )
     # NO ADMISSIBLE FINALIST is its own reason, not `bound_not_computable`. Every
     # finalist was MEASURED (numerically, completely) and every one had at least
@@ -6801,7 +6892,18 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("model_inadequate", model_inadequate),
                 (adequacy_reason, adequacy_unknown),
             ) if hit
-        ],
+        ] + ([] if pareto_stage.objectives(pol) else model_reasons),
+        # The certificate's two halves and how they combine (WP-A A1).
+        **({"global_bound": global_bound} if global_bound is not None
+           and not pareto_stage.objectives(pol) else {}),
+        # Alpha-spending over confirm looks (WP-A A2): `delta_terminal` below
+        # is the PER-LOOK level this round's bound is stated at.
+        "alpha_spending": {
+            "delta_terminal_declared": delta_t_declared, "looks": looks,
+            "per_look": delta_t,
+            "rule": "Bonferroni over the registered confirm looks: "
+                    "delta_terminal / (confirm_max_rounds + 1 if the refill "
+                    "branch is registered)"},
         **({"terminal_bound_measured_only": measured_only.as_dict()}
            if measured_only is not None else {}),
         **({"certification_caveats": ["finalist_measured_infeasible"]}
@@ -6899,6 +7001,14 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                     metric or "response", confirmed_mean, best_val,
                     best_obs.get("levels"), gap, pct,
                 )
+
+    # WP-A A3: the gain of the winner over the permanent baseline seat, from
+    # THIS round's fresh replicates, as a simultaneous interval that stays
+    # valid although the winner was chosen from the same data.
+    _gain = _gain_over_baseline(pol, fin, ok, best, delta=delta_t,
+                                paired=paired, direction=direction)
+    if _gain is not None:
+        summary["gain_over_baseline"] = _gain
 
     # The refill branch's candidate pool, read BEFORE confirmation.json is
     # written so anything it could not read is recorded there (B4).
@@ -7024,12 +7134,15 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         # A multi-objective round re-seats up to the whole shortlist (front
         # points, gap fills, spread), so the full shortlist is the upper bound.
         max(1, int(_cfg.get("shortlist_size", 3))) if "pareto" in summary
-        else _next_round_finalists(summary, shortlist_size=_cfg.get("shortlist_size", 3))
+        else _next_round_finalists(
+            summary, shortlist_size=_cfg.get("shortlist_size", 3),
+            baseline_seat=_baseline_seat_extra(pol, summary))
     )
     if "finalists_vacated" in obs and obs["feasible_finalists"] < 2 \
             and obs["refill_available"]:
         # A refill round re-seats the survivors AND every vacated seat.
-        carry = max(1, int(_cfg.get("shortlist_size", 3)))
+        carry = max(1, int(_cfg.get("shortlist_size", 3))) + (
+            1 if _baseline_seat_extra(pol, summary) else 0)
     obs["runs_needed_confirm"] = carry * max(1, int(_cfg.get("replicates", 3)))
     obs["confirm_affordable"] = (
         obs["budget_remaining"] >= obs["runs_needed_confirm"]
@@ -7235,6 +7348,138 @@ def _refill_candidates(work_dir, factors, warnings: list | None = None) -> list[
     return out
 
 
+def _baseline_seat_extra(pol: dict, summary: dict) -> bool:
+    """Will the next round seat the baseline OUTSIDE the shortlist cap (A3)?"""
+    base = pol.get("known_valid_baseline")
+    if not base or pareto_stage.objectives(pol):
+        return False
+    return True
+
+
+def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict | None:
+    """``confirmation.json["gain_over_baseline"]`` (WP-A A3).
+
+    Signed in the campaign's direction (positive = the winner is better).
+    The interval is two-sided at ``delta`` simultaneously over every finalist
+    vs the baseline (Bonferroni, ``certificate.simultaneous_gain_interval``),
+    so it covers the selected winner's true gain with probability >= 1 -
+    delta. The point estimate is the winner's mean difference on the same
+    replicates that selected it and is biased upward; the interval is the
+    claim.
+    """
+    base = pol.get("known_valid_baseline")
+    if not base or best is None or pareto_stage.objectives(pol):
+        return None
+    bkey = next((f["key"] for f in fin if _same_levels(dict(f["levels"]), dict(base))),
+                None)
+    if bkey is None or bkey not in ok:
+        return {"baseline": dict(base), "estimate": None, "low": None, "high": None,
+                "delta": delta, "method": "none",
+                "detail": "the baseline produced no admissible measurement this round"}
+    iv = certificate.simultaneous_gain_interval(ok, best, bkey, delta=delta, paired=paired)
+    if iv is None:
+        return {"baseline": dict(base), "estimate": None, "low": None, "high": None,
+                "delta": delta, "method": "none",
+                "detail": "no variance estimate (fewer than two replicates, or zero spread)"}
+    sign = 1.0 if direction != "minimize" else -1.0
+    lo, hi = sorted((sign * iv["low"], sign * iv["high"]))
+    return {"baseline": dict(base), "baseline_key": bkey, "winner_key": best,
+            "estimate": sign * iv["estimate"], "low": lo, "high": hi, "delta": delta,
+            "method": f"simultaneous_two_sided_{iv['method']}",
+            "simultaneous_over": iv["simultaneous_over"],
+            "detail": ("Bonferroni over every finalist vs the baseline at two-sided "
+                       "delta/(2M), so the interval for the data-selected winner "
+                       "covers at >= 1 - delta; the estimate is the winner's mean "
+                       "difference on the selecting replicates (biased upward).")}
+
+
+def _certificate_scope(rec: dict, boundary: dict | None) -> dict:
+    """``report.json["certificate_scope"]`` (WP-A A4, spec
+    2026-10-17-certification-soundness.md section 4): the region the model
+    half of the certificate ranged over, read from this epoch's latest
+    fitting record. ``slice`` when that stage held any factor fixed, else
+    ``declared_space``; ``searched`` notes a candidate space that was sampled
+    rather than enumerated."""
+    held = dict((rec or {}).get("held_fixed") or {})
+    region = "slice" if held else ("declared_space" if rec else "none")
+    out = {
+        "region": region,
+        "held_fixed": held,
+        "fitting_stage": (rec or {}).get("stage"),
+        "searched": bool((rec or {}).get("candidate_space")),
+        "within_declared_ranges": True,
+    }
+    if boundary:
+        out["boundary_axes"] = list(boundary.get("axes") or [])
+    out["statement"] = (
+        "no fitting stage: no model half, nothing beyond the finalists is covered"
+        if region == "none" else
+        ("epsilon-optimal over the declared ranges of the fitted factors with "
+         + ", ".join(f"{k}={v!r}" for k, v in sorted(held.items()))
+         + " held fixed; the other levels of those factors are NOT covered")
+        if held else
+        "epsilon-optimal over the declared ranges of every factor")
+    return out
+
+
+def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
+                  bound, eps, *, delta_t: float, delta_s: float, skip: bool,
+                  xhat_measured_infeasible: bool = False) -> tuple[dict | None, list[str]]:
+    """``G = R_model_out + R_terminal`` and why it cannot certify (WP-A A1).
+
+    See the A1 block in ``_finish_confirm`` and spec
+    2026-10-17-certification-soundness.md section 2. Returns the record
+    written to ``confirmation.json["global_bound"]`` (None when the model
+    half is not consulted) and the named withheld reasons.
+    """
+    if skip:
+        return None, []
+    rb = rec.get("residual_regret_model") or {}
+    r_model = rb.get("value")
+    xhat = rec.get("levels") or {}
+    inside = [dict(f["levels"]) for f in fin if f["key"] in ok]
+    r_out = certificate.model_bound_outside(
+        rec.get("residual_regret_model_profile"), inside)
+    out = {"value": None, "residual_regret_model": r_model,
+           "residual_regret_model_outside": r_out,
+           "residual_regret_terminal": bound.value,
+           "x_hat": dict(xhat), "x_hat_key": None,
+           "delta_screen": delta_s, "delta_terminal_per_look": delta_t,
+           "rule": "G = R_model_outside + R_terminal, R_model_outside the model "
+                   "bound over the candidates OUTSIDE the measured shortlist; "
+                   "certified needs G <= epsilon and the fitted argmax measured "
+                   "admissibly in this round. Pr(certified and gap > epsilon) "
+                   "<= delta_screen + delta_terminal under the stated "
+                   "assumptions."}
+    if not rec or not isinstance(r_model, (int, float)):
+        return out, ["model_bound_not_computable"]
+    if r_out is None:
+        # A record written before the profile existed: the whole-space bound
+        # is a valid (larger) stand-in for the bound outside S.
+        r_out = float(r_model)
+        out["residual_regret_model_outside"] = r_out
+    reasons: list[str] = []
+    if rec.get("candidate_space"):
+        # Searched, not enumerated: R_model is a max over the EVALUATED
+        # candidates only, so it is silent about the rest of X_valid.
+        reasons.append("model_bound_not_exhaustive")
+    key = next((f["key"] for f in fin
+                if xhat and _same_levels(dict(f["levels"]), dict(xhat))), None)
+    out["x_hat_key"] = key
+    if (key is not None and status.get(key) == "infeasible") or (
+            xhat and xhat_measured_infeasible):
+        # The fitted argmax is INADMISSIBLE: the step f(x_hat) <= f(i*) needs
+        # x_hat admissible, so nothing links the model bound to the winner.
+        return out, reasons + ["model_recommendation_infeasible"]
+    if key is None or status.get(key) != "ok" or key not in ok or best is None \
+            or bound.value is None:
+        return out, reasons + ["model_recommendation_not_compared"]
+    out["value"] = float(r_out) + float(bound.value)
+    if eps is not None and out["value"] > eps:
+        reasons.append("model_bound_above_epsilon")
+    return out, reasons
+
+
 def _refills_spent(pol, work_dir) -> int:
     """Refill rounds (``policy.REFILL_ACCOUNTING``) this epoch has already run."""
     return sum(
@@ -7250,7 +7495,8 @@ def _refill_round(pol, work_dir) -> bool:
         "accounting") == policy_mod.REFILL_ACCOUNTING
 
 
-def _next_round_finalists(summary: dict, *, shortlist_size) -> int:
+def _next_round_finalists(summary: dict, *, shortlist_size,
+                          baseline_seat: bool = False) -> int:
     """How many finalists a round r+1 would seat, by `_confirm_rows`'s own rule.
 
     Mirrors the ``rnd > 1`` carry-over branch there: the previous round's winner
@@ -7284,8 +7530,10 @@ def _next_round_finalists(summary: dict, *, shortlist_size) -> int:
     if best:
         carry.add(best)
     # `_confirm_rows` caps the shortlist at `k` regardless of how many the
-    # carry-over rule nominates, so the estimate caps there too.
-    return min(k, len(carry)) if carry else k
+    # carry-over rule nominates, so the estimate caps there too -- plus the
+    # permanent baseline seat (WP-A A3), which sits outside the cap.
+    base = 1 if baseline_seat else 0
+    return (min(k, len(carry)) if carry else k) + base
 
 
 def _confirm_epsilon(spec: dict, work_dir, metric: str, *, direction: str,

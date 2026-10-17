@@ -524,8 +524,6 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     metrics = [o.metric for o in objs]
     pts, incomplete = measured_points_and_incomplete(work_dir, objs)
     delta_t = float(pol["objective"]["delta_terminal"])
-    max_rounds = int(((pol.get("states") or {}).get("confirm") or {}).get(
-        "design", {}).get("max_rounds", 1) or 1)
     # Two levels, two looks. The front's STATUSES (and the hypervolume over the
     # confident points) are a claim made once, at the end, over the measured
     # points: delta_terminal. CERTIFICATION is a stopping rule evaluated every
@@ -537,7 +535,11 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     delta_front = delta_t
     # A refill round (policy.REFILL_ACCOUNTING) is a look beyond the cap, so
     # the divisor is the larger of the registered cap and the rounds spent.
-    delta_cert = delta_t / max(1, max_rounds, int(rnd or 1))
+    # Shared with single-objective confirm (policy.confirm_looks): the
+    # registered cap plus the one refill look when that branch is registered.
+    from orchestrator.optimize.policy import confirm_looks
+
+    delta_cert = delta_t / max(1, confirm_looks(pol), int(rnd or 1))
     pool = pooled(pts, objs)
     # UNKNOWN STAYS UNKNOWN: an epsilon with no reference (a pct of a zero
     # best) is None all the way through -- it resolves nothing, blocks
@@ -718,7 +720,8 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
             "over every (member, rival, objective) bound so the statuses hold "
             "SIMULTANEOUSLY over the front; delta_front = delta_terminal. The "
             "preferred point's certificate (its status and the scalar regret) "
-            "is re-taken at delta_certification = delta_terminal / max_rounds"),
+            "is re-taken at delta_certification = delta_terminal / confirm_looks "
+            "(the round cap, plus one when the refill branch is registered)"),
     }
 
 

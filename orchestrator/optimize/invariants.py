@@ -587,6 +587,41 @@ def check_certificate_rests_on_adequate_model(certifying: dict,
     return out
 
 
+def check_certificate_global_bound(confirmation: dict) -> list[str]:
+    """INV-SEM20: a single-objective certificate states BOTH halves.
+
+    ``confirmation`` is one ``confirmation.json``. When it is certified and
+    single-objective it carries ``global_bound`` with a known ``value`` equal
+    to ``residual_regret_model_outside + residual_regret_terminal`` and at or
+    below ``epsilon``, names the fitted argmax among its admissible finalists
+    (``x_hat_key``), and its ``delta_terminal`` is the per-look level
+    ``alpha_spending.per_look`` = declared / looks (WP-A A1, A2; spec
+    2026-10-17-certification-soundness.md).
+    """
+    out: list[str] = []
+    a = confirmation.get("alpha_spending")
+    if isinstance(a, dict):
+        if float(a["per_look"]) > float(a["delta_terminal_declared"]) / int(a["looks"]) + 1e-12:
+            out.append(f"alpha_spending.per_look {a['per_look']} exceeds "
+                       f"delta_terminal_declared / looks")
+        if abs(float(confirmation.get("delta_terminal", 0.0)) - float(a["per_look"])) > 1e-12:
+            out.append("delta_terminal is not alpha_spending.per_look")
+    if not confirmation.get("certified") or "pareto" in confirmation:
+        return out
+    gb = confirmation.get("global_bound")
+    eps = confirmation.get("epsilon")
+    if not isinstance(gb, dict) or gb.get("value") is None:
+        return out + ["certified without a known global_bound (the delta_s half)"]
+    if gb.get("x_hat_key") is None:
+        out.append("certified although the fitted argmax was not a measured finalist")
+    exp = float(gb["residual_regret_model_outside"]) + float(gb["residual_regret_terminal"])
+    if abs(float(gb["value"]) - exp) > 1e-9:
+        out.append(f"global_bound.value {gb['value']} != R_model_outside + R_terminal {exp}")
+    if eps is None or float(gb["value"]) > float(eps) + 1e-12:
+        out.append(f"certified with global_bound {gb['value']} above epsilon {eps}")
+    return out
+
+
 def check_adequacy_determination(recommendations: list[dict]) -> list[str]:
     """INV-STAT19: how adequacy was determined is recorded, and it is sticky.
 
@@ -1164,7 +1199,7 @@ def check_pareto_certificate(certifying: dict) -> list[str]:
     ``certifying`` is a ``confirmation.json`` or ``report.json``. When it
     carries a ``pareto`` block and ``certified`` is true, the preferred point is
     a front member, is ``confidently_nondominated`` at the CERTIFICATION level
-    (delta_terminal / max_rounds), and the preference scalarisation's regret
+    (delta_terminal / policy.confirm_looks), and the preference scalarisation's regret
     bound is known and within its epsilon; a report's recommendation names that
     point. Vacuous otherwise.
     """
@@ -1766,9 +1801,23 @@ _ENTRIES: tuple[Invariant, ...] = (
               violated_by="SURFACES['geometric_knob']: screen and refine both rejected "
                           "for lack of fit, and confirm certified the best of a "
                           "measured-only shortlist 26% below the optimum"),
+    Invariant("INV-SEM20", "A single-objective certificate states both halves: when "
+                           "certified, confirmation.json global_bound = R_model_outside + "
+                           "R_terminal is known and <= epsilon, the fitted argmax is an "
+                           "admissible measured finalist, and delta_terminal is the "
+                           "per-look level delta_terminal / confirm_looks.",
+              "SEM", "artifact", "stage_runner._finish_confirm (_global_bound, "
+              "alpha_spending); spec 2026-10-17-certification-soundness.md", TEST,
+              check_certificate_global_bound,
+              violated_by="stage-0 audit Q1: certified read R_terminal alone; 17 of 621 "
+                          "noise-sweep certificates were wrong, each with R_model far "
+                          "above epsilon, and 4 confirm rounds at full delta_terminal "
+                          "certified wrongly at 0.108 vs 0.05",
+              note="tests/test_optimize_certification_soundness.py runs the checker "
+                   "over oracle campaigns and gives it teeth on hand-built records."),
     Invariant("INV-SEM18", "A multi-objective certificate rests on the front: when "
                            "certified, the preferred point is on the measured front, "
-                           "confidently nondominated at delta_terminal / max_rounds, and "
+                           "confidently nondominated at delta_terminal / confirm_looks, and "
                            "the preference scalarisation's regret bound is known and "
                            "within epsilon_scalar; the report recommends that point.",
               "SEM", "artifact", "stage_runner._finish_confirm_pareto; spec 2026-10-15 "

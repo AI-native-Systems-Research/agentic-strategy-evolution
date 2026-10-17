@@ -537,7 +537,10 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             })
         transitions += [
             {"from": "confirm", "when": {"certified": True}, "to": "report",
-             "accounting": "bonferroni_one_sided_welch_t at delta_terminal over |S|-1 finalists"},
+             "accounting": ("bonferroni_one_sided_welch_t at delta_terminal / "
+                            "confirm_looks over |S|-1 finalists, plus the model "
+                            "bound at delta_screen (spec 2026-10-17-"
+                            "certification-soundness)")},
             # BEFORE both budget guards below, and the order is load-bearing for
             # the same reason the foldover rule precedes refine: `step` takes the
             # FIRST matching rule, and `budget_remaining < 1` only fires once
@@ -819,6 +822,31 @@ def enumerate_paths(policy: dict, *, max_len: int = 12) -> list[list[str]]:
             walk(t.get("to") or t.get("default"), path + [t.get("to") or t.get("default")], used | {i})
     walk(policy["initial"], [policy["initial"]], frozenset())
     return out
+
+
+def confirm_looks(policy: dict) -> int:
+    """How many times an epoch may LOOK at the terminal certificate.
+
+    Every confirm round evaluates ``certified`` and stops on it, so each round
+    is a look, and a certificate judged at the full ``delta_terminal`` on every
+    look fails with probability up to ``looks x delta_terminal`` (measured: 4
+    rounds at 0.05 gave 0.108). Bonferroni alpha-spending over the
+    PRE-REGISTERED maximum number of looks fixes it: each look is taken at
+    ``delta_terminal / confirm_looks``. The maximum is the registered round
+    cap plus one when the refill branch (``REFILL_ACCOUNTING``) is registered,
+    because that branch fires only AT the cap and buys exactly one extra round.
+    Charged whether or not the refill is ever taken: a per-look level must be
+    fixed before the data decide how many looks there are. One for the default
+    unconstrained single-round campaign, so its certificate is unchanged.
+    Single- and multi-objective confirm share this divisor
+    (spec 2026-10-17-certification-soundness.md).
+    """
+    rounds = int(((policy.get("states") or {}).get("confirm") or {}).get(
+        "design", {}).get("max_rounds", 1) or 1)
+    refill = any(t.get("from") == "confirm"
+                 and t.get("accounting") == REFILL_ACCOUNTING
+                 for t in policy.get("transitions") or [])
+    return max(1, rounds) + (1 if refill else 0)
 
 
 def longest_path(policy: dict) -> int:

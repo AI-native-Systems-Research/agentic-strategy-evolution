@@ -253,14 +253,20 @@ def build_preview(
                if (design_cfg.get("refine") or {}).get("reuse_screen") else ""),
         ))
 
+    base_seat = 0
     if "confirm" in states:
         d = states["confirm"]["design"]
-        per_round = int(d["shortlist_size"]) * int(d["replicates"])
+        # WP-A A3: a declared known_valid_baseline is seated in every
+        # single-objective round as a reference finalist outside the cap.
+        base_seat = int(bool(opt.get("known_valid_baseline"))
+                        and not (opt.get("response") or {}).get("objectives"))
+        per_round = (int(d["shortlist_size"]) + base_seat) * int(d["replicates"])
         rounds = int(d["max_rounds"])
         pv.stages.append(StageRuns(
             "confirm", per_round, per_round * rounds, False,
-            f"{d['shortlist_size']} finalist(s) x {d['replicates']} "
-            f"replicate(s) per round, up to {rounds} round(s)",
+            f"{d['shortlist_size']} finalist(s)"
+            + (" + the known_valid_baseline reference seat" if base_seat else "")
+            + f" x {d['replicates']} replicate(s) per round, up to {rounds} round(s)",
         ))
 
     # B3: D-efficiency of each fitting stage's planned model matrix.
@@ -309,9 +315,9 @@ def build_preview(
                 n = s.max_runs if use_max else (0 if s.conditional else s.runs)
                 if s.stage == "confirm" and n:
                     d = states["confirm"]["design"]
-                    blocks = n // max(1, int(d["shortlist_size"]))
-                    total += blocks * _ceil_div(
-                        int(d["shortlist_size"]), pv.confirm_width) * per
+                    width = int(d["shortlist_size"]) + base_seat
+                    blocks = n // max(1, width)
+                    total += blocks * _ceil_div(width, pv.confirm_width) * per
                 else:
                     total += _ceil_div(n, pv.spending_width) * per
             return total / 3600.0

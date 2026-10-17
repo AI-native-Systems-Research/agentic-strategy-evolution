@@ -96,6 +96,25 @@ WITHHELD_MEANING = {
     "epsilon_unknown": "an objective's epsilon has no reference (a percentage "
                        "of a zero best), so no difference on it can be judged "
                        "-- declare it as `abs`",
+    "model_bound_above_epsilon": "the model bound over the candidates outside "
+                                 "the shortlist, plus the terminal bound, "
+                                 "exceeds epsilon: a configuration screening "
+                                 "did not shortlist may still beat the winner "
+                                 "by more than epsilon",
+    "model_bound_not_computable": "no model bound exists for this epoch (no "
+                                  "fitting stage, or no pure error), so nothing "
+                                  "bounds what screening left out",
+    "model_bound_not_exhaustive": "the candidate space was searched, not "
+                                  "enumerated, so the model bound is silent "
+                                  "about candidates the search never evaluated",
+    "model_recommendation_not_compared": "the fitted argmax was not measured "
+                                         "admissibly in the final round, so the "
+                                         "model bound cannot be linked to the "
+                                         "winner",
+    "model_recommendation_infeasible": "the fitted argmax was measured "
+                                       "inadmissible, so the model bound -- "
+                                       "taken against it -- cannot be linked "
+                                       "to the admissible winner",
     "shortlist_refilled": "the shortlist was refilled after finalists were "
                           "measured inadmissible; the replacements were "
                           "compared, but the ranking that nominated the "
@@ -616,6 +635,23 @@ def render_report_markdown(work_dir: Path) -> str:
         lines.append("- **Certification withheld because:** " + "; ".join(
             f"`{r}` ({WITHHELD_MEANING.get(r, 'unrecognised reason')})"
             for r in withheld))
+    g = report.get("gain_over_baseline") or {}
+    if g.get("low") is not None:
+        lines.append(f"- **Gain over the baseline** {_fmt_levels(g.get('baseline'))}: "
+                     f"[{_fmt(g['low'])}, {_fmt(g['high'])}] (simultaneous "
+                     f"{1 - float(g['delta']):.3g} interval from the final confirm "
+                     f"round's fresh replicates; point estimate {_fmt(g.get('estimate'))}, "
+                     f"biased upward by selection)")
+    scope = report.get("certificate_scope") or {}
+    if scope.get("region") == "slice":
+        lines.append("- **Certificate scope:** a slice -- "
+                     + ", ".join(f"`{k}={v}`" for k, v in sorted(
+                         (scope.get("held_fixed") or {}).items()))
+                     + " held fixed by the "
+                     + f"{scope.get('fitting_stage') or 'fitting'} stage; the other "
+                     "levels of those factors are not covered"
+                     + ("" if report.get("certified") else
+                        " (nothing is certified here in any case)"))
     if "model_adequate" in report and report["model_adequate"] is None:
         # A legacy record may carry null with no basis (stage-1c P9).
         b = str(report.get("model_adequate_basis") or "model_adequacy_unknown")
