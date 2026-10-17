@@ -487,17 +487,28 @@ LAUNCHERS = frozenset({"uv", "uvx", "conda", "mamba", "micromamba", "poetry", "p
 SHIM_DIRS = (".pyenv/shims", ".asdf/shims", ".rbenv/shims", "shims")
 
 
-def _resolve_interpreter(tok: str, cwd: Path) -> tuple[str | None, str | None]:
+def _resolve_interpreter(tok: str, cwd: Path, path: str | None = None
+                         ) -> tuple[str | None, str | None]:
     """``(executable, None)`` for a Python interpreter the command runs
     DIRECTLY, ``(None, reason)`` when what runs cannot be determined, and
-    ``(None, None)`` when the token is not a Python launcher at all."""
+    ``(None, None)`` when the token is not a Python launcher at all.
+
+    ``path`` is the command's EFFECTIVE ``PATH`` -- the target environment's,
+    overridden by an ``env PATH=...`` wrapper -- never Nous's own: resolving a
+    bare ``python`` with Nous's PATH probed a different interpreter from the
+    one the command runs (round 6, item 1)."""
     name = Path(tok).name
     if name in LAUNCHERS:
         return None, f"`{name}` launches another program; its interpreter is not known"
     is_py = name.startswith("python") or name in ("pytest", "py.test")
     if not is_py:
         return None, None
-    exe = tok if os.path.isabs(tok) else (str(cwd / tok) if "/" in tok else shutil.which(tok))
+    if os.path.isabs(tok):
+        exe = tok
+    elif "/" in tok:
+        exe = str(cwd / tok)
+    else:
+        exe = shutil.which(tok, path=path)
     if not exe:
         return None, f"`{tok}` is not on PATH"
     real = os.path.realpath(exe)
@@ -579,7 +590,10 @@ def _interpreters(cmd: str, cwd: Path) -> tuple[list[tuple[str, list[str], dict]
     """``([(exe, flags, env)], undetermined_reasons)``.
 
     Known wrappers (``timeout``, ``nice``, ``time``, ``env A=B``, ...) are
-    unwrapped first; ``env`` assignments are passed to the probe. When what is
+    unwrapped first; ``env`` assignments are passed to the probe, and a ``PATH``
+    assignment is what the interpreter is resolved with: the probe runs with
+    EXACTLY the command's environment (``PATH``, ``PYTHONPATH``,
+    ``PYTHONHOME``, ``VIRTUAL_ENV``... all as the command sets them). When what is
     left does not start with a Python interpreter -- a launcher, a script such
     as ``./bench.sh``, any other program -- the command is NOT probed and that
     is recorded (round 5, item 3). ``flags`` are the interpreter's own options,
@@ -595,7 +609,13 @@ def _interpreters(cmd: str, cwd: Path) -> tuple[list[tuple[str, list[str], dict]
         return [], [why]
     if not toks:
         return [], [f"`{cmd[:60]}` has no program after its wrappers"]
-    exe, why = _resolve_interpreter(toks[0], cwd)
+    if "=" in toks[0] and not toks[0].startswith(("/", ".")):
+        return [], [f"`{toks[0]}` is a shell-style assignment, but commands are not run "
+                    f"in a shell; use `env {toks[0]} ...`. Not probed"]
+    from orchestrator.optimize.runner import target_env
+
+    effective_path = env.get("PATH", target_env("/dev/null").get("PATH", os.defpath))
+    exe, why = _resolve_interpreter(toks[0], cwd, path=effective_path)
     if why:
         return [], [why]
     if exe is None:

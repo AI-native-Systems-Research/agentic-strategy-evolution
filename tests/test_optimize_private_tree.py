@@ -538,3 +538,49 @@ def test_a_rerun_build_stage_after_the_key_was_deleted_fails(tmp_path, monkeypat
     with pytest.raises((OptimizationAborted, gr.GateRecordError), match="missing"):
         build()
     assert not gr.key_path(Path(wd)).exists()
+
+
+# ─── round 6, item 1: the probe resolves with the command's own PATH ─────────
+
+
+def test_env_path_pointing_at_an_agent_venv_is_refused(setup):
+    """Repro a_envpath.py: `env PATH=<agent>/.venv/bin:... python bench.py`
+    runs the agent repo's venv; the probe must resolve `python` with THAT PATH."""
+    import sys
+
+    repo, wd = setup
+    venv = repo / ".venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+    site = next(venv.glob("lib/python*/site-packages"))
+    (site / "_editable.pth").write_text(str(repo) + "\n")
+    cmd = f"env PATH={venv}/bin:/usr/bin:/bin python bench.py"
+    with pytest.raises(ct.CleanTreeError, match=r"\.venv/bin/python.*would import from"):
+        ct.probe_imports(wd, repo, [cmd], work_dir=wd)
+
+
+@pytest.mark.parametrize("var", ["PYTHONPATH", "PYTHONHOME", "VIRTUAL_ENV"])
+def test_the_probe_runs_with_exactly_the_commands_environment(setup, var, tmp_path):
+    import sys
+
+    repo, wd = setup
+    cmd = f"env {var}={repo} {sys.executable} harness.py"
+    if var == "PYTHONPATH":
+        with pytest.raises(ct.CleanTreeError, match="would import from"):
+            ct.probe_imports(wd, repo, [cmd], work_dir=wd)
+    else:
+        # The probe must run with the assignment (it may then fail or refuse);
+        # it must never report a clean pass for an interpreter it did not run
+        # the way the command runs it.
+        try:
+            ct.probe_imports(wd, repo, [cmd], work_dir=wd)
+        except ct.CleanTreeError:
+            return
+        rec = json.loads((wd / ct.PROBE_RECORD).read_text())
+        assert rec["probed"][0]["env"] == [var]
+
+
+def test_a_shell_style_assignment_is_recorded_as_not_probed(setup):
+    repo, wd = setup
+    ct.probe_imports(wd, repo, [f"PYTHONPATH={repo} python harness.py"], work_dir=wd)
+    rec = json.loads((wd / ct.PROBE_RECORD).read_text())
+    assert "shell-style assignment" in rec["not_probed"][0]["reason"]
