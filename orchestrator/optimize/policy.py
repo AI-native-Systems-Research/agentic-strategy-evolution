@@ -280,7 +280,8 @@ def _multi_objective_block(opt: dict) -> dict | None:
     }
 
 
-def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1) -> dict:
+def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1,
+                   run_order_salt: str | None = None) -> dict:
     opt = campaign.get("optimization") or {}
     factors = parse_factors(opt["factors"])
     design = opt.get("design") or {}
@@ -602,6 +603,15 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         "states": states,
         "transitions": transitions,
     }
+    if run_order_salt:
+        # Run-order concealment (#321): the salt is a random draw recorded at
+        # compile (run_order.epoch-<e>.json) and compiled INTO the policy, so
+        # it is covered by policy.sha256 and a reader can recompute every
+        # run order from the record. Absent block = derivation 1 (the
+        # iteration index), which every policy written before this existed
+        # uses; run_order_seed() keeps reproducing those.
+        policy["run_order"] = {"derivation": RUN_ORDER_DERIVATION,
+                               "salt": str(run_order_salt)}
     _sanity = {t["from"] for t in transitions if "default" in t}
     assert {s for s, v in states.items() if not v.get("terminal")} <= _sanity
     from orchestrator.optimize.invariants import (
@@ -616,6 +626,28 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
 
 def policy_hash(policy: dict) -> str:
     return hashlib.sha256(_canonical(policy).encode()).hexdigest()
+
+
+#: The current run-order seed derivation. 1 = the iteration index (identical
+#: across campaigns: reproducible, not concealed). 2 = sha256 over the policy
+#: hash (which covers the recorded salt) and the iteration.
+RUN_ORDER_DERIVATION = 2
+
+
+def run_order_seed(policy: dict | None, iteration: int) -> int:
+    """The seed every run-order permutation (and every derived workload seed)
+    of ``iteration`` is drawn from, under the derivation ``policy`` registered.
+
+    A policy with no ``run_order`` block was compiled before concealment
+    existed (or by a campaign pinned to derivation 1): the seed is the
+    iteration, exactly as before, so old campaigns reproduce byte for byte.
+    """
+    ro = (policy or {}).get("run_order") or {}
+    if int(ro.get("derivation") or 1) < 2:
+        return int(iteration)
+    digest = hashlib.sha256(
+        f"nous-run-order-v2|{policy_hash(policy)}|{int(iteration)}".encode()).hexdigest()
+    return int(digest[:15], 16) % (2 ** 31)
 
 
 def write_policy(work_dir: Path, policy: dict) -> Path:

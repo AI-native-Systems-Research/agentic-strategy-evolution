@@ -2361,6 +2361,21 @@ an experiment that paired nothing. Wire the variable into the workload
 generator's seed, and verify it with the two-run recipe in
 [`docs/targets.md`](targets.md) §3 before you trust any paired bound.
 
+**Run order is concealed per campaign.** Every iteration's run order (and every
+derived workload seed) is drawn from `sha256(policy hash, iteration)`. The
+policy hash covers a random 32-hex salt Nous draws at compile, records in
+`run_order.epoch-<e>.json`, and compiles into `policy.json` as
+`run_order: {derivation: 2, salt}`. Two campaigns therefore run their rows in
+different orders, so a periodic effect on the machine (a nightly job, a thermal
+cycle) cannot line up with the same rows in every campaign. Every order is
+still recomputable from the record. To reproduce another campaign's orders
+exactly, copy its salt into `optimization.policy.run_order_salt`. A policy
+compiled before this release has no `run_order` block; its seed is the
+iteration index (derivation 1), and `nous reanalyze` keeps reproducing it that
+way. Concealment is from other campaigns, not from the target: the seed is
+exported in `seed_env` when you declare one, and the order is on disk before
+the first run.
+
 ### `design.confirm.shortlist_size`: terminal discrimination, not replication
 
 ```yaml

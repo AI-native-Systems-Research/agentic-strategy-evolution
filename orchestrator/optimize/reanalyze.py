@@ -65,6 +65,7 @@ NOT_DERIVED = frozenset({
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
     "clean_tree.manifest.json", "clean_tree.extras.json", "clean_tree.probe.json",
+    "anchor.json",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
@@ -404,6 +405,12 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
                      *CARRIED_RECORDS):
             if (orig / name).exists():
                 shutil.copy2(orig / name, new / name)
+        # The run-order salt each epoch drew at compile (#321). It is random,
+        # so it is carried rather than re-drawn; the recompiled policy then
+        # hashes to the registered one only if the file is unaltered, and a
+        # policy written before concealment has none (derivation 1).
+        for p in sorted(orig.glob("run_order.epoch-*.json")):
+            shutil.copy2(p, new / p.name)
         last = iters[-1] if iters else 0
         for i in iters:
             e = epoch_of.get(i, max(campaigns))

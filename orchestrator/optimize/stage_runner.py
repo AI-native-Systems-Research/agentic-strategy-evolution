@@ -1719,6 +1719,7 @@ def _compile_and_write_policy(campaign: dict, work_dir: Path) -> dict:
     pol = policy_mod.compile_policy(
         campaign, mechanism_patch_hash=_read_mechanism_hash(work_dir),
         epoch=_epoch_index(work_dir),
+        run_order_salt=_run_order_salt(campaign, work_dir, _epoch_index(work_dir)),
     )
     errs = policy_mod.check_policy(pol)
     if errs:
@@ -1748,6 +1749,37 @@ def _compile_and_write_policy(campaign: dict, work_dir: Path) -> dict:
     except (OSError, yaml.YAMLError) as exc:
         logger.warning("could not record the epoch's campaign: %s", exc)
     return pol
+
+
+def _run_order_salt(campaign: dict, work_dir: Path, epoch: int) -> str | None:
+    """The epoch's run-order salt (#321 run-order concealment), or None.
+
+    Recorded in ``run_order.epoch-<e>.json`` the first time the epoch compiles
+    and READ BACK on every later compile of the same epoch (a resume, or
+    ``nous reanalyze``'s scratch dir, which carries the file), so the policy
+    hash is reproducible from the record. ``optimization.policy.run_order_salt``
+    pins it (to reproduce an earlier campaign's orders). Under reanalysis an
+    epoch with no recorded salt was compiled before concealment existed, and
+    gets None: the old derivation (the iteration index).
+    """
+    import secrets
+
+    p = Path(work_dir) / f"run_order.epoch-{int(epoch)}.json"
+    if p.exists():
+        try:
+            return str(json.loads(p.read_text())["salt"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise OptimizationGateFailed(
+                f"{p.name} exists but does not record a salt ({exc}); the "
+                f"epoch's run orders cannot be reproduced from it") from exc
+    if _REANALYSIS.get():
+        return None
+    declared = ((_opt_block(campaign) or {}).get("policy") or {}).get("run_order_salt")
+    salt = str(declared) if declared else secrets.token_hex(16)
+    _write_json(p, {"epoch": int(epoch), "salt": salt,
+                    "derivation": policy_mod.RUN_ORDER_DERIVATION,
+                    "source": "declared" if declared else "random"})
+    return salt
 
 
 def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
@@ -1976,7 +2008,8 @@ def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool)
         # a small multiplier would (base*2+i aliases base+1 at i=2).
         return (base * 7919 + i) % (2 ** 31)
 
-    base = iteration if confirm else int(payload.get("run_order_seed", iteration))
+    base = (policy_mod.run_order_seed(pol, iteration) if confirm
+            else int(payload.get("run_order_seed", iteration)))
     out, rec = [], {}
     for r in rows:
         i = r.replicate if confirm else r.row_index
@@ -3356,7 +3389,8 @@ def _run_stage_body(
         # What the two blocks TOGETHER still alias, read off the combined
         # matrix (stage-1 M3) -- never assumed from the fold rule.
         _left = design_mod.alias_pairs(design_mod.combine(screen_design, design))
-        payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
+        payload = matrix.matrix_payload(
+            design, factors, run_order_seed=policy_mod.run_order_seed(pol, iteration))
         rows = matrix.expand(design, factors)
         # Provenance the combined fit rests on: WHICH column was negated, and
         # WHICH iteration's runs are the other half of the response vector. A
@@ -3382,7 +3416,8 @@ def _run_stage_body(
         )
     else:
         design = _build_design(factors, design_cfg, stage_name)
-        payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
+        _ros = policy_mod.run_order_seed(pol, iteration)
+        payload = matrix.matrix_payload(design, factors, run_order_seed=_ros)
         rows = matrix.expand(design, factors)
         _n_val = sum(1 for p in design.points if p.role == "validation")
         if _n_val:
@@ -3394,9 +3429,9 @@ def _run_stage_body(
             # only make the prediction check reject (the conservative side).
             _n0 = len(rows) - _n_val
             payload["run_order"] = (
-                matrix.randomized_run_order(_n0, iteration)
+                matrix.randomized_run_order(_n0, _ros)
                 + [_n0 + j for j in matrix.randomized_run_order(
-                    _n_val, iteration * 7919 + 1)])
+                    _n_val, _ros * 7919 + 1)])
             from orchestrator.optimize import adequacy as _adq
 
             _rcfg = design_cfg.get("refine") or {}
@@ -6169,8 +6204,10 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
 
     rows: list[ConfigRow] = []
     idx = 0
+    # The iteration under derivation 1 (old policies), the concealed seed under 2.
+    _ros = policy_mod.run_order_seed(pol, iteration)
     for i in range(r):
-        for j in randomized_run_order(len(finalists), seed=iteration * 1000 + i):
+        for j in randomized_run_order(len(finalists), seed=_ros * 1000 + i):
             lv = finalists[j]
             rows.append(ConfigRow(
                 row_index=idx, levels=dict(lv), role="confirm", replicate=i,
@@ -6193,7 +6230,7 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # shuffle. A second permutation over the whole matrix would undo the
         # "every finalist once before any twice" property.
         "run_order": list(range(len(rows))),
-        "run_order_seed": iteration,
+        "run_order_seed": _ros,
         "round": rnd,
         "finalists": [
             {"key": f"f{j}", "levels": lv, "why": why}
