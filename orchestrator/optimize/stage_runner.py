@@ -7008,6 +7008,13 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     _gain = _gain_over_baseline(pol, fin, ok, best, delta=delta_t,
                                 paired=paired, direction=direction)
     if _gain is not None:
+        # The interval is computed at this look's level, but it is REPORTED
+        # from the round where the campaign stopped, and stopping depends on
+        # that round's data: over the registered looks the guaranteed coverage
+        # is 1 - delta_terminal (the declared budget, a union over looks), not
+        # 1 - delta_t/L. Record both; the guaranteed one is what is printed.
+        _gain["delta_per_look"] = _gain.get("delta")
+        _gain["delta_guaranteed"] = float(pol["objective"]["delta_terminal"])
         summary["gain_over_baseline"] = _gain
 
     # The refill branch's candidate pool, read BEFORE confirmation.json is

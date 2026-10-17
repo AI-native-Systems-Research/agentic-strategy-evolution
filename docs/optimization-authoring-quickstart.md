@@ -179,6 +179,11 @@ says which step catches it. **[static]** = `nous validate campaign`,
   `df = center_points − 1`. If `epsilon < MDE` it warns that certification
   will rest on confirm's paired replicates. In that case add confirm
   replicates, declare `workload.seed_env`, or add centre points. [live]
+- **Give the certificate enough noise df.** A certificate needs BOTH the
+  terminal and the model regret bound within epsilon, and the model bound
+  scales with `t(df)` over the pure-error df (`center_points − 1`). With 3-4
+  centre points, near-tied surfaces rarely certify; 6-8 centre points are the
+  cheapest way to buy certification power. [static]
 - **Size `run_timeout_sec` from the slowest corner** (≥ 2× its wall clock), not
   from the baseline. `--liveness` fails a ceiling with under 2× headroom over
   the slowest level it ran. [live, then you for corners]

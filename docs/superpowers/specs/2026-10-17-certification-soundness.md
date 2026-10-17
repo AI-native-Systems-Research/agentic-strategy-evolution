@@ -193,6 +193,30 @@ term in the strict sense, and it is not yet added to the stated budget (§7).
 
 ## 7. Documented limits (deferred items and open questions)
 
+**From the WP-A review (merge gate, 2026-10-17)** -- recorded, not fixed:
+
+- The refill look is charged in `confirm_looks` but a refill round never
+  certifies (`shortlist_refilled`), so the +1 costs power without buying
+  validity: deliberate conservatism.
+- `_baseline_seat_extra` adds a seat even when the baseline is already a
+  finalist, so `runs_needed_confirm` can over-count by one seat and
+  `confirm_affordable` can stop a round early.
+- A baseline measured inadmissible vetoes the round (deliberate; it has no
+  dedicated withheld reason yet).
+- `test_spending_holds_the_sequential_error_at_delta` checks certificate
+  arithmetic only; product-path coverage is `test_every_confirm_look_is_charged`.
+- Paired (CRN) gain intervals are not exercised end to end: the synthetic
+  target's seeded workload gives zero-spread paired differences.
+- Retired earlier-round finalists and the current round's infeasible
+  finalists stay in the model max (conservative).
+- Power: 621 -> 425 certificates on the noise sweep, concentrated on near-tied
+  surfaces with few pure-error df (saddle 82 -> 3, interaction_only 7 -> 1).
+  The remedy is more centre points, not a weaker rule (quickstart).
+- The gain interval's level: computed per look, REPORTED at the guaranteed
+  1 - delta_terminal (the round shown is the one the campaign stopped at).
+  Fixed in report.md / report.json (`delta_guaranteed`).
+
+
 1. **A5, small-n noise.** No per-finalist variance-ratio or skewness
    diagnostic is recorded. No robust bound (bootstrap-t or permutation on CRN
    differences) or replicate floor is applied. The terminal Monte Carlo with

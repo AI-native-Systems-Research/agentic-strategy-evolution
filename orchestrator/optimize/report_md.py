@@ -638,10 +638,11 @@ def render_report_markdown(work_dir: Path) -> str:
     g = report.get("gain_over_baseline") or {}
     if g.get("low") is not None:
         lines.append(f"- **Gain over the baseline** {_fmt_levels(g.get('baseline'))}: "
-                     f"[{_fmt(g['low'])}, {_fmt(g['high'])}] (simultaneous "
-                     f"{1 - float(g['delta']):.3g} interval from the final confirm "
-                     f"round's fresh replicates; point estimate {_fmt(g.get('estimate'))}, "
-                     f"biased upward by selection)")
+                     f"[{_fmt(g['low'])}, {_fmt(g['high'])}] (coverage >= "
+                     f"{1 - float(g.get('delta_guaranteed', g['delta'])):.3g} over the "
+                     f"registered confirm looks -- the round reported is the one the "
+                     f"campaign stopped at; from that round's fresh replicates; point "
+                     f"estimate {_fmt(g.get('estimate'))}, biased upward by selection)")
     scope = report.get("certificate_scope") or {}
     if scope.get("region") == "slice":
         lines.append("- **Certificate scope:** a slice -- "

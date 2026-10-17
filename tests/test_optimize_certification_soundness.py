@@ -203,3 +203,24 @@ def test_inv_sem20_holds_on_oracle_campaigns_and_has_teeth(tmp_path):
     assert chk({**good, "global_bound": {**good["global_bound"], "x_hat_key": None}})
     assert chk({**good, "alpha_spending": {**good["alpha_spending"], "per_look": 0.05},
                 "delta_terminal": 0.05})
+
+
+def test_the_gain_interval_reports_the_coverage_it_guarantees_after_stopping(tmp_path):
+    """The interval is computed at the per-look level, but the round reported
+    is the one the campaign STOPPED at, and stopping depends on that round's
+    data: over 4 registered looks only 1 - delta_terminal is guaranteed, not
+    1 - delta_terminal/4. report.md must print the guaranteed level."""
+    from orchestrator.optimize.report_md import render_report_markdown
+
+    s = dataclasses.replace(SURFACES["bowl"](), noise_sd=0.4)
+    r = run_synthetic_campaign(
+        s, seed=1, parent_dir=tmp_path,
+        campaign_overrides={"known_valid_baseline": {"A": 2, "B": 2},
+                            "policy": {"confirm_max_rounds": 4}})
+    g = r.report["gain_over_baseline"]
+    delta_t = json.loads((r.work_dir / "policy.json").read_text())["objective"]["delta_terminal"]
+    assert g["delta_guaranteed"] == delta_t
+    assert g["delta_per_look"] < delta_t          # spent across the looks
+    md = render_report_markdown(r.work_dir)
+    assert f"coverage >= {1 - delta_t:.3g}" in md
+    assert f"{1 - g['delta_per_look']:.3g} interval" not in md
