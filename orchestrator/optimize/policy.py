@@ -333,6 +333,19 @@ def campaign_delta_share(spec: dict | None, epoch: int) -> float | None:
     return lst[epoch - 1] if 1 <= epoch <= len(lst) else 0.0
 
 
+#: The registered M3 check (#321 P3 item 1). See ``noise.brown_forsythe``.
+_HETERO_RULE = {
+    "alpha": 0.05,
+    "method": "brown_forsythe_median_structural_zeros_removed",
+    "groups": "the fitting stage's pure-error cells and every admissible "
+              "confirm finalist with >= 2 replicates",
+    "role": "veto: a rejection (p < alpha) or an untestable spread withholds "
+            "the model half (heteroscedastic_pure_error / "
+            "heteroscedasticity_not_testable); it never certifies, so it "
+            "spends no part of delta",
+}
+
+
 def delta_stated(policy: dict) -> float:
     """The epoch's stated error budget: ``delta_screen + delta_terminal``,
     plus ``delta_constraint`` when constraint exclusion is registered."""
@@ -752,6 +765,13 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                if _constraint_exclusion_registered(opt) else {}),
             # #321 item 7: the charged cross-epoch mode, when declared.
             **({"campaign_delta": cd_block} if cd_block is not None else {}),
+            # #321 P3 item 1: the Brown-Forsythe check of M3 (pure error is
+            # the error variance at every configuration). Registered, so its
+            # level is fixed before any data; a VETO on the model half, so it
+            # spends no delta. A policy compiled before P3 lacks the key and
+            # confirm then skips the check (old epochs reproduce).
+            **({"heteroscedasticity": dict(_HETERO_RULE)}
+               if confirm_on and mo is None else {}),
         },
         "budget": {"max_runs": design.get("max_runs")},
         "known_valid_baseline": opt.get("known_valid_baseline"),

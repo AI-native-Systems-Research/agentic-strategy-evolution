@@ -133,6 +133,18 @@ WITHHELD_MEANING = {
                                        "inadmissible, so the model bound -- "
                                        "taken against it -- cannot be linked "
                                        "to the admissible winner",
+    "heteroscedastic_pure_error": "the replicate spread at the finalists "
+                                  "differs from the pure error the model bound "
+                                  "used (Brown-Forsythe rejected at the "
+                                  "registered alpha), so the model half's "
+                                  "variance does not hold where the optimum is "
+                                  "-- add centre points or replicates, or "
+                                  "transform the metric",
+    "heteroscedasticity_not_testable": "the pure error could not be compared "
+                                       "with the finalists' spread (too few "
+                                       "replicated groups, or zero spread), so "
+                                       "the model half's equal-variance "
+                                       "assumption is untested",
     "shortlist_refilled": "the shortlist was refilled after finalists were "
                           "measured inadmissible; the replacements were "
                           "compared, but the ranking that nominated the "

@@ -5062,6 +5062,11 @@ def _run_stage_body(
         # WP-A A1: the largest per-challenger model bounds and the max over the
         # rest, so confirm can bound what screening left OUTSIDE its shortlist.
         **({"residual_regret_model_profile": rb.profile} if rb.profile else {}),
+        # #321 P3 item 1: the replicate cells the model bound's pure error
+        # was pooled from, so confirm can test M3 (Brown-Forsythe) against
+        # the finalists' replicates without the Fit.
+        **({"pure_error_cells": [list(g) for g in fit.pure_error_cells]}
+           if fit.pure_error_cells else {}),
         "epsilon": epsilon,
         "alias_consequential": [list(p) for p in alias_pairs_consequential],
         # 2fi NOT fitted because their corner column lies in the span of kept
@@ -7303,7 +7308,8 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         delta_s=float(pol["objective"]["delta_screen"]),
         delta_c=pol["objective"].get("delta_constraint"),
         xhat_measured_infeasible=bool(_rec_for_bias.get("levels")) and
-        _measured_infeasible_contains(work_dir, dict(_rec_for_bias["levels"])))
+        _measured_infeasible_contains(work_dir, dict(_rec_for_bias["levels"])),
+        hetero_rule=pol["objective"].get("heteroscedasticity"))
     # #321 item 7: a charged campaign-wide budget whose share for THIS epoch is
     # exhausted certifies nothing (the epoch may still answer, uncertified).
     budget_exhausted = bool(((pol["objective"].get("campaign_delta") or {})
@@ -8100,7 +8106,8 @@ def _certificate_scope(rec: dict, boundary: dict | None,
 def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
                   bound, eps, *, delta_t: float, delta_s: float, skip: bool,
                   delta_c: float | None = None,
-                  xhat_measured_infeasible: bool = False) -> tuple[dict | None, list[str]]:
+                  xhat_measured_infeasible: bool = False,
+                  hetero_rule: dict | None = None) -> tuple[dict | None, list[str]]:
     """``G = R_model_out + R_terminal`` and why it cannot certify (WP-A A1).
 
     See the A1 block in ``_finish_confirm`` and spec
@@ -8158,7 +8165,56 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
     out["value"] = float(r_out) + float(bound.value)
     if eps is not None and out["value"] > eps:
         reasons.append("model_bound_above_epsilon")
+    if hetero_rule:
+        out["heteroscedasticity"], why = _heteroscedasticity_check(
+            rec, ok, hetero_rule)
+        if why:
+            reasons.append(why)
     return out, reasons
+
+
+def _heteroscedasticity_check(rec: dict, ok: dict, rule: dict) -> tuple[dict, str | None]:
+    """The M3 check (#321 P3 item 1): ``(record, withheld reason or None)``.
+
+    M3 says the fitting stage's pure error -- the centre replicates' variance
+    -- is the error variance at EVERY configuration, and the model bound uses
+    it for every challenger. Measured in P2: with sd growing from 1x at the
+    centre to (1 + h)x at the corners, the model bound misses the true gap at
+    0.023 / 0.11 / 0.53 for h = 1 / 3 / 8. The finalists are the only other
+    replicated configurations the epoch has, and they sit where the model
+    predicts the optimum, so their spread is the evidence that tests M3 where
+    it matters.
+
+    Brown-Forsythe (median-centred Levene, structural zeros removed;
+    ``noise.brown_forsythe``) over the pure-error cells plus every admissible
+    finalist with >= 2 replicates, at the REGISTERED level (``rule.alpha``,
+    compiled into the policy before any data). A rejection withholds the
+    model half (``heteroscedastic_pure_error``). Fewer than two testable
+    groups, or a degenerate spread, withholds too
+    (``heteroscedasticity_not_testable``): the bound rests on M3, and an
+    untested assumption is not a satisfied one.
+
+    A VETO: it can only remove certificates, so ``Pr(certified and wrong)``
+    stays within the stated delta and no delta is spent. Its power is the
+    point and is measured, not proved (spec §7). Under CRN the finalists'
+    replicates share workload draws; the test then compares the raw spread
+    at each finalist, which is what the model bound's variance stands for.
+    """
+    from orchestrator.optimize import noise as noise_mod
+
+    cells = [list(map(float, g)) for g in (rec.get("pure_error_cells") or [])
+             if len(g) >= 2]
+    fin = {k: list(map(float, v)) for k, v in sorted(ok.items()) if len(v) >= 2}
+    test = noise_mod.brown_forsythe(cells + list(fin.values()))
+    alpha = float(rule.get("alpha", 0.05))
+    record = {"alpha": alpha, "method": test["method"], "p": test["p"],
+              "w": test["w"], "df": test["df"],
+              "pure_error_cells": len(cells), "finalists": sorted(fin),
+              "rejected": None if test["p"] is None else bool(test["p"] < alpha)}
+    if test["reason"] is not None or not cells:
+        record["reason"] = test["reason"] or "no_pure_error_cells"
+        return record, "heteroscedasticity_not_testable"
+    return record, ("heteroscedastic_pure_error" if record["rejected"] else None)
 
 
 def _refills_spent(pol, work_dir) -> int:

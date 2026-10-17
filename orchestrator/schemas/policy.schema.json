@@ -28,6 +28,7 @@
         "delta_terminal": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
         "delta_constraint": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5,
           "description": "#321 P2 item 3: the third union term of the stated budget -- the level at which constraint models exclude candidates (Bonferroni over the modelled constraints). Present exactly when a declared constraint has a violating side and no when-guard; defaults to delta_screen."},
+        "heteroscedasticity": {"type": "object", "additionalProperties": false, "required": ["alpha", "method", "groups", "role"], "description": "#321 P3 item 1: the registered Brown-Forsythe check of M3 at confirm (single-objective). A veto on the model half, so it spends no delta; absent in policies compiled before P3, which then skip it.", "properties": {"alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5}, "method": {"type": "string"}, "groups": {"type": "string"}, "role": {"type": "string"}}},
         "campaign_delta": {"type": "object",
           "description": "#321 item 7: the charged cross-epoch mode (optimization.policy.campaign_delta). epoch_share is this epoch's share of the campaign-wide total (geometric: total/2^e; or a declared schedule); the epoch's delta_screen/delta_terminal(/delta_constraint) are that share split in the declared proportions (declared_split). exhausted: no share remains, so this epoch certifies nothing."},
         "objectives": {

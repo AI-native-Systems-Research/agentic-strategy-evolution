@@ -131,6 +131,10 @@ class Surface:
     #: pinned -- still exact, because nothing it judges depends on the inert
     #: ones -- instead of 9^k points (a 16-knob truth would never finish).
     active: tuple = ()
+    #: HETEROSCEDASTIC surfaces only (#321 P3): the primary's noise sd at a
+    #: configuration, replacing the constant ``noise_sd``. ``None`` on every
+    #: other surface, whose draws are therefore unchanged.
+    noise_sd_at: Callable[[dict], float] | None = None
 
 
 def _numeric(fid: str, levels=(2, 4, 8, 16), grid=1) -> dict:
@@ -830,7 +834,9 @@ def _observe(surface: Surface, levels: dict, *, rng: random.Random,
     if surface.exception_at and all(lv.get(k) == v for k, v in surface.exception_at.items()):
         m = float("nan")
     else:
-        m = (surface.fn(lv) + rng.gauss(0.0, surface.noise_sd)
+        sd = (surface.noise_sd if surface.noise_sd_at is None
+              else float(surface.noise_sd_at(lv)))
+        m = (surface.fn(lv) + rng.gauss(0.0, sd)
              + surface.drift_per_run * run_counter)
     obs = {"cfg": {k.lower(): v for k, v in lv.items()}, "m": m}
     for o in surface.objectives:

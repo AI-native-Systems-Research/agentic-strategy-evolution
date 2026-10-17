@@ -167,6 +167,12 @@ class Fit:
     #: ``(estimate, se, t, p, df)`` -- the between-stage DRIFT check
     #: (Box & Draper 2007, ch. 15). ``None`` on every unblocked fit.
     block_effect: tuple | None = None
+    #: The replicate groups the pure error was pooled from (#321 P3 item 1):
+    #: one tuple of fitted responses per centre configuration (per block on a
+    #: blocked fit) with at least two rows. The Brown-Forsythe check of M3 at
+    #: confirm compares their spread with the finalists'. Not written to
+    #: effects.json (recommendation.json carries it for confirm).
+    pure_error_cells: tuple[tuple[float, ...], ...] = ()
 
 
 def pure_error(center_responses) -> tuple[float | None, int]:
@@ -514,6 +520,7 @@ def fit_effects(design: Design, responses, *, factor_ids,
                 ss_g += v * d
                 df_g += d
         pe_var, pe_df = (ss_g / df_g, df_g) if df_g else (None, 0)
+    extra_cells = tuple(tuple(g) for g in groups.values() if len(g) >= 2)
 
     n = len(pts)
     tcrit = None
@@ -675,6 +682,7 @@ def fit_effects(design: Design, responses, *, factor_ids,
         lack_of_fit_f=lof_f, lack_of_fit_p=lof_p,
         aliases=tuple(alias_pairs(design) if aliases is None else aliases),
         quadratic=tuple(quads),
+        pure_error_cells=extra_cells,
         **extra,
     )
 
