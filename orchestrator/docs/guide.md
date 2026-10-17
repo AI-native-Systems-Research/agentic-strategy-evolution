@@ -722,11 +722,44 @@ not chosen freely.
   two-level choice factor, 3 centres leave `on` uncovered and 4 cover both. Pure error with 2 df is very noisy; a lack-of-fit verdict resting on
   it is weak either way, so prefer 4–6 centre points when the constraint
   models matter.
-- **`refine`** — `{kind: central_composite, center_points}`. Runs only
+- **`refine`** — `{kind: central_composite, center_points, validation_points,
+  validation_seed, reuse_screen}`. Runs only
   when at least two `numeric` factors with more than 2 levels survive
   screening (the validator's rule 4). Omit this key entirely when your
   factors are all `choice`, or all binary numeric — there is no curvature
   to fit, and refine would have nothing to do.
+  - **`validation_points`** (default 4). The composite puts each factor at
+    only 3 levels, so its lack-of-fit test cannot see one-dimensional shape
+    errors: on a cliff or a cubic it rejected at about α (stage-0 audit Q3).
+    Refine therefore also runs this many OFF-LATTICE points at coded ±0.5 on
+    every refinable axis (seeded greedy maximin, `validation_seed`), as their
+    own block after the composite, holds them OUT of the fit, and tests them
+    against its predictions (joint predictive F, Chow 1960, α = 0.05). A
+    rejection makes `model_adequate` false, with
+    `model_adequacy.this_stage.rejected_by: ["validation_prediction"]`.
+    The preview counts these runs. `0` turns the check off, and then a
+    refine cannot overturn an earlier lack-of-fit rejection:
+    `model_adequate: null`, `screen_rejection_unresolved`.
+  - **`reuse_screen`** (default false). Sequential assembly (Box & Draper
+    2007, ch. 15). Refine cube corners that the screen already measured at
+    identical levels (held factors included) are not re-run, and the screen's
+    centre rows join as block-1 centres. The fit carries a block term, whose
+    t test is the between-stage drift check (`model_adequacy.reuse`). It is
+    refused when a choice factor is declared or when the screen ran under
+    another policy. On `bowl` it saves 4 of 33 runs.
+  - **Model adequacy is sticky.** `model_adequate` is the EPOCH verdict. A
+    stage's verdict is superseded only by a later stage of the same or a
+    higher model class (screen and foldover are first order with 2fi; refine
+    is second order). `recommendation.json["model_adequacy"]` records how the
+    verdict was reached: lack of fit with its df, the validation check,
+    PRESS / R²_pred (Allen 1974), and the D-efficiency and centred VIFs of
+    the design as run.
+  - **An inadequate model is never the answer.** When the verdict is false,
+    confirm seats measured leaders. With no confirm stage, the report's
+    `model` rung is barred and the `measured` rung answers. `report.md`
+    says the surface is not well approximated and names the remedies:
+    narrower ranges, `scale: log`, a transform, more levels, or a method
+    that assumes no low-order model (see the matched-budget benchmark).
 - **`confirm`** (required) — `{replicates}`. Replicates the predicted
   optimum (snapped to each factor's `grid`); the report then summarises
   the `held_out` metrics at the configurations it names.
@@ -737,6 +770,26 @@ not chosen freely.
   fit, names the options — raise the budget, accept a lower resolution (only
   those that fit AND cost less than every higher one), or screen fewer
   factors this epoch — rather than silently downgrading resolution to fit.
+
+#### The assumptions the design family rests on
+
+Fractional screening followed by a second-order refine is valid under four
+standard assumptions (Wu & Hamada, *Experiments*, ch. 4; Myers, Montgomery &
+Anderson-Cook, *Response Surface Methodology*, 4e, ch. 1-3). Nous relies on
+each of them at a named place:
+
+| assumption | relied on at | what breaks when it fails | what catches it |
+|---|---|---|---|
+| **effect sparsity**: few factors matter | screen keeps factors whose main effect is significant at α = 0.05; the rest are held | an active factor dropped by chance is held at the screen's choice | refine's validation check (only along refined axes); a later epoch |
+| **hierarchy**: low-order terms dominate, so terms of order 3 and above are ~0 | the screen model (mains + 2fi); refine's quadratic | an unmodelled cubic or 3fi biases the argmax (`ridge_cubic`) | screen lack of fit; refine's off-lattice validation check |
+| **heredity** (strong): no curvature or interaction without the parent main effect | dropped factors are held fixed and never refined | curvature in a dropped factor goes unseen | screen centre points, through lack of fit, which routes to refine on every refinable factor |
+| **low-order smoothness** over the declared ranges | refine fits and ranks with a quadratic | a cliff, threshold or second peak: the model is confidently wrong | the validation check (`step_cliff` 8/8, `ridge_cubic` 8/8 at ×1); the sticky verdict; then measured leaders, and report.md names remedies |
+
+Two more apply to held factors. Refine holds non-refinable factors at one
+level (corner marginal or centre mean). That assumes **no qualitative
+interaction** outside that slice, and the certificate's scope is the slice.
+Sequential reuse (`reuse_screen`) assumes **no between-stage drift beyond a
+constant shift**; the block term estimates that shift and tests it.
 
 #### How many knobs: any number, at resolution III, IV or V
 
