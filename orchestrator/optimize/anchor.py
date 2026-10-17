@@ -53,6 +53,7 @@ logger = logging.getLogger(__name__)
 
 SCHEMA = "nous-anchor/1"
 LOCATOR = "anchors.json"   # in the work_dir: where `nous anchor` put extra copies
+FAILURE = "anchor_failure.json"   # in the work_dir: why compile could not anchor
 REF_PREFIX = "refs/nous/anchors"
 
 
@@ -138,6 +139,11 @@ def anchor_at_compile(work_dir: Path) -> Path | None:
         return record_local(work_dir, build_anchor(work_dir))
     except (OSError, ValueError) as exc:
         logger.warning("pre-registration NOT anchored outside the work_dir: %s", exc)
+        try:
+            (Path(work_dir) / FAILURE).write_text(json.dumps(
+                {"reason": f"{type(exc).__name__}: {exc}"}, sort_keys=True))
+        except OSError:
+            pass
         return None
 
 
@@ -288,7 +294,17 @@ def verify(work_dir: Path, *, extra: list[dict] | None = None,
                                 f"({exc})")
     for where, a in checked:
         problems.extend(_check_one(wd, a, where))
+    absent_because = None
+    if not checked:
+        fp = wd / FAILURE
+        try:
+            absent_because = (json.loads(fp.read_text()).get("reason") if fp.exists()
+                              else "no anchor was written (a Nous older than #321, or "
+                                   "the state-home copy is on another machine)")
+        except (OSError, ValueError):
+            absent_because = f"{FAILURE} is unreadable"
     return {
+        "absent_because": absent_because,
         "present": bool(checked),
         "matches": (not problems) if checked else None,
         "mismatches": problems,

@@ -75,7 +75,7 @@ def test_compile_anchors_the_registration_outside_the_work_dir(campaign):
     assert "campaign.epoch-1.yaml" in hist[0]["registration"]
     assert campaign.report["provenance"]["anchor"] == {
         "present": True, "matches": True, "mismatches": [], "where": "state_home",
-        "reanchored": []}
+        "reanchored": [], "absent_because": None}
     from orchestrator.optimize.report_md import render_report_markdown
 
     assert "**External anchor:** matches (state_home)" in render_report_markdown(
@@ -133,6 +133,19 @@ def test_no_anchor_is_reported_as_self_attested_not_as_a_match(tmp_path, monkeyp
     assert r.report["provenance"]["anchor"]["matches"] is None
     assert _cli(monkeypatch, str(r.work_dir), "--verify") == 2
     assert "self-attested" in capsys.readouterr().out
+
+
+def test_a_failed_compile_anchor_names_its_reason(tmp_path, monkeypatch):
+    def _boom(wd):
+        raise OSError("state home is read-only")
+
+    monkeypatch.setattr(anchor_mod, "record_local", lambda wd, a: _boom(wd))
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=7, parent_dir=tmp_path)
+    a = r.report["provenance"]["anchor"]
+    assert a["present"] is False and "state home is read-only" in a["absent_because"]
+    from orchestrator.optimize.report_md import render_report_markdown
+
+    assert "state home is read-only" in render_report_markdown(r.work_dir)
 
 
 def test_an_export_file_verifies_and_detects(campaign, tmp_path, monkeypatch):

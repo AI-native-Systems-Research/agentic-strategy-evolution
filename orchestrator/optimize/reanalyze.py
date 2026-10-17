@@ -65,7 +65,7 @@ NOT_DERIVED = frozenset({
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
     "clean_tree.manifest.json", "clean_tree.extras.json", "clean_tree.probe.json",
-    "anchors.json",
+    "anchors.json", "anchor_failure.json",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are

@@ -2632,7 +2632,7 @@ def _report_provenance(work_dir, pol, campaign) -> dict:
 
         _v = _anchor.verify(Path(work_dir))
         _prov["anchor"] = {k: _v[k] for k in ("present", "matches", "mismatches", "where",
-                                              "reanchored")}
+                                              "reanchored", "absent_because")}
         if _v["present"] and not _v["matches"]:
             logger.error("report: the pre-registration does NOT match its external "
                          "anchor: %s", "; ".join(_v["mismatches"]))

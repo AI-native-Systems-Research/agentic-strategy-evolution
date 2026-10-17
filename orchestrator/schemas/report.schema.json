@@ -104,6 +104,7 @@
             "matches": {"type": ["boolean", "null"]},
             "mismatches": {"type": "array", "items": {"type": "string"}},
             "where": {"type": ["string", "null"]},
+            "absent_because": {"type": ["string", "null"], "description": "Why no anchor exists (null when one does)."},
             "reanchored": {"type": "array", "items": {"type": "integer"}, "description": "Epochs anchored with more than one policy hash (recompiled before any benchmark run); the latest anchor is the one checked."}
           }
         }

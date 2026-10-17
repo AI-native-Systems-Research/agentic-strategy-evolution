@@ -940,7 +940,8 @@ def _provenance_lines(report: dict) -> list[str]:
                       " (the requested ID is an alias, not a dated snapshot)"))
     anc = prov.get("anchor") if isinstance(prov.get("anchor"), dict) else None
     if anc and not anc.get("present"):
-        out.append("- **External anchor:** none; the pre-registration is self-attested")
+        out.append("- **External anchor:** none; the pre-registration is self-attested"
+                   + (f" ({anc['absent_because']})" if anc.get("absent_because") else ""))
     if anc and anc.get("present"):
         out.append("- **External anchor:** " + (
             f"matches ({anc.get('where')})" if anc.get("matches") else

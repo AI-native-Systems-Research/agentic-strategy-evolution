@@ -2622,7 +2622,7 @@ def _cmd_anchor(args):
             print(_json.dumps(v, indent=2))
         elif not v["present"]:
             print("anchor: NONE outside the work_dir; the pre-registration is "
-                  "self-attested only")
+                  f"self-attested only ({v['absent_because']})")
         elif v["matches"]:
             print(f"anchor: matches ({v['anchors']} anchor(s): {v['where']})")
         else:
