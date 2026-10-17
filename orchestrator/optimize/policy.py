@@ -760,15 +760,25 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         "states": states,
         "transitions": transitions,
     }
-    # WP-D D3 (#320): an optional BO proposer's configuration is compiled
-    # into the policy and hashed with it, so its seed and sampler are fixed
-    # before any data. Present only when declared, so every other policy is
-    # byte-identical. It proposes candidates only; nothing certifies from it.
-    _bo = (opt.get("planner") or {}).get("bo")
-    if _bo is not None:
-        policy["planner"] = {"bo": {"sampler": str(_bo.get("sampler", "tpe")),
-                                    "n_startup": int(_bo.get("n_startup", 10)),
-                                    "seed": int(_bo.get("seed", 0))}}
+    # WP-D (#320): the planning tools' declarations (the optional BO
+    # proposer's sampler/n_startup/seed, plan-next's stopping threshold and
+    # campaign run budget) are compiled into the policy and hashed with it, so
+    # they are fixed before any data of this epoch. Present only when declared,
+    # so every other policy is byte-identical. Allocation only: nothing
+    # certifies from them.
+    _pl = opt.get("planner") or {}
+    if _pl:
+        _pc: dict = {}
+        if _pl.get("bo") is not None:
+            _bo = _pl["bo"]
+            _pc["bo"] = {"sampler": str(_bo.get("sampler", "tpe")),
+                         "n_startup": int(_bo.get("n_startup", 10)),
+                         "seed": int(_bo.get("seed", 0))}
+        if _pl.get("stop_value_per_run") is not None:
+            _pc["stop_value_per_run"] = float(_pl["stop_value_per_run"])
+        if _pl.get("campaign_max_runs") is not None:
+            _pc["campaign_max_runs"] = int(_pl["campaign_max_runs"])
+        policy["planner"] = _pc
     _sanity = {t["from"] for t in transitions if "default" in t}
     assert {s for s, v in states.items() if not v.get("terminal")} <= _sanity
     from orchestrator.optimize.invariants import (

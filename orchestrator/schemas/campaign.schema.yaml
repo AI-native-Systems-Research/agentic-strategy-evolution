@@ -1617,6 +1617,24 @@ properties:
               sampler: {type: string, enum: [tpe]}
               n_startup: {type: integer, minimum: 0}
               seed: {type: integer, minimum: 0}
+          stop_value_per_run:
+            type: number
+            minimum: 0
+            description: >
+              plan-next's declared stopping threshold, in units of the
+              planner's utility per benchmark run (objective units for a
+              single objective, normalised hypervolume for several). A move
+              is chosen only if its expected value per run exceeds it.
+              Default: epsilon / (runs the epoch spent), i.e. a whole
+              epoch's runs must be expected to buy at least one epsilon.
+          campaign_max_runs:
+            type: integer
+            minimum: 1
+            description: >
+              Total benchmark runs the campaign may spend across every
+              epoch. plan-next refuses a move whose next epoch could exceed
+              what remains (``run_budget_insufficient``). Absent: no
+              cross-epoch run cap.
       run_command:
         type: string
         minLength: 1

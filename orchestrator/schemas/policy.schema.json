@@ -56,7 +56,9 @@
                "required": ["sampler", "n_startup", "seed"],
                "properties": {"sampler": {"type": "string", "enum": ["tpe"]},
                               "n_startup": {"type": "integer", "minimum": 0},
-                              "seed": {"type": "integer", "minimum": 0}}}
+                              "seed": {"type": "integer", "minimum": 0}}},
+        "stop_value_per_run": {"type": "number", "minimum": 0},
+        "campaign_max_runs": {"type": "integer", "minimum": 1}
       }
     },
     "workload": {"type": ["object", "null"]},

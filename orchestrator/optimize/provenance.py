@@ -215,6 +215,9 @@ def input_hashes(work_dir: Path) -> dict[str, str]:
     # The campaign each epoch registered: the analysis is a function of it too.
     for p in sorted(Path(work_dir).glob("campaign.epoch-*.yaml")):
         out[p.name] = sha256_file(p)
+    # WP-D D2: an accepted plan-next boundary (an override's reason lives here).
+    for p in sorted(Path(work_dir).glob("epoch_end.planned-*.json")):
+        out[p.name] = sha256_file(p)
     return out
 
 
@@ -316,7 +319,7 @@ WAIVER_KEYS = ("allow_unarmed_baseline", "allow_nondiscriminating_tests",
 
 
 def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None = None) -> dict:
-    return {
+    out = {
         "nous": nous_version_info(),
         "runtime": runtime_versions(),
         "policy_hash": policy_hash,
@@ -324,6 +327,24 @@ def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None 
         "analysis_constants": analysis_constants(),
         "waivers": waivers(work_dir, campaign),
     }
+    # WP-D D2 (#320): an epoch started by an accepted `nous plan-next`
+    # decision records what was chosen, the scored choice, and any override
+    # with its reason. Present only then, so other reports are byte-identical.
+    planned = _planner_provenance(work_dir)
+    if planned is not None:
+        out["planner"] = planned
+    return out
+
+
+def _planner_provenance(work_dir: Path) -> dict | None:
+    from orchestrator.optimize.policy import read_policy
+
+    pol = read_policy(Path(work_dir))
+    if pol is None or int(pol.get("epoch", 1)) < 2:
+        return None
+    from orchestrator.optimize.planner import planner_provenance
+
+    return planner_provenance(Path(work_dir), pol)
 
 
 def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[float, float, float] | None:

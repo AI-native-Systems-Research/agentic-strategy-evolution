@@ -65,6 +65,8 @@ NOT_DERIVED = frozenset({
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
     "clean_tree.manifest.json", "clean_tree.extras.json", "clean_tree.probe.json",
+    "planner_decision.json", "proposed_campaign.yaml", "proposed_campaign.diff",
+    "accepted_stop.json",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
@@ -400,9 +402,19 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         for name in ("mechanism.sha256", "mechanism.patch", *CARRIED_RECORDS):
             if (orig / name).exists():
                 shutil.copy2(orig / name, new / name)
+        # WP-D D2: an accepted plan-next boundary is an INPUT (a decision made
+        # before epoch e+1's data existed), and its presence is what advances
+        # the epoch index; carried, never re-derived. Copied as each replayed
+        # epoch reaches it, below, so epoch e is replayed as epoch e.
+        _planned = {int(p.stem.rsplit("-", 1)[-1]): p
+                    for p in orig.glob("epoch_end.planned-*.json")
+                    if p.stem.rsplit("-", 1)[-1].isdigit()}
         last = iters[-1] if iters else 0
         for i in iters:
             e = epoch_of.get(i, max(campaigns))
+            for pe, src in _planned.items():
+                if pe < e and not (new / src.name).exists():
+                    shutil.copy2(src, new / src.name)
             c = _detached(campaigns[e])
             pre = policy_mod.pre_epoch_stages(c)
             engine = Engine(new)

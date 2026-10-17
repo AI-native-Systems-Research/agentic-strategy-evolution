@@ -212,10 +212,14 @@ def merge_pool(*parts) -> list[dict]:
 # ── prediction ───────────────────────────────────────────────────────────────
 
 
-def coded_of(levels: dict, *, fitted_ids, factors, held_fixed: dict) -> dict:
+def coded_of(levels: dict, *, fitted_ids, factors, held_fixed: dict,
+             max_coded: float = 1.0) -> dict:
     """The fit's coded coordinates of ``levels``. Raises ``ValueError`` when
     the model cannot predict them: a fitted knob is missing or off its coding,
-    or a held knob is at a value other than the held one."""
+    or a held knob is at a value other than the held one. A numeric value
+    whose coded coordinate exceeds ``max_coded`` in magnitude is refused as
+    an extrapolation. The default 1.0 is the fitted range; only the planner's
+    widen move passes more, and it records that its score is extrapolated."""
     from orchestrator.optimize.factors import code_vector, model_columns
 
     by_id = {f.id: f for f in factors}
@@ -232,10 +236,10 @@ def coded_of(levels: dict, *, fitted_ids, factors, held_fixed: dict) -> dict:
             if v not in f.levels:
                 raise ValueError(f"{fid}={v!r} is not a declared level")
         else:
-            lo, hi = sorted(float(x) for x in f.screen_levels)
-            if not lo - 1e-12 <= float(v) <= hi + 1e-12:
-                raise ValueError(f"{fid}={v!r} lies outside the fitted range "
-                                 f"[{lo:g}, {hi:g}]: an extrapolation")
+            cv = code_vector(f, v)
+            if any(abs(x) > float(max_coded) + 1e-9 for x in cv):
+                raise ValueError(f"{fid}={v!r} lies outside the fitted range (coded "
+                                 f"{cv[0]:+.3f}, bound {max_coded:g}): an extrapolation")
         coded.update(zip(model_columns(f), code_vector(f, levels[fid])))
     return coded
 
@@ -351,7 +355,8 @@ def _check_models(fits: dict, model_adequate) -> Allocation | None:
 
 def score(pool: list[dict], *, fits: dict, objectives: list[dict], factors,
           fitted_ids, held_fixed: dict, measured: list[dict], model_adequate,
-          replicates: int = 3, eps: dict | None = None) -> Allocation:
+          replicates: int = 3, eps: dict | None = None,
+          max_coded: float = 1.0, frame=None) -> Allocation:
     """Rank ``pool`` (entries ``{levels, source}``) by the acquisition score.
 
     ``fits``: ``{metric: Fit}``. ``objectives``: ``[{metric, direction}]``,
@@ -360,7 +365,9 @@ def score(pool: list[dict], *, fits: dict, objectives: list[dict], factors,
     incumbent is the best posterior mean over them; KG's decision set adds them
     to the pool; for EHVI their predicted values form the current front.
     Using predicted rather than measured values keeps EHVI and the candidate
-    on one scale. ``mean`` sets the frame only. Returns an ``Allocation``.
+    on one scale. ``mean`` sets the frame only, and a caller comparing several
+    pools passes one fixed ``frame`` (``pareto.Frame``) so that their EHVIs
+    are in the same units. Returns an ``Allocation``.
     """
     bad = _check_models(fits, model_adequate)
     if bad is not None:
@@ -373,7 +380,7 @@ def score(pool: list[dict], *, fits: dict, objectives: list[dict], factors,
     for e in pool:
         try:
             c = coded_of(e["levels"], fitted_ids=fitted_ids, factors=factors,
-                         held_fixed=held_fixed)
+                         held_fixed=held_fixed, max_coded=max_coded)
         except (ValueError, KeyError) as exc:
             unscored.append({"levels": e["levels"], "source": e.get("source"),
                              "reason": f"unpredictable: {exc}"})
@@ -471,7 +478,8 @@ def score(pool: list[dict], *, fits: dict, objectives: list[dict], factors,
     cand_pred = [({o.metric: pred(o.metric, c) for o in pobjs}) for _, c in cands]
     value_rows = ([dict(m.get("mean") or {}) for m, _ in inc] + P_pred
                   + [{k: v[0] for k, v in cp.items()} for cp in cand_pred])
-    frame = pareto.make_frame(pobjs, value_rows, eps or {})
+    if frame is None:
+        frame = pareto.make_frame(pobjs, value_rows, eps or {})
     Pz = [frame.z(v) for v in P_pred]
     Pz = [p for p in Pz if all(math.isfinite(x) for x in p)]
     front = [Pz[i] for i in pareto.nondominated_indices(Pz)] if Pz else []

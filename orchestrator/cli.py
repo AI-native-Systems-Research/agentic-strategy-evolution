@@ -2607,6 +2607,48 @@ def _cmd_reanalyze(args):
     sys.exit(0 if res.identical else 1)
 
 
+def _cmd_plan_next(args):
+    """WP-D D2 (#320): score the candidate next epochs of a kind:optimization
+    campaign and write planner_decision.json plus a proposed next campaign.
+    Zero tokens. Never touches campaign.yaml unless ``--accept``."""
+    from orchestrator.optimize import planner
+
+    work_dir = Path(resolve_work_dir(args.target))
+    try:
+        if args.accept:
+            if not args.target.endswith((".yaml", ".yml")):
+                raise planner.PlanError(
+                    "accept_needs_campaign: --accept writes the accepted proposal over "
+                    "the campaign file, so pass the campaign.yaml path")
+            if args.choose:
+                d = planner.plan(work_dir)
+                planner.write_plan(d, choose=args.choose, reason=args.reason)
+            rec = planner.accept(work_dir, Path(args.target))
+            if rec["kind"] == "stop":
+                print(f"plan-next: accepted STOP for epoch {rec['epoch']}; no new epoch.")
+            else:
+                print(f"plan-next: accepted {rec['chosen']} for epoch {rec['epoch'] + 1}; "
+                      f"{args.target} now holds the proposal. Next: "
+                      f"`nous validate campaign {args.target} --smoke`, then "
+                      f"`nous resume {args.target}`.")
+            return
+        res = planner.plan(work_dir)
+        path = planner.write_plan(res, choose=args.choose, reason=args.reason)
+    except planner.PlanError as exc:
+        print(f"plan-next: {exc}", file=sys.stderr)
+        sys.exit(2)
+    d = res["decision"]
+    if args.json:
+        print(path.read_text())
+    else:
+        print("\n".join(planner.summary_lines(d)))
+        print(f"  decision: {path}")
+        if d.get("proposed_campaign"):
+            print(f"  proposed: {d['proposed_campaign']['path']}")
+            print(f"  diff:     {d['proposed_campaign']['diff']}")
+            print("  apply with: nous plan-next <campaign.yaml> --accept")
+
+
 def _cmd_create_campaign(args):
     """Scaffold a heavily-commented campaign.yaml (issue #89)."""
     from orchestrator.create_campaign import scaffold_campaign
@@ -3211,6 +3253,27 @@ def build_parser():
                              help="keep the re-derived scratch work_dir")
     p_reanalyze.add_argument("--json", action="store_true")
     p_reanalyze.set_defaults(func=_cmd_reanalyze)
+
+    p_plan = subparsers.add_parser(
+        "plan-next",
+        help="kind:optimization (WP-D): after an epoch reports, score the candidate "
+             "next epochs (pin dead knobs, narrow, widen an edge, raise resolution, "
+             "a recombination block, BO block, stop) by expected value of information "
+             "per run under a stated utility; write planner_decision.json and a "
+             "proposed next campaign as a validated diff. Zero tokens. campaign.yaml "
+             "is changed only with --accept.",
+    )
+    p_plan.add_argument("target", help="campaign.yaml (required with --accept) or work_dir")
+    p_plan.add_argument("--accept", action="store_true",
+                        help="apply the written decision: write the proposal over the "
+                             "campaign file and mark the epoch boundary, so the next "
+                             "`nous resume` compiles the next epoch")
+    p_plan.add_argument("--choose", metavar="OPTION",
+                        help="override the scored choice (recorded, with --reason, in "
+                             "the next epoch's provenance)")
+    p_plan.add_argument("--reason", metavar="TEXT", help="why the override (required with --choose)")
+    p_plan.add_argument("--json", action="store_true")
+    p_plan.set_defaults(func=_cmd_plan_next)
 
     p_reports = subparsers.add_parser(
         "reports",
