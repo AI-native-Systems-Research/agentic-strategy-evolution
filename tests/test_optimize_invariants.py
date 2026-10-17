@@ -1703,7 +1703,13 @@ def test_deleting_the_policy_pair_recompiles_and_shows_only_in_the_hash_trail(tm
     from orchestrator.optimize.harness import synthetic_campaign
     from orchestrator.optimize.stage_runner import _load_or_compile_policy
 
-    pol = _load_or_compile_policy(synthetic_campaign(SURFACES["bowl"]()), wd)
+    import yaml as _yaml
+
+    # The campaign the epoch REGISTERED (the harness adds its run-order opt-out,
+    # #321); recompiling a different campaign is a different registration.
+    assert synthetic_campaign  # the bare builder is not that campaign
+    pol = _load_or_compile_policy(
+        _yaml.safe_load((wd / "campaign.epoch-1.yaml").read_text()), wd)
     from orchestrator.optimize.policy import policy_hash
     assert policy_hash(pol) == before == rows[0]["policy_hash"]
 

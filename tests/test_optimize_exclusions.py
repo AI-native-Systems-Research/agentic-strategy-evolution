@@ -1198,7 +1198,10 @@ def test_a_level_correlated_fit_alone_withholds_global_certification(
     from orchestrator.optimize.synthetic import make_synthetic_runner
 
     surface = SURFACES["additive"]()
-    campaign = synthetic_campaign(surface, stages=["verify", "screen", "confirm"])
+    # One salt for both arms (#321): a random per-work_dir run-order salt would
+    # make the two arms two different experiments.
+    campaign = synthetic_campaign(surface, stages=["verify", "screen", "confirm"],
+                                  policy={"run_order_salt": "5" * 32})
 
     def _drive(tag: str, *, inject_bias: bool) -> dict:
         monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / tag))
