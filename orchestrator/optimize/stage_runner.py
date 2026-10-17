@@ -1280,6 +1280,7 @@ def built_factor_ids(factors, ran: set) -> set[str]:
 
 def _check_tests_failed_before_build(
     campaign: dict, work_dir: Path, factors, test_results: dict | None,
+    *, records: dict | None = None,
 ) -> None:
     """Oracle 2(b): a correctness test that already passed proves nothing.
 
@@ -1302,7 +1303,7 @@ def _check_tests_failed_before_build(
     check, exactly as it does for the drift oracle.
     """
     path = Path(work_dir) / "pre_build_tests.json"
-    if not path.exists():
+    if records is None and not path.exists():
         return
     if _build_checks(campaign).get("allow_preexisting_tests"):
         logger.info(
@@ -1311,7 +1312,10 @@ def _check_tests_failed_before_build(
         )
         return
     try:
-        pre = json.loads(path.read_text())
+        # The sealed, in-memory copy read before any target code ran, when
+        # verify has one (gate_records.load); the file otherwise.
+        pre = (records["pre_build_tests.json"] if records is not None
+               else json.loads(path.read_text()))
     except (OSError, ValueError) as exc:
         raise OptimizationGateFailed(
             f"pre_build_tests.json exists but could not be read ({exc}). It is "
@@ -1352,8 +1356,50 @@ def _check_tests_failed_before_build(
     )
 
 
+def _check_authored_tests_discriminate(campaign: dict, work_dir: Path, factors,
+                                       iteration: int, *, records: dict | None = None
+                                       ) -> None:
+    """Oracle 2(d) (``test_vacuity.py``): every declared correctness test of a
+    built factor must be shown to observe the mechanism, not merely the
+    existence of a name. No-op when no build ran."""
+    from orchestrator.optimize import test_vacuity
+
+    pre_path = Path(work_dir) / "pre_build_tests.json"
+    if records is None and not pre_path.exists():
+        return
+    try:
+        pre = (records["pre_build_tests.json"] if records is not None
+               else json.loads(pre_path.read_text()))
+    except (OSError, ValueError) as exc:
+        # Not "2(b) already failed": with allow_preexisting_tests 2(b) never
+        # reads the file, so this is the oracle that must fail closed.
+        raise OptimizationGateFailed(
+            f"pre_build_tests.json is unreadable ({exc}); oracle 2(d) cannot "
+            f"run. Re-run the build stage in a fresh work_dir.") from exc
+    opt = _opt_block(campaign) or {}
+    repo = (campaign.get("target_system") or {}).get("repo_path")
+    run_tests = None
+    if opt.get("test_command") and repo:
+        log = Path(work_dir) / "runs" / f"iter-{iteration}" / "mutant_test_output.log"
+
+        def run_tests(cwd: Path):
+            raw = runner.run_test_command(opt["test_command"], cwd=Path(cwd),
+                                          timeout=resolve_test_timeout(opt), log_path=log)
+            _check_survivors(work_dir, iteration, "2(d) mutant test command")
+            return runner.match_declared_tests(factors, raw), test_vacuity.read_log(raw)
+    try:
+        test_vacuity.check(
+            campaign, work_dir, factors, repo=Path(repo) if repo else None,
+            run_tests=run_tests,
+            built_ids=built_factor_ids(factors, set(pre.get("ran") or ())),
+            records=records)
+    except ValueError as exc:
+        raise OptimizationGateFailed(str(exc)) from exc
+
+
 def _check_baseline_equivalence(
     campaign: dict, work_dir: Path, factors, config_runner: Callable | None,
+    *, records: dict | None = None,
 ) -> None:
     """Oracle 2(c): ``control == known_valid_baseline`` after the build.
 
@@ -1382,14 +1428,23 @@ def _check_baseline_equivalence(
     build stage, no declared baseline, no runner); ``pre_unavailable`` means it
     was attempted and the pre-build measurement could not be taken, which is a
     normal pre-build state (see the build branch) but must not read as a pass.
-    Every not-armed path says so at WARNING, because the alternative is a
-    campaign author assuming a check ran when nothing did.
+    Every not-armed path after a build is a HARD FAIL (``_baseline_unarmed``)
+    unless ``build_checks.allow_unarmed_baseline`` waives it with a reason,
+    which is recorded; the alternative is a campaign author assuming a check
+    ran when nothing did.
     """
     path = Path(work_dir) / "baseline_equivalence.json"
-    if not path.exists():
+    sealed = records.get("baseline_equivalence.json") if records is not None else None
+    if (records is not None and sealed is None) or (records is None and not path.exists()):
+        # A build ran but no control was even attempted: unarmed, and a gate
+        # like every other unarmed path.
+        if records is not None or (Path(work_dir) / "pre_build_tests.json").exists():
+            _baseline_unarmed(campaign, path, {},
+                              "no pre-build control measurement was attempted "
+                              "(no known_valid_baseline, or no runner at build)")
         return
     try:
-        rec = json.loads(path.read_text())
+        rec = dict(sealed) if sealed is not None else json.loads(path.read_text())
     except (OSError, ValueError) as exc:
         raise OptimizationGateFailed(
             f"baseline_equivalence.json exists but could not be read ({exc}). It "
@@ -1401,30 +1456,20 @@ def _check_baseline_equivalence(
     levels = dict(rec.get("levels") or {})
     unavailable = rec.get("pre_unavailable")
     if unavailable and not pre:
-        # The build stage tried and could not. Say so loudly and proceed: the
-        # pre-build measurement is gone for good (the mechanism is in the tree
-        # now), so there is nothing to compare against and no way to recover it
-        # without re-running the build.
-        logger.warning(
-            "verify: ORACLE 2(c) IS NOT ARMED for this campaign. The control "
-            "configuration %s could not be measured before the build (%s), so "
-            "nothing verifies that the mechanism is inert at its control level "
-            "— a mechanism that shifts the metric at its OFF setting would "
-            "confound every effect this epoch measures, and that would not be "
-            "detected. The epoch proceeds. To arm the oracle, make the "
-            "run_command able to execute the control configuration BEFORE the "
-            "build stage runs, then start a fresh campaign.",
-            levels or "<unrecorded>", unavailable,
-        )
+        # The build stage tried and could not. The pre-build measurement is gone
+        # for good (the mechanism is in the tree now), so nothing can verify the
+        # mechanism is inert at its control level: a GATE, not a warning (audit
+        # Q8.1), unless the author waived it with a recorded reason.
+        _baseline_unarmed(campaign, path, rec,
+                          f"the control {levels or '<unrecorded>'} could not be "
+                          f"measured before the build ({unavailable})")
         return
     if not pre or not levels:
         return
     if config_runner is None:
-        logger.warning(
-            "verify: a pre-build control measurement exists but no config_runner "
-            "is available, so baseline equivalence cannot be re-measured. The "
-            "epoch will run without oracle 2(c).",
-        )
+        _baseline_unarmed(campaign, path, rec,
+                          "a pre-build control measurement exists but no "
+                          "config_runner is available to re-measure it")
         return
 
     from orchestrator.optimize import build as build_mod
@@ -1509,6 +1554,72 @@ def _check_baseline_equivalence(
            "cancels out of it")
         + ". See baseline_equivalence.json for both replicate vectors.",
     )
+
+
+def _baseline_unarmed(campaign: dict, path: Path, rec: dict, why: str) -> None:
+    """Oracle 2(c) could not run. Hard-fail, unless the campaign waives it with
+    ``optimization.build_checks.allow_unarmed_baseline: "<reason>"``; a waiver
+    is recorded in ``baseline_equivalence.json`` and in report.json's
+    ``provenance.waivers``, so an unarmed oracle never reads as a passed one."""
+    reason = _build_checks(campaign).get("allow_unarmed_baseline")
+    if isinstance(reason, str) and reason.strip():
+        logger.warning(
+            "verify: ORACLE 2(c) IS NOT ARMED (%s). Waived by "
+            "build_checks.allow_unarmed_baseline: %r -- nothing verifies that "
+            "the mechanism is inert at its control level, and report.json says so.",
+            why, reason.strip(),
+        )
+        _write_json(path, {**rec, "armed": False, "unarmed_because": why,
+                           "waived": reason.strip()})
+        return
+    raise OptimizationGateFailed(
+        f"oracle 2(c) is NOT ARMED: {why}. Nothing would verify that the built "
+        f"mechanism is inert at its control level, and a mechanism that moves "
+        f"the metric at its OFF setting confounds every effect the epoch "
+        f"measures. Make the run_command able to execute the "
+        f"known_valid_baseline BEFORE the build runs and start a fresh "
+        f"campaign, or, if that is impossible for this target, waive the "
+        f"oracle in writing: optimization.build_checks.allow_unarmed_baseline: "
+        f"\"<why>\" (recorded in report.json).",
+    )
+
+
+def _review_build(gate, work_dir: Path, *, built: bool | None = None) -> None:
+    """THE HUMAN GATE FOR A BUILT MECHANISM (audit Q10).
+
+    After a build, and after every automatic build oracle passed, but BEFORE the
+    policy is compiled and any benchmark budget is spent, a human is shown the
+    authored diff and the oracle records and asked to approve. This is the
+    HUMAN_DESIGN_GATE the phase machine names for this kind. Under
+    ``--auto-approve`` (this kind's default) the gate answers itself; the record
+    says so (``build_review.json`` ``auto: true``) and report.json lists it under
+    ``provenance.waivers``, so an unreviewed mechanism never reads as reviewed.
+    A reject or abort ends the campaign. Not consulted when no build ran.
+    """
+    wd = Path(work_dir)
+    if built is False or (built is None and not (wd / "pre_build_tests.json").exists()):
+        return
+    files = [str(wd / n) for n in ("mechanism.patch", "build_scope.json",
+                                   "authored_tests.json", "baseline_equivalence.json",
+                                   "pre_build_tests.json")
+             if (wd / n).exists()]
+    decision, reason = gate.prompt(
+        "The build authored the mechanism and its tests, and every automatic "
+        "oracle passed. Approve it before the epoch spends benchmark runs?",
+        artifact_path=str(wd / "mechanism.patch") if (wd / "mechanism.patch").exists() else None,
+        files=files,
+    )
+    # A gate that cannot say whether a human answered is treated as automatic:
+    # the record must not claim a review that may not have happened.
+    auto = bool(getattr(gate, "is_automatic", True))
+    _write_json(wd / "build_review.json", {
+        "decision": decision, "reason": reason, "auto": auto, "files": files})
+    if decision != "approve":
+        raise OptimizationGateFailed(
+            f"the built mechanism was not approved at the build review gate "
+            f"({decision}{': ' + reason if reason else ''}); no policy was "
+            f"compiled and no benchmark run was spent. See build_review.json.",
+        )
 
 
 def _reuse_enabled(opt: dict) -> bool:
@@ -2088,6 +2199,43 @@ def _epoch_end_remedy(when: dict) -> str:
     )
 
 
+import contextvars
+
+#: Set while run_stage serves ``nous reanalyze``: nothing is measured, and the
+#: scratch work_dir has no clean tree to check.
+_REANALYSIS = contextvars.ContextVar("nous_reanalysis", default=False)
+
+
+def _check_survivors(work_dir, iteration, what: str) -> None:
+    """Raise when a target command left processes running after it returned
+    (reaper.run_in_process_group reaped them and recorded it; round 3, C2)."""
+    from orchestrator.optimize import reaper
+
+    left = reaper.take_survivors()
+    if not left:
+        return
+    p = Path(work_dir) / "runs" / f"iter-{iteration}" / "target_survivors.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    _write_json(p, {"after": what, "survivors": left})
+    raise OptimizationGateFailed(
+        f"after the {what}: {len(left)} target command(s) left processes running "
+        f"after they returned ({[x['cmd'][:60] for x in left[:3]]}); they were killed. "
+        f"A process that outlives its command can change the measured tree or the "
+        f"results after every check. See {p.name}.")
+
+
+def _check_clean_tree_after(campaign, work_dir, what: str) -> None:
+    """Raise when target code modified the clean tree (clean_tree.check)."""
+    from orchestrator.optimize import clean_tree as _ct
+
+    if _REANALYSIS.get() or not (Path(work_dir) / _ct.RECORD).exists():
+        return
+    try:
+        _ct.check(Path(work_dir))
+    except _ct.CleanTreeError as exc:
+        raise OptimizationGateFailed(f"after the {what}: {exc}") from exc
+
+
 def _run_report(engine, campaign, work_dir, iteration, pol, *,
                 recommendation_levels, epoch_ended: str | None = None) -> None:
     """Write ``report.json`` and end the campaign at DONE.
@@ -2140,6 +2288,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     into one number would advertise the assumption-light guarantee while
     delivering the model-dependent one.
     """
+    # No report on measurements from a tree target code modified (round 3, A4).
+    _check_clean_tree_after(campaign, work_dir, "last stage, at the terminal transition")
     primary = _primary_of((campaign.get("optimization") or {}).get("response"))
     metric = primary.get("metric") or ""
     direction = primary.get("direction") or pol["objective"]["direction"]
@@ -2355,6 +2505,10 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         **({"boundary_optimum": boundary_block} if boundary_block else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
+        # What this report rests on (audit Q7): code version, input hashes,
+        # analysis constants, waived gates; and the cross-epoch error budget.
+        # See orchestrator/optimize/provenance.py.
+        **_report_provenance(work_dir, pol, campaign),
     })
     logger.info(
         "report: recommendation %s on basis %r (certified=%s); R_model=%s, "
@@ -2367,6 +2521,17 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         else "",
     )
     engine.transition("DONE")
+
+
+def _report_provenance(work_dir, pol, campaign) -> dict:
+    """``provenance`` and ``error_budget`` for report.json (provenance.py)."""
+    from orchestrator.optimize import provenance as prov_mod
+
+    return {
+        "provenance": prov_mod.build_provenance(
+            Path(work_dir), policy_mod.policy_hash(pol), campaign=campaign),
+        "error_budget": prov_mod.error_budget(Path(work_dir), pol),
+    }
 
 
 def _measured_infeasible_contains(work_dir, levels: dict, *,
@@ -2513,6 +2678,7 @@ def run_stage(
     gate=None,
     model: str | None = None,
     sdk_runner: Callable | None = None,
+    reanalysis: bool = False,
     **_ignored,
 ):
     """Run one optimization-kind iteration and return an ``IterationOutcome``.
@@ -2524,6 +2690,44 @@ def run_stage(
     agent call, mirroring ``SDKDispatcher(sdk_runner=...)``. Every other
     stage is pure Python and ignores it.
     """
+    from orchestrator.engine import Engine
+    from orchestrator.gates import HumanGate
+    from orchestrator.iteration import (
+        IterationOutcome,
+        _enter_phase,
+        finalize_iteration,
+    )
+
+    from orchestrator.optimize import reaper as _reaper
+
+    _reaper.take_survivors()          # none from an earlier stage count here
+    _reanalysis_token = _REANALYSIS.set(bool(reanalysis))
+    try:
+        return _run_stage_body(
+            campaign, work_dir, iteration=iteration, stage=stage,
+            config_runner=config_runner, integrity_check=integrity_check,
+            test_results=test_results, auto_approve=auto_approve, gate=gate,
+            model=model, sdk_runner=sdk_runner, reanalysis=reanalysis, **_ignored)
+    finally:
+        _REANALYSIS.reset(_reanalysis_token)
+
+
+def _run_stage_body(
+    campaign: dict,
+    work_dir: Path,
+    *,
+    iteration: int,
+    stage=None,
+    config_runner=None,
+    integrity_check=None,
+    test_results=None,
+    auto_approve: bool = True,
+    gate=None,
+    model=None,
+    sdk_runner=None,
+    reanalysis: bool = False,
+    **_ignored,
+):
     from orchestrator.engine import Engine
     from orchestrator.gates import HumanGate
     from orchestrator.iteration import (
@@ -2573,6 +2777,43 @@ def run_stage(
     # Set only when the test command runs HERE; None when verdicts were injected.
     test_run: "runner.NativeTestResults | None" = None
 
+    # THE BUILD RECORDS ARE READ ONCE, HERE, before any target code runs at
+    # verify (the test command below executes agent-authored code). The oracles
+    # use these sealed in-memory copies (gate_records.py).
+    _gate = None
+    if stage_name == Stage.VERIFY.value and not reanalysis:
+        from orchestrator.optimize import build_scope as _bs
+        from orchestrator.optimize import gate_records as _gr
+
+        if _bs.build_declared(campaign) or (Path(work_dir) / "pre_build_tests.json").exists():
+            try:
+                _gr.require_outside_repo(work_dir, Path(repo) if repo else None)
+                _gate = _gr.load(work_dir)
+            except _gr.GateRecordError as exc:
+                raise OptimizationGateFailed(str(exc)) from exc
+
+    # WHERE TARGET CODE RUNS. With a build stage, every stage after it runs the
+    # target's commands in the CLEAN CHECKOUT of the pre-build commit plus the
+    # recorded mechanism patch (clean_tree.py) -- never in the agent's tree.
+    exec_repo = Path(repo) if repo else None
+    if (repo and not _is_build and stage_name != Stage.PLAN.value and not reanalysis):
+        from orchestrator.optimize import clean_tree as _ct
+
+        if _ct.active(campaign, work_dir):
+            from orchestrator.optimize import gate_records as _gr2
+
+            broken = [n for n in (_ct.RECORD, _ct.PATCH) if _gr2.check(work_dir, n) != "ok"]
+            if broken:
+                raise OptimizationGateFailed(
+                    f"the recorded mechanism {broken} fails its seal: what the epoch "
+                    f"would measure cannot be shown to be what the build produced.")
+            try:
+                exec_repo = _ct.ensure(Path(repo), work_dir,
+                                       fresh=stage_name == Stage.VERIFY.value)
+            except _ct.CleanTreeError as exc:
+                raise OptimizationGateFailed(str(exc)) from exc
+
+
     if test_results is None and opt.get("test_command") and repo:
         # Runs on the BUILD iteration too, and deliberately so (oracle 2(b),
         # spec §3.7). An earlier version skipped it here on the grounds that
@@ -2591,7 +2832,7 @@ def run_stage(
         # WHY, and re-running by hand may not reproduce a timeout or an
         # ordering-dependent failure.
         raw = runner.run_test_command(
-            opt["test_command"], cwd=Path(repo),
+            opt["test_command"], cwd=exec_repo,
             timeout=resolve_test_timeout(opt),
             log_path=Path(work_dir) / "runs" / f"iter-{iteration}" / "test_output.log",
         )
@@ -2599,6 +2840,7 @@ def run_stage(
         # `match_declared_tests` returns a plain dict, and an empty one reads
         # the same whether the suite was killed, crashed, or printed nothing.
         test_run = raw
+        _check_survivors(work_dir, iteration, f"{stage_name} test command")
         test_results = runner.match_declared_tests(parse_factors(opt["factors"]), raw)
         logger.info(
             "test_command reported %d test(s); %d matched a declared "
@@ -2611,7 +2853,7 @@ def run_stage(
     # the real campaigns it exists for.
     if config_runner is None and opt.get("run_command") and repo:
         config_runner = runner.make_config_runner(
-            opt["run_command"], cwd=Path(repo),
+            opt["run_command"], cwd=exec_repo,
             metric_path=_primary_of(opt.get("response")).get(
                 "metric", "",
             ),
@@ -2630,9 +2872,52 @@ def run_stage(
         # verify rejects, and `ran` is what distinguishes "the test existed and
         # failed" (the shape a build is supposed to have) from "the test command
         # never mentioned it", which is the fail-closed case verify already owns.
+        from orchestrator.optimize import gate_records, test_vacuity
+
+        # A build needs a repo at all (round 3, E3): say so here rather than
+        # failing later with a misleading "record absent" seal error.
+        if not repo:
+            raise OptimizationGateFailed(
+                "a build stage needs target_system.repo_path: the mechanism is "
+                "authored in that repository and verified in a clean checkout of its "
+                "commit.")
+        # Gate records live OUTSIDE the repo and are sealed (gate_records.py).
+        try:
+            gate_records.require_outside_repo(work_dir, Path(repo) if repo else None)
+        except gate_records.GateRecordError as exc:
+            raise OptimizationGateFailed(str(exc)) from exc
+        gate_records.ensure_key(work_dir)
+        # The clean-checkout model (clean_tree.py): a real scope, and a committed
+        # pre-build tree whose commit the mechanism patch is taken against.
+        from orchestrator.optimize import build_scope as _bs0
+        from orchestrator.optimize import clean_tree
+        try:
+            _bs0.mechanism_scope(campaign)
+            _clean_base = clean_tree.require_clean_base(Path(repo)) if repo else None
+            # The pre-build TREE hash, recorded before the agent can touch the
+            # repository's objects: every clean tree is checked against it.
+            _clean_tree_sha = clean_tree.base_tree(Path(repo), _clean_base) if repo else None
+            # The ignored assets the clean tree will copy, as they are BEFORE
+            # the agent runs (clean_tree.extras_digest).
+            _extras_pre = clean_tree.extras_digest(
+                Path(repo), list((campaign.get("target_system") or {})
+                                 .get("worktree_extras") or []))
+        except (_bs0.BuildScopeViolation, clean_tree.CleanTreeError) as exc:
+            raise OptimizationGateFailed(str(exc)) from exc
         _write_json(Path(work_dir) / "pre_build_tests.json", {
             "passed": sorted(t for t, ok in (test_results or {}).items() if ok),
             "ran": sorted(test_results or {}),
+            # WHY each failing test failed (oracle 2(d)): a failure only on a
+            # missing symbol is not evidence the test observes the mechanism.
+            "failure_kinds": test_vacuity.kinds_for(
+                test_results or {}, test_vacuity.read_log(test_run)),
+            # Whether those kinds were read from real test output (False only
+            # when verdicts were injected): 2(d) accepts an unclassified
+            # pre-build failure only without output.
+            "output_recorded": test_vacuity.read_log(test_run) is not None,
+            # True only when no test command ran here at all (the verdicts were
+            # injected by a caller): review C2.
+            "verdicts_injected": test_run is None,
         })
         # ── oracle 2(c), first half: the control, measured before the build ──
         #
@@ -2726,14 +3011,43 @@ def run_stage(
                     dict(_pre_baseline), _n, f"{_mean(_pre):.6g}",
                     _metric or "<unset>",
                 )
-        build_mod.run_build(
-            campaign, work_dir,
-            iteration=iteration,
-            declared_tests=build_mod.declared_native_tests(_factors_for_build),
-            model=model,
-            max_turns=_build_max_turns(campaign),
-            sdk_runner=sdk_runner,
-        )
+        from orchestrator.optimize import build_scope
+
+        # The write-scope gate: what the agent changed is the diff between the
+        # tree just before and just after its call (build_scope.py).
+        _scope_before = build_scope.snapshot(Path(repo), work_dir) if repo else None
+        from orchestrator.optimize import isolation
+
+        try:
+            # Every process the build starts must be gone when it returns
+            # (isolation.py): a survivor could act after every check.
+            with isolation.track(work_dir):
+                build_mod.run_build(
+                    campaign, work_dir,
+                    iteration=iteration,
+                    declared_tests=build_mod.declared_native_tests(_factors_for_build),
+                    model=model,
+                    max_turns=_build_max_turns(campaign),
+                    sdk_runner=sdk_runner,
+                )
+        except isolation.BuildSurvivors as exc:
+            raise OptimizationGateFailed(str(exc)) from exc
+        if repo:
+            try:
+                build_scope.check(campaign, Path(repo), work_dir, _scope_before,
+                                  pre_ran=sorted(test_results or {}))
+            except build_scope.BuildScopeViolation as exc:
+                raise OptimizationGateFailed(str(exc)) from exc
+        _clean_rec = None
+        if repo and _clean_base:
+            try:
+                _clean_rec = clean_tree.capture(
+                    campaign, Path(repo), work_dir, _clean_base,
+                    protected=build_scope.protected_paths(
+                        Path(repo), campaign, sorted(test_results or {})),
+                    base_tree_sha=_clean_tree_sha, extras_pre=_extras_pre)
+            except (clean_tree.CleanTreeError, build_scope.GitError) as exc:
+                raise OptimizationGateFailed(str(exc)) from exc
         # Pre-register WHICH CODE the epoch will measure. `verify` compiles the
         # policy one iteration later and stamps this hash into it; every epoch
         # iteration re-checks it (below). Snapshot here rather than at verify
@@ -2756,7 +3070,14 @@ def run_stage(
                 "otherwise any file the test or run command leaves behind that "
                 "git does not ignore will read as mechanism drift)",
             )
-    elif repo and stage_name not in policy_mod.pre_epoch_stages(campaign):
+            if _clean_rec is not None:
+                # The registered mechanism IS the clean patch: the policy is
+                # compiled for its hash, and the epoch measures base + patch.
+                (Path(work_dir) / "mechanism.sha256").write_text(
+                    _clean_rec["patch_sha256"] + "\n")
+        gate_records.seal(work_dir, gate_records.BUILD_RECORDS)
+    elif (repo and stage_name not in policy_mod.pre_epoch_stages(campaign)
+          and exec_repo == Path(repo)):
         # ── drift oracle (spec §3.7, oracle 2) ──────────────────────────────
         #
         # A measurement is only about the system that was pre-registered. The
@@ -2924,8 +3245,34 @@ def run_stage(
         # never actually tested (2(b)) or is not the system the control
         # describes (2(c)) would leave a signed commitment to a broken
         # experiment on disk for a later resume to pick up.
-        _check_tests_failed_before_build(campaign, work_dir, factors, test_results)
-        _check_baseline_equivalence(campaign, work_dir, factors, config_runner)
+        # The build's gate records must exist and be the ones written at build
+        # time; "a build ran" is decided from the campaign, not from a file the
+        # build agent could delete; the records were loaded and their seals
+        # verified at the top of run_stage (gate_records.load).
+        #
+        # `nous reanalyze` (reanalyze.py) re-derives the ANALYSIS from recorded
+        # rows; these gates are measurements of the target tree and were
+        # decided when the campaign ran, so a reanalysis carries their records
+        # instead of re-running them.
+        if not reanalysis:
+            _check_tests_failed_before_build(campaign, work_dir, factors, test_results,
+                                             records=_gate)
+            _check_authored_tests_discriminate(campaign, work_dir, factors, iteration,
+                                               records=_gate)
+            _check_baseline_equivalence(campaign, work_dir, factors, config_runner,
+                                        records=_gate)
+            _review_build(gate, work_dir, built=_gate is not None)
+            if _gate is not None:
+                from orchestrator.optimize import gate_records as _gr
+                # Reseal only what verify itself wrote: the build-written part
+                # of baseline_equivalence.json on disk must still equal the
+                # sealed in-memory copy, or target code that ran at verify
+                # rewrote it (round 3, B3).
+                try:
+                    _gr.confirm_build_part(work_dir, _gate)
+                except _gr.GateRecordError as exc:
+                    raise OptimizationGateFailed(str(exc)) from exc
+                _gr.seal(work_dir, ("baseline_equivalence.json", *_gr.VERIFY_RECORDS))
         # The apparatus is certified, so pre-register the epoch's policy: a
         # JSON document hashed BEFORE the first benchmark run is what makes
         # the path a pre-registration rather than a story told afterwards.
@@ -3581,6 +3928,11 @@ def run_stage(
         # to runs.jsonl stay on disk (append-only), which is what lets an author
         # see which rows preceded the change.
         raise OptimizationGateFailed(str(exc)) from exc
+    # The measurement batch ran target code in the clean tree: check the tree
+    # right after it, so a batch that modified what it measured fails THIS
+    # iteration rather than the next one (round 3, A4).
+    _check_survivors(work_dir, iteration, f"{stage_name} measurement batch")
+    _check_clean_tree_after(campaign, work_dir, f"{stage_name} measurement batch")
 
     # Restore DESIGN order before anything reads these positionally.
     # `_fitting_responses` walks `outcomes` in sequence and `fit_effects` pairs

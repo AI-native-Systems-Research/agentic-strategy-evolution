@@ -31,6 +31,12 @@ locked_parameters:
   gpu_memory_utilization: 0.90
   tensor_parallel_size: 1
 optimization:
+  # Every lock the harness echoes in its cfg block is CHECKED on every row.
+  locked_observables:
+    model: cfg.model
+    requests: cfg.requests
+    gpu_memory_utilization: cfg.gpu_memory_utilization
+    tensor_parallel_size: cfg.tensor_parallel_size
   run_command: "python bench/nous_bench.py --model meta-llama/Llama-3.1-8B-Instruct --requests 400"
   test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
   known_valid_baseline: {MNS: 256, MBT: 8192, CP: "off", POL: fcfs}

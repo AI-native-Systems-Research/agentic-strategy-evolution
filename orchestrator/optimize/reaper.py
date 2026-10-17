@@ -261,6 +261,23 @@ def run_in_process_group(cmd, *, cwd=None, env=None, timeout=None,
         start_new_session=_supports_process_groups(),
     )
     track(proc)
+    watcher = _DescendantWatcher(proc.pid)
+    reaped = False
+
+    def _reap():
+        # Anything still in the command's process group, or any DESCENDANT seen
+        # while it ran (one that called setsid() and left the group), outlived
+        # it. Kill and record them -- on EVERY exit path, the timeout and an
+        # interrupt included (round 6, item 2): a target process that outlives
+        # its command can change the tree or the results after every check.
+        nonlocal reaped
+        if reaped:
+            return
+        reaped = True
+        seen = watcher.stop()
+        if _supports_process_groups():
+            _reap_leftover_group(proc.pid, cmd, seen)
+
     try:
         out, err = proc.communicate(timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -272,6 +289,7 @@ def run_in_process_group(cmd, *, cwd=None, env=None, timeout=None,
             out, err = proc.communicate(timeout=1)
         except (subprocess.TimeoutExpired, ValueError, OSError):  # pragma: no cover
             out, err = "", ""
+        _reap()
         raise subprocess.TimeoutExpired(
             cmd, timeout, output=out, stderr=err,
         ) from None
@@ -279,7 +297,134 @@ def run_in_process_group(cmd, *, cwd=None, env=None, timeout=None,
         # Includes KeyboardInterrupt: a Ctrl-C during a measurement must not
         # leave the benchmark's server running.
         kill_tree(proc)
+        _reap()
         raise
     finally:
         untrack(proc)
+    _reap()
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+def start_time(pid: int) -> str | None:
+    """The process's start time as ``ps`` reports it (``lstart``), or None
+    when it is gone. With the pid, it identifies ONE process: a pid the kernel
+    has reused for another process has a different start time (round 6)."""
+    try:
+        out = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True,
+                             text=True, timeout=10).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return out or None
+
+
+class _DescendantWatcher:
+    """Polls the process table while a target command runs and remembers every
+    descendant (pid -> pgid). A child that calls ``setsid()`` leaves the
+    command's group but not, while it is being created, its ancestry, so the
+    poller sees it. A double-fork that detaches within one polling interval can
+    still escape; that limit is documented."""
+
+    INTERVAL = 0.1
+
+    def __init__(self, root: int):
+        self.root, self.seen = root, {}
+        self.started: dict[int, str | None] = {}
+        self.errors: list[str] = []
+        self._stop = threading.Event()
+        self._t = threading.Thread(target=self._run, daemon=True)
+        self._t.start()
+
+    def _run(self):
+        from orchestrator.optimize import isolation
+
+        while not self._stop.is_set():
+            try:
+                for pid, pg in isolation.descendants(self.root).items():
+                    if pid not in self.seen:
+                        self.seen[pid] = pg
+                        self.started[pid] = start_time(pid)
+            except Exception as exc:  # noqa: BLE001 -- recorded with the survivors
+                self.errors.append(str(exc))
+            self._stop.wait(self.INTERVAL)
+
+    def stop(self) -> dict:
+        self._stop.set()
+        self._t.join(timeout=5)
+        return dict(self.seen), list(self.errors), dict(self.started)
+
+
+#: Every target command whose process group still had members after it
+#: returned: ``{"cmd", "pgid"}``. Drained by ``take_survivors``.
+SURVIVORS: list[dict] = []
+_SURVIVORS_LOCK = threading.Lock()
+
+
+def _reap_leftover_group(pgid: int, cmd, seen=None) -> None:
+    from orchestrator.optimize import isolation
+
+    if seen is None:
+        descendants, errors, started = {}, [], {}
+    elif len(seen) == 2:
+        descendants, errors = seen
+        started = {}
+    else:
+        descendants, errors, started = seen
+    reused: list[int] = []
+    alive_group = True
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        alive_group = False
+    except PermissionError:
+        pass
+    # EVERY descendant seen while the command ran that is still alive is a
+    # survivor -- whatever group it was in when first seen. Its group is
+    # RE-READ now: a child that called setsid() after the first poll has a new
+    # one, and a cached pgid would point the kill at the wrong group (round 5).
+    escaped: list[int] = []
+    current: dict[int, int | None] = {}
+    for p in sorted(descendants):
+        if not isolation._alive(p):
+            continue
+        # The SAME process, or a reused pid? Compare the start time recorded
+        # when it was first seen; on a mismatch (or none recorded), record and
+        # do NOT kill: SIGKILLing an unrelated group is worse than a miss.
+        st_then = started.get(p)
+        if st_then is None or start_time(p) != st_then:
+            reused.append(p)
+            continue
+        try:
+            current[p] = os.getpgid(p)
+        except (ProcessLookupError, PermissionError):
+            current[p] = None
+        if current[p] != pgid:
+            escaped.append(p)
+    if not alive_group and not escaped and not errors and not reused:
+        return
+    if alive_group:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    me = os.getpgid(0)
+    for p in escaped:
+        pg = current.get(p)
+        try:
+            if pg is not None and pg != me:
+                os.killpg(pg, signal.SIGKILL)
+            else:
+                os.kill(p, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+    with _SURVIVORS_LOCK:
+        SURVIVORS.append({"cmd": " ".join(map(str, cmd)) if isinstance(cmd, (list, tuple))
+                          else str(cmd), "pgid": pgid, "escaped_session": escaped,
+                          "pid_not_verified": reused,
+                          "observation_errors": errors[:3]})
+
+
+def take_survivors() -> list[dict]:
+    with _SURVIVORS_LOCK:
+        out = list(SURVIVORS)
+        SURVIVORS.clear()
+    return out

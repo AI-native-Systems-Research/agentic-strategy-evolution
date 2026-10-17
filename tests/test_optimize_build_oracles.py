@@ -18,7 +18,7 @@ def _git_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "config", "user.name", "t"], cwd=repo, check=True)
     (repo / "mech.py").write_text("X = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "init"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "init"], cwd=repo, check=True)
     return repo
 
 
@@ -128,6 +128,7 @@ def test_build_stage_snapshots_the_mechanism_it_authored(tmp_path, monkeypatch):
     c = synthetic_campaign(s)
     c["target_system"]["repo_path"] = str(repo)
     c["optimization"]["stages"] = ["build", "verify", "screen", "confirm"]
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["mech.py", "test_mech.py"]}
     wd = setup_work_dir("buildsnap", repo_path=str(repo), campaign=c)
 
     class _Result:
@@ -148,7 +149,13 @@ def test_build_stage_snapshots_the_mechanism_it_authored(tmp_path, monkeypatch):
               config_runner=make_synthetic_runner(s, seed=1))
     patch = (Path(wd) / "mechanism.patch").read_text()
     assert "X = 42" in patch and "untracked: test_mech.py" in patch
-    assert (Path(wd) / "mechanism.sha256").read_text().strip() == current_mechanism_hash(repo)
+    # The registered mechanism is the CLEAN patch (clean_tree.py): the diff of
+    # mechanism_paths against the pre-build commit, which the epoch measures.
+    clean = json.loads((Path(wd) / "clean_tree.json").read_text())
+    assert (Path(wd) / "mechanism.sha256").read_text().strip() == clean["patch_sha256"]
+    cpatch = (Path(wd) / "mechanism.clean.patch").read_text()
+    assert "X = 42" in cpatch and "test_mech.py" in cpatch
+    assert clean["touched"] == ["mech.py", "test_mech.py"]
 
 
 # ─── oracle 2(b)/(c): the build's own claims, checked against measurement ───
@@ -167,6 +174,8 @@ def _build_campaign(tmp_path, repo):
     c = synthetic_campaign(s, stages=["build", "verify", "screen", "confirm"],
                            known_valid_baseline={"A": 2, "B": 2, "C": "off"})
     c["target_system"]["repo_path"] = str(repo)
+    # A build must declare its scope (build_scope.mechanism_scope).
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["mech.py", "test_mech.py"]}
     return s, c
 
 
@@ -252,7 +261,7 @@ def test_allow_preexisting_tests_opts_out_of_oracle_2b(tmp_path, monkeypatch):
     from orchestrator.optimize.synthetic import make_synthetic_runner
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
     repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
-    c["optimization"]["build_checks"] = {"allow_preexisting_tests": True}
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], "allow_preexisting_tests": True}
     wd = setup_work_dir("optout", repo_path=str(repo), campaign=c)
     all_pass = {t: True for t in _declared_ids(c)}
     run_stage(c, wd, iteration=1, stage="build",
@@ -328,7 +337,7 @@ def test_baseline_equivalence_records_the_measurement_even_when_it_passes(tmp_pa
     from orchestrator.optimize.synthetic import make_synthetic_runner
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
     repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
-    c["optimization"]["build_checks"] = {"baseline_replicates": 2,
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], "baseline_replicates": 2,
                                          "baseline_tolerance_pct": 25.0}
     wd = setup_work_dir("recorded", repo_path=str(repo), campaign=c)
     ids = _declared_ids(c)
@@ -517,18 +526,65 @@ def test_an_unarmed_oracle_is_recorded_not_silent(tmp_path, monkeypatch, caplog)
     assert "unknown flag" in be["pre_unavailable"], be
     assert be["levels"] == {"A": 2, "B": 2, "C": "off"}
 
-    # verify must proceed (nothing to compare against) and must SAY it did not
-    # check, rather than passing silently.
+    # verify must NOT proceed: an unarmed oracle is a gate, not a warning
+    # (audit Q8.1). And the record must not have been rewritten into
+    # something that looks OK.
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+    with pytest.raises(OptimizationAborted, match="NOT ARMED"):
+        run_stage(c, wd, iteration=2, stage="verify",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in ids})
+    assert not (Path(wd) / "policy.json").exists(), "no pre-registration on a broken apparatus"
+    be2 = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be2.get("ok") is None and "pre_unavailable" in be2
+
+
+def test_an_unarmed_oracle_proceeds_only_with_a_recorded_waiver(tmp_path, monkeypatch, caplog):
+    """The opt-out is explicit, carries a reason, and reaches report.json."""
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], 
+        "allow_unarmed_baseline": "the harness is authored by the build itself"}
+    wd = setup_work_dir("waived", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build", config_runner=_strict_runner,
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
     import logging
     with caplog.at_level(logging.WARNING, logger="orchestrator.optimize.stage_runner"):
         run_stage(c, wd, iteration=2, stage="verify",
                   config_runner=make_synthetic_runner(s, seed=1),
                   test_results={t: True for t in ids})
-    assert any("NOT ARMED" in r.getMessage() for r in caplog.records), caplog.text
-    assert (Path(wd) / "policy.json").exists(), "the epoch still compiles"
-    # And the record must NOT have been rewritten into something that looks OK.
-    be2 = json.loads((wd / "baseline_equivalence.json").read_text())
-    assert be2.get("ok") is None and "pre_unavailable" in be2
+    assert (Path(wd) / "policy.json").exists()
+    be = json.loads((wd / "baseline_equivalence.json").read_text())
+    assert be["armed"] is False and be["waived"] == "the harness is authored by the build itself"
+    from orchestrator.optimize.provenance import waivers
+    assert any(w["gate"] == "oracle_2c_baseline"
+               and w["reason"] == "the harness is authored by the build itself"
+               for w in waivers(wd, c)), waivers(wd, c)
+
+
+def test_a_build_with_no_control_attempt_is_unarmed_too(tmp_path, monkeypatch):
+    """No runner at build time: the file is never written. Absence after a
+    build is not 'never attempted, so fine' -- it is unarmed."""
+    from orchestrator.iteration import setup_work_dir
+    from orchestrator.optimize.stage_runner import OptimizationAborted, run_stage
+    from orchestrator.optimize.synthetic import make_synthetic_runner
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
+    repo = _git_repo(tmp_path); s, c = _build_campaign(tmp_path, repo)
+    wd = setup_work_dir("noattempt", repo_path=str(repo), campaign=c)
+    ids = _declared_ids(c)
+    run_stage(c, wd, iteration=1, stage="build", config_runner=None,
+              test_results={t: False for t in ids},
+              sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
+    assert not (wd / "baseline_equivalence.json").exists()
+    with pytest.raises(OptimizationAborted, match="NOT ARMED"):
+        run_stage(c, wd, iteration=2, stage="verify",
+                  config_runner=make_synthetic_runner(s, seed=1),
+                  test_results={t: True for t in ids})
 
 
 def test_a_post_build_measurement_failure_still_aborts(tmp_path, monkeypatch):
@@ -755,7 +811,7 @@ def test_allowlist_matching_agrees_with_gits_own_pathspec(tmp_path):
         (repo / d).mkdir()
         (repo / d / "a.py").write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "dirs"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "dirs"], cwd=repo, check=True)
     for d in ("src", "srcx"):
         (repo / d / "a.py").write_text("V = 2\n")
     for entry in ("src", "src/", "src/a", "srcx", "nope"):
@@ -865,7 +921,7 @@ def test_a_rejected_glob_is_exactly_what_the_runtime_cannot_match(tmp_path):
     for rel in ("src/mech.py", "src/other.py"):
         (repo / rel).write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "src"], cwd=repo, check=True)
     for rel in ("src/mech.py", "src/other.py"):
         (repo / rel).write_text("V = 2\n")
 
@@ -991,7 +1047,7 @@ def test_the_parent_escape_really_disarms_the_oracle(tmp_path):
     (repo / "src").mkdir()
     (repo / "src" / "mech.py").write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "src"], cwd=repo, check=True)
     (repo / "src" / "mech.py").write_text("V = 2\n")
     wd = tmp_path / "wd"
     wd.mkdir()
@@ -1016,7 +1072,7 @@ def test_a_rejected_normalization_entry_is_what_the_runtime_cannot_match(tmp_pat
     (repo / "src").mkdir()
     (repo / "src" / "mech.py").write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "src"], cwd=repo, check=True)
     (repo / "src" / "mech.py").write_text("V = 2\n")
 
     for entry in ("src//mech.py", "src/./mech.py", "./src/mech.py"):
@@ -1044,7 +1100,7 @@ def test_a_padded_entry_really_makes_the_oracle_watch_nothing(tmp_path):
     (repo / "src").mkdir()
     (repo / "src" / "mech.py").write_text("V = 1\n")
     subprocess.run(["git", "add", "."], cwd=repo, check=True)
-    subprocess.run(["git", "commit", "-qm", "src"], cwd=repo, check=True)
+    subprocess.run(["git", "-c", "commit.gpgsign=false", "commit", "-qm", "src"], cwd=repo, check=True)
 
     padded, clean = ["  src/mech.py  "], ["src/mech.py"]
     before_pad = current_mechanism_hash(repo, allowlist=padded)
@@ -1099,6 +1155,7 @@ def _seeded_campaign(tmp_path, repo, **workload):
                            known_valid_baseline={"A": 2, "B": 2, "C": "off"},
                            workload=wl)
     c["target_system"]["repo_path"] = str(repo)
+    c["optimization"]["build_checks"] = {"mechanism_paths": ["mech.py", "test_mech.py"]}
     return s, c
 
 
@@ -1153,7 +1210,7 @@ def test_baseline_oracle_shares_workload_draws_across_the_build(tmp_path, monkey
     from orchestrator.optimize.stage_runner import run_stage
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
     repo = _git_repo(tmp_path); s, c = _seeded_campaign(tmp_path, repo)
-    c["optimization"]["build_checks"] = {"baseline_replicates": 4}
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], "baseline_replicates": 4}
     wd = setup_work_dir("crnbase", repo_path=str(repo), campaign=c)
     ids = _declared_ids(c)
 
@@ -1249,7 +1306,7 @@ def test_declared_workload_seeds_are_used_verbatim_on_both_sides(tmp_path, monke
     monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path))
     repo = _git_repo(tmp_path)
     s, c = _seeded_campaign(tmp_path, repo, seeds=[7, 11])
-    c["optimization"]["build_checks"] = {"baseline_replicates": 3}
+    c["optimization"]["build_checks"] = {**c["optimization"]["build_checks"], "baseline_replicates": 3}
     wd = setup_work_dir("crnpinned", repo_path=str(repo), campaign=c)
     ids = _declared_ids(c)
     pre_seen: list = []

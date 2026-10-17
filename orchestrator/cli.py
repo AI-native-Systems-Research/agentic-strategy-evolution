@@ -252,6 +252,19 @@ def _cmd_run(args):
     run_id = args.run_id or campaign.get("run_id") or (campaign_path.parent.name + "-run")
     repo_path = campaign["target_system"].get("repo_path")
 
+    # A build campaign's preconditions, checked BEFORE plan/build spends a
+    # token (round 3, D3): a committed git repo and a work_dir outside it.
+    if _campaign_kind(campaign) == "optimization":
+        from orchestrator.optimize.clean_tree import build_preconditions
+
+        _pre = build_preconditions(campaign, run_id)
+        if _pre:
+            print(f"Refusing to run {campaign_path}: its build stage cannot start.",
+                  file=sys.stderr)
+            for p_ in _pre:
+                print(f"  x {p_}", file=sys.stderr)
+            sys.exit(1)
+
     # #251 (F6): warn at campaign load time about ``worktree_extras``
     # entries that are tracked in the target repo's main branch.
     # Tracked paths are already in every git worktree checkout;
@@ -767,6 +780,14 @@ def _validate_campaign_file(
             warnings.append(item[len("WARN:"):].strip())
         else:
             errors.append(f"{rule_tag} {item}")
+    if kind == "optimization":
+        from orchestrator.optimize.clean_tree import build_preconditions
+
+        try:
+            for item in build_preconditions(campaign):
+                errors.append(f"[build] {item}")
+        except Exception as exc:  # noqa: BLE001
+            errors.append(f"[build] preconditions could not be checked ({exc})")
 
     if warnings:
         print(f"\n{len(warnings)} warning(s) — not fatal, but worth reading:")
@@ -2563,6 +2584,29 @@ def _cmd_replay(args):
             print("  Worktree cleaned up.")
 
 
+def _cmd_reanalyze(args):
+    """Re-derive a kind:optimization campaign's analysis from its recorded rows
+    and diff it against disk (audit Q7). Zero tokens, zero measurements."""
+    import json as _json
+    import logging
+
+    from orchestrator.optimize.reanalyze import format_result, reanalyze
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.ERROR)
+    work_dir = resolve_work_dir(args.target)
+    campaign = None
+    if args.target.endswith((".yaml", ".yml")):
+        campaign = yaml.safe_load(Path(args.target).read_text())
+    try:
+        res = reanalyze(Path(work_dir), campaign=campaign, keep=args.keep)
+    except (ValueError, OSError) as exc:
+        print(f"reanalyze: {exc}", file=sys.stderr)
+        sys.exit(2)
+    print(_json.dumps(res.to_dict(), indent=2, default=str) if args.json
+          else format_result(res))
+    sys.exit(0 if res.identical else 1)
+
+
 def _cmd_create_campaign(args):
     """Scaffold a heavily-commented campaign.yaml (issue #89)."""
     from orchestrator.create_campaign import scaffold_campaign
@@ -3154,6 +3198,19 @@ def build_parser():
     p_replay.add_argument("target")
     p_replay.add_argument("--iter", required=True, type=int)
     p_replay.set_defaults(func=_cmd_replay)
+
+    p_reanalyze = subparsers.add_parser(
+        "reanalyze",
+        help="kind:optimization: recompute every fit, recommendation, "
+             "confirmation and the report from the recorded runs.jsonl (no "
+             "measurement, no LLM) and diff against what is on disk. Exit 0 "
+             "when identical, 1 when anything differs.",
+    )
+    p_reanalyze.add_argument("target", help="campaign.yaml or work_dir")
+    p_reanalyze.add_argument("--keep", action="store_true",
+                             help="keep the re-derived scratch work_dir")
+    p_reanalyze.add_argument("--json", action="store_true")
+    p_reanalyze.set_defaults(func=_cmd_reanalyze)
 
     p_reports = subparsers.add_parser(
         "reports",

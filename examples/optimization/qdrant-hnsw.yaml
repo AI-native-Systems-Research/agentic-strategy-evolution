@@ -35,6 +35,15 @@ locked_parameters:
   segment_number: 1
   indexing_threshold: 0
 optimization:
+  # Every lock the harness echoes in its cfg block is CHECKED on every row.
+  locked_observables:
+    distance: cfg.distance
+    queries: cfg.queries
+    segment_number: cfg.segment_number
+    indexing_threshold: cfg.indexing_threshold
+  # Locks the harness genuinely cannot report, each with its own reason.
+  unverified_locks:
+    corpus: "the corpus is a pre-loaded collection known only by name; the harness does not fingerprint its contents"
   run_command: "python bench/nous_bench.py --corpus dbpedia-openai-1M-1536d --queries 10000 --topk 10"
   test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
   known_valid_baseline: {M: 16, EFC: 128, Q: none, EFS: 64}

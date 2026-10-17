@@ -875,6 +875,15 @@ locked_parameters:            # unchanged from the original campaign
   oos_start: "2026-02-01"
 
 optimization:
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    arming_threshold: cfg.arming_threshold
+    score_floor: cfg.score_floor
+    cooldown_bars: cfg.cooldown_bars
+    weighting: cfg.weighting
+    is_start: cfg.is_start
+    oos_start: cfg.oos_start
   response:
     primary: {metric: improvement_steady_pct, direction: maximize}
     constraints:

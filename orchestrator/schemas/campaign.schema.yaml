@@ -146,7 +146,11 @@ properties:
         uniqueItems: true
         description: >
           Paths (relative to repo_path) to symlink into each experiment
-          worktree on creation (#229). Use this for gitignored assets
+          worktree on creation (#229). For a ``kind: optimization`` campaign
+          with a ``build`` stage they are COPIED (never symlinked) into the
+          clean checkout the epoch is measured in, with every copied file
+          hashed into clean_tree.extras.json; extras must be ignored assets,
+          not tracked files or mechanism paths. Use this for gitignored assets
           the executor needs from main — virtualenvs, pre-fetched data
           dirs, prior-iteration outputs, build artifacts. Without this
           mechanism, executors discover that the worktree is missing
@@ -1365,9 +1369,24 @@ properties:
           evaluates the same check on the configuration it runs. A key
           that is not in ``locked_parameters`` is a validation error (a
           typo would leave the intended lock unenforced); a locked
-          parameter with no entry here is NOT enforced at run time, and
-          validation warns naming each one. Example:
+          parameter with no entry here CANNOT be enforced at run time, so
+          validation REJECTS it unless ``unverified_locks`` names it with a
+          reason. Example:
           ``{max_seq_len: engine.max_seq_len, model: config.model}``.
+      unverified_locks:
+        type: object
+        minProperties: 1
+        additionalProperties: { type: string, minLength: 1 }
+        description: >
+          ``{locked_parameter: <reason>}`` for every lock the target does
+          NOT report back, so Nous cannot verify it was honoured (e.g. a
+          dataset name passed on the run_command line that the target never
+          echoes). Without an entry here such a lock is a validation ERROR:
+          a lock that cannot be enforced must not read as one that was. With
+          an entry, validation warns and report.json records the lock under
+          ``provenance.waivers`` as declared-but-unverified. A key that is
+          not in ``locked_parameters``, or that also has a
+          ``locked_observables`` entry, is an error.
 
       guidance:
         type: object
@@ -1963,6 +1982,34 @@ properties:
           are literal repo-relative paths; globs are rejected by the
           validator (see that field's own description).
         properties:
+          allow_unarmed_baseline:
+            type: string
+            minLength: 1
+            description: >
+              A WAIVER, written as the reason. Oracle 2(c) (the control is
+              unchanged across the build) is a hard gate: when it cannot run
+              -- the control could not be measured before the build, or no
+              runner exists to re-measure it -- ``verify`` aborts. Set this
+              only when the target truly cannot run the control before the
+              build; the reason is recorded in baseline_equivalence.json and
+              in report.json ``provenance.waivers``.
+          allow_nondiscriminating_tests:
+            type: string
+            minLength: 1
+            description: >
+              A WAIVER, written as the reason, for oracle 2(d): every declared
+              correctness test of a built factor must be shown to discriminate
+              the mechanism (fail before it, or against a mechanism-reverted
+              mutant, for a reason other than a missing symbol). Recorded in
+              authored_tests.json and report.json ``provenance.waivers``.
+          allow_out_of_scope_writes:
+            type: string
+            minLength: 1
+            description: >
+              A WAIVER, written as the reason, for the build write-scope gate
+              (writes outside ``mechanism_paths``, or to the benchmark harness
+              / a pre-existing test). Recorded in build_scope.json and
+              report.json ``provenance.waivers``.
           allow_preexisting_tests:
             type: boolean
             description: >
@@ -1974,7 +2021,9 @@ properties:
               Set true only when the relation genuinely covers
               pre-existing behaviour — a backward-compatibility test
               asserting an existing default did not change is the
-              legitimate case.
+              legitimate case. It also skips oracle 2(d) for the tests that
+              passed before the build; report.json lists that under
+              provenance.waivers, so say why in a comment beside it.
           baseline_replicates:
             type: integer
             minimum: 1

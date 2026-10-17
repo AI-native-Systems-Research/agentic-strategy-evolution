@@ -51,31 +51,18 @@ def _overrides(name: str) -> dict | None:
 def campaign(request, tmp_path_factory):
     """One finished campaign per surface, shared read-only across this module.
 
-    BLOCKED, NOT BROKEN: while other agents' changes are half-landed, driving a
-    real campaign can raise for reasons unrelated to these invariants — observed
-    so far: ``TypeError: write_effects() got an unexpected keyword argument
-    'exclusion_balance'`` and ``NameError: name '_reuse_enabled' is not
-    defined``, both from ``stage_runner``. The pre-existing
-    ``tests/test_optimize_harness.py`` fails the same way on the same calls,
-    which is how the attribution is established.
-
-    Skipped with the cause named rather than left to surface as an ERROR, because
-    an ERROR here is indistinguishable from these invariants being wrong. Remove
-    the guard once the driver imports cleanly; the invariants below were authored
-    against the documented contract and need no change.
+    NO EXCEPTION IS TURNED INTO A SKIP HERE. An earlier version converted any
+    ``NameError``/``TypeError``/``AttributeError`` from the driver into
+    ``pytest.skip`` while other changes were half-landed; that made a genuine
+    regression in the campaign driver read as "skipped" across this whole
+    module (audit, other objections #7). A driver that raises is a failure.
     """
     name = request.param
-    try:
-        res = run_synthetic_campaign(
-            SURFACES[name](), seed=13,
-            parent_dir=tmp_path_factory.mktemp(f"oracle-{name}"),
-            campaign_overrides=_overrides(name),
-        )
-    except (NameError, TypeError, AttributeError) as exc:
-        pytest.skip(
-            f"blocked by an in-flight change in the campaign driver, not by "
-            f"this invariant: {type(exc).__name__}: {exc}"
-        )
+    res = run_synthetic_campaign(
+        SURFACES[name](), seed=13,
+        parent_dir=tmp_path_factory.mktemp(f"oracle-{name}"),
+        campaign_overrides=_overrides(name),
+    )
     return name, res
 
 
@@ -291,3 +278,31 @@ def test_the_nan_refusal_names_the_offending_index_and_the_callers_obligation():
                       factor_ids=("A", "B"))
     assert not math.isnan(fit.intercept)
     assert all(not math.isnan(e.estimate) for e in fit.effects)
+
+
+def test_a_driver_regression_fails_this_module_rather_than_skipping_it(tmp_path):
+    """Inject the exact failure the old fixture swallowed (a TypeError from the
+    driver) and run this module's first invariant on one surface: the outcome
+    must be an error, never a skip."""
+    import os
+    import subprocess
+    import sys
+
+    (tmp_path / "break_driver.py").write_text(
+        "import orchestrator.optimize.stage_runner as sr\n"
+        "def _broken(*a, **k):\n"
+        "    raise TypeError(\"write_effects() got an unexpected keyword argument 'x'\")\n"
+        "sr.run_stage = _broken\n"
+    )
+    env = {**os.environ, "PYTHONPATH": f"{tmp_path}{os.pathsep}{os.environ.get('PYTHONPATH', '')}"}
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-p", "no:xdist",
+         "-p", "break_driver", __file__, "-k",
+         "additive and report_naming_an_action"],
+        capture_output=True, text=True, env=env, cwd=Path(__file__).resolve().parents[1],
+        timeout=300,
+    )
+    out = proc.stdout + proc.stderr
+    summary = [ln for ln in out.splitlines() if ln.strip()][-1]
+    assert proc.returncode != 0, out
+    assert "1 error" in summary and "skipped" not in summary, summary

@@ -59,6 +59,12 @@ class HumanGate:
         else:
             self._response = None
 
+    @property
+    def is_automatic(self) -> bool:
+        """True when this gate answers itself (auto-approve or a fixed
+        auto_response) -- no human sees the question."""
+        return self._response is not None
+
     def prompt(
         self,
         question: str,

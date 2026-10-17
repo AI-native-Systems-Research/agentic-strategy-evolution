@@ -74,6 +74,17 @@ locked_parameters:
   test_split: test-frozen-5k
   warmup_pct: 3
 optimization:
+  # Every lock the harness echoes in its cfg block is CHECKED on every row.
+  locked_observables:
+    dataset: cfg.dataset
+    base_checkpoint: cfg.base_checkpoint
+    epochs: cfg.epochs
+    max_seq_len: cfg.max_seq_len
+    warmup_pct: cfg.warmup_pct
+  # Locks the harness genuinely cannot report, each with its own reason.
+  unverified_locks:
+    val_split: "the loader opens the frozen split file by name; the harness never sees which file it read, so it cannot report it"
+    test_split: "same as val_split: chosen inside the data loader, invisible to the harness"
   run_command: "python bench/nous_bench.py --dataset task-mix-v2 --checkpoint base-7b-r3 --epochs 3 --json"
   test_command: "python -m pytest tests/test_train_props.py -q --json-report --json-report-file=/dev/stdout"
 

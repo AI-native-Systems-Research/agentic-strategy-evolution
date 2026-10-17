@@ -1097,6 +1097,160 @@ def _as_text(stream) -> str:
     return stream if isinstance(stream, str) else ""
 
 
+def target_env(pycache_prefix: str | None = None) -> dict:
+    """The environment a target command (test_command, run_command) runs with:
+    the caller's, minus every Nous path (``NOUS_CAMPAIGN_PARENT``,
+    ``NOUS_STATE_HOME``, ``NOUS_GATE*``), plus ``PYTHONPYCACHEPREFIX``.
+
+    The prefix is a FRESH directory per command (``fresh_pycache``), removed
+    when the command returns: bytecode one target command writes can never be
+    read by another, and a stale or planted ``__pycache__`` in any tree is never
+    imported. (Other runtimes' caches -- Go's build cache, node_modules -- are
+    not redirected.)"""
+    import os
+
+    hidden = ("NOUS_GATE", "NOUS_CAMPAIGN_PARENT", "NOUS_STATE_HOME")
+    env = {k: v for k, v in os.environ.items() if not k.startswith(hidden)}
+    if pycache_prefix is None:
+        import tempfile
+
+        pycache_prefix = tempfile.mkdtemp(prefix="nous-pycache-")
+        _ORPHAN_PREFIXES.append(pycache_prefix)
+    env["PYTHONPYCACHEPREFIX"] = pycache_prefix
+    return env
+
+
+#: Prefixes created by a bare ``target_env()`` call (no owner to remove them);
+#: removed at interpreter exit.
+_ORPHAN_PREFIXES: list[str] = []
+
+
+def _cleanup_orphans() -> None:
+    import shutil
+
+    for p in _ORPHAN_PREFIXES:
+        shutil.rmtree(p, ignore_errors=True)
+
+
+import atexit as _atexit  # noqa: E402
+
+_atexit.register(_cleanup_orphans)
+
+
+class fresh_pycache:
+    """``with fresh_pycache() as env:`` -- a target environment whose bytecode
+    cache is private to this command and removed afterwards."""
+
+    def __enter__(self) -> dict:
+        import tempfile
+
+        self.dir = tempfile.mkdtemp(prefix="nous-pycache-")
+        return target_env(self.dir)
+
+    def __exit__(self, *exc) -> None:
+        import shutil
+
+        shutil.rmtree(self.dir, ignore_errors=True)
+
+
+#: Copy-back limits for a row's run dir (round 5, item 1).
+KEEP_MAX_BYTES = 64 << 20
+KEEP_MAX_FILES = 2000
+
+
+def _keep_run_dir(rd: Path, keep_root: Path) -> Path:
+    """Copy what the adapter left in its run dir into a FRESH destination
+    (``row-K.attempt-N``, never reused), REGULAR FILES ONLY.
+
+    * A symlink or any other non-regular entry is skipped and recorded, never
+      followed or written through, so target code cannot steer the copy.
+    * Each source is opened with ``O_NOFOLLOW`` and re-checked with ``fstat``
+      on the open descriptor, so a swap between the type check and the open
+      cannot redirect the read (round 6, item 4).
+    * The cap counts the bytes ACTUALLY read, so a file that grows after it is
+      listed cannot exceed it; a file cut short is recorded as truncated.
+    * An error on one file (unreadable, vanished, a directory that cannot be
+      listed) is recorded and the copy goes on.
+    * ``_nous_keep.json`` is ALWAYS written, so the record of what was kept,
+      skipped and truncated survives even when nothing could be copied."""
+    import json
+    import os
+    import stat
+
+    keep_root.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        dest = keep_root / f"{rd.name}.attempt-{n}"
+        try:
+            dest.mkdir()
+            break
+        except FileExistsError:
+            n += 1
+    skipped: list[dict] = []
+    truncated: list[str] = []
+    errors: list[dict] = []
+    total, count = 0, 0
+
+    def walk_error(exc: OSError) -> None:
+        errors.append({"path": str(Path(exc.filename or "").relative_to(rd))
+                       if exc.filename and str(exc.filename).startswith(str(rd)) else
+                       str(exc.filename), "error": f"{type(exc).__name__}: {exc.strerror}"})
+
+    for dirpath, dirnames, filenames in os.walk(rd, followlinks=False, onerror=walk_error):
+        rel_dir = Path(dirpath).relative_to(rd)
+        for d in list(dirnames):
+            if (Path(dirpath) / d).is_symlink():
+                skipped.append({"path": str(rel_dir / d), "why": "symlink"})
+                dirnames.remove(d)
+        for name in filenames:
+            src = Path(dirpath) / name
+            rel = rel_dir / name
+            try:
+                st = os.lstat(src)
+                if stat.S_ISLNK(st.st_mode):
+                    skipped.append({"path": str(rel), "why": "symlink"})
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    skipped.append({"path": str(rel), "why": "not a regular file"})
+                    continue
+                if count >= KEEP_MAX_FILES or total >= KEEP_MAX_BYTES:
+                    truncated.append(str(rel))
+                    continue
+                sfd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+                try:
+                    if not stat.S_ISREG(os.fstat(sfd).st_mode):
+                        skipped.append({"path": str(rel), "why": "not a regular file at open"})
+                        continue
+                    out = dest / rel
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    dfd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                  0o600)
+                    cut = False
+                    with os.fdopen(dfd, "wb") as fh:
+                        while True:
+                            room = KEEP_MAX_BYTES - total
+                            if room <= 0:
+                                cut = bool(os.read(sfd, 1))
+                                break
+                            chunk = os.read(sfd, min(1 << 20, room))
+                            if not chunk:
+                                break
+                            fh.write(chunk)
+                            total += len(chunk)
+                    if cut:
+                        truncated.append(str(rel))
+                    count += 1
+                finally:
+                    os.close(sfd)
+            except OSError as exc:
+                errors.append({"path": str(rel), "error": f"{type(exc).__name__}: {exc.strerror}"})
+    (dest / "_nous_keep.json").write_text(json.dumps(
+        {"kept_files": count, "kept_bytes": total, "skipped": skipped,
+         "truncated": truncated, "errors": errors,
+         "limits": {"bytes": KEEP_MAX_BYTES, "files": KEEP_MAX_FILES}}, indent=2))
+    return dest
+
+
 def run_test_command(
     command: str, *, cwd: Path, timeout: int = DEFAULT_TEST_TIMEOUT_SEC,
     log_path: Path | None = None,
@@ -1156,11 +1310,16 @@ def run_test_command(
         except OSError as exc:  # never let logging break the gate
             logger.warning("could not write test log to %s: %s", log_path, exc)
 
+    from orchestrator.optimize import reaper
+
     try:
-        proc = subprocess.run(
-            shlex.split(command), cwd=str(cwd), capture_output=True,
-            text=True, timeout=timeout,
-        )
+        # In its own session; the group is reaped when the command returns
+        # (reaper.run_in_process_group), and leftovers are recorded (C2).
+        with fresh_pycache() as _env:
+            proc = reaper.run_in_process_group(
+                shlex.split(command), cwd=str(cwd), capture_output=True,
+                text=True, timeout=timeout, env=_env,
+            )
     except subprocess.TimeoutExpired as exc:
         # A timeout still carries the partial output, and that is often the
         # most informative artifact of all (which test hung).
@@ -1636,10 +1795,14 @@ def make_config_runner(
     # read as one with eighteen. And NOT `cwd` when there is no log dir: `cwd` is
     # the target repo, so scratch landed in its working tree. Beside the
     # iteration's other artifacts when there is one; a private temp dir when not.
-    if log_dir is not None:
-        run_root = Path(log_dir).parent / "run_dirs"
-    else:
-        run_root = Path(tempfile.mkdtemp(prefix="nous-run-dirs-"))
+    #
+    # ALWAYS a private temp dir, never under the work_dir: NOUS_RUN_DIR is
+    # handed to target code, and a path inside the work_dir would put the
+    # campaign's records a few `..` away (round 4). A run dir the adapter wrote
+    # into is COPIED back to `runs/iter-N/run_dirs/row-K/` afterwards, so the
+    # evidence is kept without the target ever learning where it is kept.
+    run_root = Path(tempfile.mkdtemp(prefix="nous-run-dirs-"))
+    keep_root = Path(log_dir).parent / "run_dirs" if log_dir is not None else None
 
     def run(row) -> dict:
         cmd = shlex.split(command_template)
@@ -1674,8 +1837,22 @@ def make_config_runner(
         finally:
             # An empty run dir is noise; one the adapter wrote into is evidence
             # and stays. rmdir refuses a non-empty directory, which is the test.
+            rd = Path(iso["NOUS_RUN_DIR"])
             try:
-                Path(iso["NOUS_RUN_DIR"]).rmdir()
+                rd.rmdir()
+            except OSError:
+                import shutil
+
+                try:
+                    if keep_root is not None:
+                        _keep_run_dir(rd, keep_root)
+                except OSError as exc:
+                    logger.warning("could not keep run dir %s: %s", rd, exc)
+                finally:
+                    shutil.rmtree(rd, ignore_errors=True)
+            # The per-runner root holds only row dirs; drop it once empty.
+            try:
+                run_root.rmdir()
             except OSError:
                 pass
 
@@ -1694,11 +1871,12 @@ def make_config_runner(
             # Same signature, same return type, same `TimeoutExpired`, so every
             # caller below is unchanged: what differs is that the child is
             # spawned in a new session and the whole process GROUP is signalled.
-            proc = reaper.run_in_process_group(
-                cmd, cwd=str(cwd), capture_output=True, text=True,
-                timeout=timeout,
-                env={**os.environ, **{k: str(v) for k, v in env_extra.items()}},
-            )
+            with fresh_pycache() as _env:
+                proc = reaper.run_in_process_group(
+                    cmd, cwd=str(cwd), capture_output=True, text=True,
+                    timeout=timeout,
+                    env={**_env, **{k: str(v) for k, v in env_extra.items()}},
+                )
         except (subprocess.TimeoutExpired, OSError) as exc:
             _dump_failed_run(log_dir, row, cmd, cwd, exc=exc)
             # The two are caught together (both mean "the invocation never

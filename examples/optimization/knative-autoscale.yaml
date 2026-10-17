@@ -35,6 +35,15 @@ locked_parameters:
   stable_window: 60s
   max_scale_up_rate: 1000
 optimization:
+  # Every lock the harness echoes in its cfg block is CHECKED on every row.
+  locked_observables:
+    service: cfg.service
+    load_profile: cfg.load_profile
+    stable_window: cfg.stable_window
+    max_scale_up_rate: cfg.max_scale_up_rate
+  # Locks the harness genuinely cannot report, each with its own reason.
+  unverified_locks:
+    nodes: "cluster size is cluster state the load generator cannot observe; check it out of band before the campaign"
   run_command: "python bench/nous_bench.py --service hello-latency --profile diurnal-burst-10m"
   test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
   known_valid_baseline: {TC: 100, PW: 10, SZ: 30, MODE: concurrency}

@@ -929,10 +929,21 @@ Validation rules:
   **error** — it cannot be both held fixed and varied.
 - A `locked_observables` key that is not in `locked_parameters` is an
   **error** — a typo would leave the intended lock unenforced.
-- A locked parameter with **no** `locked_observables` entry is a **warning**
-  naming it: Nous cannot see what the target used, so the lock is a
-  declaration to the build prompt and the reader, not a check. Make the
-  adapter echo the value (see §7.7) and declare its path.
+- A locked parameter with **no** `locked_observables` entry is an **error**:
+  Nous cannot see what the target used, so the lock cannot be enforced, and a
+  lock that cannot be enforced must not read as one that is. Make the adapter
+  echo the value (see §7.7) and declare its path; or, when the target really
+  cannot report it, acknowledge it in writing:
+
+  ```yaml
+  optimization:
+    unverified_locks:
+      corpus: "passed on run_command; the harness does not echo it"
+  ```
+
+  An acknowledged lock is a **warning**, and `report.json` lists it under
+  `provenance.waivers` as declared-but-unverified, so a reader of the
+  certificate sees exactly which locks were checked.
 
 ### `guidance`
 
@@ -1729,6 +1740,250 @@ is declared: without a control there is nothing to measure, and a silently absen
 oracle on the one stage that writes code is the worst place to have one. On a
 noisy target, raise `baseline_replicates` rather than widening the tolerance.
 
+**Oracle 2(c) unarmed is a gate.** When the control could not be measured
+before the build (the harness or flag did not exist yet), no runner can
+re-measure it, or no control was ever attempted, nothing verifies the
+mechanism is inert at its control level. `verify` aborts. If the target truly
+cannot run the control before the build, waive it in writing:
+`build_checks.allow_unarmed_baseline: "<why>"`. The reason lands in
+`baseline_equivalence.json` and in `report.json` `provenance.waivers`.
+
+**Oracle 2(d) — the authored tests must observe the mechanism.** 2(b) accepts a
+test that failed before the build only because the module or symbol it imports
+did not exist, so `import mech; assert mech.f` would pass for any build that
+creates `f`. Each declared `correctness` test of a built factor therefore needs
+one of two kinds of evidence (`authored_tests.json` records which):
+
+- it ran before the build and failed **by assertion**; or
+- it fails **by assertion** against a **mechanism-reverted mutant**. Nous builds
+  the mutant in a temporary git worktree: the post-build tree with every
+  pre-existing non-test file the build edited restored to `HEAD`, and the build's
+  tests and new files kept. An import-only test passes there (vacuous). A test
+  that drives the mechanism through the code it is wired into fails there.
+
+**The classification is a text match on the test's own output, and it fails
+closed.** Any missing-name signature (`ImportError`, `ModuleNotFoundError`,
+`AttributeError ... has no attribute`, `NameError`, `hasattr(`/`getattr(`
+probes, arity errors, a missing pytest fixture, Go `undefined:`, Rust `no method
+named`, TypeScript `does not exist on type`, and others) makes a failure an
+*absence* failure, even next to an assertion. Only an assertion signature makes
+it *behavioural*. Anything else is *unknown* and is not evidence: a timeout, a
+crash, an echoed source line, a framework whose per-test output Nous cannot
+isolate. A test's text is isolated exactly, never by substring, and never by
+falling back to the whole log. The one accepted unclassified case: verdicts that
+were injected with no test output (the unit-test seam). Those are listed in
+`report.json` `provenance.waivers` as `pre_build_failure_unclassified`.
+
+A test with no evidence fails `verify`. Write tests that exercise the mechanism
+through code that existed before the build and assert on what it does. The
+waiver is `build_checks.allow_nondiscriminating_tests: "<why>"`, recorded in
+`report.json`. `allow_preexisting_tests: true` also skips 2(d) for the tests that
+passed before the build; give the reason in a comment beside it, and expect it in
+`provenance.waivers`. Known limits:
+
+- A mechanism that lives entirely in NEW files, reached only by a new entry
+  point, leaves nothing to revert, so its mutant equals the build and every test
+  reads as vacuous.
+- A second, stub-body mutant (Python only) keeps the new symbols but replaces
+  the body of every new or changed function with `raise NotImplementedError`. A
+  test that still passes there checks only that names exist (`hasattr`,
+  `in dir(m)`, `vars(m)`, `__dict__`, `inspect`), and it is rejected. Other
+  languages have no stub mutant.
+- The oracle removes existence-only tests. It does not grade whether an
+  assertion is the right one.
+
+**Clean-checkout verification: what is measured is the recorded mechanism.**
+Any check that runs in the same tree as agent-authored code can be tampered
+with by that code: it runs again at verify (the test command) and in every epoch
+(the run command). So after a build, Nous measures the RECORDED artifact in a
+clean environment that shares nothing with the agent's repository, as
+reproducible builds do.
+
+**Before any token is spent**, `nous validate` and `nous run` refuse a build
+campaign that is missing any of these:
+
+- a git repository (`target_system.repo_path`);
+- every tracked file committed (`git commit -am ...`);
+- a work dir outside the repo (`export NOUS_CAMPAIGN_PARENT=~/nous-campaigns`);
+- a real `build_checks.mechanism_paths` (not `.` or `**`).
+
+**After the build:**
+
+1. **The mechanism patch.** The mechanism is recorded as exactly the diff of
+   `mechanism_paths` against the pre-build commit (`mechanism.clean.patch`). It
+   is computed in a private tree from plain file reads; no git command runs in
+   the agent's repo except reading objects. Its sha256 is the mechanism hash the
+   policy is compiled with. A patch touching the benchmark harness or a
+   pre-existing declared test is refused, unless that file is listed by exact
+   path.
+2. **The clean tree** is PRIVATE.
+   - It is built from the pre-build commit's objects (`ls-tree`/`cat-file`, so
+     no hooks, filters or attributes apply) as plain files, in a directory under
+     `~/.nous/clean-trees/` unrelated to the work dir.
+   - It is committed to its own fresh repository, run with hardened git: no
+     hooks, no fsmonitor, no global or system config, no excludes, no
+     attributes.
+   - It is checked to hash to the pre-build TREE recorded before the agent ran,
+     so rewritten or replaced objects are refused.
+   - The patch is then applied. Mutant trees are built the same way.
+   - It shares no `.git`, hooks, config, attributes, excludes or index with the
+     agent's repository.
+3. **Where it runs.** Verify's test runs, the baseline re-measurement, the 2(d)
+   mutants and every epoch measurement run in the clean tree. Out-of-scope
+   writes, commits, hidden or ignored files, hooks, symlink swaps and planted
+   caches in the agent's tree are simply absent there.
+4. **Integrity checks.** The clean tree is checked before every stage, after
+   every measurement batch, and at the terminal transition. Every file on disk
+   is hashed against the manifest recorded when the tree was created,
+   independent of any index or exclude file, and a new code file or symlink is a
+   problem anywhere. A failure fails that iteration. A missing tree is recreated
+   byte-identically from the recorded commit and patch.
+5. **Imports from the agent's repo are refused.** Each Python interpreter the
+   run or test command names is probed, with the command's own interpreter
+   flags (so `python -S` is probed as `-S`). The clean tree is refused when:
+   - the import path (`sys.path`, an editable install's `direct_url.json`, a
+     `.pth` file) reaches the agent's repository, because it would silently
+     measure the agent's tree;
+   - the probe cannot run, fails, or prints something unparseable.
+
+   Known wrappers are unwrapped first: `timeout`, `gtimeout`, `nice`, `time`, `nohup`, `ionice`, `taskset`, `chrt`, `stdbuf`, `caffeinate`, `env A=B`. The probe then runs the
+   interpreter the command runs, resolved with the command's own `PATH` (an
+   `env PATH=...` assignment included), with exactly the command's
+   environment and interpreter flags; flags keep their arguments (`-W ignore`,
+   `-X dev`). Resolution is exec-exact: the child's environment is the target
+   environment with the command's `env` assignments applied and its `env -u`
+   unsets removed, the interpreter is the file `execvp` would run with that
+   `PATH` (the default when it is unset), every relative or empty entry is
+   anchored at the clean tree, and the probe runs with that environment and
+   cwd. Wrapper and interpreter options are parsed exactly; an option the
+   table does not model, or an option value that could itself be the program
+   (`time -o python3 ...`), is not guessed. Any other command is not refused but is recorded in
+   `clean_tree.probe.json` and listed in `provenance.waivers` as not probed.
+   That covers one whose first program is not a Python interpreter: a
+   launcher (`uv run`, `conda run`, `poetry run`, `make`, `sh -c`), a script
+   such as `./bench.sh`, another runtime, a pyenv or asdf shim, `env -i`,
+   `env -S`, or a shell-style `VAR=value` prefix. Install the package
+   non-editably, and prefer a run command that names its interpreter.
+6. **Ignored assets.** A data set, built binaries or a virtualenv go in
+   `target_system.worktree_extras`. Each is COPIED (never symlinked) into the
+   clean tree, and every copied file is hashed into `clean_tree.extras.json`.
+   - The copy must equal what existed BEFORE the build, so a `conftest.py` or a
+     patched module planted in an asset directory is refused.
+   - A symlink inside an extra that resolves into the agent's repository is
+     refused.
+   - A tracked file, or a path outside the repo, is refused.
+7. **Hard links.** A file in the clean tree with an extra hard link (writable
+   through a path the check never looks at) fails the integrity check.
+8. **The tree's reference is sealed and kept in memory.** The manifest, the
+   extras record and the probe record are sealed the moment the tree is
+   created, before the first measurement. Later checks in the same process
+   compare with the in-memory reference; a resumed process uses the
+   seal-verified file.
+
+**Gate records are kept out of reach and sealed.**
+
+- Every build record is sealed with HMAC-SHA256 under a per-campaign random key.
+  The records sealed are `pre_build_tests.json`, `baseline_equivalence.json`,
+  `build_scope.json`, `build_isolation.json`, `clean_tree.json`, the patch, and
+  `mechanism.sha256`, plus `authored_tests.json` and `build_review.json` after
+  verify.
+- The key is kept in `~/.nous/keys/<hash>` (mode 0600, checked on every read).
+  It is not in the work dir or the clean tree, so no relative path from either
+  reaches it.
+- Target commands get no environment variable naming the work dir or the state
+  home. `NOUS_RUN_DIR` is a private temporary directory outside the work dir; a
+  run dir the adapter wrote into is copied back to `runs/iter-N/run_dirs/`
+  afterwards.
+- Once the first seal exists, a missing key is an error everywhere, including
+  a re-run build stage. A new key is never minted to replace a deleted one.
+- Verify loads and checks the seals once, before any target code runs, and the
+  oracles use those in-memory copies. It reseals only after confirming that
+  what the build wrote is unchanged.
+- A broken or missing seal is reported in `provenance.waivers` and by
+  `nous reanalyze`.
+
+**Nothing the build or a target command starts may outlive it.**
+
+- A poller records every process the build call starts. Any still running when
+  the call returns is killed, together with its process group, and the build
+  fails (`build_isolation.json`). If the process table cannot be read, the build
+  fails rather than passing.
+- Every test and run command runs in its own session, and a poller watches its
+  descendants while it runs. When it returns, the following are killed and
+  recorded (`target_survivors.json`), and that stage fails:
+  - whatever is left in its process group;
+  - every descendant the poller saw that is still alive, whatever group it is
+    in now. Its group is re-read at that moment, so a `setsid()` before or
+    after the first poll does not escape, on a normal exit, a timeout or an
+    interrupt alike. A pid whose start time no longer matches the one recorded
+    when it was first seen has been reused by an unrelated process; it is
+    recorded and never killed.
+- **A run dir is copied back safely.** Each attempt's copy goes to a fresh
+  `row-K.attempt-N` directory, regular files only, under a size and file-count
+  cap that counts the bytes actually read. A symlink or other special file is
+  skipped and recorded in `_nous_keep.json`, never written through; an
+  unreadable file is recorded and the rest is still kept.
+
+**No planted bytecode.** Every target command runs with `PYTHONPYCACHEPREFIX`
+set to a Nous-owned directory. Other runtimes' caches are not redirected.
+
+**The write-scope diff is an early signal.** Just before and just after the
+agent call, the build stage snapshots the target:
+
+- tracked and untracked files, by bytes;
+- ignored source and config files, by bytes up to 1 MiB;
+- symlinks and submodules;
+- `HEAD`, the branch, the stash, the index, per-file flags and the exclude
+  files.
+
+The build is refused before anything is measured when the agent committed,
+stashed or checked out, changed git flags or excludes, edited a gate record,
+left the tree unreadable, or wrote outside `mechanism_paths` or to a protected
+input. `build_scope.json` records what was written and what the diff cannot
+see. Correctness no longer depends on this check: the clean checkout is what is
+measured. The path rules can be waived with
+`build_checks.allow_out_of_scope_writes: "<why>"`; that waiver does not let a
+protected file into the patch.
+
+**What all of this still does not cover:**
+
+- **In-process tampering by in-scope mechanism code.** The mechanism is code
+  that runs inside the measured process. If it monkeypatches the harness's
+  timer or metric at import, nothing changes on disk, and no check above can see
+  it. Only the build review can catch that, and under `--auto-approve` nobody
+  reviews the mechanism.
+- **The seal key is reachable by same-user code that knows Nous's layout.** The
+  build agent and target code run as the same OS user, so code that knows to
+  look in `~/.nous/keys/` can read the key and forge a seal. Moving the key
+  removed every relative path to it; it did not remove the absolute one.
+- **Changes undone within one measurement batch.** Target code can modify the
+  clean tree during a batch and restore it before the check that follows. The
+  check runs before and after each batch, so the window is the batch itself.
+- **Anything outside the clean tree**, such as the home directory or system
+  libraries.
+- **A process that double-forks and detaches within one polling interval**
+  (100 ms for target commands): the poller never sees it.
+- **A planted data file in the clean tree** (no code suffix or name).
+- **Non-Python import paths.** A Go `replace`, an `npm link` or a `GOPATH`
+  pointing at the agent's repo is not probed.
+- **The script itself.** The import probe checks the interpreter's `sys.path`
+  and `.pth` roots, not the script a command runs: `python /abs/agent-repo/x.py`
+  puts the agent's repo at `sys.path[0]` and the probe still passes. Name
+  scripts by paths inside the clean tree (relative to `repo_path`).
+- **Shebang flags are honoured, the command's are not invented.** A `pytest`
+  command's interpreter flags come from the script's `#!` line, never from
+  pytest's own arguments (`pytest -s` is not `python -s`).
+- **Probes run one at a time** (120 s each, no total limit); a probe that cannot
+  finish fails closed.
+
+**The build review gate: a human only without `--auto-approve`.** After the
+build's automatic oracles pass, and before it compiles the policy, `verify`
+consults the gate with `mechanism.patch` and the oracle records. A reject or
+abort ends the campaign with nothing spent, and `build_review.json` records the
+decision. Under `--auto-approve` (this kind's default) **no human sees it**: the
+gate approves itself, and `report.json` `provenance.waivers` lists the build as
+auto-approved, unreviewed. Run without `--auto-approve` to review it yourself.
+
 #### `mechanism_paths`: declare it, `build` stage or not
 
 **This one field is not limited to `build` campaigns.** Every epoch iteration
@@ -2294,6 +2549,72 @@ it. (The reflective kind writes the first two with an LLM call and derives the
 verdict from `best_found.json`; this kind does neither, so its only model
 calls remain `plan` and `build`.)
 
+### Re-deriving a report's analysis: provenance, `nous reanalyze`, the error budget
+
+`report.json` records what it rests on, in `provenance`:
+
+- `nous`: the package version, the git commit, and a sha256 over the package
+  source. `nous.source_scope` names what the hash covers (the `orchestrator/`
+  code, schemas and templates, and the prompts), so uncommitted edits are
+  visible;
+- `runtime`: the Python, scipy and numpy versions;
+- `inputs`: the sha256 of every `runs/iter-*/runs.jsonl`, `design_matrix.json`
+  and `relations.json`, and of every `campaign.epoch-*.yaml`, on disk when the
+  report was written;
+- `policy_hash`: the pre-registration;
+- `analysis_constants`: the numbers and switches that change the analysis
+  without changing the policy hash (candidate cap, search sample and starts,
+  design restarts, the lack-of-fit and screen alphas, feature switches), read
+  live from the code that ran;
+- `waivers`: every gate that did not run as a full check, read from the gate
+  RECORDS rather than from the campaign. That covers waived oracles, an unarmed
+  oracle, unclassified test evidence, an unavailable mutant, a write scope that
+  could not be checked, an auto-approved build review, a build record that is
+  missing, and unverified locks.
+
+`nous reanalyze <campaign.yaml|work_dir>` re-derives the ANALYSIS from the
+recorded rows. It spends zero tokens and runs zero measurements. It re-drives the
+real stage runner over a scratch work dir with each epoch's registered campaign
+(`campaign.epoch-<e>.yaml`; one that does not parse is reported as a
+difference, never substituted). A replay runner answers each row with the
+observation recorded for it. Row attempt counts and durations are not replayed,
+and are left out of the comparison. It then diffs every derived artifact against
+disk: policy, transitions, design matrices, fits, recommendations, shortlists,
+confirmations, `report.json` and `report.md`. Before that, it checks the input
+hashes the report recorded. A missing report is reported as `inputs_unchecked`.
+
+Some things are not re-run, and the output says so:
+
+- `plan` and `build`, which are agent calls;
+- the build gates (2(b), 2(c), 2(d), the write-scope check, the build review),
+  which are measurements of the target tree. Their records are carried over, not
+  re-derived.
+
+Every file left out of the comparison is listed under `excluded` with the
+reason. Exit codes:
+
+- 0: the analysis re-derives identically under this code (the measurements
+  themselves are taken as recorded);
+- 1: something differs, and each input that changed after the report and each
+  differing artifact is listed;
+- 2: the work dir cannot be reanalysed at all.
+
+`error_budget` gives the family-wise figure. Each epoch spends
+`delta_screen + delta_terminal`, and every epoch after the first was compiled
+after the earlier epochs' data were seen. `cumulative` is therefore the union
+bound over every epoch on the work dir, and `report.md` prints it beside the
+per-epoch deltas. Read it with three qualifications:
+
+- It is valid only under each epoch's own response-model assumptions. It does
+  not cover misspecification: on the benchmark's non-quadratic family, 22 of
+  22 certificates were false at a nominal 0.10.
+- An earlier epoch's deltas are recovered by recompiling its registered campaign
+  with the current Nous (`deltas_from` says which).
+- `cumulative_is_lower_bound` is true when an earlier epoch's campaign could not
+  be recovered.
+
+`certified` is still judged at this epoch's own deltas.
+
 ### Artifacts the epoch writes
 
 Work-dir root:
@@ -2517,6 +2838,13 @@ locked_parameters:
   query_count: 10000
   threads: 8
 optimization:
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    corpus: cfg.corpus
+    vectors: cfg.vectors
+    query_count: cfg.query_count
+    threads: cfg.threads
   run_command: "python bench/nous_bench.py --corpus sift-1m --queries 10000"
   test_command: "python -m pytest bench/test_nous_props.py -q --json-report --json-report-file=/dev/stdout"
 
@@ -2697,6 +3025,15 @@ locked_parameters:
   oos_start: "2026-02-01"
 
 optimization:
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    arming_threshold: cfg.arming_threshold
+    score_floor: cfg.score_floor
+    cooldown_bars: cfg.cooldown_bars
+    weighting: cfg.weighting
+    is_start: cfg.is_start
+    oos_start: cfg.oos_start
   response:
     primary: {metric: improvement_steady_pct, direction: maximize}
     constraints:
@@ -3291,6 +3628,15 @@ prompts:
   methodology_layer: prompts/methodology
 
 optimization:
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    geometry: cfg.geometry
+    boundary_conditions: cfg.boundary_conditions
+    iteration_cap: cfg.iteration_cap
+    residual_target: cfg.residual_target
+    precision: cfg.precision
+    cfl: cfg.cfl
   run_command: "python bench/nous_bench.py --config solver.json --geometry reference-cube-3d --json"
   test_command: "python -m pytest tests/test_solver_props.py -q --json-report --json-report-file=/dev/stdout"
   run_timeout_sec: 2700     # see the sizing note below this block
@@ -3493,6 +3839,13 @@ prompts:
   methodology_layer: prompts/methodology
 
 optimization:
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    compiler: cfg.compiler
+    target_arch: cfg.target_arch
+    benchmark_suite: cfg.benchmark_suite
+    reference_build: cfg.reference_build
   run_command: "python bench/nous_bench.py --suite kernels-v3 --reference O0-strict-fp --json"
   test_command: "python -m pytest tests/test_codegen_props.py -q --json-report --json-report-file=/dev/stdout"
   # A full rebuild plus the suite; the LTO corner is the expensive one.
@@ -3682,6 +4035,16 @@ prompts:
   methodology_layer: prompts/methodology
 
 optimization:
+  # The harness echoes these in its cfg block, so each lock is CHECKED on
+  # every row (a deviation aborts the campaign).
+  locked_observables:
+    dataset: cfg.dataset
+    base_checkpoint: cfg.base_checkpoint
+    epochs: cfg.epochs
+    max_seq_len: cfg.max_seq_len
+    val_split: cfg.val_split
+    test_split: cfg.test_split
+    warmup_pct: cfg.warmup_pct
   run_command: "python bench/nous_bench.py --dataset task-mix-v2 --checkpoint base-7b-r3 --epochs 3 --json"
   test_command: "python -m pytest tests/test_train_props.py -q --json-report --json-report-file=/dev/stdout"
   run_timeout_sec: 6600     # 90 min budget + margin; see the note below
@@ -5020,7 +5383,7 @@ runs against a budget of 60–90.
 | # | Check | Cost | Fails if |
 |---|---|---|---|
 | 1 | `nous validate campaign FILE --smoke` | 1 run | predicates unsatisfiable, tests unmatched, `run_command` cannot exec, a declared `response.self_check` violated at the probe corner |
-| 1a | Every `locked_parameters` entry has an `optimization.locked_observables` path (`nous validate campaign` warns, naming each one that does not); `--smoke` then checks the probe ran with the locked values | 0 runs (part of #1) | a lock the target cannot report is a lock nothing enforces; a target that ignores one fails `--smoke` rather than aborting the epoch on row 1 |
+| 1a | Every `locked_parameters` entry has an `optimization.locked_observables` path (`nous validate campaign` rejects one that has neither a path nor an `unverified_locks` acknowledgement); `--smoke` then checks the probe ran with the locked values | 0 runs (part of #1) | a lock the target cannot report is a lock nothing enforces; a target that ignores one fails `--smoke` rather than aborting the epoch on row 1 |
 | 2 | Mechanism is active (§7.5) | 1 run | the mechanism's own metric is zero |
 | 3+4 | `nous validate campaign FILE --smoke --liveness` (§7.2, §7.3) | `sum(len(levels)) + N` runs | any declared level the target cannot execute, or one whose row violates a declared `response.self_check` — and it *reports* every factor under 2x the noise CV |
 | 5 | Objective is monotone and uncensored (§7.4) | 4–6 runs | orders-of-magnitude swings, or values pinned at a deadline |

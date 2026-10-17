@@ -1657,3 +1657,51 @@ def test_adequacy_determination_checker_has_teeth():
         [screen_rej, rec("foldover", True, False)]) == []
     # records predating the field are skipped
     assert inv.check_adequacy_determination([{"stage": "refine", "model_adequate": True}]) == []
+
+
+def test_no_table_row_claims_a_violation_the_registry_records_as_closed():
+    """The doc's status column must agree with ``open_violation`` both ways.
+
+    The stage-0 audit found INV-SEM02, STAT05, STAT12, STAT02 and PROV01 still
+    marked VIOLATED (or "still poisons") in the table after every one was
+    fixed and the registry flag cleared: a reader of the checklist got a wrong
+    picture of which guarantees hold."""
+    text = DOC.read_text()
+    wrong, matched = [], set()
+    for m in re.finditer(r"^\|\s*`(INV-[A-Z]+\d+)`\s*\|(.*)$", text, re.M):
+        iid, row = m.group(1), m.group(2)
+        says_open = ("**VIOLATED**" in row or "still poisons" in row
+                     or "partially open" in row)
+        reg = inv.REGISTRY.get(iid)
+        if reg is not None:
+            matched.add(iid)
+        if reg is not None and says_open != bool(reg.open_violation):
+            wrong.append((iid, "doc says open" if says_open else "doc says closed"))
+    assert not wrong, wrong
+    # Every registered invariant had its row inspected -- a parse that matched
+    # nothing would pass vacuously.
+    assert len(matched) == len(inv.REGISTRY), sorted(set(inv.REGISTRY) - matched)
+
+
+def test_deleting_the_policy_pair_recompiles_and_shows_only_in_the_hash_trail(tmp_path):
+    """INV-PROV01's documented limit: deleting BOTH policy.json and its sidecar
+    is not refused -- the next stage recompiles from the campaign. For an
+    unchanged campaign the recompiled policy hashes identically (compile is
+    pure), so every transitions.jsonl row still names one policy_hash."""
+    import json as _json
+
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    res = run_synthetic_campaign(SURFACES["bowl"](), seed=2, parent_dir=tmp_path)
+    wd = res.work_dir
+    rows = [_json.loads(ln) for ln in (wd / "transitions.jsonl").read_text().splitlines() if ln]
+    before = (wd / "policy.sha256").read_text().strip()
+    (wd / "policy.json").unlink()
+    (wd / "policy.sha256").unlink()
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.stage_runner import _load_or_compile_policy
+
+    pol = _load_or_compile_policy(synthetic_campaign(SURFACES["bowl"]()), wd)
+    from orchestrator.optimize.policy import policy_hash
+    assert policy_hash(pol) == before == rows[0]["policy_hash"]

@@ -136,7 +136,10 @@ def test_the_refill_pool_never_offers_a_measured_inadmissible_configuration(
 def _strip(o):
     if isinstance(o, dict):
         return {k: _strip(v) for k, v in o.items()
-                if k not in ("policy_hash", "duration_ms", "last_attempt_ms")}
+                # analysis_constants records the very switch this test flips
+                # (policy._REFILL_VACATED); inputs hash the rows' durations.
+                if k not in ("policy_hash", "duration_ms", "last_attempt_ms",
+                             "analysis_constants", "inputs")}
     if isinstance(o, list):
         return [_strip(v) for v in o]
     return o
