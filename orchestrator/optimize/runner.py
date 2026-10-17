@@ -1160,11 +1160,19 @@ KEEP_MAX_FILES = 2000
 
 def _keep_run_dir(rd: Path, keep_root: Path) -> Path:
     """Copy what the adapter left in its run dir into a FRESH destination
-    (``row-K.attempt-N``, never reused), REGULAR FILES ONLY: a symlink or any
-    other non-regular entry is skipped and recorded, never followed or written
-    through, so target code cannot steer the copy into the work_dir. A size and
-    file-count cap is applied and any truncation is recorded in
-    ``_nous_keep.json`` beside the copy."""
+    (``row-K.attempt-N``, never reused), REGULAR FILES ONLY.
+
+    * A symlink or any other non-regular entry is skipped and recorded, never
+      followed or written through, so target code cannot steer the copy.
+    * Each source is opened with ``O_NOFOLLOW`` and re-checked with ``fstat``
+      on the open descriptor, so a swap between the type check and the open
+      cannot redirect the read (round 6, item 4).
+    * The cap counts the bytes ACTUALLY read, so a file that grows after it is
+      listed cannot exceed it; a file cut short is recorded as truncated.
+    * An error on one file (unreadable, vanished, a directory that cannot be
+      listed) is recorded and the copy goes on.
+    * ``_nous_keep.json`` is ALWAYS written, so the record of what was kept,
+      skipped and truncated survives even when nothing could be copied."""
     import json
     import os
     import stat
@@ -1178,8 +1186,17 @@ def _keep_run_dir(rd: Path, keep_root: Path) -> Path:
             break
         except FileExistsError:
             n += 1
-    skipped, truncated, total, count = [], [], 0, 0
-    for dirpath, dirnames, filenames in os.walk(rd, followlinks=False):
+    skipped: list[dict] = []
+    truncated: list[str] = []
+    errors: list[dict] = []
+    total, count = 0, 0
+
+    def walk_error(exc: OSError) -> None:
+        errors.append({"path": str(Path(exc.filename or "").relative_to(rd))
+                       if exc.filename and str(exc.filename).startswith(str(rd)) else
+                       str(exc.filename), "error": f"{type(exc).__name__}: {exc.strerror}"})
+
+    for dirpath, dirnames, filenames in os.walk(rd, followlinks=False, onerror=walk_error):
         rel_dir = Path(dirpath).relative_to(rd)
         for d in list(dirnames):
             if (Path(dirpath) / d).is_symlink():
@@ -1188,31 +1205,49 @@ def _keep_run_dir(rd: Path, keep_root: Path) -> Path:
         for name in filenames:
             src = Path(dirpath) / name
             rel = rel_dir / name
-            st = os.lstat(src)
-            if stat.S_ISLNK(st.st_mode):
-                skipped.append({"path": str(rel), "why": "symlink"})
-                continue
-            if not stat.S_ISREG(st.st_mode):
-                skipped.append({"path": str(rel), "why": "not a regular file"})
-                continue
-            if count >= KEEP_MAX_FILES or total + st.st_size > KEEP_MAX_BYTES:
-                truncated.append(str(rel))
-                continue
-            out = dest / rel
-            out.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            with os.fdopen(fd, "wb") as fh, open(src, "rb") as fin:
-                while True:
-                    chunk = fin.read(1 << 20)
-                    if not chunk:
-                        break
-                    fh.write(chunk)
-            total += st.st_size
-            count += 1
-    if skipped or truncated:
-        (dest / "_nous_keep.json").write_text(json.dumps(
-            {"skipped": skipped, "truncated": truncated,
-             "limits": {"bytes": KEEP_MAX_BYTES, "files": KEEP_MAX_FILES}}, indent=2))
+            try:
+                st = os.lstat(src)
+                if stat.S_ISLNK(st.st_mode):
+                    skipped.append({"path": str(rel), "why": "symlink"})
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    skipped.append({"path": str(rel), "why": "not a regular file"})
+                    continue
+                if count >= KEEP_MAX_FILES or total >= KEEP_MAX_BYTES:
+                    truncated.append(str(rel))
+                    continue
+                sfd = os.open(src, os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0))
+                try:
+                    if not stat.S_ISREG(os.fstat(sfd).st_mode):
+                        skipped.append({"path": str(rel), "why": "not a regular file at open"})
+                        continue
+                    out = dest / rel
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    dfd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                  0o600)
+                    cut = False
+                    with os.fdopen(dfd, "wb") as fh:
+                        while True:
+                            room = KEEP_MAX_BYTES - total
+                            if room <= 0:
+                                cut = bool(os.read(sfd, 1))
+                                break
+                            chunk = os.read(sfd, min(1 << 20, room))
+                            if not chunk:
+                                break
+                            fh.write(chunk)
+                            total += len(chunk)
+                    if cut:
+                        truncated.append(str(rel))
+                    count += 1
+                finally:
+                    os.close(sfd)
+            except OSError as exc:
+                errors.append({"path": str(rel), "error": f"{type(exc).__name__}: {exc.strerror}"})
+    (dest / "_nous_keep.json").write_text(json.dumps(
+        {"kept_files": count, "kept_bytes": total, "skipped": skipped,
+         "truncated": truncated, "errors": errors,
+         "limits": {"bytes": KEEP_MAX_BYTES, "files": KEEP_MAX_FILES}}, indent=2))
     return dest
 
 

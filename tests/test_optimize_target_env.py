@@ -141,3 +141,42 @@ def test_with_no_log_dir_the_run_dir_is_still_removed(tmp_path):
     _, run = _row_runner(tmp_path, body, log=False)
     run()
     assert not Path(seen.read_text()).exists()
+
+
+def test_an_unreadable_file_is_recorded_and_the_rest_is_still_kept(tmp_path):
+    """Round 6, item 4 (repro a_unreadable.py)."""
+    body = ("import os, json, pathlib\n"
+            "rd = pathlib.Path(os.environ['NOUS_RUN_DIR'])\n"
+            "[ (rd / f'evidence{i}.log').write_text('real\\n') for i in range(3) ]\n"
+            "(rd / 'sub').mkdir(); p = rd / 'sub' / 'locked'; p.write_text('x'); os.chmod(p, 0)\n"
+            "print(json.dumps({'m': 1.0}))\n")
+    wd, run = _row_runner(tmp_path, body)
+    run()
+    dest = wd / "runs" / "iter-3" / "run_dirs" / "row-7.attempt-1"
+    rec = json.loads((dest / "_nous_keep.json").read_text())
+    assert len(list(dest.glob("evidence*.log"))) == 3 and rec["kept_files"] == 3
+    assert rec["errors"] and rec["errors"][0]["path"] == "sub/locked"
+
+
+def test_a_clean_copy_back_still_writes_its_record(tmp_path):
+    body = ("import os, json, pathlib\n"
+            "(pathlib.Path(os.environ['NOUS_RUN_DIR']) / 'a.txt').write_text('a')\n"
+            "print(json.dumps({'m': 1.0}))\n")
+    wd, run = _row_runner(tmp_path, body)
+    run()
+    rec = json.loads((wd / "runs/iter-3/run_dirs/row-7.attempt-1/_nous_keep.json").read_text())
+    assert rec["kept_files"] == 1 and rec["errors"] == [] and rec["skipped"] == []
+
+
+def test_the_byte_cap_counts_bytes_actually_read(tmp_path, monkeypatch):
+    """A file larger than the remaining budget is cut at the cap and recorded,
+    whatever size lstat reported."""
+    monkeypatch.setattr(runner, "KEEP_MAX_BYTES", 10)
+    body = ("import os, json, pathlib\n"
+            "(pathlib.Path(os.environ['NOUS_RUN_DIR']) / 'big.txt').write_text('x' * 100)\n"
+            "print(json.dumps({'m': 1.0}))\n")
+    wd, run = _row_runner(tmp_path, body)
+    run()
+    dest = wd / "runs/iter-3/run_dirs/row-7.attempt-1"
+    rec = json.loads((dest / "_nous_keep.json").read_text())
+    assert (dest / "big.txt").stat().st_size == 10 and rec["truncated"] == ["big.txt"]
