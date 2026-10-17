@@ -198,8 +198,9 @@ about the presence of a cause.
 | `INV-SEM15` | Confirm's epsilon records the reference its percentage was taken of (`epsilon_reference`) and is never 0 for want of one. With no admissible finalist it is the declared percentage of the best measured ADMISSIBLE configuration (`best_observed`), else `recommendation.json`'s epsilon, else null (unknown). | artifact | `stage_runner._confirm_epsilon`; spec §3.3 | `always` — `tests/test_optimize_no_admissible_finalist.py` | **yes** — every finalist inadmissible gave `epsilon: 0.0` |
 | `INV-SEM16` | Whenever the policy registers `refine`, `screen` and `foldover` each carry a registered `{lack_of_fit: true} -> refine` rule naming its accounting (`policy.CURVATURE_ACCOUNTING`: lack-of-fit F on pure error at alpha=0.05). Centre-point curvature with no refinable survivor augments to the second-order design over EVERY refinable factor, never to `confirm`. | artifact | `policy.CURVATURE_ACCOUNTING`; `compile_policy` raises `InvariantViolation` on it | `always` — `tests/test_optimize_curvature_branch.py` | **yes** — `geometric_knob` (linear coding) certified a point 26% below the optimum on every seed |
 | `INV-SEM17` | No global certificate rests on a model the data rejected: when the latest fitting stage reported `model_adequate: false` (the epoch's sticky verdict, `INV-STAT19`), `certified` is false and `certification_withheld` names `model_inadequate`. The within-shortlist bound is still reported. | artifact | `stage_runner._finish_confirm`; spec §3.6 rung 3, §3.3 | `always` — `tests/test_optimize_curvature_branch.py` (every surface) | **yes** — same campaign: screen and refine both rejected for lack of fit, confirm certified anyway |
-| `INV-SEM18` | A multi-objective certificate rests on the front: when `certified`, the preferred point is on the measured front, `confidently_nondominated` at `δ_t / max_rounds`, and the preference scalarisation's regret bound is known and within `epsilon_scalar`; the report recommends that point. | artifact | `stage_runner._finish_confirm_pareto`; spec 2026-10-15 step 7 | `test` — `tests/test_optimize_pareto.py` (every oracle campaign) + `check_pareto_certificate` | — |
+| `INV-SEM18` | A multi-objective certificate rests on the front: when `certified`, the preferred point is on the measured front, `confidently_nondominated` at `δ_t / confirm_looks` (the round cap, plus one when the refill branch is registered), and the preference scalarisation's regret bound is known and within `epsilon_scalar`; the report recommends that point. | artifact | `stage_runner._finish_confirm_pareto`; spec 2026-10-15 step 7 | `test` — `tests/test_optimize_pareto.py` (every oracle campaign) + `check_pareto_certificate` | — |
 | `INV-SEM19` | The recommendation and the ranked candidates never name a categorical level that is lost (no retained row) or inadmissible wherever it was measured. | artifact | `stage_runner.run_stage` (lost/inadmissible level exclusions); spec 2026-10-16 stage-1b N7 | `always` — `check_recommendation_avoids_lost_levels`; `tests/test_optimize_stage1b_mixed_fixes.py` | — |
+| `INV-SEM20` | A single-objective certificate states both halves: when certified, `confirmation.json` `global_bound` = R_model_outside + R_terminal is known and ≤ ε, the fitted argmax is an admissible measured finalist, and `delta_terminal` is the per-look level `delta_terminal / confirm_looks` (`alpha_spending`). | artifact | `stage_runner._finish_confirm` (`_global_bound`, `alpha_spending`); spec 2026-10-17-certification-soundness.md | `test` — `tests/test_optimize_certification_soundness.py` (oracle campaigns + `check_certificate_global_bound`) | **yes** — stage-0 audit Q1: `certified` read R_terminal alone; 17 of 621 noise-sweep certificates were wrong, each with R_model far above ε; 4 confirm rounds at full δ_t certified wrongly at 0.108 vs 0.05 |
 
 **`INV-SEM02` — the violation, now CLOSED.** As first recorded: `certificate.model_regret_bound` returns
 `RegretBound(None, ..., method="none")` when `pure_error_df <= 0`, correctly
@@ -494,16 +495,16 @@ they disagree.
 |---|---|---|---|---|---|
 | Structural (`INV-ST`) | 11 | 10 | 0 | 1 | 0 |
 | Closed vocabulary (`INV-VOC`) | 10 | 7 | 0 | 3 | 0 |
-| Semantic (`INV-SEM`) | 19 | 17 | 0 | 2 | 0 |
+| Semantic (`INV-SEM`) | 20 | 17 | 0 | 3 | 0 |
 | Statistical (`INV-STAT`) | 18 | 7 | 0 | 11 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
 | Provenance (`INV-PROV`) | 6 | 4 | 0 | 2 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **81** | **56** | **0** | **23** | **2** |
+| **Total** | **82** | **56** | **0** | **24** | **2** |
 
-By level: `function` 26, `module` 6, `artifact` 34, `iteration` 5, `epoch` 7, `campaign` 3. Checkable (a
-checker function exists): 56 of 81. The 25 without one are
+By level: `function` 26, `module` 6, `artifact` 35, `iteration` 5, `epoch` 7, `campaign` 3. Checkable (a
+checker function exists): 57 of 82. The 25 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check

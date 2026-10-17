@@ -380,7 +380,7 @@ to be told apart from its neighbours at your replicate count), the registered
 `confirm -> confirm` branch (`front gap fill, Bonferroni over rounds`) seats
 predicted-front candidates inside the largest gaps. `certified` means the
 preferred point is `confidently_nondominated` at `delta_terminal /
-max_rounds` and the preference's scalar regret bound is within its epsilon;
+looks` (the round cap, plus one when the refill branch is registered) and the preference's scalar regret bound is within its epsilon;
 otherwise `certification_withheld` names why (`front_point_possibly_dominated`
 among them) and the basis is `terminal_best`. With noise close to epsilon,
 neighbouring front points cannot be separated by a few replicates and stay
@@ -2275,7 +2275,16 @@ an epsilon wider than the whole response range certifies immediately.
 at your replicate count — it is **not** simply "above the noise floor."
 
 `delta_screen` and `delta_terminal` are separate because the two bounds they
-size rest on different assumptions; `Pr(wrong global decision) ≤ δ_s + δ_t`.
+size rest on different assumptions. A certificate states
+`Pr(certified and the answer is more than ε below the best candidate) ≤ δ_s + δ_t`
+under the assumptions in [Reading `report.json`](#reading-reportjson).
+
+`confirm_max_rounds` is charged: every confirm round looks at the
+certificate and stops on it, so each round's bound is taken at
+`delta_terminal / looks`, where `looks` is the round cap plus one when the
+constrained refill branch is registered (`confirmation.json`
+`alpha_spending`). More rounds therefore buy more measurements, never more
+error. Without the charge, 4 rounds at 0.05 certified wrongly at 0.108.
 
 ### `known_valid_baseline`: the bottom rung
 
@@ -2290,10 +2299,22 @@ declared factor and every level must be one of that factor's `levels`; the
 validator hard-fails otherwise, because a baseline outside the declared space
 is not a configuration the campaign is allowed to run.
 
-It does three jobs: it is the report's last-resort answer when nothing
-measured survives the correctness gates, it is the shortlist's last-resort
-finalist, and it is the control that build oracle 2(c) measures before and
-after a `build`. It is **required** whenever `build` is declared.
+It does four jobs:
+- It is the report's last-resort answer when nothing measured survives the
+  correctness gates.
+- It is the control that build oracle 2(c) measures before and after a
+  `build`.
+- In a single-objective campaign, confirm seats it in **every round** as a
+  reference finalist. That seat sits outside `shortlist_size` and costs
+  `replicates` runs per round, which the preview counts. It competes like any
+  finalist, so if it wins it is the answer.
+- `report.json` `gain_over_baseline` gives the winner's gain over it, with an
+  interval from the same fresh confirm replicates. The interval is
+  simultaneous (Bonferroni over every finalist against the baseline), so it
+  stays valid although the winner was chosen from those replicates. The point
+  `estimate` is biased upward by that selection; the interval is the claim.
+
+It is **required** whenever `build` is declared.
 
 ### `workload`: seeds, and why `confirm` pairs them
 
@@ -2480,7 +2501,7 @@ reading a single log line:
 
 | `recommendation.basis` | What it means |
 |---|---|
-| `certified` | terminal discrimination ran, `R_δ^term ≤ ε`, and nothing broke the `delta_screen` premise. The strongest claim the kind makes. |
+| `certified` | terminal discrimination ran, the global bound `R_model,outside + R_δ^term ≤ ε`, the fitted argmax was measured admissibly in the final round, the model was adequate at every fitting stage, and nothing broke the `delta_screen` premise. The strongest claim the kind makes. |
 | `terminal_best` | terminal discrimination ran, bound too wide to certify. The winner is still a *measured* configuration compared against measured rivals. |
 | `model` | no terminal stage ran; the fitted argmax stands with its model bound. **The one rung that rests on the fitted surface** — suppressed when a semantic exception ended the epoch, or when the exact levels were already measured infeasible. |
 | `measured` | the model's answer is unusable; the best measured *valid* configuration is returned. Never the largest noisy observation — only `complete` rows are eligible. |
@@ -2521,8 +2542,64 @@ adequate.
 
 They rest on different assumptions, so a single "regret" number would
 advertise the assumption-light guarantee while delivering the
-model-dependent one. `Pr(wrong global decision) ≤ delta_screen +
-delta_terminal` is only meaningful while the two stay apart.
+model-dependent one. The certificate reads both halves, each at its own
+delta.
+
+**What `certified: true` claims** (spec
+`docs/superpowers/specs/2026-10-17-certification-soundness.md`):
+
+> With probability at least `1 − delta_screen − delta_terminal`, the
+> recommended configuration is within ε of the best configuration in the
+> certificate's scope.
+
+The terminal half alone is a WITHIN-SHORTLIST claim. The global claim also
+needs the model half, linked to the winner `w` through the fitted argmax
+`x̂`:
+
+- The model bound over the candidates screening did NOT shortlist,
+  `R_model,outside`, is recorded per challenger in `recommendation.json`
+  `residual_regret_model_profile`. It is valid for a data-chosen subset
+  because the whole family is simultaneous.
+- `x̂` is measured admissibly in the final round, so `f(x̂) ≤ f(best finalist)`.
+- The terminal bound `R_δ^term` covers the shortlist.
+
+So `G = R_model,outside + R_δ^term` bounds the winner's gap, and
+`certified` needs `G ≤ ε`. `confirmation.json` `global_bound` records the
+pieces.
+
+The statement rests on these assumptions:
+- the registered response class (linear + 2fi at screen, quadratic at
+  refine) holds over the scope, and WP-B's adequacy checks did not reject it
+  (`model_adequate` true at every fitting stage);
+- replicate noise is independent with approximately normal means. n = 3 is
+  small, so see limit 1 below;
+- the pure error from the centre replicates represents the noise at every
+  configuration.
+
+Each withheld reason names the half that failed:
+- `model_bound_above_epsilon`: `G > ε`. A configuration outside the
+  shortlist may still beat the winner by more than ε.
+- `model_bound_not_computable`: no fitting stage, or no pure error, so
+  nothing bounds what screening left out.
+- `model_bound_not_exhaustive`: the candidate space was searched, not
+  enumerated, so the model bound is silent about candidates the search never
+  evaluated.
+- `model_recommendation_not_compared` / `model_recommendation_infeasible`:
+  the fitted argmax was not measured admissibly in the final round, so the
+  model bound cannot be linked to the winner.
+
+Measured on the stage-0 noise sweep (2016 campaigns), this took false
+certificates from 17 to 0 (the spec has the table). It costs no power on
+surfaces the model describes; on `saddle` it withholds the 6/8 certificates
+the terminal half alone had issued, because the model bound there is 2-3x ε.
+
+**The certificate's scope** is in `report.json` `certificate_scope`. Refine
+holds every non-refinable factor (choice, two-level) at the screen's best
+level. A certificate after refine therefore covers that SLICE only:
+`region: slice`, with `held_fixed` naming the factors and levels, and
+`report.md` says so. It is never a claim about the other levels.
+`declared_space` means every factor varied. No certificate reaches past the
+declared ranges.
 
 `report.json` carries each bound's *value*; the full record — `challenger`,
 `delta`, `method`, `detail` — is in `recommendation.json` (model) and
@@ -2613,7 +2690,48 @@ per-epoch deltas. Read it with three qualifications:
 - `cumulative_is_lower_bound` is true when an earlier epoch's campaign could not
   be recovered.
 
-`certified` is still judged at this epoch's own deltas.
+`certified` is still judged at this epoch's own deltas. Within an epoch,
+the stages are covered by the two halves above (`delta_screen` for the model
+family, `delta_terminal` for the terminal one), and the confirm rounds by
+`alpha_spending`. This record covers the epochs.
+
+#### Certification: documented limits
+
+What a certificate does NOT cover (spec
+2026-10-17-certification-soundness.md §7):
+
+1. **Small-n noise (A5, deferred).** The terminal bound is a Bonferroni
+   one-sided Welch (or paired) t at n = 3. With heteroscedastic, skewed
+   noise it can be anti-conservative: in a Monte Carlo of the bound alone,
+   0.17 against a nominal 0.05. No per-finalist noise diagnostic (variance
+   ratio, skewness) is recorded. No robust small-n bound (bootstrap-t,
+   permutation on CRN differences) or replicate floor is applied. If your
+   metric is a tail latency, raise `design.confirm.replicates`.
+2. **Outliers and censoring (A6, deferred).** No outlier flag (studentized
+   residuals) is written. A timed-out run is an unmeasured row (a finalist
+   that times out is `finalist_unmeasured`, which withholds), not a
+   right-censored observation with the bound it implies. Constraints are
+   judged "every replicate passes", not as a mean or chance constraint.
+3. **Pure error stands in for every configuration.** The model bound's
+   variance comes from the centre replicates only. If those under-state the
+   variance elsewhere, the model half is anti-conservative.
+4. **Bonferroni is conservative.** Both families divide δ by the number of
+   comparisons. On large candidate spaces with few pure-error df, this makes
+   `G ≤ ε` hard to reach. Expect `model_bound_above_epsilon` rather than
+   false certificates. Raise `design.screen.center_points` (more pure-error
+   df) or narrow the ranges.
+5. **The refill look is charged whether or not it is taken.** The per-look
+   level must be fixed before the data decide how many looks there are.
+6. **The baseline's gain point estimate is selection-biased.** The interval
+   is not. Report the interval.
+7. **The fitted argmax is kept on every confirm round** (it links the model
+   half to the winner), at a cost of up to `replicates` runs per round.
+8. **A baseline that measures inadmissible** vetoes the round like any
+   finalist (`finalist_measured_infeasible`). You declared it valid, so the
+   contradiction is evidence and is never silenced.
+9. **Multi-objective certificates** do not use the global bound or the
+   baseline seat. They use alpha-spending over looks and the front's own
+   rules (INV-SEM18).
 
 ### Artifacts the epoch writes
 
