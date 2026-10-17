@@ -1167,9 +1167,19 @@ def _read_mechanism_hash(work_dir: Path) -> str:
 #: noisy target — which teaches authors to disable the check.
 DEFAULT_BASELINE_TOLERANCE_PCT = 5.0
 
-#: Replicates of the control measured before and after the build. Three is the
-#: smallest count whose mean is not one outlier away from either verdict.
-DEFAULT_BASELINE_REPLICATES = 3
+#: Replicates of the control measured before and after the build. Six since
+#: #321 P3: oracle 2(c) is a TOST, which must SHOW equivalence; at a margin of
+#: 3 sd its power is 0.75 (Welch) / 0.61 (paired) at n = 3 and 0.998 / 0.994
+#: at n = 6 (nous-e2e/audit/p3/mc_tost_power.py, 20,000 trials per cell).
+DEFAULT_BASELINE_REPLICATES = 6
+
+#: #321 P3 item 5: oracle 2(c)'s registered equivalence rule (written into the
+#: build-time record, so it is fixed and sealed before the mechanism exists).
+BASELINE_EQUIVALENCE_RULE = {
+    "test": "tost_ratio_of_means", "alpha": 0.05,
+    "margin": "tolerance_pct of the TRUE pre-build mean",
+    "reference": "Schuirmann 1987; Hauschke, Kieser & Hothorn 1999; Berger 1982",
+}
 
 
 def _build_checks(campaign: dict) -> dict:
@@ -1526,11 +1536,25 @@ def _check_baseline_equivalence(
         workload=_wl if paired else None,
     )
     pre_mean, post_mean = _mean(pre), _mean(post)
-    ok = _baseline_equivalent(pre_mean, post_mean, tol)
+    eq_rule = rec.get("equivalence")
+    tost_rec = None
+    if eq_rule:
+        # #321 P3 item 5: TOST of the ratio of means at the declared margin
+        # (Hauschke, Kieser & Hothorn 1999), paired under CRN.
+        from orchestrator.optimize import noise as noise_mod
+
+        tost_rec = noise_mod.tost_ratio(
+            pre, post, margin_frac=tol / 100.0,
+            alpha=float(eq_rule.get("alpha", noise_mod.BASELINE_TOST_ALPHA)),
+            paired=paired)
+        ok = tost_rec["equivalent"] is True
+    else:
+        ok = _baseline_equivalent(pre_mean, post_mean, tol)
     record = {
         "levels": levels, "pre": pre, "post": post,
         "pre_mean": pre_mean, "post_mean": post_mean,
         "tolerance_pct": tol, "ok": ok, "paired": paired,
+        **({"equivalence": dict(eq_rule), "tost": tost_rec} if eq_rule else {}),
     }
     if paired:
         record["workload_seeds"] = seeds
@@ -1545,6 +1569,27 @@ def _check_baseline_equivalence(
             else "unpaired",
         )
         return
+    if tost_rec is not None and tost_rec["equivalent"] is None:
+        raise OptimizationGateFailed(
+            f"oracle 2(c) could not DECIDE whether the build changed the control "
+            f"{levels} ({tost_rec['reason']}): the equivalence test needs at least "
+            f"two replicates with spread on each side. An undecided control is not "
+            f"an inert one. Raise optimization.build_checks.baseline_replicates. "
+            f"See baseline_equivalence.json.")
+    if tost_rec is not None:
+        raise OptimizationGateFailed(
+            f"oracle 2(c): the build was not SHOWN to leave the control {levels} "
+            f"unchanged: TOST of post/pre mean ratio within +-{tol:.3g}% at alpha "
+            f"{tost_rec['alpha']} gave p = {tost_rec.get('p')!r} (ratio estimate "
+            f"{tost_rec.get('ratio_estimate')!r}; {pre_mean:.6g} -> {post_mean:.6g}, "
+            f"{len(pre)} replicate(s) each side, "
+            f"{'paired on workload common random numbers' if paired else 'unpaired'}). "
+            f"Either the mechanism moved the control, or there are too few "
+            f"replicates to show it did not: raise build_checks.baseline_replicates "
+            f"(power 0.61-0.75 at n = 3, 0.99 at n = 6 for a margin of 3 sd), declare "
+            f"optimization.workload.seed_env so the comparison is paired, or widen "
+            f"the margin (response.noise_estimate_pct / build_checks."
+            f"baseline_tolerance_pct). See baseline_equivalence.json.")
     raise OptimizationGateFailed(
         f"build changed the baseline: control configuration {levels} moved from "
         f"{pre_mean:.6g} to {post_mean:.6g} on {metric or '<unset metric>'} "
@@ -3141,6 +3186,11 @@ def _run_stage_body(
                     "pre": _pre,
                     "pre_mean": _mean(_pre),
                     "tolerance_pct": _baseline_tolerance_pct(campaign),
+                    # #321 P3 item 5: the rule verify applies, registered (and
+                    # sealed) BEFORE the build. A record without it predates
+                    # P3 and keeps the relative-mean rule, so old campaigns
+                    # reproduce.
+                    "equivalence": dict(BASELINE_EQUIVALENCE_RULE),
                 }
                 if _pre_seeds is not None:
                     _rec["workload_seeds"] = _pre_seeds

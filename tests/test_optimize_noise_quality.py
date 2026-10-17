@@ -299,3 +299,64 @@ def test_the_probe_can_be_waived_in_writing(tmp_path):
                                runner_options={"workload_sd": 1.0, "ignore_seed": True})
     assert not r.path[0].startswith("aborted:")
     assert json.loads((r.work_dir / "crn_probe.json").read_text())["waived"]
+
+
+# ── item 5: oracle 2(c) as TOST ──────────────────────────────────────────────
+
+def test_the_old_relative_mean_rule_passed_an_undecidable_control():
+    """The concrete input that makes the old rule false: 3 replicates per side,
+    run-to-run sd 3x the tolerance, means 1% apart. The old rule declared the
+    control unchanged (|1%| <= 5%); the evidence cannot exclude a 5% shift in
+    either direction, so the TOST does not show equivalence."""
+    from orchestrator.optimize.noise import tost_ratio
+    from orchestrator.optimize.stage_runner import _baseline_equivalent
+
+    pre = [100.0, 85.0, 115.0]
+    post = [101.0, 86.0, 116.0]
+    assert _baseline_equivalent(sum(pre) / 3, sum(post) / 3, 5.0) is True   # old
+    r = tost_ratio(pre, post, margin_frac=0.05, paired=False)
+    assert r["equivalent"] is False and r["p"] > 0.05
+
+
+def test_tost_ratio_holds_its_size_at_the_margin_and_pairs_under_crn():
+    from orchestrator.optimize.noise import tost_ratio
+
+    rng = random.Random(4)
+
+    def rate(shift, paired, n=6, trials=4000):
+        ok = 0
+        for _ in range(trials):
+            w = [20.0 * rng.gauss(0, 1) for _ in range(n)]       # workload draw
+            pre = [100 + wi + rng.gauss(0, 1) for wi in w]
+            post = [100 * (1 + shift) + (wi if paired else 20.0 * rng.gauss(0, 1))
+                    + rng.gauss(0, 1) for wi in w]
+            ok += tost_ratio(pre, post, margin_frac=0.03, paired=paired)["equivalent"] is True
+        return ok / trials
+
+    se = (0.05 * 0.95 / 4000) ** 0.5
+    for paired in (False, True):
+        assert rate(0.03, paired) <= 0.05 + 2 * se          # size at the margin
+    # A workload term 20x the run noise: unpaired cannot show equivalence,
+    # paired (CRN) can -- the reason the paired form exists.
+    assert rate(0.0, paired=True) >= 0.95
+    assert rate(0.0, paired=False) <= 0.10
+
+
+def test_a_pre_p3_build_record_keeps_the_old_rule(tmp_path, monkeypatch):
+    """Reproducibility: a baseline_equivalence.json written before P3 carries
+    no `equivalence` key, and verify judges it by the relative-mean rule it
+    registered."""
+    from orchestrator.optimize.stage_runner import _check_baseline_equivalence
+    from orchestrator.optimize.synthetic import SURFACES, make_synthetic_runner
+    from orchestrator.optimize.factors import parse_factors
+
+    s = SURFACES["bowl"]()
+    c = {"optimization": {"response": {"primary": {"metric": "m"}},
+                          "factors": list(s.factors)}}
+    (tmp_path / "baseline_equivalence.json").write_text(json.dumps(
+        {"levels": {"A": 2, "B": 2}, "pre": [13.55, 13.6, 13.5],
+         "pre_mean": 13.55, "tolerance_pct": 5.0}))
+    _check_baseline_equivalence(c, tmp_path, parse_factors(list(s.factors)),
+                                make_synthetic_runner(s, seed=1))
+    rec = json.loads((tmp_path / "baseline_equivalence.json").read_text())
+    assert rec["ok"] is True and "tost" not in rec and "equivalence" not in rec

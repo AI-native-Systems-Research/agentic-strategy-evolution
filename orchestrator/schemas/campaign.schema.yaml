@@ -2115,16 +2115,23 @@ properties:
             description: >
               How many times the ``known_valid_baseline`` configuration
               is measured before the build and again at ``verify``.
-              Default 3 — the smallest count whose mean is not one
-              outlier away from either verdict. Raise it on a noisy
+              Default 6 (#321 P3; was 3). Oracle 2(c) is a TOST: verify
+              passes only when the build is SHOWN to leave the control's mean
+              within the tolerance, so it needs power -- 0.61-0.75 at n = 3,
+              0.99 at n = 6, for a tolerance of 3 sd. Raise it on a noisy
               target instead of widening the tolerance.
           baseline_tolerance_pct:
             type: number
             exclusiveMinimum: 0
             description: >
-              Allowed relative shift of the control's mean across the
-              build, as a percent: the campaign aborts when
-              ``|post_mean - pre_mean| / |pre_mean|`` exceeds it.
+              The equivalence margin for the control's mean across the
+              build, as a percent of the pre-build mean. Since #321 P3 verify
+              passes only when a TOST of the post/pre ratio of means
+              (Schuirmann 1987; Hauschke, Kieser & Hothorn 1999), paired under
+              workload CRN, shows the ratio inside ``1 +- tolerance/100`` at
+              alpha 0.05 -- equivalence must be SHOWN, not merely not refuted.
+              A campaign whose build record predates P3 keeps the old rule
+              (abort when ``|post_mean - pre_mean| / |pre_mean|`` exceeds it).
               Defaults to ``3 x response.noise_estimate_pct`` when that
               is declared, else 5.0. Prefer declaring
               ``noise_estimate_pct`` — it is a fact about the target that

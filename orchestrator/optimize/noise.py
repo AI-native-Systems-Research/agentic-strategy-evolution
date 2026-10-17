@@ -329,3 +329,82 @@ def crn_probe_verdict(pairs, *, alpha: float = CRN_PROBE_ALPHA) -> dict:
     p = float(fisher_f.sf(f, m - 1, m))
     out.update(f=f, p=p, verdict="real" if p < alpha else "decorative")
     return out
+
+
+# ── #321 P3 item 5: oracle 2(c) as a formal equivalence test ────────────────
+
+BASELINE_TOST_ALPHA = 0.05
+
+
+def tost_ratio(pre, post, *, margin_frac: float, alpha: float = BASELINE_TOST_ALPHA,
+               paired: bool) -> dict:
+    """Equivalence of the control's mean across the build, RELATIVE margin.
+
+    H0: ``|mu_post - mu_pre| >= m |mu_pre|`` against H1: inside. With ``s =
+    sign(mean(pre))`` (orientation only), H1 is the intersection of
+    ``s (mu_post - (1 + m) mu_pre) < 0`` and ``s (mu_post - (1 - m) mu_pre) >
+    0``: two LINEAR contrasts with fixed coefficients, so each is an exact
+    one-sided t test at ``alpha`` -- paired on ``d_i = post_i - c pre_i`` under
+    CRN (replicate i of both sides shares a workload draw), Welch otherwise --
+    and the intersection-union test has size ``alpha`` (Berger 1982). This is
+    the ratio-of-means TOST (Hauschke, Kieser & Hothorn 1999, Stat. Med. 18,
+    93-105; Schuirmann 1987 for TOST): the margin is a fraction of the TRUE
+    pre-build mean, not of its estimate, so no data-dependent constant enters
+    the test. ``equivalent`` is ``None`` with a named ``reason`` when it cannot
+    be decided (fewer than 2 replicates, zero spread, a zero pre-build mean).
+    """
+    import statistics as st
+
+    from scipy.stats import t as student_t
+
+    pre = [float(v) for v in pre]
+    post = [float(v) for v in post]
+    out = {"method": ("tost_ratio_paired_t" if paired else "tost_ratio_welch_t"),
+           "margin_frac": margin_frac, "alpha": alpha, "equivalent": None,
+           "reason": None, "p_lower": None, "p_upper": None}
+    if len(pre) < 2 or len(post) < 2 or (paired and len(pre) != len(post)):
+        out["reason"] = "fewer_than_two_replicates" if min(len(pre), len(post)) < 2 \
+            else "unequal_replicate_counts_for_pairing"
+        return out
+    mp = st.mean(pre)
+    if mp == 0.0:
+        out["reason"] = "zero_pre_build_mean"
+        return out
+    s = 1.0 if mp > 0 else -1.0
+    if st.variance(pre) == 0.0 and st.variance(post) == 0.0:
+        # A deterministic target: both sides measured exactly, so the
+        # equivalence is decided exactly, not tested.
+        out.update(method="exact_deterministic", p=None,
+                   equivalent=bool(abs(st.mean(post) - mp) < margin_frac * abs(mp)),
+                   ratio_estimate=st.mean(post) / mp)
+        return out
+
+    def one_sided(c: float, upper: bool) -> float | None:
+        # t for H0: s (mu_post - c mu_pre) >= 0 (upper) / <= 0 (lower).
+        if paired:
+            d = [s * (b - c * a) for a, b in zip(pre, post)]
+            v = st.variance(d)
+            if not v > 0.0:
+                return None
+            t = st.mean(d) / math.sqrt(v / len(d))
+            df = len(d) - 1
+        else:
+            vb = st.variance(post) / len(post)
+            va = c * c * st.variance(pre) / len(pre)
+            se = math.sqrt(va + vb)
+            den = (vb ** 2 / (len(post) - 1) + va ** 2 / (len(pre) - 1))
+            if not (se > 0.0 and den > 0.0):
+                return None
+            t = s * (st.mean(post) - c * mp) / se
+            df = (va + vb) ** 2 / den
+        return float(student_t.cdf(t, df) if upper else student_t.sf(t, df))
+
+    pu = one_sided(1.0 + margin_frac, upper=True)
+    pl = one_sided(1.0 - margin_frac, upper=False)
+    if pu is None or pl is None:
+        out["reason"] = "zero_spread"
+        return out
+    out.update(p_upper=pu, p_lower=pl, p=max(pu, pl),
+               equivalent=bool(pu < alpha and pl < alpha),
+               ratio_estimate=st.mean(post) / mp)
+    return out

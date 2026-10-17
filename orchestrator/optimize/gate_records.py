@@ -176,7 +176,7 @@ def load(work_dir: Path, names=BUILD_RECORDS) -> dict:
 #: The keys of baseline_equivalence.json the BUILD stage wrote (verify adds the
 #: post-build measurement and its verdict).
 BUILD_BASELINE_KEYS = ("levels", "pre", "pre_mean", "pre_unavailable", "tolerance_pct",
-                       "workload_seeds", "workload_seed_env")
+                       "workload_seeds", "workload_seed_env", "equivalence")
 
 
 def confirm_build_part(work_dir: Path, sealed: dict) -> None:
