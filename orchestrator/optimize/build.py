@@ -209,7 +209,12 @@ def run_agent_call(
             "dispatcher": "sdk",
             "role": role,
             "phase": phase,
+            # `model` is what was REQUESTED (an alias, e.g. claude-opus-5);
+            # `model_resolved` is what the SDK reported serving the turn, or
+            # None when it reported nothing (audit Q10: the alias alone does
+            # not say which snapshot authored the mechanism).
             "model": model,
+            "model_resolved": getattr(result, "resolved_model", "") or None,
             "input_tokens": getattr(result, "input_tokens", 0),
             "output_tokens": getattr(result, "output_tokens", 0),
             "cache_creation_input_tokens": getattr(

@@ -397,7 +397,11 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
             scratch_key = kp
         else:
             scratch_key = None
-        for name in ("mechanism.sha256", "mechanism.patch", *CARRIED_RECORDS):
+        # llm_metrics.jsonl is carried because provenance.model is READ from
+        # it: which model the plan/build calls requested and were served is a
+        # record of agent calls, not something a replay can re-derive.
+        for name in ("mechanism.sha256", "mechanism.patch", "llm_metrics.jsonl",
+                     *CARRIED_RECORDS):
             if (orig / name).exists():
                 shutil.copy2(orig / name, new / name)
         last = iters[-1] if iters else 0

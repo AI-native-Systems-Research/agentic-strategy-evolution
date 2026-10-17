@@ -78,6 +78,26 @@
               "reason"
             ]
           }
+        },
+        "model": {
+          "type": "object",
+          "description": "Audit Q10: the kind's configured default model (an alias; snapshot_pinned says whether a dated snapshot was pinned) and, for every plan/build attempt in llm_metrics.jsonl, the model ID requested and the ID the SDK reported serving it (resolved; null when none was reported).",
+          "properties": {
+            "configured_default": {"type": "string"},
+            "snapshot_pinned": {"type": "boolean"},
+            "pin_note": {"type": "string"},
+            "calls": {"type": "array", "items": {"type": "object", "required": ["phase", "requested", "resolved"]}}
+          }
+        },
+        "anchor": {
+          "type": "object",
+          "description": "Item 2 (#321): the external anchor of this epoch's pre-registration, when `nous anchor` recorded one, and whether it still matches the policy and inputs on disk.",
+          "properties": {
+            "present": {"type": "boolean"},
+            "matches": {"type": ["boolean", "null"]},
+            "mismatches": {"type": "array", "items": {"type": "string"}},
+            "where": {"type": ["string", "null"]}
+          }
         }
       }
     },

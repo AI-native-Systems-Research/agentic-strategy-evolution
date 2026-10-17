@@ -339,6 +339,11 @@ class SDKResult:
     num_turns: int = 1
     is_error: bool = False
     error_message: str = ""
+    #: The model ID the SDK reported SERVING the turn (``AssistantMessage.model``,
+    #: else the ``ResultMessage.model_usage`` keys), as opposed to the ID that
+    #: was REQUESTED. Empty when the producer did not report one. Recorded so an
+    #: alias such as ``claude-opus-5`` can be tied to what actually ran.
+    resolved_model: str = ""
 
     def __post_init__(self) -> None:
         if self.is_error and not self.error_message.strip():
@@ -476,6 +481,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
             # path can synthesize a useful diagnostic when result text is
             # missing (instead of recording the literal string "None").
             message_class_counts: dict[str, int] = {}
+            served: list[str] = []
             if event_log_path is not None:
                 Path(event_log_path).parent.mkdir(parents=True, exist_ok=True)
             # #205: per-message live watchdog. When a positive
@@ -513,6 +519,9 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 # `nous status --watch` can render live progress.
                 _tee_event(event_log_path, message, cls)
                 if cls == "AssistantMessage":
+                    _m = getattr(message, "model", None)
+                    if isinstance(_m, str) and _m and _m not in served:
+                        served.append(_m)
                     for block in getattr(message, "content", []):
                         if hasattr(block, "text"):
                             text_chunks.append(block.text)
@@ -521,6 +530,10 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     cost_usd = float(getattr(message, "total_cost_usd", 0.0) or 0.0)
                     duration_ms = int(getattr(message, "duration_ms", 0) or 0)
                     num_turns = int(getattr(message, "num_turns", 0) or 0)
+                    _mu = getattr(message, "model_usage", None)
+                    if isinstance(_mu, dict):
+                        served.extend(k for k in _mu if isinstance(k, str)
+                                      and k and k not in served)
                     if getattr(message, "is_error", False):
                         return SDKResult(
                             text="".join(text_chunks),
@@ -542,6 +555,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                             cost_usd=cost_usd,
                             duration_ms=duration_ms,
                             num_turns=num_turns,
+                            resolved_model=",".join(served),
                         )
             return SDKResult(
                 text="".join(text_chunks),
@@ -556,6 +570,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 cost_usd=cost_usd,
                 duration_ms=duration_ms or int((time.time() - t0) * 1000),
                 num_turns=num_turns or 1,
+                resolved_model=",".join(served),
             )
 
         try:
@@ -1027,6 +1042,7 @@ class SDKDispatcher(CLIDispatcher):
             "role": self._current_role,
             "phase": self._current_phase,
             "model": self.model,
+            "model_resolved": getattr(result, "resolved_model", "") or None,
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
             "cache_creation_input_tokens": result.cache_creation_input_tokens,

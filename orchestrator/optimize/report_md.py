@@ -902,6 +902,18 @@ def _provenance_lines(report: dict) -> list[str]:
                "(`runs.jsonl`, `design_matrix.json`, `relations.json`, each epoch's "
                "registered campaign); `nous reanalyze` re-derives this report's "
                "analysis from them")
+    mdl = prov.get("model") if isinstance(prov.get("model"), dict) else None
+    if mdl and mdl.get("calls"):
+        seen = sorted({f"{c.get('requested')} -> {c.get('resolved') or 'not reported'}"
+                       for c in mdl["calls"]})
+        out.append("- **Model (requested -> served):** " + "; ".join(seen)
+                   + ("" if mdl.get("snapshot_pinned") else
+                      " (the requested ID is an alias, not a dated snapshot)"))
+    anc = prov.get("anchor") if isinstance(prov.get("anchor"), dict) else None
+    if anc and anc.get("present"):
+        out.append("- **External anchor:** " + (
+            f"matches ({anc.get('where')})" if anc.get("matches") else
+            "**MISMATCH**: " + "; ".join(anc.get("mismatches") or [])))
     for w in prov.get("waivers") or []:
         out.append(f"- **Gate waived:** `{w.get('gate')}` -- {w.get('reason')}"
                    + (f" ({w['note']})" if w.get("note") else ""))

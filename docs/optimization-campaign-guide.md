@@ -210,6 +210,15 @@ downstream measurement describes worse code. An explicit
 `campaign.models.<phase>` still wins, so pin a cheaper model per phase when you
 want one.
 
+**`claude-opus-5` is an alias, not a dated snapshot.** No dated snapshot of it
+could be verified, so Nous does not pin one. Instead every plan and build
+attempt's `llm_metrics.jsonl` row records `model` (the ID requested) and
+`model_resolved` (the ID the SDK reported serving the turn, or null when it
+reported none). `report.json` `provenance.model` lists both per call, and
+`report.md` prints them. A rerun after the alias moves is a different build;
+that record is what lets a reader see it. Pin a dated ID yourself with
+`campaign.models.build` when one is available to you.
+
 **Do not add a `build` stage you do not need.** It is the only stage that
 spends an agent call on the target repo, so a campaign varying existing
 flags should omit it and stay at zero *substantive* model calls. Add it only
