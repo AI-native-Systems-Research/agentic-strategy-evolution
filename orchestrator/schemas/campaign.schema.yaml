@@ -1251,6 +1251,31 @@ properties:
                 type: integer
                 minimum: 0
                 description: "Replicated center-point runs at the refine stage."
+              validation_points:
+                type: integer
+                minimum: 0
+                description: >
+                  Off-lattice VALIDATION runs refine registers (default 4;
+                  WP-B, spec 2026-10-17-model-adequacy-design.md): coded
+                  +-0.5 on every refinable axis, chosen by a seeded greedy
+                  maximin, executed as their own block after the composite,
+                  held OUT of the fit and checked against its predictions
+                  (joint predictive F at alpha 0.05). A rejection makes the
+                  model inadequate. 0 turns the check off; then refine cannot
+                  overturn an earlier stage's lack-of-fit rejection
+                  (screen_rejection_unresolved).
+              validation_seed:
+                type: integer
+                description: "Seed of the maximin tie-breaks (default 0)."
+              reuse_screen:
+                type: boolean
+                description: >
+                  Sequential assembly (WP-B B4; default false): refine cube
+                  corners the screen already measured at identical levels
+                  (held factors included) are not re-run, and the screen's
+                  centre rows join as block-1 centres; the fit carries a
+                  block (drift) term. Refused silently when a choice factor
+                  is declared or the screen ran under another policy.
           confirm:
             type: object
             required: [replicates]

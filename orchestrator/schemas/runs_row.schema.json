@@ -30,6 +30,7 @@
         "corner",
         "center",
         "axial",
+        "validation",
         "confirm"
       ],
       "description": "Design-point role, copied from the planned row. Includes `confirm`, which `design_matrix.schema.json` has always declared: a confirm replicate row carries role=confirm, and `pure_error` reads this field to separate genuine centre-point replicates from confirm replicates. Omitting it made every confirm row on disk fail its own schema while design_matrix accepted the identical value -- two schemas describing one field, disagreeing. Nothing caught it because the schema has no production consumer and the tests built rows by hand."
@@ -160,6 +161,8 @@
           ],
           "description": "The iteration whose attempt actually MEASURED this row."
         },
+        "row_index": {"type": "integer", "minimum": 0, "description": "WP-B B4 sequential assembly only: the SCREEN row that measured this one (refine filled it from the screen instead of re-running it)."},
+        "stage": {"enum": ["screen"], "description": "WP-B B4 only: the stage whose measurement fills this row. Absent on a retry-reused row."},
         "epoch": {
           "type": "integer",
           "minimum": 1,

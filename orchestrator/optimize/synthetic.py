@@ -478,6 +478,56 @@ def curvature_under_second_level() -> Surface:
     )
 
 
+# ── deliberately NON-QUADRATIC oracles (WP-B; stage-0 audit Q3, WP-C bench) ──
+#
+# Copied verbatim from the audit probe (nous-e2e/audit/probelib.py) and the
+# WP-C benchmark (benchmarks/optimization/surfaces.py) so the numbers compare.
+# A second-order model cannot represent any of them; at three levels per axis
+# refine's lack-of-fit test has ~alpha power against the first two, which is
+# how 22/22 non-quadratic certificates in the benchmark were false. Not in
+# ``SURFACES``: the every-surface loops and the byte-identity baseline stay as
+# they were.
+
+def step_cliff() -> Surface:
+    """Monotone rise that drops 6 units past A = 12 (a cache-overflow cliff)."""
+    def fn(lv):
+        a, b = float(lv["A"]), float(lv["B"])
+        return 10.0 + 0.3 * a + 0.1 * b - (6.0 if a > 12 else 0.0)
+    return Surface(name="step_cliff", noise_sd=0.05,
+                   factors=(_numeric("A"), _numeric("B")), fn=fn)
+
+
+def ridge_cubic() -> Surface:
+    """Cubic in A with an interior maximum near A = 6, plus a hidden A*B*C
+    three-way interaction that makes C = off optimal."""
+    def fn(lv):
+        a, b = float(lv["A"]), float(lv["B"])
+        c = 1.0 if lv["C"] == "on" else -1.0
+        x = (a - 9) / 7.0
+        return (12.0 - 2.0 * x ** 3 - 2.0 * x ** 2 + 1.5 * x
+                + 0.3 * c * x * ((b - 9) / 7.0) * 3)
+    return Surface(name="ridge_cubic", noise_sd=0.05,
+                   factors=(_numeric("A"), _numeric("B"), _choice("C")), fn=fn)
+
+
+def two_peaks() -> Surface:
+    """Narrow global peak at (14, 3), broad local hump at the centre (9, 9)."""
+    def fn(lv):
+        a, b = float(lv["A"]), float(lv["B"])
+        broad = 3.0 * math.exp(-((a - 9) ** 2 + (b - 9) ** 2) / 40.0)
+        narrow = 5.0 * math.exp(-((a - 14) ** 2 + (b - 3) ** 2) / 4.0)
+        return 10.0 + broad + narrow
+    return Surface(name="two_peaks", noise_sd=0.05,
+                   factors=(_numeric("A"), _numeric("B")), fn=fn)
+
+
+NON_QUADRATIC: dict[str, Callable[[], Surface]] = {
+    "step_cliff": step_cliff,
+    "ridge_cubic": ridge_cubic,
+    "two_peaks": two_peaks,
+}
+
+
 SURFACES: dict[str, Callable[[], Surface]] = {
     "additive": _additive,
     "interaction_only": _interaction_only,
@@ -829,6 +879,14 @@ def make_synthetic_runner(surface: Surface, *, seed: int,
         ) if seed_env else None
         draw = (random.Random(f"{seed}:{int(row_seed)}")
                 if row_seed is not None else rng)
+        if row_seed is None and getattr(row, "role", None) == "validation":
+            # WP-B: a refine VALIDATION row draws from its own seeded stream
+            # (same distribution, independent), so adding the validation block
+            # does not shift every LATER row's draw on the shared stream -- an
+            # artifact of this in-process target, not of iid noise. Every
+            # non-validation measurement is then identical with and without
+            # validation points. The run counter still advances (drift).
+            draw = random.Random(f"{seed}:validation:{counter['n']}")
         obs = _observe(surface, row.levels, rng=draw, run_counter=counter["n"])
         counter["n"] += 1
         return obs

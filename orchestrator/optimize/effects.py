@@ -160,6 +160,12 @@ class Fit:
     #: or ``"rejected"`` (nonzero residuals against zero replicate spread --
     #: lack of fit ESTABLISHED, no F needed); ``None`` otherwise.
     lof_exact: str | None = None
+    #: Sequential-assembly fits only (refine reusing screen rows, WP-B B4): the
+    #: BLOCK nuisance coefficient (screen block coded 1, refine block 0, so the
+    #: intercept and every prediction refer to the refine block) as
+    #: ``(estimate, se, t, p, df)`` -- the between-stage DRIFT check
+    #: (Box & Draper 2007, ch. 15). ``None`` on every unblocked fit.
+    block_effect: tuple | None = None
 
 
 def pure_error(center_responses) -> tuple[float | None, int]:
@@ -394,8 +400,15 @@ def _spanning(v, cols, labels) -> tuple[str, ...]:
 
 def fit_effects(design: Design, responses, *, factor_ids,
                 include_interactions: bool = True,
-                alpha: float = 0.05, omit_terms=()) -> Fit:
-    """Fit main effects (+ 2-factor interactions, + curvature when present)."""
+                alpha: float = 0.05, omit_terms=(), blocks=None) -> Fit:
+    """Fit main effects (+ 2-factor interactions, + curvature when present).
+
+    ``blocks`` (one 0/1 per row, or ``None``): a sequentially assembled design
+    (WP-B B4). When both blocks are present a block indicator enters the
+    solve as a NUISANCE column, pure error pools within (coordinates, block),
+    every SE comes from the exact ``(X'X)^-1``, and ``Fit.block_effect`` is
+    the drift check. ``None`` or a single block: the unblocked fit, unchanged.
+    """
     ids = tuple(factor_ids)
     ys = [float(v) for v in responses]
     if len(ys) != len(design.points):
@@ -444,12 +457,20 @@ def fit_effects(design: Design, responses, *, factor_ids,
     )
     pts = design.points
 
-    coefs = _solve_normal_equations(cols, ys)
+    blk = None
+    if blocks is not None and len(set(int(b) for b in blocks)) > 1:
+        if len(blocks) != len(ys):
+            raise ValueError("blocks must give one entry per row")
+        blk = [float(int(b)) for b in blocks]
+    coefs = _solve_normal_equations(cols + ([blk] if blk else []), ys)
+    coefs_blocked = coefs
+    coefs = coefs[:len(cols)]
     # A fit with a categorical's contrast columns (several per factor, or one
     # surviving contrast of a categorical reduced to two levels, N6).
     mixed = bool(design.groups) and any(
         c != g for c, g in zip(design.factor_ids, design.groups))
-    coefs_lof = coefs
+    coefs_lof = coefs_blocked
+    lof_cols = cols + ([blk] if blk else [])
     centre_ind = _centre_indicators(pts, cols) if mixed else []
     if centre_ind:
         # CURVATURE ISOLATION (mixed fits; stage-1 M1). A collapsed
@@ -462,7 +483,8 @@ def fit_effects(design: Design, responses, *, factor_ids,
         # centre points (Montgomery, DAE 8e §6.8). The lack-of-fit test is still
         # computed from the model WITHOUT the indicators (``coefs_lof``), so
         # under H0 it is exactly F-distributed and curvature still triggers it.
-        coefs = _solve_normal_equations(cols + centre_ind, ys)[:len(cols)]
+        coefs = _solve_normal_equations(
+            cols + centre_ind + ([blk] if blk else []), ys)[:len(cols)]
 
     # Pure error from the centre rows, POOLED WITHIN IDENTICAL COORDINATES.
     # Pure error is only pure if every row in a group is a replicate of ONE
@@ -477,9 +499,10 @@ def fit_effects(design: Design, responses, *, factor_ids,
     # SS_pe = sum of within-group SS, df_pe = n_centre - g. A plain variance
     # over all centres would silently include the choice factor's effect.
     groups: dict[tuple[float, ...], list[float]] = {}
-    for p, y in zip(pts, ys):
+    for r, (p, y) in enumerate(zip(pts, ys)):
         if p.role == "center":
-            groups.setdefault(tuple(p.coded), []).append(y)
+            key = tuple(p.coded) + ((blk[r],) if blk else ())
+            groups.setdefault(key, []).append(y)
     if len(groups) <= 1:
         pe_var, pe_df = pure_error(next(iter(groups.values()), []))
     else:
@@ -550,11 +573,19 @@ def fit_effects(design: Design, responses, *, factor_ids,
 
     extra: dict = {}
     aliases = None
+    if blk and not mixed:
+        # A BLOCKED fit (B4): the block column is correlated with the
+        # quadratics (and with every column when the reuse is unbalanced), so
+        # every SE comes from the exact inverse, the block a nuisance column.
+        built, quads, extra = _exact_inference(
+            design, labels, terms, cols, coefs, built, quads, quad_start,
+            alias_classes, pe_var, pe_df, tcrit, have_se, alpha,
+            extra_cols=[blk])
     if mixed:
         built, quads, extra = _exact_inference(
             design, labels, terms, cols, coefs, built, quads, quad_start,
             alias_classes, pe_var, pe_df, tcrit, have_se, alpha,
-            extra_cols=centre_ind)
+            extra_cols=centre_ind + ([blk] if blk else []))
         extra["centre_isolated"] = bool(centre_ind)
         if not centre_ind and any(p.role == "center" for p in pts):
             # Recorded, never silent (stage-1b N3): the corner model is not of
@@ -576,12 +607,12 @@ def fit_effects(design: Design, responses, *, factor_ids,
     lof_f = lof_p = None
     if pe_var is not None and pe_var > 0 and pe_df > 0:
         resid = [
-            ys[r] - sum(coefs_lof[c] * cols[c][r] for c in range(len(cols)))
+            ys[r] - sum(coefs_lof[c] * lof_cols[c][r] for c in range(len(lof_cols)))
             for r in range(n)
         ]
         ss_resid = sum(v * v for v in resid)
         ss_pe = pe_var * pe_df
-        df_resid = n - len(cols)
+        df_resid = n - len(lof_cols)
         df_lof = df_resid - pe_df
         if df_lof > 0:
             ss_lof = max(ss_resid - ss_pe, 0.0)
@@ -598,16 +629,31 @@ def fit_effects(design: Design, responses, *, factor_ids,
     # computable".
     exact_fit = False
     lof_exact = None
-    df_lof_all = n - len(cols) - pe_df
+    df_lof_all = n - len(lof_cols) - pe_df
     if (lof_p is None and pe_df > 0 and pe_var is not None and pe_var == 0.0
             and df_lof_all > 0):
-        resid0 = [ys[r] - sum(coefs_lof[c] * cols[c][r] for c in range(len(cols)))
+        resid0 = [ys[r] - sum(coefs_lof[c] * lof_cols[c][r] for c in range(len(lof_cols)))
                   for r in range(n)]
         scale = 1.0 + sum(v * v for v in ys)
         exact_fit = sum(v * v for v in resid0) <= 1e-18 * scale
         lof_exact = "exact_fit" if exact_fit else "rejected"
     extra["lof_exact_fit"] = exact_fit
     extra["lof_exact"] = lof_exact
+    if blk:
+        # The between-stage DRIFT check: the block coefficient's t on pure
+        # error, from the exact inverse over the solved columns.
+        allc = cols + list(centre_ind) + [blk]
+        xtx = [[sum(a[r] * b[r] for r in range(n)) for b in allc] for a in allc]
+        vb = _invert(xtx)[-1][-1]
+        b_est = float(coefs_blocked[len(cols)])
+        if have_se:
+            b_se = math.sqrt(pe_var * max(vb, 0.0))
+            b_t = b_est / b_se if b_se > 0 else None
+            b_p = (float(2.0 * (1.0 - student_t.cdf(abs(b_t), pe_df)))
+                   if b_t is not None else None)
+        else:
+            b_se = b_t = b_p = None
+        extra["block_effect"] = (b_est, b_se, b_t, b_p, pe_df)
 
     return Fit(
         intercept=coefs[0], effects=tuple(built), n_runs=n,

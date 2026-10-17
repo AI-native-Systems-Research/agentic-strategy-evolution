@@ -359,9 +359,20 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         states["refine"] = {
             "spends": True,
             "design": {"kind": "central_composite",
-                       "center_points": int((design.get("refine") or {}).get("center_points", 4))},
+                       "center_points": int((design.get("refine") or {}).get("center_points", 4)),
+                       # WP-B (spec 2026-10-17): the held-out validation block
+                       # and the sequential-assembly option are part of the
+                       # pre-registration, so they are in the hashed policy.
+                       "validation_points": max(0, int((design.get("refine") or {}).get(
+                           "validation_points", 4))),
+                       "validation_seed": int((design.get("refine") or {}).get(
+                           "validation_seed", 0)),
+                       "reuse_screen": bool((design.get("refine") or {}).get(
+                           "reuse_screen", False))},
             "estimator": "ols_normal_equations",
-            "accounting": "per_term_t_on_pure_error",
+            "accounting": ("per_term_t_on_pure_error; validation points held out, "
+                           "joint predictive F at alpha 0.05 (a rejection makes "
+                           "model_adequate false)"),
         }
     if confirm_on:
         states["confirm"] = {

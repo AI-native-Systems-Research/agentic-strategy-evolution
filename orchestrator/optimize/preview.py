@@ -77,6 +77,10 @@ class DesignPreview:
     #: is ``sd * sqrt(2 L / N)`` (two level means of ~N/L corners each), NOT
     #: the two-level MDE line's ``2 sd / sqrt(N)``.
     categorical_se: list[tuple[str, int, float]] = field(default_factory=list)
+    #: WP-B B3: ``(stage, D-efficiency, max centred VIF, p, n)`` of each
+    #: fitting stage's PLANNED model matrix (the design as run is in
+    #: recommendation.json ``model_adequacy.design_efficiency``).
+    efficiency: list[tuple[str, float, float | None, int, int]] = field(default_factory=list)
 
 
 def screen_mde(n_corners: int, df: int, sd: float) -> tuple[float, float | None]:
@@ -232,11 +236,21 @@ def build_preview(
             ))
 
     if "refine" in states:
-        ccd = len(_build_design(factors, design_cfg, Stage.REFINE.value).points)
+        _ref = _build_design(factors, design_cfg, Stage.REFINE.value)
+        ccd = len(_ref.points)
+        n_val = sum(1 for p in _ref.points if p.role == "validation")
         pv.stages.append(StageRuns(
             "refine", ccd, ccd, True,
-            "central composite over refinable factors; runs if one survives "
-            "the screen OR the screen's centre points show curvature",
+            "central composite over refinable factors"
+            + (f" + {n_val} off-lattice validation point(s) (coded +-0.5, held "
+               f"out of the fit, checked against its predictions)" if n_val else
+               "; NO validation points (design.refine.validation_points: 0), "
+               "so refine cannot overturn a screen lack-of-fit rejection")
+            + "; runs if one survives the screen OR the screen's centre points "
+              "show curvature"
+            + ("; reuse_screen: cube corners and centres already measured at "
+               "the screen are not re-run (fewer runs than shown)"
+               if (design_cfg.get("refine") or {}).get("reuse_screen") else ""),
         ))
 
     if "confirm" in states:
@@ -249,6 +263,27 @@ def build_preview(
             f"replicate(s) per round, up to {rounds} round(s)",
         ))
 
+    # B3: D-efficiency of each fitting stage's planned model matrix.
+    from orchestrator.optimize import adequacy as _adq
+    from orchestrator.optimize.effects import model_matrix as _mm
+
+    def _eff(name, d):
+        pts = [p for p in d.points if p.role != "validation"]
+        import dataclasses as _dc
+
+        d = _dc.replace(d, points=tuple(pts))
+        try:
+            labels, _t, cols, _q, _a = _mm(d, d.factor_ids)
+        except Exception:  # noqa: BLE001 -- a preview never fails on this
+            return
+        e = _adq.design_efficiency(cols, labels)
+        if e is not None:
+            pv.efficiency.append((name, e["d_efficiency"], e["max_vif"], e["p"], e["n"]))
+
+    if not screen.groups:
+        _eff("screen", screen)
+    if "refine" in states:
+        _eff("refine", _ref)
     pv.guaranteed_runs = sum(s.runs for s in pv.stages if not s.conditional)
     pv.max_runs = sum(s.max_runs for s in pv.stages)
     budget = design_cfg.get("max_runs")
@@ -476,6 +511,10 @@ def format_preview(pv: DesignPreview) -> list[str]:
             f"    {fid} ({L} levels): the MDE line above is for two-level "
             f"contrasts; comparing two of {fid}'s levels has SE about sd x "
             f"sqrt(2 x {L} / {pv.screen_corners}) = {mult:.3g} sd{sd}")
+    for name, d, vif, p, n in pv.efficiency:
+        v = f", max VIF {vif:.3g}" if vif is not None else ""
+        out.append(f"    {name} design: D-efficiency {d:.3f} ({p} model terms over "
+                   f"{n} planned fitted runs{v}; 1.0 = orthogonal +-1 design)")
     for w in pv.warnings:
         out.append(f"    WARNING: {w}")
     return out

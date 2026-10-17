@@ -37,6 +37,8 @@
     }
   ],
   "properties": {
+    "validation": {"type": "object", "description": "Refine only (WP-B B1, spec 2026-10-17): the registered off-lattice VALIDATION block -- the rule (seeded greedy maximin over coded +-0.5 on every refinable axis), the seed, the row indices (appended after every composite row and executed as their own block), and the check they feed (joint predictive F, Chow 1960, at alpha). They are held out of the fit."},
+    "stage_reuse": {"type": "object", "description": "Refine only, when design.refine.reuse_screen is true (WP-B B4): sequential assembly -- which refine rows were filled from which measured screen rows (cube corners at identical levels; the screen's centre rows join as block-1 centres), the per-row block indicator the fit's nuisance block term uses, and the stated blocking assumption."},
     "factor_ids": {
       "type": "array",
       "items": {
@@ -282,6 +284,7 @@
             "corner",
             "center",
             "axial",
+            "validation",
             "confirm"
           ],
           "description": "Design-point role: a full/fractional-factorial corner, a replicated center point (supplies the pure-error estimate), a central-composite axial/star point (supplies curvature), or a \"confirm\" replicate of a shortlisted finalist at terminal discrimination. A confirm row is not a design point in the response-surface sense -- nothing is fitted from it -- which is why it is a role of its own rather than a corner: `_best_observed` and the fitting states select on this field, and calling a replicate a corner would feed terminal-discrimination measurements into a surface fit."

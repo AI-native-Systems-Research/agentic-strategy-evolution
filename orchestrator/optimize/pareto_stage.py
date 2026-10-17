@@ -127,6 +127,15 @@ def measured_points_and_incomplete(work_dir, objs) -> tuple[list[MeasuredPoint],
             lv = row.get("levels")
             if row.get("status") != "complete" or not lv:
                 continue
+            if row.get("role") == "validation":
+                # WP-B: a validation row is an ADEQUACY instrument -- one
+                # replicate at a point placed to test the model, not nominated
+                # as a candidate. As a front member or rival its single noisy
+                # sample can neither be ruled out nor rule anything out, so it
+                # would only dilute the simultaneous statuses. (Single-
+                # objective confirm MAY nominate one as a measured leader: it
+                # is then re-measured freshly before it can win.)
+                continue
             if not _config_admissible(work_dir, lv, invalid=invalid, barred=barred):
                 continue
             key = json.dumps(lv, sort_keys=True, default=str)

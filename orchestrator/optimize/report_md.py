@@ -65,9 +65,10 @@ WITHHELD_MEANING = {
                            "shortlist was never fully compared -- re-run it",
     "fit_exclusions_level_correlated": "the fit behind the shortlist lost rows "
                                        "correlated with factor levels",
-    "model_inadequate": "the fit behind the shortlist failed its lack-of-fit "
-                        "test, so nothing supports the claim that screening "
-                        "did not exclude the optimum",
+    "model_inadequate": "a fitting stage of this epoch rejected its model "
+                        "(lack of fit, or the held-out validation runs "
+                        "disagreed with its predictions), so nothing supports "
+                        "the claim that screening did not exclude the optimum",
     "lack_of_fit_not_computable": "the fit behind the shortlist could not be "
                                   "tested for lack of fit (no pure error, or "
                                   "no residual df beyond it): its adequacy is "
@@ -78,6 +79,9 @@ WITHHELD_MEANING = {
     "curvature_not_isolated": "a mixed-level fit could not estimate its "
                               "coefficients from the corners alone, so curvature "
                               "may have leaked into them: adequacy unknown",
+    "screen_rejection_unresolved": "an earlier stage rejected the model and "
+                                   "refine completed no validation check that "
+                                   "could overturn it: adequacy is unknown",
     "model_adequacy_unknown": "the fit behind the shortlist has unknown "
                               "adequacy",
     "no_terminal_discrimination": "no terminal discrimination ran",
@@ -617,8 +621,7 @@ def render_report_markdown(work_dir: Path) -> str:
         b = str(report.get("model_adequate_basis") or "model_adequacy_unknown")
         lines.append(f"- **Model adequacy:** unknown (`{b}` — {WITHHELD_MEANING.get(b, '')})")
     elif report.get("model_adequate") is False:
-        lines.append("- **Model adequacy:** rejected — the latest fitting stage's "
-                     "lack-of-fit test (or an objective model's) rejected the model")
+        lines += _inadequate_lines(report)
     every = set(report.get("all_levels_inadmissible") or ())
     for key, label in (("curvature_untested_levels", "Curvature never checked under"),
                        ("lost_levels", "Levels lost (no retained run; never "
@@ -836,3 +839,38 @@ def write_gate_summary(work_dir: Path, iteration: int, *,
     path = iter_dir / f"gate_summary_{gate_type}.json"
     path.write_text(json.dumps(doc, indent=2) + "\n")
     return path
+
+
+def _inadequate_lines(report: dict) -> list[str]:
+    """The model-inadequate block (WP-B B5): say plainly that the surface is
+    not well approximated, what the answer then rests on, and what to do."""
+    why = [str(c) for c in (report.get("model_rejected_by") or [])]
+    reason = {
+        "lack_of_fit": "its lack-of-fit test rejected",
+        "validation_prediction": ("the held-out validation runs disagreed with "
+                                  "its predictions"),
+    }
+    said = "; ".join(reason.get(c.split(":")[0], c) for c in why) or (
+        "its lack-of-fit test (or an objective model's) rejected")
+    basis = str((report.get("recommendation") or {}).get("basis") or "")
+    rests = {
+        "terminal_best": "the measured leaders the terminal stage re-measured "
+                         "against each other",
+        "certified": "the measured leaders the terminal stage re-measured "
+                     "against each other",
+        "measured": "the best MEASURED valid configuration",
+        "baseline": "the declared known_valid_baseline",
+    }.get(basis, "no model-free evidence")
+    return [
+        f"- **Model adequacy:** rejected — {said}. The response surface is NOT "
+        f"well approximated by the registered model over these ranges, so the "
+        f"recommendation above is NOT the model's argmax: it rests on {rests}.",
+        "- **What to do about it:** narrow the ranges to the region the leaders "
+        "sit in (a quadratic is a local approximation); code a geometric knob "
+        "with `scale: log`; transform the response; declare more levels on the "
+        "factor whose validation points missed; or, for a cliff, threshold or "
+        "multi-modal surface, use a method that does not assume a low-order "
+        "model (the matched-budget benchmark, docs/benchmarks/"
+        "optimization-benchmark.md, shows random search and GP-BO beat this "
+        "kind on step, cubic and two-peak surfaces).",
+    ]

@@ -132,7 +132,7 @@ def _why_not_modellable(constraint: dict) -> str:
     return ""
 
 
-def fit_constraint_models(constraints, design, records, *, fitted_ids,
+def fit_constraint_models(constraints, design, records, *, fitted_ids, blocks=None,
                           held_levels: dict | None = None,
                           levels_by_pos=None) -> list[ConstraintModel]:
     """Fit every numeric constraint metric over the same design as the primary.
@@ -166,7 +166,7 @@ def fit_constraint_models(constraints, design, records, *, fitted_ids,
             out.append(ConstraintModel(metric, op, value, None, why))
             continue
         fit, why_not, n_rows = _fit_one(metric, design, records, keep_ids, cols,
-                                        held_levels, levels_by_pos)
+                                        held_levels, levels_by_pos, blocks)
         if fit is None:
             out.append(ConstraintModel(metric, op, value, None, why_not,
                                        n_rows=n_rows))
@@ -190,7 +190,8 @@ def fit_constraint_models(constraints, design, records, *, fitted_ids,
     return out
 
 
-def _fit_one(metric, design, records, keep_ids, cols, held_levels, levels_by_pos):
+def _fit_one(metric, design, records, keep_ids, cols, held_levels, levels_by_pos,
+             blocks=None):
     """Fit ONE metric over the measured rows of ``design``.
 
     Returns ``(fit, reason, n_rows)``; ``fit is None`` with ``reason`` when the
@@ -239,7 +240,10 @@ def _fit_one(metric, design, records, keep_ids, cols, held_levels, levels_by_pos
         try:
             return (fit_effects(sub, ys, factor_ids=keep_ids,
                                 include_interactions=interactions,
-                                omit_terms=omit), "", len(ys))
+                                omit_terms=omit,
+                                blocks=(None if blocks is None
+                                        else [blocks[i] for i in pos])),
+                    "", len(ys))
         except ValueError:
             continue
     return (None,
@@ -490,7 +494,7 @@ class ObjectiveModel:
 
 def fit_objective_models(objectives, design, records, *, fitted_ids,
                          held_levels: dict | None = None,
-                         levels_by_pos=None) -> dict:
+                         levels_by_pos=None, blocks=None) -> dict:
     """``{metric: ObjectiveModel}``, fitted on the SAME rows and reduction as
     the constraint models (complete + infeasible rows, coded as run)."""
     owner = design.groups or design.factor_ids
@@ -500,7 +504,7 @@ def fit_objective_models(objectives, design, records, *, fitted_ids,
     for o in objectives:
         metric, direction = o["metric"], o.get("direction", "maximize")
         fit, why_not, n_rows = _fit_one(metric, design, records, keep_ids, cols,
-                                        held_levels, levels_by_pos)
+                                        held_levels, levels_by_pos, blocks)
         if fit is None:
             out[metric] = ObjectiveModel(metric, direction, None, why_not, n_rows)
             continue

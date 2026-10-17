@@ -185,7 +185,8 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
                    interactions_dropped: bool = False,
                    planned_aliases_separated=None,
                    curvature_untested_levels=None,
-                   lost_levels=None) -> Path:
+                   lost_levels=None,
+                   held_out_rows=None) -> Path:
     """Write the fitted model: effects, pure error, lack-of-fit, aliases,
     dropped factors. ``factors`` supplies the factor-id universe that
     ``dropped_factors`` checks against -- the factors this fit was run
@@ -268,6 +269,12 @@ def write_effects(iter_dir: Path, fit: Fit, *, factors: list[Factor],
         payload["curvature_untested_levels"] = dict(curvature_untested_levels)
     if planned_aliases_separated:
         payload["planned_aliases_separated"] = list(planned_aliases_separated)
+    if held_out_rows:
+        # WP-B B1: planned rows deliberately NOT fitted (refine's validation
+        # block, checked against the fit instead), so planned == n_runs +
+        # excluded + held out reconciles. Present only when there are any.
+        payload["held_out_rows"] = {"row_indices": sorted(int(i) for i in held_out_rows),
+                                    "reason": "validation"}
     if fit.span_aliased:
         payload["aliased_in_span"] = [
             {"term": list(t), "spanned_by": list(sp)} for t, sp in fit.span_aliased]

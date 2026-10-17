@@ -653,7 +653,7 @@ def _exclusion_reason(outcome) -> str:
 
 
 def _screen_block_rows(work_dir: Path, screen_iter: int | None,
-                       n_expected: int) -> list[dict]:
+                       n_expected: int, indices=None) -> list[dict]:
     """The screen block's ``runs.jsonl`` rows in DESIGN-ROW order.
 
     Sibling of ``_screen_responses``, which reads the same file for the same
@@ -675,12 +675,13 @@ def _screen_block_rows(work_dir: Path, screen_iter: int | None,
         idx = row.get("row_index")
         if isinstance(idx, int):
             by_index[idx] = row
-    return [by_index.get(i) or {} for i in range(n_expected)]
+    picks = list(indices) if indices is not None else list(range(n_expected))
+    return [by_index.get(i) or {} for i in picks]
 
 
 def _fit_row_levels(work_dir: Path, rows, outcomes, stage_name: str,
                     screen_iter: int | None, *, n_total: int,
-                    n_fold: int) -> list[dict]:
+                    n_fold: int, prefix_indices=None) -> list[dict]:
     """Levels for every POSITION in the fit's response vector ``ys``.
 
     Positions, not ``row_index``, because that is what ``ys`` and
@@ -693,17 +694,22 @@ def _fit_row_levels(work_dir: Path, rows, outcomes, stage_name: str,
     the screen block's exclusions would analyse the wrong contingency table and
     could flag a factor whose rows all completed.
     """
-    fold_levels = {r.row_index: dict(r.levels) for r in rows}
-    fold = [fold_levels.get(i, {}) for i in range(n_fold)]
-    if stage_name != Stage.FOLDOVER.value or n_total == n_fold:
+    # POSITIONAL over `rows` (design order): `row_index` equals the position
+    # at every stage except refine with a held-out validation block, where
+    # the block-1 reuse centres sit after it (WP-B B1/B4).
+    fold = [dict(r.levels) for r in rows][:n_fold]
+    fold += [{}] * (n_fold - len(fold))
+    if n_total == n_fold:
         return fold
-    screen = _screen_block_rows(work_dir, screen_iter, n_total - n_fold)
+    screen = _screen_block_rows(work_dir, screen_iter, n_total - n_fold,
+                                indices=prefix_indices)
     return [dict(r.get("levels") or {}) for r in screen] + fold
 
 
 def _fit_exclusion_reasons(outcomes, stage_name: str, dropped, *, n_total: int,
                            n_fold: int, work_dir: Path,
-                           screen_iter: int | None) -> dict[int, str]:
+                           screen_iter: int | None,
+                           prefix_indices=None) -> dict[int, str]:
     """``EXCLUSION_REASONS`` label per excluded POSITION in ``ys``.
 
     Same positional convention as ``_fit_row_levels``, and the same reason for
@@ -714,9 +720,10 @@ def _fit_exclusion_reasons(outcomes, stage_name: str, dropped, *, n_total: int,
     """
     by_pos: dict[int, object] = {}
     offset = 0
-    if stage_name == Stage.FOLDOVER.value and n_total != n_fold:
+    if n_total != n_fold:
         offset = n_total - n_fold
-        for i, row in enumerate(_screen_block_rows(work_dir, screen_iter, offset)):
+        for i, row in enumerate(_screen_block_rows(work_dir, screen_iter, offset,
+                                                   indices=prefix_indices)):
             by_pos[i] = row
     for i, o in enumerate(outcomes[:n_fold]):
         by_pos[offset + i] = o
@@ -792,7 +799,7 @@ _PRIMARY_FIT_STATUSES = frozenset({"complete", "infeasible"})
 
 def _fit_row_records(work_dir: Path, outcomes, stage_name: str,
                      screen_iter: int | None, *, n_total: int,
-                     n_fold: int) -> list[tuple[str, dict]]:
+                     n_fold: int, prefix_indices=None) -> list[tuple[str, dict]]:
     """``(status, response)`` for every POSITION in the fit's response vector.
 
     Same positional convention as ``_fit_row_levels``: at ``foldover`` the
@@ -802,9 +809,10 @@ def _fit_row_records(work_dir: Path, outcomes, stage_name: str,
     """
     fold = [(str(getattr(o, "status", "") or ""), dict(getattr(o, "response", {}) or {}))
             for o in list(outcomes)[:n_fold]]
-    if stage_name != Stage.FOLDOVER.value or n_total == n_fold:
+    if n_total == n_fold:
         return fold
-    screen = _screen_block_rows(work_dir, screen_iter, n_total - n_fold)
+    screen = _screen_block_rows(work_dir, screen_iter, n_total - n_fold,
+                                indices=prefix_indices)
     return [(str(r.get("status") or ""), dict(r.get("response") or {}))
             for r in screen] + fold
 
@@ -1772,8 +1780,11 @@ def _budget_remaining(pol: dict, work_dir: Path) -> int:
     cap = (pol.get("budget") or {}).get("max_runs")
     if not cap:
         return 10 ** 9
+    # A row refine filled from a measured SCREEN row (WP-B B4,
+    # `reused_from.stage`) cost nothing: the screen's row is already counted.
     spent = sum(
-        len(artifacts.read_runs(d))
+        sum(1 for r in artifacts.read_runs(d)
+            if not (r.get("reused_from") or {}).get("stage"))
         for d in (Path(work_dir) / "runs").glob("iter-*")
     )
     return int(cap) - spent
@@ -2188,6 +2199,10 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # no `best` to read anyway, so those rungs fall through on their own
         # facts rather than on a special case.
         and not epoch_ended
+        # WP-B B5: nor once this epoch's model was REJECTED (lack of fit, or
+        # the validation prediction check). The argmax of a surface the data
+        # refused is not an answer; the measured rung below is.
+        and rec.get("model_adequate") is not False
         and _config_admissible(work_dir, rec["levels"])
     ):
         basis, levels, value = "model", dict(rec["levels"]), rec.get("predicted")
@@ -2272,6 +2287,13 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
            if "model_adequate" in _epoch_rec and _epoch_rec["model_adequate"] is None
            else {}),
         **({"model_adequate": False} if _epoch_rec.get("model_adequate") is False else {}),
+        # WHICH test rejected (WP-B B5), so report.md can say it plainly.
+        **({"model_rejected_by": sorted({
+            c for r in _epoch_recommendations(work_dir)
+            for c in ((r.get("model_adequacy") or {}).get("this_stage") or {})
+            .get("rejected_by") or []})}
+           if _epoch_rec.get("model_adequate") is False
+           and _epoch_rec.get("model_adequacy") else {}),
         **({k: dict(_epoch_rec[k]) for k in ("curvature_untested_levels",)
             if _epoch_rec.get(k)}),
         # The LEVEL facts the bar acts on come from THIS epoch's latest record
@@ -3001,6 +3023,34 @@ def run_stage(
         design = _build_design(factors, design_cfg, stage_name)
         payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
         rows = matrix.expand(design, factors)
+        _n_val = sum(1 for p in design.points if p.role == "validation")
+        if _n_val:
+            # WP-B B1: the validation rows are their OWN BLOCK, executed after
+            # every composite row in a separately seeded order. The composite's
+            # rows keep exactly the run order (and, on a target with a shared
+            # noise stream, exactly the measurements) they had before
+            # validation points existed; a drift between the two blocks can
+            # only make the prediction check reject (the conservative side).
+            _n0 = len(rows) - _n_val
+            payload["run_order"] = (
+                matrix.randomized_run_order(_n0, iteration)
+                + [_n0 + j for j in matrix.randomized_run_order(
+                    _n_val, iteration * 7919 + 1)])
+            from orchestrator.optimize import adequacy as _adq
+
+            _rcfg = design_cfg.get("refine") or {}
+            payload["validation"] = {
+                "rule": "seeded_greedy_maximin",
+                "candidates": "coded +-0.5 on every refinable axis",
+                "offset": _adq.VALIDATION_OFFSET,
+                "points": _n_val,
+                "seed": int(_rcfg.get("validation_seed", 0)),
+                "row_indices": list(range(_n0, len(rows))),
+                "held_out_of_fit": True,
+                "check": "joint_predictive_F_chow_1960",
+                "alpha": _adq.VALIDATION_ALPHA,
+                "execution": "own block, after the composite rows",
+            }
 
     # At refine the design spans only the REFINABLE factors, so a factor left
     # out of it contributes no level and therefore no `apply` fragment — its
@@ -3194,6 +3244,18 @@ def run_stage(
                 for row in payload.get("rows", [])
             ]
 
+    # ── WP-B B4: reuse the screen's cube and centre rows (opt-in) ──────────
+    # Sequential assembly with a block term (Box & Draper 2007, ch. 15):
+    # refine's cube corners that the screen already measured at exactly these
+    # levels are NOT re-run; the screen's matching centre rows join as extra
+    # block-1 centres, so each block keeps its own centres and the block
+    # (drift) effect is estimable. See `_screen_reuse` for every guard.
+    stage_reuse: dict = {}
+    if stage_name == Stage.REFINE.value and rows and bool(
+            (design_cfg.get("refine") or {}).get("reuse_screen", False)):
+        design, rows, payload, stage_reuse = _screen_reuse(
+            work_dir, pol, design, rows, payload, factors)
+
     # ── the workload seed: last thing added to a row, before anything is written ──
     #
     # HERE, not inside `_confirm_rows` / the design branches, and not after the
@@ -3212,6 +3274,14 @@ def run_stage(
         rows, payload, pol,
         iteration=iteration, confirm=stage_name == Stage.CONFIRM.value,
     )
+    if stage_reuse and "workload_seeds" in payload:
+        # A reused row is the screen's measurement, under the SCREEN's
+        # registered seed: record that seed, not one this stage never ran.
+        _ws = dict(payload["workload_seeds"])
+        for _ri, _src in stage_reuse["rows"].items():
+            if _src.get("seed") is not None:
+                _ws[str(_ri)] = _src["seed"]
+        payload = {**payload, "workload_seeds": _ws}
 
     # ── row reuse across a retried iteration ─────────────────────────────────
     #
@@ -3426,6 +3496,28 @@ def run_stage(
             policy_hash=policy_mod.policy_hash(pol),
         ))
 
+    if stage_reuse:
+        # Appended to THIS iteration's runs.jsonl like a retry-reused row, with
+        # `reused_from` naming the screen row that paid for it; never executed.
+        _epoch = int(pol.get("epoch", 1))
+        _already = {int(r.get("row_index", -1)) for r in _reused_rows}
+        for _ri, _src in sorted(stage_reuse["rows"].items()):
+            if int(_ri) in _already:
+                continue        # a retry already carried this row forward
+            _row = {k: v for k, v in _src["row"].items() if k != "reused_from"}
+            _row["row_index"] = int(_ri)
+            _row["reused_from"] = {"iteration": int(stage_reuse["from_iteration"]),
+                                   "epoch": _epoch, "row_index": int(_src["row_index"]),
+                                   "stage": Stage.SCREEN.value}
+            artifacts.append_run(iter_dir, _row)
+            _reused_rows.append(_row)
+        _skip = set(int(i) for i in stage_reuse["rows"])
+        exec_rows = [r for r in exec_rows if r.row_index not in _skip]
+        logger.info(
+            "refine: reusing %d screen row(s) from iter-%d as block 1 (cube corners "
+            "+ centres); %d row(s) to measure. Block term fitted (drift check).",
+            len(_skip), stage_reuse["from_iteration"], len(exec_rows))
+
     if max_parallel > 1:
         logger.info(
             "%s: executing replicate blocks at up to %d simultaneous run(s); "
@@ -3617,6 +3709,32 @@ def run_stage(
 
     ys = _fitting_responses(outcomes, response_spec, primary)
 
+    # ── WP-B B1: the validation block is HELD OUT of the fit ────────────────
+    # It is appended last, so the fit sees exactly the composite it saw before
+    # validation points existed; the held-out rows are checked against the
+    # fitted model after the fit (`adequacy.prediction_check`).
+    val_rows: list = []
+    val_outcomes: list = []
+    val_ys: list = []
+    fit_blocks = (list((payload.get("stage_reuse") or {}).get("block") or [])
+                  or None)
+    if stage_name == Stage.REFINE.value and any(
+            p.role == "validation" for p in design.points):
+        _vi = [i for i, p in enumerate(design.points) if p.role == "validation"]
+        _ki = [i for i, p in enumerate(design.points) if p.role != "validation"]
+        _outs = list(outcomes)
+        val_rows = [rows[i] for i in _vi]
+        val_outcomes = [_outs[i] for i in _vi]
+        val_ys = [ys[i] for i in _vi]
+        import dataclasses as _dc
+
+        design = _dc.replace(design, points=tuple(design.points[i] for i in _ki))
+        rows = [rows[i] for i in _ki]
+        outcomes = [_outs[i] for i in _ki]
+        ys = [ys[i] for i in _ki]
+        if fit_blocks:
+            fit_blocks = [fit_blocks[i] for i in _ki]
+
     if stage_name == Stage.CONFIRM.value:
         # Confirm does NOT fit a model. It compares a SHORTLIST of finalists on
         # fresh replicates, so there is no coded design to estimate effects
@@ -3656,6 +3774,9 @@ def run_stage(
     # row that never measured means the combined design is not the design whose
     # alias structure was just reasoned about.
     fold_n = len(ys)
+    # Positions of an earlier block's rows that PRECEDE this iteration's in
+    # `ys` (foldover's screen block). None reads the whole block in order.
+    prefix_indices = None
     if stage_name == Stage.FOLDOVER.value:
         screen_ys, screen_nan = _screen_responses(
             work_dir, screen_iter, primary, len(screen_design.points),
@@ -3739,11 +3860,11 @@ def run_stage(
     # the screen block's exclusions and analyse the wrong table.
     levels_by_pos = _fit_row_levels(
         work_dir, rows, outcomes, stage_name, screen_iter,
-        n_total=len(ys), n_fold=fold_n,
+        n_total=len(ys), n_fold=fold_n, prefix_indices=prefix_indices,
     )
     excluded_reasons = _fit_exclusion_reasons(
         outcomes, stage_name, dropped, n_total=len(ys), n_fold=fold_n,
-        work_dir=work_dir, screen_iter=screen_iter,
+        work_dir=work_dir, screen_iter=screen_iter, prefix_indices=prefix_indices,
     )
     # ── a categorical level measured ONLY at centre rows (stage-1b N3) ──────
     #
@@ -3998,8 +4119,10 @@ def run_stage(
     if balance.level_correlated:
         logger.warning("%s: %s", stage_name, balance.caveat())
 
+    blocks_for_fit = (None if not fit_blocks else
+                      [fit_blocks[i] for i in (keep if dropped else range(len(ys)))])
     fit = fit_effects(
-        design_for_fit, ys_for_fit,
+        design_for_fit, ys_for_fit, blocks=blocks_for_fit,
         # A categorical's fit columns are its contrasts, not its factor id;
         # with none, the design's columns ARE fitted_ids (unchanged).
         factor_ids=(design_for_fit.factor_ids if design_for_fit.groups
@@ -4016,7 +4139,8 @@ def run_stage(
                               for k in range(len(design_for_fit.points))],
         [levels_by_pos[i] for i in _fit_pos], lost=lost_levels)
     _fit_records = _fit_row_records(work_dir, outcomes, stage_name, screen_iter,
-                                    n_total=len(ys), n_fold=fold_n)
+                                    n_total=len(ys), n_fold=fold_n,
+                                    prefix_indices=prefix_indices)
     if design_for_fit.groups:
         # Mixed-level: the planned design's columns are pseudo-factors and the
         # fit's are contrasts -- different widths. Record the planned columns
@@ -4057,6 +4181,7 @@ def run_stage(
         interactions_dropped=interactions_dropped,
         curvature_untested_levels=untested,
         lost_levels=lost_levels,
+        held_out_rows=[r.row_index for r in val_rows],
         planned_aliases_separated=(
             planned_aliases_separated(design_mod.alias_pairs(design), fit)
             if design.groups else None),
@@ -4202,7 +4327,7 @@ def run_stage(
             response_spec.get("constraints") or [], design_run,
             _fit_records,
             fitted_ids=fitted_ids, held_levels=non_identifiable_held,
-            levels_by_pos=levels_by_pos,
+            levels_by_pos=levels_by_pos, blocks=fit_blocks,
         )
     # ── the candidate space: enumerated, or searched above the cap ─────────
     #
@@ -4229,6 +4354,7 @@ def run_stage(
              for o in pareto_stage.objectives(pol)],
             design_run, _fit_records, fitted_ids=fitted_ids,
             held_levels=non_identifiable_held, levels_by_pos=levels_by_pos,
+            blocks=fit_blocks,
         )
         _search_objectives = tuple(
             (_omodels[o.metric].fit, o.direction)
@@ -4429,6 +4555,15 @@ def run_stage(
     adequate, adequacy_basis = _model_adequacy(
         decision, mo_rejected, fit, untested, design_for_fit,
         mo_untested=mo_untested)
+    # ── WP-B: how adequacy is DETERMINED beyond lack of fit ──────────────────
+    # (spec 2026-10-17-model-adequacy-design.md). The validation prediction
+    # check (refine), PRESS and the design's D-efficiency, and the STICKY
+    # epoch verdict over every fitting stage.
+    adequacy_record, adequate, adequacy_basis = _adequacy_record(
+        work_dir, stage_name, fit, design_for_fit, ys_for_fit, factors,
+        fitted_ids, interactions_dropped, omitted_terms, adequate,
+        adequacy_basis, decision, val_rows, val_outcomes, val_ys,
+        response_spec, primary, _omodels, blocks=blocks_for_fit)
     _write_json(iter_dir / "recommendation.json", {
         "stage": stage_name,
         "iteration": iteration,
@@ -4464,6 +4599,7 @@ def run_stage(
         # choice level was never measured at the centre (stage-1 M8).
         "model_adequate": adequate,
         **({"model_adequate_basis": adequacy_basis} if adequate is None else {}),
+        "model_adequacy": adequacy_record,
         **({"curvature_untested_levels": untested} if untested else {}),
         "excluded_measured_infeasible": excluded_measured,
         **({"lost_levels": {k: list(v) for k, v in lost_levels.items()}}
@@ -5763,9 +5899,25 @@ def _build_design(factors, design_cfg: dict, stage_name: str, *,
                 "level on the numeric factor you want curvature for, or drop "
                 "design.refine and let the stage rule go screen -> confirm.",
             )
-        return central_composite(
+        ccd = central_composite(
             refinable, center_points=int(cfg.get("center_points", 4)),
         )
+        # WP-B B1: the registered off-lattice VALIDATION points, appended LAST
+        # (so every CCD row keeps its position and row_index) and held out of
+        # the fit. Coded +-0.5 on every refinable axis, chosen by seeded
+        # maximin (adequacy.validation_points). `validation_points: 0` builds
+        # the plain composite, byte-identical to before.
+        from orchestrator.optimize import adequacy as _adq
+        from orchestrator.optimize.design import Design as _D, DesignPoint as _P
+
+        m = _adq.n_validation_points(cfg, len(refinable))
+        if m:
+            vp = _adq.validation_points(len(refinable), m,
+                                        int(cfg.get("validation_seed", 0)))
+            ccd = _D(points=ccd.points + tuple(
+                _P(coded=c, role="validation", replicate=i) for i, c in enumerate(vp)),
+                factor_ids=ccd.factor_ids, kind=ccd.kind, resolution=ccd.resolution)
+        return ccd
     if stage_name == Stage.CONFIRM.value:
         # Unreachable, and deliberately loud rather than silently plausible.
         #
@@ -6991,6 +7143,259 @@ def _model_adequacy(decision, mo_rejected, fit, untested, design_for_fit,
             and not fit.centre_isolated):
         return None, "curvature_not_isolated"
     return True, None
+
+
+def _screen_reuse(work_dir, pol, design, rows, payload, factors):
+    """WP-B B4: which refine rows the screen already measured.
+
+    Returns ``(design, rows, payload, record)``; ``record`` is ``{}`` when
+    nothing is reused (every guard below refuses quietly, and the stage runs
+    exactly as without the option). Guards, each of which refuses:
+
+      1. a screen in THIS epoch (``_screen_iteration``) whose matrix records
+         the same ``policy_hash`` -- one pre-registration, one instrument;
+      2. NO choice factor declared (a centre row of a choice factor runs the
+         diagonal cyclic assignment; one-to-one matching would need the held
+         level to coincide with every cycled level) and no multi-level
+         categorical;
+      3. every held (non-refinable) factor ran at the SAME level on the screen
+         row as refine holds it;
+      4. the screen row is ``complete``/``infeasible`` (a fit input) and its
+         levels equal the refine CUBE corner's levels exactly.
+
+    MATCHED CUBE CORNERS ARE NOT RE-RUN: refine's row keeps its position and
+    the screen's measurement fills it (``reused_from``). The screen's matching
+    CENTRE rows join as extra block-1 centre rows (appended after the plan's
+    rows), so each block has its own centres and the block effect is
+    estimable from the replicated centres alone (Box & Draper 2007, §15.3).
+    Refine's own centre rows are kept: they are the refine block's pure error
+    and its estimate of the block shift.
+    """
+    import dataclasses
+
+    from orchestrator.optimize.design import DesignPoint
+    from orchestrator.optimize.factors import is_refinable
+
+    if any(f.type == "choice" for f in factors):
+        return design, rows, payload, {}
+    s_iter = _screen_iteration(work_dir, pol)
+    if s_iter is None:
+        return design, rows, payload, {}
+    sdir = Path(work_dir) / "runs" / f"iter-{s_iter}"
+    try:
+        smat = json.loads((sdir / "design_matrix.json").read_text())
+    except (OSError, ValueError):
+        return design, rows, payload, {}
+    if smat.get("policy_hash") != policy_mod.policy_hash(pol):
+        return design, rows, payload, {}
+    seeds = smat.get("workload_seeds") or {}
+    srows = [r for r in artifacts.read_runs(sdir)
+             if r.get("status") in _PRIMARY_FIT_STATUSES and not r.get("reused_from")]
+    held_ids = [f.id for f in factors if not is_refinable(f)]
+    held_lv = dict(payload.get("held_fixed") or {})
+
+    def _key(lv):
+        return json.dumps({k: lv.get(k) for k in sorted(lv)}, sort_keys=True, default=str)
+
+    def _held_ok(lv):
+        return all(lv.get(h) == held_lv.get(h, lv.get(h)) for h in held_ids)
+
+    corners = {}
+    for i, (p, r) in enumerate(zip(design.points, rows)):
+        if p.role == "corner":
+            corners.setdefault(_key(dict(r.levels)), i)
+    used: dict = {}
+    taken: set = set()
+    centre_src = []
+    centre_lv = next((dict(r.levels) for p, r in zip(design.points, rows)
+                      if p.role == "center"), None)
+    for sr in sorted(srows, key=lambda r: int(r.get("row_index", 0))):
+        lv = dict(sr.get("levels") or {})
+        if not _held_ok(lv):
+            continue
+        if sr.get("role") == "corner":
+            i = corners.get(_key(lv))
+            if i is not None and i not in taken:
+                taken.add(i)
+                used[i] = {"row": sr, "row_index": int(sr["row_index"]),
+                           "seed": seeds.get(str(sr["row_index"]))}
+        elif sr.get("role") == "center" and centre_lv is not None \
+                and _key(lv) == _key(centre_lv):
+            centre_src.append(sr)
+    if not used and not centre_src:
+        return design, rows, payload, {}
+    # Block-1 centres appended AFTER every planned row (validation included),
+    # so every planned row keeps its position and row_index.
+    n0 = len(rows)
+    proto = next(r for p, r in zip(design.points, rows) if p.role == "center") \
+        if centre_src else None
+    origin = tuple(0.0 for _ in design.factor_ids)
+    new_pts = list(design.points)
+    new_rows = list(rows)
+    for j, sr in enumerate(centre_src):
+        ri = n0 + j
+        new_pts.append(DesignPoint(coded=origin, role="center", replicate=1000 + j))
+        new_rows.append(dataclasses.replace(proto, row_index=ri, replicate=1000 + j))
+        used[ri] = {"row": sr, "row_index": int(sr["row_index"]),
+                    "seed": seeds.get(str(sr["row_index"]))}
+    design = dataclasses.replace(design, points=tuple(new_pts))
+    payload = dict(payload)
+    order = list(payload.get("run_order") or range(n0))
+    payload["run_order"] = order + list(range(n0, len(new_rows)))
+    payload["rows"] = list(payload.get("rows") or []) + [
+        {"row_index": r.row_index, "levels": dict(r.levels), "role": r.role,
+         "replicate": r.replicate, "apply": r.apply} for r in new_rows[n0:]]
+    blocks = [1 if i in used else 0 for i in range(len(new_rows))]
+    record = {
+        "from_iteration": s_iter, "rows": used,
+        "manifest": {
+            "kind": "sequential_assembly",
+            "from_stage": Stage.SCREEN.value, "from_iteration": s_iter,
+            "rule": ("refine cube corners whose levels (held factors included) "
+                     "equal a measured screen corner's are filled from it; the "
+                     "screen's centre rows at refine's centre join as block-1 "
+                     "centres"),
+            "reused": {str(i): {"screen_row_index": u["row_index"]}
+                       for i, u in sorted(used.items())},
+            "reused_count": len(used),
+            "block": blocks,
+            "blocking_assumption": (
+                "no drift between stages beyond a constant shift; the shift is "
+                "the fitted block coefficient and is tested (block_effect)"),
+        },
+    }
+    payload["stage_reuse"] = record["manifest"]
+    return design, new_rows, payload, record
+
+
+def _stage_model_class(stage_name: str) -> int:
+    """1: first-order + 2fi (screen, foldover); 2: second-order (refine)."""
+    return 2 if stage_name == Stage.REFINE.value else 1
+
+
+def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
+                     factors, fitted_ids, interactions_dropped, omitted_terms,
+                     adequate, basis, decision, val_rows, val_outcomes, val_ys,
+                     response_spec, primary, omodels, blocks=None):
+    """``(model_adequacy record, model_adequate, basis)`` for this stage.
+
+    THE THIS-STAGE VERDICT. Lack of fit (``_model_adequacy``) as before, and at
+    refine the validation prediction check: a rejected check makes the model
+    inadequate (False) whatever lack of fit said; a check that could not be
+    computed leaves the lack-of-fit verdict standing.
+
+    THE EPOCH VERDICT (sticky). ``adequacy.epoch_verdict`` over this epoch's
+    fitting stages: a stage's verdict is superseded only by a later stage of at
+    least its model class. One more rule gives the screen's rejection teeth: a
+    refine that did NOT complete a validation check (``validation_points: 0``,
+    every validation row unmeasured, no pure error) cannot overturn an earlier
+    rejection -- its lack-of-fit test alone has ~alpha power against the
+    one-dimensional misspecification the screen saw (stage-0 audit Q3) -- so
+    the verdict is then UNKNOWN, ``screen_rejection_unresolved``.
+    """
+    from orchestrator.optimize import adequacy as adq
+    from orchestrator.optimize.factors import code_actual
+
+    fit_factor_ids = (design_for_fit.factor_ids if design_for_fit.groups
+                      else tuple(fitted_ids))
+    labels, terms, cols = adq.model_columns(
+        design_for_fit, fit_factor_ids,
+        include_interactions=not interactions_dropped, omit_terms=omitted_terms)
+    nuis = [[float(b) for b in blocks]] if blocks and len(set(blocks)) > 1 else []
+    rec: dict = {
+        "lack_of_fit": {
+            "f": fit.lack_of_fit_f, "p": fit.lack_of_fit_p,
+            "df": ([max(0, len(ys_for_fit) - len(cols) - len(nuis)
+                           - int(fit.pure_error_df or 0)),
+                    int(fit.pure_error_df or 0)]),
+            "exact": fit.lof_exact,
+            "rejected": (Trigger.LACK_OF_FIT in set(decision.triggers)
+                         or fit.lof_exact == "rejected"),
+        },
+        "press": adq.press(cols + nuis, ys_for_fit),
+        "design_efficiency": adq.design_efficiency(cols, labels),
+    }
+    if nuis and fit.block_effect is not None:
+        b, se, t, pv, df = fit.block_effect
+        rec["reuse"] = {"block_effect": {"estimate": b, "se": se, "t": t, "p": pv,
+                                         "df": df},
+                        "drift_detected": (pv is not None and pv < 0.05)}
+    causes: list[str] = []
+    if rec["lack_of_fit"]["rejected"] or adequate is False:
+        causes.append("lack_of_fit")
+    validated = None
+    if stage_name == Stage.REFINE.value and val_rows:
+        by_id = {f.id: f for f in factors}
+        pts, objs = [], {}
+        for r, o, y in zip(val_rows, val_outcomes, val_ys):
+            if getattr(o, "status", None) not in _PRIMARY_FIT_STATUSES or y != y:
+                continue
+            lv = dict(r.levels)
+            if any(fid not in lv for fid in fitted_ids):
+                continue
+            coded = {fid: code_actual(by_id[fid], lv[fid]) for fid in fitted_ids}
+            pts.append((coded, y))
+            for metric, m in (omodels or {}).items():
+                v = (getattr(o, "response", None) or {}).get(metric)
+                if isinstance(v, (int, float)) and v == v:
+                    objs.setdefault(metric, []).append((coded, float(v)))
+        check = adq.prediction_check(fit, cols, terms, pts, nuisance=nuis)
+        check["points_registered"] = len(val_rows)
+        rec["validation"] = check
+        validated = check.get("rejected")
+        for metric, mpts in objs.items():
+            mod = omodels.get(metric)
+            if mod is None or mod.fit is None or metric == primary:
+                continue
+            _l, mterms, mcols = adq.model_columns(
+                design_for_fit, fit_factor_ids,
+                include_interactions=not interactions_dropped,
+                omit_terms=omitted_terms)
+            if len(mcols) != len(list(mod.fit.effects) + list(mod.fit.quadratic)) + 1:
+                continue        # the objective model was reduced differently
+            oc = adq.prediction_check(mod.fit, mcols, mterms, mpts, nuisance=nuis)
+            rec.setdefault("validation_objectives", {})[metric] = oc
+            if oc.get("rejected"):
+                validated = True if validated is None else (validated or True)
+                causes.append(f"validation_prediction:{metric}")
+        if check.get("rejected"):
+            causes.append("validation_prediction")
+        if validated:
+            adequate, basis = False, None
+    rec["this_stage"] = {"verdict": adequate, "basis": basis,
+                         "rejected_by": causes}
+    # The epoch's earlier fitting stages, from their records on disk.
+    hist = []
+    for r in _epoch_recommendations(work_dir):
+        if r.get("stage") in (None, Stage.CONFIRM.value):
+            continue
+        st = (r.get("model_adequacy") or {}).get("this_stage") or {}
+        v = st.get("verdict", r.get("model_adequate"))
+        hist.append((str(r.get("stage")), _stage_model_class(str(r.get("stage"))),
+                     v, st.get("basis", r.get("model_adequate_basis"))))
+    stages = [(h[0], h[1], h[2]) for h in hist] + [
+        (stage_name, _stage_model_class(stage_name), adequate)]
+    ep, decided_by = adq.epoch_verdict(stages)
+    ep_basis = basis if ep is None else None
+    validation_done = rec.get("validation", {}).get("rejected") is not None
+    earlier_rejected = [h[0] for h in hist if h[2] is False]
+    if (ep is True and earlier_rejected and stage_name == Stage.REFINE.value
+            and not validation_done):
+        ep, ep_basis, decided_by = None, "screen_rejection_unresolved", earlier_rejected
+    if ep is None and ep_basis is None:
+        # An earlier stage's UNKNOWN decided it: carry that stage's basis.
+        ep_basis = next((h[3] for h in hist if h[0] in decided_by and h[2] is None
+                         and h[3]), None) or "model_adequacy_unknown"
+    rec["epoch"] = {
+        "verdict": ep, "basis": ep_basis, "decided_by": decided_by,
+        "stages": [{"stage": st, "model_class": c, "verdict": v}
+                   for st, c, v in stages],
+        "rule": ("a stage's verdict is superseded only by a later stage of at "
+                 "least its model class (1: first order + 2fi, 2: second "
+                 "order); a refine without a completed validation check "
+                 "cannot overturn an earlier rejection"),
+    }
+    return rec, ep, ep_basis
 
 
 def _curvature_untested_levels(factors, fitted_ids, roles, levels_rows,

@@ -240,6 +240,7 @@
           "lack_of_fit_not_computable",
           "curvature_untested",
           "curvature_not_isolated",
+          "screen_rejection_unresolved",
           "model_adequacy_unknown"
         ]
       },
