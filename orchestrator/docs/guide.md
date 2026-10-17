@@ -1699,11 +1699,16 @@ campaign that is missing any of these:
      measure the agent's tree;
    - the probe cannot run, fails, or prints something unparseable.
 
-   A command whose interpreter cannot be read off the command line (`uv run`,
-   `conda run`, `poetry run`, `make`, `sh -c`, a pyenv or asdf shim) is not
-   refused. It is recorded in `clean_tree.probe.json` and listed in
-   `provenance.waivers` as not probed. Install the package non-editably, and
-   prefer a run command that names its interpreter.
+   Known wrappers are unwrapped first, and `env` assignments are passed to the
+   probe: `timeout`, `nice`, `time`, `nohup`, `env A=B`, `ionice`, `taskset`,
+   `chrt`, `stdbuf`, `caffeinate`. Interpreter flags keep their arguments
+   (`-W ignore`, `-X dev`). Any other command, one whose first program is not a
+   Python interpreter, is not refused but is recorded in `clean_tree.probe.json`
+   and listed in `provenance.waivers` as not probed. That covers a launcher
+   (`uv run`, `conda run`, `poetry run`, `make`, `sh -c`), a script such as
+   `./bench.sh`, another runtime, a pyenv or asdf shim, and `env -i`. Install
+   the package non-editably, and prefer a run command that names its
+   interpreter.
 6. **Ignored assets.** A data set, built binaries or a virtualenv go in
    `target_system.worktree_extras`. Each is COPIED (never symlinked) into the
    clean tree, and every copied file is hashed into `clean_tree.extras.json`.
@@ -1734,8 +1739,8 @@ campaign that is missing any of these:
   home. `NOUS_RUN_DIR` is a private temporary directory outside the work dir; a
   run dir the adapter wrote into is copied back to `runs/iter-N/run_dirs/`
   afterwards.
-- Once the first seal exists, a missing key is an error. A new key is never
-  minted to replace a deleted one.
+- Once the first seal exists, a missing key is an error everywhere, including
+  a re-run build stage. A new key is never minted to replace a deleted one.
 - Verify loads and checks the seals once, before any target code runs, and the
   oracles use those in-memory copies. It reseals only after confirming that
   what the build wrote is unchanged.
@@ -1748,10 +1753,17 @@ campaign that is missing any of these:
   the call returns is killed, together with its process group, and the build
   fails (`build_isolation.json`). If the process table cannot be read, the build
   fails rather than passing.
-- Every test and run command runs in its own session, and a poller watches
-  its descendants while it runs. When it returns, whatever is left in its
-  process group, and any descendant that left the group (`setsid`), is killed
-  and recorded (`target_survivors.json`), and that stage fails.
+- Every test and run command runs in its own session, and a poller watches its
+  descendants while it runs. When it returns, the following are killed and
+  recorded (`target_survivors.json`), and that stage fails:
+  - whatever is left in its process group;
+  - every descendant the poller saw that is still alive, whatever group it is
+    in now. Its group is re-read at that moment, so a `setsid()` before or
+    after the first poll does not escape.
+- **A run dir is copied back safely.** Each attempt's copy goes to a fresh
+  `row-K.attempt-N` directory, regular files only, under a size and file-count
+  cap. A symlink or other special file is skipped and recorded in
+  `_nous_keep.json`, never written through.
 
 **No planted bytecode.** Every target command runs with `PYTHONPYCACHEPREFIX`
 set to a Nous-owned directory. Other runtimes' caches are not redirected.
@@ -1790,7 +1802,8 @@ protected file into the patch.
   check runs before and after each batch, so the window is the batch itself.
 - **Anything outside the clean tree**, such as the home directory or system
   libraries.
-- **A process that double-forks and detaches within one polling interval.**
+- **A process that double-forks and detaches within one polling interval**
+  (100 ms for target commands): the poller never sees it.
 - **A planted data file in the clean tree** (no code suffix or name).
 - **Non-Python import paths.** A Go `replace`, an `npm link` or a `GOPATH`
   pointing at the agent's repo is not probed.
