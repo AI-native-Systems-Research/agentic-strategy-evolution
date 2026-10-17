@@ -2020,6 +2020,22 @@ properties:
               rejects anything else, because a name with a space or a lowercase
               letter is silently unreadable from most shells and the failure
               surfaces as "the seed had no effect" rather than as an error.
+          probe:
+            type: boolean
+            description: >
+              #321 P3: ``false`` waives the verify-time CRN probe in writing
+              (recorded in ``crn_probe.json``). Default: the probe runs.
+          probe_seeds:
+            type: integer
+            minimum: 2
+            description: >
+              #321 P3: distinct seeds the verify-time CRN probe runs, twice
+              each, at one configuration (default 4, i.e. 8 runs). Verify FAILS
+              when different seeds give measurements no more different than
+              the same seed run twice (one-way random-effects ANOVA, seed
+              random, alpha 0.05), because ``paired: true`` would then be
+              decorative. Power: 0.59 / 0.94 at a seed effect 2x / 5x the
+              run-to-run sd with 4 seeds; raise it for a weak seed effect.
           seeds:
             type: array
             minItems: 1

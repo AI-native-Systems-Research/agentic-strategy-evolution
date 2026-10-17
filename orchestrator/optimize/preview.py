@@ -134,6 +134,16 @@ def build_preview(
             f"{n} baseline run(s) before and after build",
         ))
 
+    _wl = opt.get("workload") or {}
+    if _wl.get("seed_env") and _wl.get("probe") is not False:
+        from orchestrator.optimize.noise import CRN_PROBE_SEEDS
+        _m = int(_wl.get("probe_seeds") or CRN_PROBE_SEEDS)
+        pv.stages.append(StageRuns(
+            "crn probe", 2 * _m, 2 * _m, False,
+            f"verify: {_m} workload seeds x 2 runs at one configuration -- "
+            f"same seed must agree, different seeds must differ (#321)",
+        ))
+
     screen = _build_design(factors, design_cfg, Stage.SCREEN.value)
     n_centre = sum(1 for p in screen.points if p.role == "center")
     pv.screen_corners = len(screen.corners)

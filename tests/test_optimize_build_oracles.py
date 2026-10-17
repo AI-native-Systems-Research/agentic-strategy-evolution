@@ -1394,8 +1394,11 @@ def test_a_prebuild_measurement_without_recorded_seeds_degrades_to_unpaired(
     c["optimization"]["workload"] = {"seed_env": "NOUS_WORKLOAD_SEED"}
     with caplog.at_level(logging.WARNING,
                          logger="orchestrator.optimize.stage_runner"):
+        # The runner honours the newly declared seed, so verify's CRN probe
+        # (#321 P3) passes and the test isolates the pre-build pairing gap.
         run_stage(c, wd, iteration=2, stage="verify",
-                  config_runner=make_synthetic_runner(s, seed=1),
+                  config_runner=make_synthetic_runner(s, seed=1,
+                                                      seed_env="NOUS_WORKLOAD_SEED"),
                   test_results={t: True for t in ids})
     be = json.loads((wd / "baseline_equivalence.json").read_text())
     assert be["paired"] is False, "a pairing that never happened must not be claimed"

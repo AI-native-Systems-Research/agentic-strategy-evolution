@@ -1564,6 +1564,89 @@ def _check_baseline_equivalence(
     )
 
 
+def _check_crn_probe(campaign: dict, work_dir: Path, factors,
+                     config_runner: Callable | None) -> None:
+    """#321 P3 item 4: verify that ``workload.seed_env`` actually reaches the
+    target before ``confirm`` records ``paired: true`` on its strength.
+
+    One configuration (the ``known_valid_baseline``, else every factor at its
+    first declared level) is run at ``workload.probe_seeds`` distinct seeds
+    (default ``noise.CRN_PROBE_SEEDS``), twice each, and judged by
+    ``noise.crn_probe_verdict``: same seed twice must agree, different seeds
+    must differ (one-way random-effects ANOVA at ``noise.CRN_PROBE_ALPHA``).
+    A ``decorative`` verdict FAILS verify: the paired bound would still be
+    valid, but every certificate would record a method whose premise did not
+    hold. ``not_testable`` (no runner, a probe run that failed) fails too,
+    unless ``workload.probe: false`` waives it in writing, which is recorded.
+    Writes ``crn_probe.json``. Costs ``2 x probe_seeds`` runs (the preview
+    counts them). No-op without ``workload.seed_env``.
+    """
+    from orchestrator.optimize import noise as noise_mod
+    from orchestrator.optimize.matrix import ConfigRow, render_apply
+
+    wl = (_opt_block(campaign) or {}).get("workload") or {}
+    env = wl.get("seed_env")
+    if not env:
+        return
+    path = Path(work_dir) / "crn_probe.json"
+    if wl.get("probe") is False:
+        _write_json(path, {"armed": False, "waived": "workload.probe: false",
+                           "verdict": "not_testable"})
+        logger.warning("verify: the CRN seed probe is WAIVED (workload.probe: "
+                       "false); nothing checks that %s reaches the target", env)
+        return
+    m = int(wl.get("probe_seeds") or noise_mod.CRN_PROBE_SEEDS)
+    base = dict(_kvb) if (_kvb := (_opt_block(campaign) or {}).get(
+        "known_valid_baseline")) else {f.id: f.levels[0] for f in factors}
+    seeds = ([int(s) for s in (wl.get("seeds") or [])][:m] if wl.get("seeds")
+             else [(noise_mod.CRN_PROBE_SEED_BASE * 7919 + i) % (2 ** 31)
+                   for i in range(m)])
+    metric = _primary_of((_opt_block(campaign) or {}).get("response")).get("metric") or ""
+    pairs, values, problem = [], [], None
+    if config_runner is None:
+        problem = "no config_runner at verify"
+    else:
+        for i, sd in enumerate(seeds):
+            pair = []
+            for rep in range(2):
+                apply = render_apply(factors, base)
+                apply = {**apply, "env": {**(apply.get("env") or {}), env: sd}}
+                row = ConfigRow(row_index=-1000 - 2 * i - rep, levels=dict(base),
+                                role="crn_probe", replicate=rep, apply=apply)
+                try:
+                    v = float((config_runner(row) or {}).get(metric, float("nan")))
+                except Exception as exc:     # a probe run that cannot measure
+                    v, problem = float("nan"), f"probe run failed: {exc}"
+                pair.append(v)
+            values.append({"seed": sd, "runs": pair})
+            if all(math.isfinite(v) for v in pair):
+                pairs.append(tuple(pair))
+            elif problem is None:
+                problem = "a probe run produced no finite primary metric"
+    verdict = noise_mod.crn_probe_verdict(pairs) if not problem else {
+        "verdict": "not_testable", "reason": problem}
+    rec = {"seed_env": env, "levels": base, "metric": metric, "runs": values,
+           **verdict, "rule": "same seed twice must agree, different seeds must "
+                              "differ: one-way random-effects ANOVA, seed random"}
+    _write_json(path, rec)
+    if verdict["verdict"] == "real":
+        logger.info("verify: CRN probe -- %s reaches the target (%s)", env,
+                    verdict.get("basis") or f"F={verdict.get('f'):.3g}, p={verdict.get('p'):.3g}")
+        return
+    why = ("the seed changed nothing: different seeds gave measurements no more "
+           "different than the same seed run twice"
+           if verdict["verdict"] == "decorative" else
+           f"the probe could not be completed ({verdict.get('reason') or 'fewer than 2 seeds'})")
+    raise OptimizationGateFailed(
+        f"verify: optimization.workload.seed_env={env!r} would make paired: true "
+        f"DECORATIVE -- {why} (crn_probe.json). The paired bound would still be "
+        f"valid, but every confirm round would record a common-random-numbers "
+        f"method whose premise did not hold. Wire {env} into the target's "
+        f"workload generator; or raise workload.probe_seeds for a weak seed "
+        f"effect; or remove the workload block (Welch is then used); or waive the "
+        f"probe in writing with workload.probe: false.")
+
+
 def _baseline_unarmed(campaign: dict, path: Path, rec: dict, why: str) -> None:
     """Oracle 2(c) could not run. Hard-fail, unless the campaign waives it with
     ``optimization.build_checks.allow_unarmed_baseline: "<reason>"``; a waiver
@@ -3320,6 +3403,7 @@ def _run_stage_body(
                                                records=_gate)
             _check_baseline_equivalence(campaign, work_dir, factors, config_runner,
                                         records=_gate)
+            _check_crn_probe(campaign, work_dir, factors, config_runner)
             _review_build(gate, work_dir, built=_gate is not None)
             if _gate is not None:
                 from orchestrator.optimize import gate_records as _gr

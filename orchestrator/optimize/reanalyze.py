@@ -73,7 +73,8 @@ CARRIED_RECORDS = ("pre_build_tests.json", "baseline_equivalence.json",
                    "authored_tests.json", "build_scope.json", "build_review.json",
                    "clean_tree.json", "mechanism.clean.patch", "gate_records.seal",
                    "build_isolation.json", "clean_tree.manifest.json",
-                   "clean_tree.extras.json", "clean_tree.probe.json")
+                   "clean_tree.extras.json", "clean_tree.probe.json",
+                   "crn_probe.json")
 
 #: Bookkeeping files outside the analysis (engine state, ledgers, logs).
 IGNORED = frozenset({

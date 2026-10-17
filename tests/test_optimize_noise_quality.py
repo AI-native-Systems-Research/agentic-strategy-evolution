@@ -227,3 +227,75 @@ def test_the_sign_flip_bound_is_exact_for_symmetric_differences():
     se = (3 / 64 * (1 - 3 / 64) / n_trials) ** 0.5
     assert abs(miss / n_trials - 3 / 64) <= 3 * se
     assert sign_flip_upper([1.0] * 4, 0.05) is None     # 2^-4 > 0.05: no bound
+
+
+# ── item 4: CRN verification ────────────────────────────────────────────────
+
+_WL = {"workload": {"seed_env": "NOUS_WORKLOAD_SEED"}}
+
+
+def test_a_seed_the_target_ignores_fails_verify(tmp_path):
+    """Before P3 nothing checked that seed_env reached the target: a target
+    that ignores it ran a campaign recording paired: true for comparisons
+    that paired nothing. Verify now probes and refuses, named."""
+    from orchestrator.optimize.synthetic import SURFACES
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path,
+                               campaign_overrides=_WL,
+                               runner_options={"workload_sd": 1.0, "ignore_seed": True})
+    assert r.path and r.path[0].startswith("aborted:") and "DECORATIVE" in r.path[0]
+    probe = json.loads((r.work_dir / "crn_probe.json").read_text())
+    assert probe["verdict"] == "decorative" and probe["seeds"] == 4
+    assert not _confirmations(r.work_dir)
+
+
+def test_a_seed_that_drives_the_workload_passes_and_pairs_with_spread(tmp_path):
+    """End to end, paired gain intervals with NONZERO spread: a workload term
+    (sd 1.0) shared by every finalist at a seed, plus independent run noise.
+    The probe passes; confirm pairs; the paired differences have spread, and
+    the baseline-gain interval is a real interval, not a point."""
+    from orchestrator.optimize.synthetic import SURFACES
+
+    ov = dict(_WL, known_valid_baseline={"A": 2, "B": 2})
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=3, parent_dir=tmp_path,
+                               campaign_overrides=ov,
+                               runner_options={"workload_sd": 1.0})
+    probe = json.loads((r.work_dir / "crn_probe.json").read_text())
+    assert probe["verdict"] == "real" and probe["p"] < 0.05
+    c = _confirmations(r.work_dir)[-1]
+    assert c["paired"] is True
+    assert c["terminal_bound"]["method"].endswith("paired_sign_flip")
+    g = c["gain_over_baseline"]
+    assert g["method"] == "simultaneous_two_sided_paired_t"
+    assert g["high"] - g["low"] > 1e-6          # nonzero spread
+    true_gain = SURFACES["bowl"]().fn(c["confirmed_at_levels"]) - SURFACES["bowl"]().fn({"A": 2, "B": 2})
+    assert g["low"] <= true_gain <= g["high"]
+    # The workload term is 20x the run noise; unpaired, the interval would be
+    # an order of magnitude wider.
+    fin = {f["key"]: f["samples"] for f in c["finalists"]}
+    from statistics import stdev
+    d = [a - b for a, b in zip(fin[g["winner_key"]], fin[g["baseline_key"]])]
+    assert stdev(d) < 0.5 * stdev(fin[g["baseline_key"]])
+
+
+def test_the_probe_verdict_is_an_anova_on_the_seed():
+    from orchestrator.optimize.noise import crn_probe_verdict
+
+    assert crn_probe_verdict([(1.0, 1.0), (2.0, 2.0)])["verdict"] == "real"
+    assert crn_probe_verdict([(1.0, 1.0), (1.0, 1.0)])["verdict"] == "decorative"
+    assert crn_probe_verdict([(1.0, 1.1)])["verdict"] == "not_testable"
+    v = crn_probe_verdict([(0.0, 0.1), (5.0, 5.1), (-3.0, -2.9), (8.0, 8.2)])
+    assert v["verdict"] == "real" and v["df"] == [3, 4]
+    v = crn_probe_verdict([(0.0, 1.0), (1.0, 0.0), (0.5, -0.5), (-0.5, 0.5)])
+    assert v["verdict"] == "decorative"
+
+
+def test_the_probe_can_be_waived_in_writing(tmp_path):
+    from orchestrator.optimize.synthetic import SURFACES
+
+    ov = {"workload": {"seed_env": "NOUS_WORKLOAD_SEED", "probe": False}}
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path,
+                               campaign_overrides=ov,
+                               runner_options={"workload_sd": 1.0, "ignore_seed": True})
+    assert not r.path[0].startswith("aborted:")
+    assert json.loads((r.work_dir / "crn_probe.json").read_text())["waived"]

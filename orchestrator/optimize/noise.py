@@ -280,3 +280,52 @@ def brown_forsythe_contrast(cells, finalists) -> dict:
     t = est / se
     out.update(t=t, df=n - k, p=float(student_t.sf(t, n - k)))
     return out
+
+
+# ── #321 P3 item 4: is the workload seed real? (CRN verification) ──────────
+
+#: Seed base of the verify-time probe (distinct from the baseline oracle's 0
+#: and from every iteration base, so its draws are fresh).
+CRN_PROBE_SEED_BASE = 104729
+#: Default number of distinct seeds the probe runs (each twice).
+CRN_PROBE_SEEDS = 4
+CRN_PROBE_ALPHA = 0.05
+
+
+def crn_probe_verdict(pairs, *, alpha: float = CRN_PROBE_ALPHA) -> dict:
+    """Does the workload seed change the measurement? ``pairs`` holds, per
+    distinct seed, the two runs made at that seed (same configuration).
+
+    1. Same seed, run twice, MUST AGREE: every pair identical is exact
+       agreement (a deterministic seeded target).
+    2. Different seeds MUST DIFFER (when ``paired: true`` is to mean anything).
+
+    Decided as a one-way random-effects ANOVA with the seed as the random
+    factor (Searle, Casella & McCulloch 1992, §3.5): under H0 (the seed is
+    ignored) ``F = MS_between / MS_within ~ F(m - 1, m)``; the pairing is
+    REAL iff H0 is rejected at ``alpha``. A deterministic target (every
+    within-seed pair identical) is decided exactly: real iff the seed means
+    are not all equal. ``verdict``: ``real`` | ``decorative`` |
+    ``not_testable`` (fewer than 2 seeds, or no spread at all).
+    """
+    pairs = [(float(a), float(b)) for a, b in pairs]
+    m = len(pairs)
+    out = {"method": "one_way_random_effects_anova_seed", "alpha": alpha,
+           "seeds": m, "f": None, "p": None, "df": [m - 1, m] if m >= 2 else None,
+           "same_seed_identical": None, "verdict": "not_testable"}
+    if m < 2:
+        return out
+    same = all(a == b for a, b in pairs)
+    out["same_seed_identical"] = same
+    means = [(a + b) / 2 for a, b in pairs]
+    if same:
+        out["verdict"] = "real" if len(set(means)) > 1 else "decorative"
+        out["basis"] = "exact: every same-seed pair agreed"
+        return out
+    gm = sum(means) / m
+    msb = 2.0 * sum((x - gm) ** 2 for x in means) / (m - 1)
+    msw = sum((a - b) ** 2 / 2.0 for a, b in pairs) / m
+    f = msb / msw
+    p = float(fisher_f.sf(f, m - 1, m))
+    out.update(f=f, p=p, verdict="real" if p < alpha else "decorative")
+    return out

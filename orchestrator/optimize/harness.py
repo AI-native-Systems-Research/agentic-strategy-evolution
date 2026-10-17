@@ -173,7 +173,8 @@ def _latest_iter_dirs(work_dir: Path) -> list[Path]:
 def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
                            campaign_overrides: dict | None = None,
                            campaign_top_level: dict | None = None,
-                           max_iterations: int = 8) -> SyntheticResult:
+                           max_iterations: int = 8,
+                           runner_options: dict | None = None) -> SyntheticResult:
     """Run every stage of a synthetic campaign and report the answer.
 
     ``parent_dir`` becomes ``NOUS_CAMPAIGN_PARENT`` for the duration of the
@@ -202,6 +203,7 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
     runner = make_synthetic_runner(
         surface, seed=seed,
         seed_env=(campaign["optimization"].get("workload") or {}).get("seed_env"),
+        **(runner_options or {}),
     )
     path: list[str] = []
 
