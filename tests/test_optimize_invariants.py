@@ -245,6 +245,7 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_single_objective_untouched", "check_refill_branch",
         "check_candidate_space",
         "check_recommendation_avoids_lost_levels",
+        "check_adequacy_determination",
     }
     registered = {i.checker.__name__ for i in inv.checkable()}
     assert registered <= exercised, (
@@ -1616,3 +1617,36 @@ def test_candidate_space_checker_accepts_a_searched_record_and_rejects_dishonest
         "modelled, but NOT applied: no point the models admit was FOUND among 4730 "
         "evaluated configurations (searched, not enumerated)")
     assert inv.check_candidate_space(bad) == []
+
+
+def test_adequacy_determination_checker_has_teeth():
+    """INV-STAT19: teeth. A forgotten screen rejection, a refine overturning it
+    without a validation check, a rejected validation check that leaves the
+    stage adequate, and a model_adequate that disagrees with its epoch verdict
+    are each a violation; the consistent sticky record is not."""
+    def rec(stage, this, epoch, val=None):
+        ma = {"this_stage": {"verdict": this, "basis": None, "rejected_by": []},
+              "epoch": {"verdict": epoch}}
+        if val is not None:
+            ma["validation"] = {"rejected": val}
+        return {"stage": stage, "model_adequate": epoch, "model_adequacy": ma}
+
+    screen_rej = rec("screen", False, False)
+    good = [screen_rej, rec("refine", True, True, val=False)]
+    assert inv.check_adequacy_determination(good) == []
+    # refine overturns the screen's rejection with no completed validation check
+    assert any("without a completed validation" in e for e in
+               inv.check_adequacy_determination([screen_rej, rec("refine", True, True)]))
+    # a validation rejection that leaves the stage adequate
+    assert any("validation check rejected" in e for e in
+               inv.check_adequacy_determination([rec("refine", True, True, val=True)]))
+    # model_adequate disagreeing with the epoch verdict
+    bad = rec("refine", False, False, val=True)
+    bad["model_adequate"] = True
+    assert any("!= model_adequacy.epoch.verdict" in e for e in
+               inv.check_adequacy_determination([bad]))
+    # a later refine adequate after an EARLIER refine (same class) rejected
+    assert any("model class" in e for e in inv.check_adequacy_determination(
+        [rec("refine", False, False, val=True), rec("refine", True, True, val=False)]))
+    # records predating the field are skipped
+    assert inv.check_adequacy_determination([{"stage": "refine", "model_adequate": True}]) == []

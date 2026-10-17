@@ -358,11 +358,14 @@ def test_every_planned_row_is_accounted_for_as_fitted_or_excluded(chain, request
         fitted = eff.get("n_runs")
         excl = _read(it / "fit_exclusions.json")
         n_excluded = len(excl.get("excluded_row_indices") or []) if excl else 0
+        # Refine's validation block is held out of the fit by design (WP-B B1)
+        # and recorded as such; it is a bucket, not a vanished row.
+        n_held = len((eff.get("held_out_rows") or {}).get("row_indices") or [])
         if fitted is not None:
-            assert fitted + n_excluded == planned, (
+            assert fitted + n_excluded + n_held == planned, (
                 f"{it.name}: {planned} planned != {fitted} fitted + "
-                f"{n_excluded} excluded — rows went missing between the "
-                f"pre-registration and the fit"
+                f"{n_excluded} excluded + {n_held} held out — rows went missing "
+                f"between the pre-registration and the fit"
             )
     if not checked:
         pytest.skip(f"{chain} fitted nothing")
