@@ -262,6 +262,25 @@
         "finalists": {"type": "array", "items": {"$ref": "#/$defs/held_out_entry"}}
       }
     },
+    "held_out_seeds": {
+      "type": "object",
+      "required": ["seeds", "declined", "feeds_certification"],
+      "description": "GENUINELY OPTIONAL: present only when optimization.workload.held_out_seeds is declared (#321). After every decision in this report was made, the winner and the known_valid_baseline were each run once per held-out seed (paired by seed) and the gain is reported here with its own two-sided interval at 1 - delta_terminal. It feeds no decision and no certificate (feeds_certification is always false). declined names why nothing was measured (multi_objective, no_baseline, no_winner, winner_is_baseline, no_runner, not_in_record, measurement_error, clean_tree_modified, processes_left_running); null when measured. unseen is false when a held-out seed was also used by a measured row, listed in overlap_with_measured_seeds.",
+      "properties": {
+        "seeds": {"type": "array", "items": {"type": "integer"}},
+        "declined": {"type": ["string", "null"]},
+        "detail": {"type": "string"},
+        "feeds_certification": {"const": false},
+        "winner": {"type": "object"}, "baseline": {"type": "object"},
+        "basis": {"type": "string"},
+        "unseen": {"type": "boolean"},
+        "overlap_with_measured_seeds": {"type": "array", "items": {"type": "integer"}},
+        "runs": {"type": "integer"}, "file": {"type": ["string", "null"]},
+        "pairs": {"type": "array", "items": {"type": "object", "required": ["seed", "winner", "baseline", "gain"]}},
+        "gain": {"type": "object", "required": ["estimate", "low", "high", "level", "n_pairs", "method"]},
+        "in_sample_gain": {"type": ["object", "null"]}
+      }
+    },
     "pareto": {
       "type": "object",
       "description": "Multi-objective campaigns only (spec 2026-10-15-pareto-front-design.md steps 5-8): the MEASURED front over every admissible configuration the campaign measured (confirm finalists and fitting-stage rows, means over complete rows), each point's dominance status, the preferred point, the hypervolume and the remaining gaps.",

@@ -279,6 +279,16 @@ def build_preview(
             + f" x {d['replicates']} replicate(s) per round, up to {rounds} round(s)",
         ))
 
+    from orchestrator.optimize.held_out import held_out_seed_cost
+
+    _ho = held_out_seed_cost(campaign)
+    if _ho:
+        pv.stages.append(StageRuns(
+            "held-out seeds", _ho, _ho, False,
+            f"after the report: the winner and the baseline x "
+            f"{_ho // 2} unseen workload seed(s), paired; reported, never certifies",
+        ))
+
     # B3: D-efficiency of each fitting stage's planned model matrix.
     from orchestrator.optimize import adequacy as _adq
     from orchestrator.optimize.effects import model_matrix as _mm
@@ -304,10 +314,12 @@ def build_preview(
     pv.max_runs = sum(s.max_runs for s in pv.stages)
     budget = design_cfg.get("max_runs")
     pv.budget_max_runs = int(budget) if isinstance(budget, int) else None
-    if pv.budget_max_runs is not None and pv.guaranteed_runs > pv.budget_max_runs:
+    # Held-out-seed runs come after the report, outside design.max_runs.
+    _in_budget = pv.guaranteed_runs - _ho
+    if pv.budget_max_runs is not None and _in_budget > pv.budget_max_runs:
         pv.warnings.append(
             f"design.max_runs={pv.budget_max_runs} is below the "
-            f"{pv.guaranteed_runs} run(s) the screen + first confirm round "
+            f"{_in_budget} run(s) the screen + first confirm round "
             f"register: the epoch will run out of budget mid-design.",
         )
 

@@ -1434,6 +1434,31 @@ def _rule16_workload_seed_env(opt: dict) -> list[str]:
                 f"environment, so a float or a bool would arrive as '1.5' or "
                 f"'True' and whatever the target does with that is not a seed."
             )
+    ho = wl.get("held_out_seeds")
+    if ho is not None:
+        if (not isinstance(ho, list) or not ho
+                or any(not isinstance(x, int) or isinstance(x, bool) for x in ho)):
+            errors.append(
+                f"optimization.workload.held_out_seeds={ho!r} must be a non-empty "
+                f"list of integers, or absent.")
+        else:
+            shared = sorted(set(ho) & set(s for s in (seeds or []) if isinstance(s, int)))
+            if shared:
+                errors.append(
+                    f"optimization.workload.held_out_seeds {shared} also appear in "
+                    f"workload.seeds, so the measured rows already ran those draws: "
+                    f"they are not held out, and the gain on them is not a "
+                    f"generalization check. Choose seeds outside workload.seeds.")
+            if not opt.get("known_valid_baseline"):
+                errors.append(
+                    "WARN: optimization.workload.held_out_seeds is declared but there "
+                    "is no known_valid_baseline to pair the winner with, so the "
+                    "held-out block will decline (no_baseline) and spend nothing.")
+            if (opt.get("response") or {}).get("objectives"):
+                errors.append(
+                    "WARN: optimization.workload.held_out_seeds is declared on a "
+                    "multi-objective campaign; a front has no single winner, so the "
+                    "held-out block will decline (multi_objective).")
     return errors
 
 

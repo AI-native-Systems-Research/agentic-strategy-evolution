@@ -832,6 +832,35 @@ def render_report_markdown(work_dir: Path) -> str:
                 )
         lines.append("")
 
+    hs = report.get("held_out_seeds")
+    if isinstance(hs, dict):
+        lines += ["## Held-out seeds", ""]
+        if hs.get("declined"):
+            lines += [f"Not measured: `{hs['declined']}` -- {hs.get('detail', '')}", ""]
+        else:
+            g = hs.get("gain") or {}
+            ins = hs.get("in_sample_gain") or {}
+            lines += [
+                f"After the answer was fixed, the winner and the baseline ran on "
+                f"{len(hs.get('seeds') or [])} workload seed(s) "
+                + ("no measured row used" if hs.get("unseen") else
+                   f"of which {hs.get('overlap_with_measured_seeds')} WERE used by "
+                   f"measured rows (not fully held out)")
+                + ". This decides nothing and certifies nothing.",
+                "",
+                "| | gain over baseline | interval | pairs |",
+                "|---|---|---|---|",
+                f"| held-out seeds | {_fmt(g.get('estimate'))} | "
+                f"[{_fmt(g.get('low'))}, {_fmt(g.get('high'))}] at {_fmt(g.get('level'))} | "
+                f"{g.get('n_pairs', 0)} |",
+            ]
+            if ins:
+                lines.append(f"| in-sample (confirm) | {_fmt(ins.get('estimate'))} | "
+                             f"[{_fmt(ins.get('low'))}, {_fmt(ins.get('high'))}] | |")
+            if g.get("no_interval_because"):
+                lines.append(f"\nNo held-out interval: {g['no_interval_because']}.")
+            lines.append("")
+
     baseline = report.get("known_valid_baseline")
     lines += [
         "## Provenance",

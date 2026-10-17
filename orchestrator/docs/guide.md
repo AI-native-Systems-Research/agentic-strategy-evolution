@@ -2389,6 +2389,39 @@ an experiment that paired nothing. Wire the variable into the workload
 generator's seed, and verify it with the two-run recipe in
 [`docs/targets.md`](targets.md) §3 before you trust any paired bound.
 
+**Held-out seeds on the winner.** `workload.held_out_seeds: [ ... ]` declares
+workload seeds that no measured row uses. Validation rejects any that also
+appear in `seeds`. After the report ladder has fixed the answer, the winner and
+the `known_valid_baseline` each run once per held-out seed. Both arms share
+each seed (paired), and the order alternates per seed. `report.json`
+`held_out_seeds` then reports:
+
+- the per-seed pairs;
+- the gain with a two-sided paired-t interval at `1 - delta_terminal`;
+- the in-sample `gain_over_baseline` beside it.
+
+A gain that holds in-sample and vanishes here is the overfit this exists to
+show: a mechanism, or a build agent, tuned to the draws the campaign selected
+on. The block:
+
+- **feeds nothing.** Its rows go to `held_out_seeds.epoch-<e>.jsonl` at the
+  work-dir root, outside `runs/iter-*`, where no fit, ranking, budget or
+  certificate reads. `feeds_certification` is always `false`.
+- **costs `2 x len(held_out_seeds)` runs**, shown as its own line in the
+  `--liveness` preview, on top of `design.max_runs`.
+- **declines by name** when it cannot measure: `no_baseline`,
+  `multi_objective`, `no_winner` (the answer is the baseline rung or `none`),
+  `winner_is_baseline`, `no_runner`, `measurement_error`, or
+  `clean_tree_modified` / `processes_left_running` when the target misbehaved
+  during the block. A declined block never changes the report's answer.
+- **is replayed, not re-measured, by `nous reanalyze`.** If the rows file is
+  missing, the replayed block declines (`not_in_record`) and the report differs.
+
+The seeds are pre-registered, because `policy.json` copies the whole `workload`
+block before the first run. "Unseen" means unseen by this work dir's rows:
+`unseen` is false, with the overlap listed, if a seed collides with one a
+measured row derived.
+
 **Run order is concealed per campaign.** Every iteration's run order (and every
 derived workload seed) is drawn from `sha256(policy hash, iteration)`. The
 policy hash covers a random 32-hex salt Nous draws at compile, records in

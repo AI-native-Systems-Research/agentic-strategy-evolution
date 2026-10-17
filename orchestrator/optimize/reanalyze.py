@@ -418,6 +418,10 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         # so it is carried rather than re-drawn; the recompiled policy then
         # hashes to the registered one only if the file is unaltered, and a
         # policy written before concealment has none (derivation 1).
+        # Held-out-seed rows (#321) are measurements taken after the report;
+        # carried, then re-read (never re-measured) by the replayed report.
+        for p in sorted(orig.glob("held_out_seeds.epoch-*.jsonl")):
+            shutil.copy2(p, new / p.name)
         for p in sorted(orig.glob("run_order.epoch-*.json")):
             shutil.copy2(p, new / p.name)
         last = iters[-1] if iters else 0
@@ -485,7 +489,7 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         a, b = _files(orig, result.excluded), _files(new)
         for rel in sorted(a | b):
             name = rel.rsplit("/", 1)[-1]
-            if name in NOT_DERIVED:
+            if name in NOT_DERIVED or name.startswith("held_out_seeds.epoch-"):
                 result.not_rederived.append(rel)
                 continue
             if rel not in b:

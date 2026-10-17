@@ -2252,6 +2252,9 @@ import contextvars
 #: Set while run_stage serves ``nous reanalyze``: nothing is measured, and the
 #: scratch work_dir has no clean tree to check.
 _REANALYSIS = contextvars.ContextVar("nous_reanalysis", default=False)
+#: The stage's config_runner, for the post-report held-out-seed block (#321),
+#: which runs inside `_run_report` where no runner is threaded.
+_RUNNER = contextvars.ContextVar("nous_config_runner", default=None)
 
 
 def _check_survivors(work_dir, iteration, what: str) -> None:
@@ -2463,6 +2466,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         recommendation=levels,
         finalists=(conf.get("finalists") if conf else []) or [],
     )
+    held_seeds_block = _held_out_seeds(campaign, work_dir, pol, levels, basis,
+                                       metric, direction, conf)
     _write_json(Path(work_dir) / "report.json", {
         "recommendation": {
             "levels": levels, "basis": basis,
@@ -2547,6 +2552,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # carries the full record next to it.
         **({"epoch_ended": epoch_ended} if epoch_ended else {}),
         **({"held_out": held_out_block} if held_out_block else {}),
+        **({"held_out_seeds": held_seeds_block} if held_seeds_block else {}),
         **({"pareto": mo_front} if mo_front is not None else {}),
         **({"certification_caveats": list(conf["certification_caveats"])}
            if conf and conf.get("certification_caveats") else {}),
@@ -2577,6 +2583,40 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         else "",
     )
     engine.transition("DONE")
+
+
+def _held_out_seeds(campaign, work_dir, pol, levels, basis, metric, direction, conf):
+    """``workload.held_out_seeds`` on the winner, AFTER every decision above is
+    fixed (orchestrator/optimize/held_out.py). A measurement failure, or target
+    code that modified the clean tree or left processes during the block,
+    declines the block with that reason; it never changes the report's answer."""
+    from orchestrator.optimize import held_out as _ho
+    from orchestrator.optimize import reaper as _reaper
+
+    try:
+        block = _ho.held_out_seed_block(
+            Path(work_dir), pol=pol, campaign=campaign, levels=levels, basis=basis,
+            metric=metric, direction=direction, runner=_RUNNER.get(),
+            replay=_REANALYSIS.get(),
+            in_sample_gain=(conf or {}).get("gain_over_baseline"))
+    except Exception as exc:  # noqa: BLE001 -- named, recorded, never fatal
+        logger.error("held-out seeds: not measured: %s", exc)
+        return _ho._decline(
+            ((pol.get("workload") or {}).get("held_out_seeds") or []),
+            "measurement_error", f"{type(exc).__name__}: {exc}")
+    if not block or block.get("declined") or _REANALYSIS.get():
+        return block
+    left = _reaper.take_survivors()
+    try:
+        _check_clean_tree_after(campaign, work_dir, "held-out-seed runs")
+    except OptimizationGateFailed as exc:
+        return {**_ho._decline(block["seeds"], "clean_tree_modified", str(exc)),
+                "file": block.get("file")}
+    if left:
+        return {**_ho._decline(block["seeds"], "processes_left_running",
+                               f"{len(left)} target process(es) outlived the runs"),
+                "file": block.get("file")}
+    return block
 
 
 def _report_provenance(work_dir, pol, campaign) -> dict:
@@ -2770,6 +2810,7 @@ def run_stage(
 
     _reaper.take_survivors()          # none from an earlier stage count here
     _reanalysis_token = _REANALYSIS.set(bool(reanalysis))
+    _runner_token = _RUNNER.set(config_runner)
     try:
         return _run_stage_body(
             campaign, work_dir, iteration=iteration, stage=stage,
@@ -2778,6 +2819,7 @@ def run_stage(
             model=model, sdk_runner=sdk_runner, reanalysis=reanalysis, **_ignored)
     finally:
         _REANALYSIS.reset(_reanalysis_token)
+        _RUNNER.reset(_runner_token)
 
 
 def _run_stage_body(
@@ -2928,6 +2970,7 @@ def _run_stage_body(
             timeout=resolve_run_timeout(opt),
             log_dir=Path(work_dir) / "runs" / f"iter-{iteration}" / "failed_runs",
         )
+        _RUNNER.set(config_runner)
 
     if _is_build:
         from orchestrator.optimize import build as build_mod

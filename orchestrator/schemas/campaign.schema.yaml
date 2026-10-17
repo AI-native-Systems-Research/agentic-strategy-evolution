@@ -2006,6 +2006,21 @@ properties:
               derived deterministically from the iteration and the
               pre-registered run-order seed, which is reproducible from the
               artifacts but not chosen by the author.
+          held_out_seeds:
+            type: array
+            minItems: 1
+            items:
+              type: integer
+            description: >
+              Workload seeds NO measured row uses (#321). After the report
+              ladder has fixed the answer, the winner and the
+              ``known_valid_baseline`` are each run once per seed (paired:
+              both arms share it), and ``report.json`` ``held_out_seeds``
+              reports that gain with its own interval, beside the in-sample
+              one. It never feeds certification or any decision. Costs
+              ``2 x len(held_out_seeds)`` runs, shown in the preview, on top
+              of ``design.max_runs``. Must not overlap ``seeds``; needs a
+              ``known_valid_baseline`` and a single objective.
 
       build_checks:
         type: object
