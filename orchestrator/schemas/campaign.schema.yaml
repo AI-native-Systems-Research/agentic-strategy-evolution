@@ -1491,6 +1491,18 @@ properties:
             description: >
               Error budget for the TERMINAL bound, computed from fresh
               finalist measurements only. Default 0.05.
+          delta_constraint:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 0.5
+            description: >
+              Error budget for CONSTRAINT-MODEL EXCLUSION (#321): the level at
+              which a fitted constraint model may drop a candidate it predicts
+              confidently infeasible (Bonferroni over the modelled
+              constraints). Its own term in the stated budget, which becomes
+              ``delta_screen + delta_terminal + delta_constraint`` whenever a
+              constraint with a violating side is declared. Default:
+              ``delta_screen``.
           out_of_hull:
             type: string
             enum: [confirm, end_epoch]

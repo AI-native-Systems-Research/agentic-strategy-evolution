@@ -65,3 +65,50 @@ def test_an_adequate_model_still_seats_predicted_points(tmp_path):
                                parent_dir=tmp_path)
     whys = [f.get("why") or "" for f in _confirmations(r.work_dir)[0]["finalists"]]
     assert any("predict" in w for w in whys), whys
+
+
+# ── item 3: the constraint-exclusion delta is in the stated budget ──────────
+
+_CORNER_OV = {"response": {"primary": {"metric": "m", "direction": "maximize"},
+                           "constraints": [{"metric": "p99_ms", "op": "<=", "value": 90}]},
+              "stages": ["verify", "screen", "confirm"]}
+
+
+def _recommendations(work_dir) -> list[dict]:
+    return [json.loads(p.read_text()) for p in sorted(
+        Path(work_dir).glob("runs/iter-*/recommendation.json"),
+        key=lambda p: int(p.parent.name.split("-")[1]))]
+
+
+def test_constraint_exclusion_is_a_third_union_term(tmp_path):
+    """Before #321 constraint-model exclusion spent delta_screen on a family
+    distinct from E_s while the stated budget was delta_screen +
+    delta_terminal. The term is now registered, used, and summed."""
+    from orchestrator.optimize.synthetic import SURFACES
+
+    ov = dict(_CORNER_OV, policy={"delta_constraint": 0.02})
+    r = run_synthetic_campaign(SURFACES["infeasible_corner_interior"](), seed=1,
+                               parent_dir=tmp_path, campaign_overrides=ov)
+    assert r.report["delta_constraint"] == 0.02
+    eb = r.report["error_budget"]["epochs"][-1]
+    assert eb["delta_constraint"] == 0.02
+    assert abs(eb["spent"] - (r.report["delta_screen"] + r.report["delta_terminal"]
+                              + 0.02)) < 1e-12
+    cm = [e for e in _recommendations(r.work_dir)[-1]["constraint_models"] if e["modelled"]]
+    assert cm and all(abs(e["delta"] - 0.02 / len(cm)) < 1e-12 for e in cm)
+
+
+def test_an_unconstrained_campaign_spends_two_terms(tmp_path):
+    from orchestrator.optimize.synthetic import SURFACES
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
+    assert "delta_constraint" not in r.report
+    eb = r.report["error_budget"]["epochs"][-1]
+    assert eb["spent"] == r.report["delta_screen"] + r.report["delta_terminal"]
+
+
+def test_delta_constraint_is_range_checked():
+    from orchestrator.validate import _rule14_policy_ranges
+
+    assert _rule14_policy_ranges({"policy": {"delta_constraint": 0.7}})
+    assert not _rule14_policy_ranges({"policy": {"delta_constraint": 0.01}})

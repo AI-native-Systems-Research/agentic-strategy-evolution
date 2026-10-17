@@ -2555,6 +2555,14 @@ delta.
 > recommended configuration is within ε of the best configuration in the
 > certificate's scope.
 
+With a declared constraint that has a violating side (`<`, `<=`, `>`, `>=`,
+no `when`), constraint models may drop candidates they predict confidently
+infeasible. Wrongly dropping the true constrained optimum is a third,
+separate risk, so the statement becomes `1 − delta_screen − delta_terminal −
+delta_constraint`. `optimization.policy.delta_constraint` sets it (default:
+`delta_screen`, Bonferroni over the modelled constraints); `report.json`
+records it as `delta_constraint`, and `error_budget` sums it.
+
 The terminal half alone is a WITHIN-SHORTLIST claim. The global claim also
 needs the model half, linked to the winner `w` through the fitted argmax
 `x̂`:
@@ -2694,7 +2702,8 @@ reason. Exit codes:
 - 2: the work dir cannot be reanalysed at all.
 
 `error_budget` gives the family-wise figure. Each epoch spends
-`delta_screen + delta_terminal`, and every epoch after the first was compiled
+`delta_screen + delta_terminal` (+ `delta_constraint` when constraint-model
+exclusion is registered), and every epoch after the first was compiled
 after the earlier epochs' data were seen. `cumulative` is therefore the union
 bound over every epoch on the work dir, and `report.md` prints it beside the
 per-epoch deltas. Read it with three qualifications:

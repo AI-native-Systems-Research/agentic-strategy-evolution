@@ -1248,7 +1248,7 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
         return ["optimization.policy must be a mapping (epsilon, delta_screen, "
                 "delta_terminal, confirm_max_rounds, out_of_hull)."]
     errors: list[str] = []
-    for key in ("delta_screen", "delta_terminal"):
+    for key in ("delta_screen", "delta_terminal", "delta_constraint"):
         if key not in pol:
             continue
         raw = pol[key]

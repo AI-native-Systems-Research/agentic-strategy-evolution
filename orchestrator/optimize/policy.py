@@ -280,6 +280,26 @@ def _multi_objective_block(opt: dict) -> dict | None:
     }
 
 
+def _constraint_exclusion_registered(opt: dict) -> bool:
+    """Can a constraint model exclude candidates in this epoch? True when a
+    declared constraint has a violating side (``<``, ``<=``, ``>``, ``>=``)
+    and no ``when`` guard -- the constraints ``constraint_models`` may model.
+    A pure function of the declaration, so the term is fixed before data."""
+    for c in (opt.get("response") or {}).get("constraints") or ():
+        if isinstance(c, dict) and c.get("op") in ("<", "<=", ">", ">=") \
+                and "when" not in c and "when_not" not in c:
+            return True
+    return False
+
+
+def delta_stated(policy: dict) -> float:
+    """The epoch's stated error budget: ``delta_screen + delta_terminal``,
+    plus ``delta_constraint`` when constraint exclusion is registered."""
+    o = policy["objective"]
+    return (float(o["delta_screen"]) + float(o["delta_terminal"])
+            + float(o.get("delta_constraint") or 0.0))
+
+
 def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1) -> dict:
     opt = campaign.get("optimization") or {}
     factors = parse_factors(opt["factors"])
@@ -594,6 +614,20 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             **(mo or {}),
             "delta_screen": float(pol_cfg.get("delta_screen", 0.05)),
             "delta_terminal": float(pol_cfg.get("delta_terminal", 0.05)),
+            # The THIRD union term (#321 P2 item 3). Constraint-model exclusion
+            # removes a candidate whose one-sided bound sits confidently on the
+            # violating side; the true constrained optimum x* is wrongly
+            # removed with probability <= delta_constraint (Bonferroni over the
+            # modelled constraints; only x*'s own exclusion matters, and x* is
+            # fixed, not data-chosen). That event is distinct from the model
+            # family E_s, so it is its own term in the stated sum. Registered
+            # exactly when a constraint with a violating side is DECLARED --
+            # known at compile time, never after the data -- and charged even
+            # if the constraint later turns out unmodellable (conservative).
+            # Defaults to delta_screen, the level exclusion always used.
+            **({"delta_constraint": float(pol_cfg.get(
+                "delta_constraint", pol_cfg.get("delta_screen", 0.05)))}
+               if _constraint_exclusion_registered(opt) else {}),
         },
         "budget": {"max_runs": design.get("max_runs")},
         "known_valid_baseline": opt.get("known_valid_baseline"),

@@ -741,6 +741,8 @@ def render_report_markdown(work_dir: Path) -> str:
             f"| residual regret, model (first objective `{first}`, at its argmax) | "
             f"{_fmt(report.get('residual_regret_model'))} |",
             f"| delta, screen | {_fmt(report.get('delta_screen'))} |",
+            *([f"| delta, constraint exclusion | {_fmt(report.get('delta_constraint'))} |"]
+              if report.get("delta_constraint") is not None else []),
             f"| delta, front statuses | {_fmt(par.get('delta_front'))} |",
             f"| delta, certification | {_fmt(par.get('delta_certification'))} |",
             "",
@@ -756,6 +758,8 @@ def render_report_markdown(work_dir: Path) -> str:
         f"| residual regret, terminal | {_fmt(report.get('residual_regret_terminal'))} |",
         f"| delta, screen | {_fmt(report.get('delta_screen'))} |",
         f"| delta, terminal | {_fmt(report.get('delta_terminal'))} |",
+        *([f"| delta, constraint exclusion | {_fmt(report.get('delta_constraint'))} |"]
+          if report.get("delta_constraint") is not None else []),
         "",
     ]
     if basis != "model" and par is None:
@@ -861,7 +865,8 @@ def _error_budget_lines(report: dict) -> list[str]:
     if not isinstance(eb, dict):
         return []
     rows = [f"| {e.get('epoch')} | {_fmt(e.get('delta_screen'))} | "
-            f"{_fmt(e.get('delta_terminal'))} | {_fmt(e.get('spent'))} | "
+            f"{_fmt(e.get('delta_terminal'))} | {_fmt(e.get('delta_constraint') or 0.0)} | "
+            f"{_fmt(e.get('spent'))} | "
             f"{'yes' if e.get('compiled_after_data') else 'no'} |"
             for e in eb.get("epochs") or []]
     cum = _fmt(eb.get("cumulative"))
@@ -870,8 +875,8 @@ def _error_budget_lines(report: dict) -> list[str]:
     return [
         "## Error budget across epochs",
         "",
-        "| epoch | delta, screen | delta, terminal | spent | compiled after earlier data |",
-        "|---|---|---|---|---|",
+        "| epoch | delta, screen | delta, terminal | delta, constraint | spent | compiled after earlier data |",
+        "|---|---|---|---|---|---|",
         *rows,
         "",
         f"**Cumulative (union bound over epochs): {cum}.** Certification above is "

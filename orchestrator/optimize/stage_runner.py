@@ -2469,6 +2469,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         "epsilon_reference": (conf.get("epsilon_reference") if conf else None),
         "delta_screen": pol["objective"]["delta_screen"],
         "delta_terminal": pol["objective"]["delta_terminal"],
+        **({"delta_constraint": pol["objective"]["delta_constraint"]}
+           if "delta_constraint" in pol["objective"] else {}),
         "certified": bool(conf and conf.get("certified")),
         # WHY `certified` is false, carried up from confirmation.json so the
         # report never states an unexplained boolean next to bounds that look
@@ -4687,6 +4689,10 @@ def _run_stage_body(
     # entirely on the violating side; see `constraint_models` for the rule and
     # for every reason a constraint falls back to measurement only.
     delta_s = pol["objective"]["delta_screen"]
+    # The level constraint exclusion is taken at: its own union term
+    # (policy objective.delta_constraint, #321 item 3), delta_screen when the
+    # policy predates it.
+    delta_c = float(pol["objective"].get("delta_constraint", delta_s))
     cmods: list = []
     if _MODEL_CONSTRAINTS and (response_spec.get("constraints") or []):
         cmods = cmodels.fit_constraint_models(
@@ -4735,7 +4741,7 @@ def _run_stage_body(
     scored = decide.ranked(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded, top=None,
-        constraint_models=cmods, constraint_delta=delta_s,
+        constraint_models=cmods, constraint_delta=delta_c,
         objectives=_search_objectives, **_search,
     )
     candidate_space = scored.space
@@ -4835,7 +4841,7 @@ def _run_stage_body(
         })
     if _SUPPORTED_FEASIBLE_SEAT and _declared:
         supported_record = _supported_feasible_record(
-            work_dir, factors, _declared, cmods, scored, delta=delta_s,
+            work_dir, factors, _declared, cmods, scored, delta=delta_c,
             pool_size=max(5, _shortlist * 2),
         )
     # ── how much doubt remains: R_delta(x-hat) (spec §3.5, paper eq. 2) ────
@@ -4885,7 +4891,7 @@ def _run_stage_body(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded,
         epsilon_pct=float((pol["objective"]["epsilon"] or {}).get("pct", 2.0)),
-        constraint_models=cmods, constraint_delta=delta_s,
+        constraint_models=cmods, constraint_delta=delta_c,
         # The stage's own primary argmax (`scored` is sorted by the primary):
         # above the cap it came from the search that also climbed every
         # objective, so it can beat what alias_consequential's own search finds.
@@ -4897,7 +4903,7 @@ def _run_stage_body(
     constraint_record = _constraint_models_record(
         cmods,
         scored.unfiltered if any(m.modelled for m in cmods) else [],
-        rec, delta=delta_s,
+        rec, delta=delta_c,
         applied=(None if candidate_space.exhaustive
                  else bool(candidate_space.constraint_models_applied)),
         evaluated=None if candidate_space.exhaustive else candidate_space.evaluated,
@@ -6771,6 +6777,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         _rec_for_bias, fin, status, ok, best, bound, eps, delta_t=delta_t,
         skip=model_inadequate or adequacy_unknown,
         delta_s=float(pol["objective"]["delta_screen"]),
+        delta_c=pol["objective"].get("delta_constraint"),
         xhat_measured_infeasible=bool(_rec_for_bias.get("levels")) and
         _measured_infeasible_contains(work_dir, dict(_rec_for_bias["levels"])))
     certified = (
@@ -7494,6 +7501,7 @@ def _certificate_scope(rec: dict, boundary: dict | None) -> dict:
 
 def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
                   bound, eps, *, delta_t: float, delta_s: float, skip: bool,
+                  delta_c: float | None = None,
                   xhat_measured_infeasible: bool = False) -> tuple[dict | None, list[str]]:
     """``G = R_model_out + R_terminal`` and why it cannot certify (WP-A A1).
 
@@ -7515,11 +7523,13 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
            "residual_regret_terminal": bound.value,
            "x_hat": dict(xhat), "x_hat_key": None,
            "delta_screen": delta_s, "delta_terminal_per_look": delta_t,
+           **({"delta_constraint": delta_c} if delta_c is not None else {}),
            "rule": "G = R_model_outside + R_terminal, R_model_outside the model "
                    "bound over the candidates OUTSIDE the measured shortlist; "
                    "certified needs G <= epsilon and the fitted argmax measured "
                    "admissibly in this round. Pr(certified and gap > epsilon) "
-                   "<= delta_screen + delta_terminal under the stated "
+                   "<= delta_screen + delta_terminal (+ delta_constraint when "
+                   "constraint exclusion is registered) under the stated "
                    "assumptions."}
     if not rec or not isinstance(r_model, (int, float)):
         return out, ["model_bound_not_computable"]

@@ -183,13 +183,34 @@ a valid claim at no extra runs, so the extra block is deferred (§7).
 |---|---|---|
 | stages within an epoch | δ_screen | one simultaneous model family at the latest fitting stage (§2). Earlier stages' decisions (screen drop, foldover, curvature routing) select the region but spend no stated δ: their errors are covered only through M1 (§7). |
 | confirm rounds within an epoch | δ_terminal | Bonferroni over the L registered looks (§3) |
-| one epoch's certificate | δ_screen + δ_terminal | union of the two families (§2) |
+| constraint exclusion within an epoch | δ_constraint | Bonferroni over the modelled constraints, only at `x*` (§6) |
+| one epoch's certificate | δ_screen + δ_terminal (+ δ_constraint) | union of the families (§2, §6) |
 | epochs | Σ_e (δ_s,e + δ_t,e) | recorded by WP-C in `report.json` `error_budget` (`cumulative`, union bound over epochs). Each epoch's certificate is judged at its own deltas. |
 
-Constraint-model exclusions use δ_screen as well, via
-`constraint_models.per_constraint_delta`. They hold on the same event only
-for `x*` itself, as `constraint_models` documents. This is a third union
-term in the strict sense, and it is not yet added to the stated budget (§7).
+**The constraint-exclusion term (#321 P2 item 3, fixed).** Constraint-model
+exclusion removes a candidate when, for some modelled constraint, its
+one-sided bound lies entirely on the violating side
+(`constraint_models.confidently_infeasible`). Let `E_c` be the event that the
+TRUE constrained optimum `x*` is not removed. `x*` is a fixed point, not a
+data-chosen one, and it is feasible, so for each of the `C` modelled
+constraints a removal needs that constraint's one-sided bound at `x*` to fail:
+`Pr(E_c^c) ≤ C · δ_c/C = δ_c` (Bonferroni over constraints; no division by
+the candidate count is needed, since removing a truly infeasible candidate
+costs nothing). `E_c` is not implied by `E_s` (a different response, a
+different fit), so the statement in §1 holds on `E_s ∩ E_t ∩ E_c`:
+
+> Pr( certified and f(x*) − f(w) > ε ) ≤ δ_screen + δ_terminal + δ_constraint.
+
+`δ_constraint` is `policy.objective.delta_constraint`
+(`optimization.policy.delta_constraint`, default δ_screen, the level the
+exclusion always used). It is registered at compile time exactly when a
+declared constraint has a violating side and no `when` guard, so it is fixed
+before any data; it is charged even when the constraint later proves
+unmodellable (conservative). `report.json` carries `delta_constraint`, and
+`error_budget.epochs[].spent` includes it. A campaign without such a
+constraint spends the two terms as before (byte-identical policy). Caveat:
+like E_s, E_c rests on the constraint model's response class (M1) and on its
+pure error (M3).
 
 ## 7. Documented limits (deferred items and open questions)
 
@@ -230,7 +251,7 @@ term in the strict sense, and it is not yet added to the stated budget (§7).
    replicate passes", not a mean or chance constraint.
 3. **M1 is checked, not proved.** The global bound inherits the response
    class. WP-B's checks have local power only (its limits 1-12).
-4. **The constraint-exclusion δ** is not in the stated sum (§6).
+4. **The constraint-exclusion δ** is in the stated sum since #321 (§6).
 5. **Seat flips for held factors** are not implemented (§4). The scope is
    recorded instead.
 6. **No post-selection validation block** (§5). The gain estimate is biased,

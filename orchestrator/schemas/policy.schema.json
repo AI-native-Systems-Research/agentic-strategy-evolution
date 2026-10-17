@@ -26,6 +26,8 @@
           {"required": ["pct"], "properties": {"pct": {"type": "number", "minimum": 0}}, "additionalProperties": false}]},
         "delta_screen": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
         "delta_terminal": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
+        "delta_constraint": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5,
+          "description": "#321 P2 item 3: the third union term of the stated budget -- the level at which constraint models exclude candidates (Bonferroni over the modelled constraints). Present exactly when a declared constraint has a violating side and no when-guard; defaults to delta_screen."},
         "objectives": {
           "description": "Multi-objective campaigns only: every objective with its own indifference width. metric/direction above are the FIRST objective's.",
           "type": "array", "minItems": 2,

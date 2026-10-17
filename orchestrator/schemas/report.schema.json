@@ -88,7 +88,7 @@
         "cumulative",
         "cumulative_is_lower_bound"
       ],
-      "description": "The cross-epoch error budget (audit Q7): each epoch spends delta_screen + delta_terminal, and epochs after the first were compiled after earlier epochs' data were seen, so `cumulative` is the union (Bonferroni) bound on the probability that ANY epoch's decision is wrong. Informational: `certified` is still judged per epoch at that epoch's deltas.",
+      "description": "The cross-epoch error budget (audit Q7): each epoch spends delta_screen + delta_terminal (+ delta_constraint when constraint-model exclusion is registered, #321), and epochs after the first were compiled after earlier epochs' data were seen, so `cumulative` is the union (Bonferroni) bound on the probability that ANY epoch's decision is wrong. Informational: `certified` is still judged per epoch at that epoch's deltas.",
       "properties": {
         "epochs": {
           "type": "array",
@@ -161,6 +161,12 @@
       "exclusiveMinimum": 0,
       "maximum": 0.5,
       "description": "The screening risk from the compiled policy's objective. Reported next to residual_regret_model because a bound without its delta is not a bound. The two deltas are what Pr(wrong global decision) <= delta_screen + delta_terminal sums, and keeping them apart here is the report-level half of the 3.5 obligation."
+    },
+    "delta_constraint": {
+      "type": "number",
+      "exclusiveMinimum": 0,
+      "maximum": 0.5,
+      "description": "#321 P2 item 3: the constraint-exclusion risk (policy objective.delta_constraint), present when constraint-model exclusion is registered. A certificate's stated probability is delta_screen + delta_terminal + delta_constraint: the true constrained optimum is wrongly excluded by a constraint model with probability <= delta_constraint, an event distinct from the model family's."
     },
     "delta_terminal": {
       "type": "number",
