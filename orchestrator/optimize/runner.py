@@ -1153,6 +1153,69 @@ class fresh_pycache:
         shutil.rmtree(self.dir, ignore_errors=True)
 
 
+#: Copy-back limits for a row's run dir (round 5, item 1).
+KEEP_MAX_BYTES = 64 << 20
+KEEP_MAX_FILES = 2000
+
+
+def _keep_run_dir(rd: Path, keep_root: Path) -> Path:
+    """Copy what the adapter left in its run dir into a FRESH destination
+    (``row-K.attempt-N``, never reused), REGULAR FILES ONLY: a symlink or any
+    other non-regular entry is skipped and recorded, never followed or written
+    through, so target code cannot steer the copy into the work_dir. A size and
+    file-count cap is applied and any truncation is recorded in
+    ``_nous_keep.json`` beside the copy."""
+    import json
+    import os
+    import stat
+
+    keep_root.mkdir(parents=True, exist_ok=True)
+    n = 1
+    while True:
+        dest = keep_root / f"{rd.name}.attempt-{n}"
+        try:
+            dest.mkdir()
+            break
+        except FileExistsError:
+            n += 1
+    skipped, truncated, total, count = [], [], 0, 0
+    for dirpath, dirnames, filenames in os.walk(rd, followlinks=False):
+        rel_dir = Path(dirpath).relative_to(rd)
+        for d in list(dirnames):
+            if (Path(dirpath) / d).is_symlink():
+                skipped.append({"path": str(rel_dir / d), "why": "symlink"})
+                dirnames.remove(d)
+        for name in filenames:
+            src = Path(dirpath) / name
+            rel = rel_dir / name
+            st = os.lstat(src)
+            if stat.S_ISLNK(st.st_mode):
+                skipped.append({"path": str(rel), "why": "symlink"})
+                continue
+            if not stat.S_ISREG(st.st_mode):
+                skipped.append({"path": str(rel), "why": "not a regular file"})
+                continue
+            if count >= KEEP_MAX_FILES or total + st.st_size > KEEP_MAX_BYTES:
+                truncated.append(str(rel))
+                continue
+            out = dest / rel
+            out.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "wb") as fh, open(src, "rb") as fin:
+                while True:
+                    chunk = fin.read(1 << 20)
+                    if not chunk:
+                        break
+                    fh.write(chunk)
+            total += st.st_size
+            count += 1
+    if skipped or truncated:
+        (dest / "_nous_keep.json").write_text(json.dumps(
+            {"skipped": skipped, "truncated": truncated,
+             "limits": {"bytes": KEEP_MAX_BYTES, "files": KEEP_MAX_FILES}}, indent=2))
+    return dest
+
+
 def run_test_command(
     command: str, *, cwd: Path, timeout: int = DEFAULT_TEST_TIMEOUT_SEC,
     log_path: Path | None = None,
@@ -1743,16 +1806,15 @@ def make_config_runner(
             try:
                 rd.rmdir()
             except OSError:
-                if keep_root is not None:
-                    import shutil
+                import shutil
 
-                    try:
-                        shutil.copytree(rd, keep_root / rd.name, symlinks=True,
-                                        dirs_exist_ok=True)
-                    except OSError as exc:
-                        logger.warning("could not keep run dir %s: %s", rd, exc)
-                    finally:
-                        shutil.rmtree(rd, ignore_errors=True)
+                try:
+                    if keep_root is not None:
+                        _keep_run_dir(rd, keep_root)
+                except OSError as exc:
+                    logger.warning("could not keep run dir %s: %s", rd, exc)
+                finally:
+                    shutil.rmtree(rd, ignore_errors=True)
             # The per-runner root holds only row dirs; drop it once empty.
             try:
                 run_root.rmdir()
