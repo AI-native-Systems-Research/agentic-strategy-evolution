@@ -2622,14 +2622,15 @@ searched, so most grid points are never scored. Under the simultaneous
 constant every grid point is covered anyway, and `certificate.region_bound`
 bounds the max over the unevaluated ones by branch and bound over sub-boxes,
 using interval arithmetic (Moore 1966) on the model columns. It is exact when
-it converges, and a valid but looser bound when it stops at
-`REGION_NODE_BUDGET` (60,000 boxes). The result is folded into
+it converges, and a valid but looser bound when it stops at its box budget
+(`REGION_NODE_BUDGET` = 60,000, capped at `REGION_WORK_BUDGET / p²` because a
+box costs O(p²)). The result is folded into
 `residual_regret_model` and the profile's `rest`, and recorded under
 `critical.unevaluated` (value, converged, nodes). Measured with the cap forced
 to 1 (every fitting stage searched; WP-B oracle, 288 campaigns): 0 → 77
-certificates, 0 false. Cost: up to about 60 s of extra CPU per fitting stage at
-8 knobs (9^8 grid; it does not converge there), well under a second at 4
-knobs. Many-knob campaigns are no longer vetoed. They still usually withhold
+certificates, 0 false. Cost: well under a second at 4 knobs, about 5 s at 6 knobs
+(converges), and up to about 10 s per fitting stage at 8-16 knobs, where it
+does not converge and the bound is the valid looser one. Many-knob campaigns are no longer vetoed. They still usually withhold
 on width (`model_bound_above_epsilon`; `sparse_knobs` 5-8: R_model 0.76 against
 ε 0.50 at 3 pure-error df). The remedy is more centre points.
 - `model_recommendation_not_compared` / `model_recommendation_infeasible`:

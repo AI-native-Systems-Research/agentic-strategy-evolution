@@ -284,6 +284,14 @@ def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
 #: recorded in provenance's analysis constants like CANDIDATE_CAP.
 REGION_NODE_BUDGET = 60_000
 
+#: Each box costs O(p^2) (the interval quadratic form), so the box budget
+#: shrinks with the model size: ``min(REGION_NODE_BUDGET, REGION_WORK_BUDGET /
+#: p^2)``. 2e8 keeps every fit up to p = 57 at the full 60,000 boxes (k = 6
+#: knobs converge there) and holds a 16-knob refine (p = 152, measured 56-73 s
+#: CPU per stage at 60,000 boxes, never converging) to ~8,700 boxes / ~9 s.
+#: The bound is valid at any budget; a smaller one is only looser.
+REGION_WORK_BUDGET = 200_000_000
+
 
 def region_bound(fit: Fit, factors, fitted_ids, xhat: Candidate, *, crit: float,
                  direction: str, skip_coded=(), node_budget: int = REGION_NODE_BUDGET) -> dict:
@@ -311,7 +319,7 @@ def region_bound(fit: Fit, factors, fitted_ids, xhat: Candidate, *, crit: float,
     largest open bound is at or below the best exact singleton (converged:
     the max over the unevaluated grid) or after ``node_budget`` boxes; the
     bound is then the largest open box's, still a valid upper bound, only
-    looser. ``V`` is ``s^2 (X'X)^-1`` when the fit carries the covariance,
+    looser (``node_budget`` is capped at ``REGION_WORK_BUDGET / p^2``). ``V`` is ``s^2 (X'X)^-1`` when the fit carries the covariance,
     else ``diag(se_j^2)`` -- the per-term arithmetic the enumerated bound uses
     for two-level fits (exact for their orthogonal columns).
 
@@ -394,6 +402,7 @@ def region_bound(fit: Fit, factors, fitted_ids, xhat: Candidate, *, crit: float,
         return tuple(sorted((k, round(float(v), 12)) for k, v in out.items()))
 
     root = tuple(tuple(range(len(a))) for a in axes)
+    node_budget = max(1, min(int(node_budget), REGION_WORK_BUDGET // max(1, p * p)))
     heap = [(-upper(root), 0, root)]
     best, nodes, tick = -math.inf, 0, 1
     while heap and nodes < node_budget:

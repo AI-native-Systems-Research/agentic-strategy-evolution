@@ -86,14 +86,21 @@ def test_smooth_surfaces_keep_their_power(name, tmp_path):
 def test_saddle_withholds_on_the_model_bound(tmp_path):
     """WP-A A1: on saddle the terminal bound alone certified 6/8, while the
     model bound over the unshortlisted candidates exceeded epsilon on every
-    one of them. Now withheld, named, and never wrong."""
+    one of them. Now withheld, named, and never wrong. Since #321 H3 (the
+    Scheffe constant, 5.3 against Bonferroni's 6.7-12 at df 3) the model half
+    is narrow enough to certify on one seed (6: {A: 16, B: 11}, which TIES
+    the optimum, gap 0.0); every other seed is withheld on the model half."""
+    certified = 0
     for seed in SEEDS:
         r = run_synthetic_campaign(SURFACES["saddle"](), seed=seed,
                                    parent_dir=tmp_path / str(seed))
         assert not _false_cert(r)
         w = r.report.get("certification_withheld") or []
-        assert not r.report.get("certified")
+        if r.report.get("certified"):
+            certified += 1
+            continue
         assert "model_bound_above_epsilon" in w or "model_inadequate" in w, w
+    assert certified <= 2
 
 
 def test_validation_rows_are_registered_held_out_and_reconciled(tmp_path):
