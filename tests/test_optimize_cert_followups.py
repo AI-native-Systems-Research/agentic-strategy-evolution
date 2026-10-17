@@ -279,3 +279,63 @@ def test_a_front_certificate_states_its_model_half(tmp_path):
             assert all(c["used"] == "scheffe" for c in mh["critical"].values())
         assert not r["false_certified"]
     assert n >= 1
+
+
+# ── item 2: the post-selection validation block ─────────────────────────────
+
+_VAL_OV = {"known_valid_baseline": {"A": 2, "B": 2},
+           "design": {"screen": {"resolution": 5, "center_points": 4},
+                      "refine": {"kind": "central_composite", "center_points": 4},
+                      "confirm": {"replicates": 3}, "validate": {"replicates": 4}}}
+
+
+def test_the_validation_block_estimates_the_gain_without_the_winners_curse(tmp_path):
+    """Before #321 the reported value and the gain point estimate came from
+    the replicates that SELECTED the winner (biased upward; spec section 5
+    measured +0.19). The block re-measures winner and baseline on fresh
+    blocks drawn after the winner is fixed: its intervals cover the true
+    gain at about the nominal level, and its value is the fresh mean."""
+    import dataclasses
+
+    from orchestrator.optimize.synthetic import SURFACES
+
+    s = dataclasses.replace(SURFACES["bowl"](), noise_sd=0.4)
+    covered = n = 0
+    for seed in range(1, 9):
+        r = run_synthetic_campaign(s, seed=seed, parent_dir=tmp_path / str(seed),
+                                   campaign_overrides=_VAL_OV, max_iterations=10)
+        assert "validate" in r.path
+        v = r.report["post_selection_validation"]
+        if v.get("skipped"):
+            continue
+        g = v["gain"]
+        assert g["method"] == "welch_t"
+        true = s.fn(r.recommendation) - s.fn({"A": 2, "B": 2})
+        n += 1
+        covered += g["low"] <= true <= g["high"]
+        assert r.report["recommendation"]["value"] == v["value"]
+        assert v["epsilon_reference"]["source"] == "validation_winner"
+        runs = [json.loads(ln) for p in r.work_dir.glob("runs/iter-*/runs.jsonl")
+                for ln in p.read_text().splitlines() if ln.strip()]
+        val_iter = [p.parent for p in r.work_dir.glob("runs/iter-*/validation.json")][0]
+        assert len((val_iter / "runs.jsonl").read_text().splitlines()) == 8   # 4 x 2
+    assert n >= 6 and covered >= n - 1
+
+
+def test_the_validation_block_needs_a_baseline():
+    from orchestrator.validate import _rule31_validate_block
+
+    assert _rule31_validate_block({"design": {"validate": {"replicates": 3}}})
+    assert not _rule31_validate_block({"design": {"validate": {"replicates": 3}},
+                                       "known_valid_baseline": {"A": 2}})
+
+
+def test_the_preview_counts_replicates_times_two():
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.preview import build_preview
+    from orchestrator.optimize.synthetic import SURFACES
+
+    c = synthetic_campaign(SURFACES["bowl"](), **_VAL_OV)
+    pv = build_preview(c, noise_sd=None, mean=None, run_secs=None)
+    st = next(x for x in pv.stages if x.stage == "validate")
+    assert st.runs == 8 and not st.conditional

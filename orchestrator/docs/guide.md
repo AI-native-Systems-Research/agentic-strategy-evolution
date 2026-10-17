@@ -2675,6 +2675,32 @@ Measured over the 8 Pareto oracle surfaces, seeds 1-8: certificates 37 → 29,
 point sits on the branch refine did not fit, so nothing bounds the other
 slice), `pareto_noisy` 1 → 0 and `pareto_three` 6 → 5.
 
+**Post-selection validation (#321, opt-in).** Declare
+`design.validate: {replicates: r}` with a `known_valid_baseline` in a
+single-objective campaign. After confirm picks its winner, a registered
+`validate` state measures the winner and the baseline on `r` fresh paired
+blocks. That costs `r × 2` runs, which the `--liveness` preview shows. The
+winner is fixed before these rows exist, so `report.json`
+`post_selection_validation` gives unbiased numbers:
+- `value`: the winner's fresh mean, also used as `recommendation.value`;
+- `gain`: a paired t on CRN differences under `workload.seed_env`, Welch
+  otherwise, two-sided at `delta_terminal`;
+- `epsilon_reference`: the fresh winner mean.
+
+Confirm's selection-biased numbers stay beside them (`selection_estimate`,
+`selection_value`). The block decides nothing. `certified` is still
+confirm's, at confirm's ε (`epsilon_confirm`).
+
+Why opt-in, not the default: the spec already gives a selection-proof
+INTERVAL at no extra runs (the simultaneous confirm interval). The block buys
+an unbiased POINT estimate and ε reference for `2r` runs, which an author
+should choose knowingly. It is skipped, with the reason recorded, when there
+is no winner, the winner is the baseline, or fewer than `2r` runs remain.
+Measured on `bowl` at noise 0.4, `r = 4`, seeds 1-8: the fresh intervals cover
+the true gain in at least 7 of 8 campaigns. A zero-spread paired difference
+(a deterministic or perfectly CRN-cancelled target) reports `method: none`,
+never a zero-width interval.
+
 **The certificate's scope** is in `report.json` `certificate_scope`. Refine
 holds every non-refinable factor (choice, two-level) at the screen's best
 level. A certificate after refine therefore covers that SLICE only:
@@ -2820,8 +2846,9 @@ What a certificate does NOT cover (spec
    (no numpy).
 5. **The refill look is charged whether or not it is taken.** The per-look
    level must be fixed before the data decide how many looks there are.
-6. **The baseline's gain point estimate is selection-biased.** The interval
-   is not. Report the interval.
+6. **The baseline's gain point estimate is selection-biased** unless you
+   declare the post-selection validation block (below). The confirm interval
+   is not biased. Report the interval, or the block's estimate.
 7. **The fitted argmax is kept on every confirm round** (it links the model
    half to the winner), at a cost of up to `replicates` runs per round.
 8. **A baseline that measures inadmissible** vetoes the round under its own

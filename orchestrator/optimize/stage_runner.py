@@ -374,6 +374,12 @@ def resolve_max_parallel(opt: dict | None, *, stage_name: str,
     ).width
 
 
+#: States whose rows are REPLICATE BLOCKS of named configurations rather than
+#: a design over the factor space: no held-fixed merge, workload seeds keyed per
+#: replicate (CRN), never reused across attempts, scheduled as blocks.
+_REPLICATE_STATES = frozenset({Stage.CONFIRM.value, Stage.VALIDATE.value})
+
+
 def resolve_concurrency(opt: dict | None, *, stage_name: str, measured=None):
     """``resolve_max_parallel``'s width TOGETHER WITH the reason for it.
 
@@ -384,8 +390,9 @@ def resolve_concurrency(opt: dict | None, *, stage_name: str, measured=None):
     projects it to an int for the call sites that only schedule.
     """
     return concurrency.resolve(
-        opt, stage_name=stage_name, confirm_stage=Stage.CONFIRM.value,
-        measured=measured,
+        opt, stage_name=(Stage.CONFIRM.value if stage_name == Stage.VALIDATE.value
+                         else stage_name),
+        confirm_stage=Stage.CONFIRM.value, measured=measured,
     )
 
 
@@ -2334,6 +2341,13 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     elif conf and conf.get("best") and mo_front is None:
         basis = "certified" if conf.get("certified") else "terminal_best"
         levels, value = dict(conf.get("confirmed_at_levels") or {}), conf.get("mean")
+        # #321 item 2: when a post-selection validation block measured this
+        # winner, its value is the fresh (unbiased) mean, not the mean on the
+        # replicates that selected it.
+        _val = _latest_validation(work_dir)
+        if (_val and _val.get("value") is not None
+                and _same_levels(dict(_val.get("winner") or {}), levels)):
+            value = _val["value"]
     elif (
         rec.get("levels")
         # THE `model` RUNG IS UNAVAILABLE ONCE A SEMANTIC EXCEPTION ENDED THE
@@ -2513,6 +2527,15 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         "certificate_scope": _certificate_scope(_epoch_rec, boundary_block),
         **({"gain_over_baseline": dict(conf["gain_over_baseline"])}
            if conf and conf.get("gain_over_baseline") else {}),
+        # #321 item 2: the post-selection validation block, when registered.
+        **({"post_selection_validation": {
+                k: v for k, v in (_latest_validation(work_dir) or {}).items()
+                if k in ("winner", "baseline", "replicates", "value", "gain",
+                         "selection_estimate", "selection_value",
+                         "epsilon_reference", "epsilon", "epsilon_confirm",
+                         "delta", "paired", "skipped", "status")}}
+           if "validate" in (pol.get("states") or {})
+           and _latest_validation(work_dir) is not None else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
         # What this report rests on (audit Q7): code version, input hashes,
@@ -3329,6 +3352,11 @@ def _run_stage_body(
         rows, payload = _confirm_rows(
             pol, work_dir, factors, primary, direction, iteration,
         )
+    elif stage_name == Stage.VALIDATE.value:
+        rows, payload = _validate_rows(pol, work_dir, factors, iteration)
+        if not rows:
+            return _skip_validate(engine, campaign, work_dir, iter_dir, iteration,
+                                  pol, payload)
     elif stage_name == Stage.FOLDOVER.value:
         # ── the registered foldover: a real block of runs, spent to resolve
         # ── an alias the screen showed could change the answer.
@@ -3456,7 +3484,7 @@ def _run_stage_body(
     # coincidence would leave the two facts free to drift apart, so say it.
     designed = set(_design_factor_ids(factors, design_cfg, stage_name))
     held = [f for f in factors if f.id not in designed]
-    if held and rows and stage_name != Stage.CONFIRM.value:
+    if held and rows and stage_name not in _REPLICATE_STATES:
         import dataclasses
 
         prev_rec = (
@@ -3635,7 +3663,7 @@ def _run_stage_body(
     # the artifact from the first attempt.
     rows, payload = _assign_workload_seeds(
         rows, payload, pol,
-        iteration=iteration, confirm=stage_name == Stage.CONFIRM.value,
+        iteration=iteration, confirm=stage_name in _REPLICATE_STATES,
     )
     if stage_reuse and "workload_seeds" in payload:
         # A reused row is the screen's measurement, under the SCREEN's
@@ -3677,7 +3705,7 @@ def _run_stage_body(
     # `shortlist_replicate` on both sides as well; this is the same rule stated
     # at the call site so a reader of the epoch's flow sees it here too.
     _reuse_plan = None
-    if (_reuse_enabled(opt) and stage_name != Stage.CONFIRM.value
+    if (_reuse_enabled(opt) and stage_name not in _REPLICATE_STATES
             and _enter_phase_pending(engine, work_dir)):
         _prior = _prior_attempt_matrix(work_dir, iteration, stage_name)
         if _prior is not None:
@@ -3723,7 +3751,7 @@ def _run_stage_body(
     # `load_independent` declaration needs no probe at all and does not enter
     # here; `concurrency.resolve` honours it directly.
     measured = None
-    if (stage_name != Stage.CONFIRM.value
+    if (stage_name not in _REPLICATE_STATES
             and concurrency.contention_probe_levels(opt)
             and concurrency.declared_width(opt) > 1
             and config_runner is not None):
@@ -4103,6 +4131,10 @@ def _run_stage_body(
         if fit_blocks:
             fit_blocks = [fit_blocks[i] for i in _ki]
 
+    if stage_name == Stage.VALIDATE.value:
+        return _finish_validate(engine, campaign, iteration, iter_dir, work_dir,
+                                rows, outcomes, ys, factors, test_results, pol,
+                                payload)
     if stage_name == Stage.CONFIRM.value:
         # Confirm does NOT fit a model. It compares a SHORTLIST of finalists on
         # fresh replicates, so there is no coded design to estimate effects
@@ -6237,6 +6269,250 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
          for j, (lv, w) in enumerate(zip(finalists, provenance))],
     )
     return rows, payload
+
+
+# ── #321 item 2: the post-selection validation block ────────────────────────
+
+
+def _validate_rows(pol: dict, work_dir: Path, factors, iteration: int):
+    """``validate``'s rows: the confirm WINNER and the ``known_valid_baseline``,
+    ``replicates`` fresh blocks of two (every block measures both, in a
+    randomized order), sharing the block's workload seed (CRN under
+    ``workload.seed_env``).
+
+    The winner is read from this epoch's latest ``confirmation.json`` and is
+    FIXED before any of these rows exists, so the replicates are independent of
+    the selection: their mean difference is an unbiased estimate of the
+    winner's gain, and the winner's mean an unbiased estimate of its value
+    (no winner's curse; Hsu 1996 ch. 1 on why the selecting data cannot give
+    one). Empty rows (and the reason in the payload) when there is no winner,
+    the winner IS the baseline, or the block is unaffordable; ``run_stage``
+    then closes the iteration without measuring.
+    """
+    from orchestrator.optimize.matrix import ConfigRow, randomized_run_order, render_apply
+
+    cfg = (pol["states"]["validate"] or {})["design"]
+    r = max(1, int(cfg.get("replicates", 3)))
+    conf = _latest_confirmation(work_dir) or {}
+    win = dict(conf.get("confirmed_at_levels") or {}) if conf.get("best") else {}
+    base = dict(pol.get("known_valid_baseline") or {})
+    why = None
+    if not win:
+        why = "confirm produced no admissible winner"
+    elif _same_levels(win, base):
+        why = "the confirm winner IS the known_valid_baseline: there is no gain to validate"
+    elif _budget_remaining(pol, work_dir) < 2 * r:
+        why = (f"the block needs {2 * r} run(s) and only "
+               f"{_budget_remaining(pol, work_dir)} remain")
+    payload = {"factor_ids": [f.id for f in factors], "kind": "validation_replicate",
+               "resolution": None, "generators": [], "aliases": [],
+               "run_order": [], "run_order_seed": iteration, "round": 1,
+               "finalists": [{"key": "w", "levels": win, "why": "confirm winner"},
+                             {"key": "b", "levels": base, "why": "known_valid_baseline"}],
+               "rows": []}
+    if why:
+        payload["skipped"] = why
+        return [], payload
+    rows, idx = [], 0
+    for i in range(r):
+        for j in randomized_run_order(2, seed=iteration * 1000 + 500 + i):
+            lv = (win, base)[j]
+            rows.append(ConfigRow(row_index=idx, levels=dict(lv), role="confirm",
+                                  replicate=i,
+                                  apply={**render_apply(factors, lv), "finalist": j}))
+            idx += 1
+    payload["run_order"] = list(range(len(rows)))
+    payload["rows"] = [{"row_index": x.row_index, "levels": dict(x.levels),
+                        "role": x.role, "replicate": x.replicate, "apply": x.apply}
+                       for x in rows]
+    return rows, payload
+
+
+def _validation_summary(pol, conf: dict, w: list[float], b: list[float], *,
+                        paired: bool, status: dict, eps_spec: dict,
+                        direction: str) -> dict:
+    """``validation.json``: the unbiased value, gain and epsilon reference.
+
+    Gain ``g = f(w) - f(b)``, signed in the campaign's direction. Paired t on
+    the CRN differences when every block measured both (equal n) and the
+    campaign shares seeds, Welch otherwise; two-sided at ``delta_terminal``.
+    The winner was fixed BEFORE these replicates, so this is an ordinary
+    (not simultaneous) interval -- no selection to correct for. The epsilon
+    reference is the winner's fresh mean, and the epsilon it implies is
+    recorded beside confirm's (selection-biased) one; certification is
+    NOT re-decided (it was confirm's, at its own level).
+    """
+    from statistics import mean, variance
+
+    from scipy.stats import t as student_t
+
+    delta = float(pol["objective"]["delta_terminal"])
+    sign = 1.0 if direction != "minimize" else -1.0
+    out = {"winner": dict(conf.get("confirmed_at_levels") or {}),
+           "baseline": dict(pol.get("known_valid_baseline") or {}),
+           "replicates": {"winner": len(w), "baseline": len(b)},
+           "status": dict(status), "delta": delta,
+           "value": mean(w) if w else None,
+           "gain": None,
+           "selection_estimate": ((conf.get("gain_over_baseline") or {}).get("estimate")),
+           "selection_value": conf.get("mean"),
+           "epsilon_reference": ({"source": "validation_winner", "value": mean(w)}
+                                 if w else {"source": "none", "value": None}),
+           "epsilon": (certificate.resolve_epsilon(eps_spec, mean(w))
+                       if w and "abs" not in eps_spec else
+                       (float(eps_spec["abs"]) if "abs" in eps_spec else None)),
+           "epsilon_confirm": conf.get("epsilon"),
+           "accounting": policy_mod.VALIDATE_ACCOUNTING}
+    if any(v != "ok" for v in status.values()):
+        out["gain"] = {"estimate": None, "low": None, "high": None, "method": "none",
+                       "detail": "a configuration produced an inadmissible or "
+                                 "unusable replicate in the validation block"}
+        return out
+    if len(w) < 2 or len(b) < 2:
+        out["gain"] = {"estimate": None, "low": None, "high": None, "method": "none",
+                       "detail": "fewer than two usable replicates per configuration"}
+        return out
+    if paired and len(w) == len(b):
+        d = [sign * (x - y) for x, y in zip(w, b)]
+        vd = variance(d)
+        # Rounding-level spread is no spread: a deterministic (or perfectly
+        # CRN-cancelled) difference leaves float noise ~1e-15 relative, which
+        # would give an interval of width 1e-15 claimed as a measurement.
+        if not math.sqrt(max(vd, 0.0)) > 1e-9 * max(1.0, abs(mean(d))):
+            out["gain"] = {"estimate": mean(d), "low": None, "high": None,
+                           "method": "none",
+                           "detail": "paired differences carry zero spread: no "
+                                     "variance estimate (unknown is not zero)"}
+            return out
+        est, se, df, method = mean(d), math.sqrt(vd / len(d)), len(d) - 1, "paired_t"
+    else:
+        vw, vb = variance(w) / len(w), variance(b) / len(b)
+        den = vw ** 2 / (len(w) - 1) + vb ** 2 / (len(b) - 1)
+        if not den > 0.0:
+            out["gain"] = {"estimate": sign * (mean(w) - mean(b)), "low": None,
+                           "high": None, "method": "none",
+                           "detail": "no variance estimate"}
+            return out
+        est, se = sign * (mean(w) - mean(b)), math.sqrt(vw + vb)
+        df, method = (vw + vb) ** 2 / den, "welch_t"
+    tc = float(student_t.ppf(1 - delta / 2, max(float(df), 1.0)))
+    out["gain"] = {"estimate": est, "low": est - tc * se, "high": est + tc * se,
+                   "method": method, "df": float(df),
+                   "detail": "fresh replicates drawn after the winner was fixed: "
+                             "unbiased point estimate, two-sided t at delta_terminal"}
+    return out
+
+
+def _finish_validate(engine, campaign, iteration, iter_dir, work_dir, rows,
+                     outcomes, ys, factors, test_results, pol, payload):
+    """Write ``validation.json`` and route to ``report``."""
+    from orchestrator.iteration import _enter_phase, finalize_iteration
+    from orchestrator.ledger import append_ledger_row
+    from orchestrator.optimize import artifacts, relations
+
+    by_idx = {r.row_index: r for r in rows}
+    samples = {"w": [], "b": []}
+    status = {"w": "ok", "b": "ok"}
+    for o, y in zip(outcomes, ys):
+        row = by_idx.get(o.row_index)
+        if row is None:
+            continue
+        key = ("w", "b")[int((row.apply or {}).get("finalist", 0))]
+        if o.status != "complete" or y != y:
+            if status[key] != "infeasible":
+                status[key] = ("infeasible" if o.status in ("infeasible", "rejected")
+                               else "unmeasured")
+        else:
+            samples[key].append(float(y))
+    conf = _latest_confirmation(work_dir) or {}
+    summary = _validation_summary(
+        pol, conf, samples["w"], samples["b"], paired=bool(payload.get("paired")),
+        status=status, eps_spec=dict(pol["objective"]["epsilon"] or {}),
+        direction=pol["objective"]["direction"])
+    summary.update(iteration=iteration, paired=bool(payload.get("paired")),
+                   samples=samples)
+    _write_json(iter_dir / "validation.json", summary)
+    g = summary["gain"] or {}
+    _write_json(iter_dir / "findings.json", {
+        "iteration": iteration,
+        "bundle_ref": f"runs/iter-{iteration}/validation.json",
+        "experiment_valid": g.get("estimate") is not None,
+        "discrepancy_analysis": (
+            "Post-selection validation: the confirm winner and the "
+            "known_valid_baseline re-measured on fresh paired replicates drawn "
+            "after the winner was fixed, so the gain estimate is unbiased."),
+        "arms": [{"arm_type": "h-main",
+                  "predicted": "the confirm winner beats the known_valid_baseline",
+                  "observed": (f"gain {g.get('estimate')!r} "
+                               f"[{g.get('low')!r}, {g.get('high')!r}] at "
+                               f"delta {summary['delta']}"),
+                  "status": ("CONFIRMED" if (g.get("low") or 0) > 0 else
+                             "REFUTED" if g.get("high") is not None and g["high"] < 0
+                             else "PARTIALLY_CONFIRMED"),
+                  "error_type": None,
+                  "diagnostic_note": f"runs/iter-{iteration}/validation.json",
+                  "metadata": {k: summary[k] for k in ("winner", "baseline", "replicates")}}],
+    })
+    _write_json(iter_dir / "principle_updates.json", [])
+    artifacts.write_relations(iter_dir, relations.reconcile(factors, test_results or {}))
+    _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
+    finalize_iteration(work_dir=work_dir, iter_dir=iter_dir, iteration=iteration,
+                       campaign=campaign)
+    append_ledger_row(work_dir, iteration)
+    logger.info("validate: winner value %s, gain %s [%s, %s] (%s) on fresh replicates",
+                summary["value"], g.get("estimate"), g.get("low"), g.get("high"),
+                g.get("method"))
+    return _close_iteration(
+        engine, campaign, work_dir, iter_dir, iteration, Stage.VALIDATE.value, pol,
+        {"correctness_failed": False, "nan_response": False,
+         "budget_remaining": _budget_remaining(pol, work_dir)},
+        recommendation_levels=summary["winner"] or None)
+
+
+def _skip_validate(engine, campaign, work_dir, iter_dir, iteration, pol, payload):
+    """No validation block (no winner, winner == baseline, unaffordable):
+    record why in ``validation.json`` and go to ``report``."""
+    from orchestrator.iteration import _enter_phase, finalize_iteration
+    from orchestrator.ledger import append_ledger_row
+
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(iter_dir / "validation.json", {
+        "iteration": iteration, "skipped": payload.get("skipped"),
+        "winner": payload["finalists"][0]["levels"],
+        "baseline": payload["finalists"][1]["levels"],
+        "accounting": policy_mod.VALIDATE_ACCOUNTING})
+    _write_json(iter_dir / "findings.json", {
+        "iteration": iteration, "bundle_ref": f"runs/iter-{iteration}/validation.json",
+        "experiment_valid": False,
+        "discrepancy_analysis": f"Post-selection validation skipped: {payload.get('skipped')}.",
+        "arms": [{"arm_type": "h-main", "predicted": "a validation block runs",
+                  "observed": f"skipped: {payload.get('skipped')}",
+                  "status": "PARTIALLY_CONFIRMED", "error_type": None,
+                  "diagnostic_note": f"runs/iter-{iteration}/validation.json"}]})
+    _write_json(iter_dir / "principle_updates.json", [])
+    for ph in ("DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE"):
+        _enter_phase(engine, ph, work_dir)
+    finalize_iteration(work_dir=work_dir, iter_dir=iter_dir, iteration=iteration,
+                       campaign=campaign)
+    append_ledger_row(work_dir, iteration)
+    logger.info("validate: skipped -- %s", payload.get("skipped"))
+    return _close_iteration(
+        engine, campaign, work_dir, iter_dir, iteration, Stage.VALIDATE.value, pol,
+        {"correctness_failed": False, "nan_response": False,
+         "budget_remaining": _budget_remaining(pol, work_dir)},
+        recommendation_levels=None)
+
+
+def _latest_validation(work_dir) -> dict | None:
+    """This epoch's ``validation.json``, if a validation block ran."""
+    for d in reversed(_this_epoch_dirs(work_dir)):
+        p = d / "validation.json"
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except (OSError, json.JSONDecodeError):
+                return None
+    return None
 
 
 def _latest_confirmation(work_dir) -> dict | None:

@@ -76,6 +76,15 @@ class Stage(str, Enum):
     FOLDOVER = "foldover"
     REFINE = "refine"
     CONFIRM = "confirm"
+    #: The POST-SELECTION VALIDATION block (#321 item 2, A3 remainder). Opt-in
+    #: (``design.validate.replicates``), never declared in
+    #: ``optimization.stages`` and never reached by index: the compiled policy
+    #: routes every ``confirm -> report`` exit through it when registered.
+    #: Fresh paired replicates of the confirm winner against the
+    #: ``known_valid_baseline``, so the reported value, the gain estimate and
+    #: the epsilon reference come from measurements the selection never saw.
+    #: It decides nothing: ``certified`` is still confirm's.
+    VALIDATE = "validate"
     #: The two TERMINAL states of a compiled epoch. Neither is ever declared in
     #: ``optimization.stages`` and neither spends benchmark budget: the policy
     #: routes to one of them and ``_close_iteration`` runs it inline.

@@ -264,9 +264,13 @@ pure error (M3).
 4. **The constraint-exclusion δ** is in the stated sum since #321 (§6).
 5. **Seat flips for held factors** are not implemented (§4). The scope is
    recorded instead.
-6. **No post-selection validation block** (§5). The gain estimate is biased,
-   and the ε reference still comes from the best finalist's mean on the
-   selecting data (stage-0 Q5).
+6. **Post-selection validation block: opt-in since #321** (§5,
+   `design.validate`). It is registered as a `validate` state that every
+   `confirm -> report` exit passes through, and it costs `replicates × 2`
+   runs. Without it the gain estimate is biased and the ε reference comes
+   from the selecting data (stage-0 Q5). With it, the value, the gain and
+   the ε reference come from fresh replicates. Certification is not
+   re-decided.
 7. **Multi-objective** has a model half since #321 (`pareto.model_half`,
    Scheffé per objective, Bonferroni over objectives at δ_screen); the
    certified probability is then δ_screen + δ_terminal (+ δ_constraint).

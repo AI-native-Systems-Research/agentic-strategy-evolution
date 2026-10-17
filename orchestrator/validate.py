@@ -1317,6 +1317,28 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
     return errors
 
 
+def _rule31_validate_block(opt: dict) -> list[str]:
+    """Rule 31 (#321 item 2): ``design.validate`` needs a
+    ``known_valid_baseline`` and a single-objective campaign -- the block
+    measures the winner's gain OVER the baseline, and a front has no single
+    winner. Refusing beats compiling a block that silently never runs."""
+    v = ((opt.get("design") or {}).get("validate"))
+    if v is None:
+        return []
+    errs = []
+    if not opt.get("known_valid_baseline"):
+        errs.append("optimization.design.validate needs optimization.known_valid_baseline: "
+                    "the block measures the winner's gain over the baseline.")
+    if (opt.get("response") or {}).get("objectives"):
+        errs.append("optimization.design.validate is single-objective only: a "
+                    "multi-objective campaign has a front, not one winner to validate.")
+    r = (v or {}).get("replicates") if isinstance(v, dict) else None
+    if not isinstance(r, int) or isinstance(r, bool) or r < 2:
+        errs.append(f"optimization.design.validate.replicates={r!r} must be an integer "
+                    f">= 2 (a variance estimate needs two).")
+    return errs
+
+
 def _rule15_build_requires_baseline(opt: dict) -> list[str]:
     """Rule 15: a declared ``build`` stage requires ``known_valid_baseline``.
 
@@ -2003,6 +2025,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule17_config_patch_path_reachable(campaign, opt, factors))
     errors.extend(_rule18_high_run_timeout_warning(opt, factors))
     errors.extend(_rule19_max_parallel_oversubscription(opt))
+    errors.extend(_rule31_validate_block(opt))
     errors.extend(_rule20_self_check_is_a_real_invariant(opt))
     errors.extend(_rule21_concurrency_declaration(opt))
     errors.extend(_rule22_completion_budgets(opt, factors))

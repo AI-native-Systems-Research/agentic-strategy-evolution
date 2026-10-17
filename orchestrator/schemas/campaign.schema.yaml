@@ -1307,6 +1307,24 @@ properties:
                   reproduces single-point confirmation, which measures only
                   how REPEATABLE one configuration is and leaves "is it the
                   best?" as a claim about the fitted model.
+          validate:
+            type: object
+            required: [replicates]
+            additionalProperties: false
+            description: >
+              The POST-SELECTION VALIDATION block (#321; opt-in). After confirm
+              picks the winner, measure the winner and the
+              ``known_valid_baseline`` on ``replicates`` fresh paired blocks
+              (``replicates x 2`` runs), so the reported value, the gain over
+              the baseline and the epsilon reference come from data the
+              selection never saw. Requires ``known_valid_baseline`` and a
+              single-objective campaign. Decides nothing: certification stays
+              confirm's.
+            properties:
+              replicates:
+                type: integer
+                minimum: 2
+                description: "Fresh paired blocks (each = one winner run + one baseline run)."
           max_runs:
             type: integer
             minimum: 1

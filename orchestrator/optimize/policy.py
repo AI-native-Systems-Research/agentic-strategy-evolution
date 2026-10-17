@@ -280,6 +280,14 @@ def _multi_objective_block(opt: dict) -> dict | None:
     }
 
 
+VALIDATE_ACCOUNTING = (
+    "post-selection validation block (#321): the winner is fixed by confirm "
+    "before these replicates are drawn, so they are independent of the "
+    "selection; reported value, gain point estimate and epsilon reference come "
+    "from them only; no certificate is decided here"
+)
+
+
 def _constraint_exclusion_registered(opt: dict) -> bool:
     """Can a constraint model exclude candidates in this epoch? True when a
     declared constraint has a violating side (``<``, ``<=``, ``>``, ``>=``)
@@ -595,6 +603,35 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             {"from": "confirm", "when": {"budget_remaining": {"<": 1}}, "to": "report",
              "accounting": "budget exhausted; report uncertified"},
             {"from": "confirm", "default": "confirm"},
+        ]
+
+    # ── #321 item 2: the post-selection validation block ───────────────────
+    # Registered only when `design.validate.replicates` is declared AND a
+    # single-objective campaign has a known_valid_baseline to compare with
+    # (the validator refuses the block otherwise). Every `confirm -> report`
+    # exit is redirected through `validate`, so the block runs whichever rule
+    # ended confirm; `validate` itself always ends at `report` (a semantic
+    # NaN is the one exception). Compile-time facts only.
+    val_cfg = design.get("validate") or {}
+    validate_on = (confirm_on and val_cfg.get("replicates") is not None
+                   and bool(opt.get("known_valid_baseline")) and mo is None)
+    if validate_on:
+        states["validate"] = {
+            "spends": True,
+            "design": {"kind": "validation_replicate",
+                       "replicates": int(val_cfg["replicates"])},
+            "estimator": ("paired differences winner - baseline on fresh "
+                          "replicates sharing workload seeds (CRN); two-sided "
+                          "Student t at delta_terminal"),
+            "accounting": VALIDATE_ACCOUNTING,
+        }
+        for t in transitions:
+            if t.get("from") == "confirm" and t.get("to") == "report":
+                t["to"] = "validate"
+        transitions += [
+            {"from": "validate", "when": {"nan_response": True}, "to": "exception",
+             "accounting": sem},
+            {"from": "validate", "default": "report"},
         ]
 
     policy = {
