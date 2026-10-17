@@ -1135,7 +1135,11 @@ class SDKDispatcher(CLIDispatcher):
         self, role: str, phase: str, *, output_path, iteration: int,
         perspective=None, h_main_result="CONFIRMED",
     ) -> None:
-        inputs_dir = self.work_dir / "runs" / f"iter-{iteration}" / "inputs"
+        # The campaign-end report (iteration 0) is not an iteration: keep its
+        # event log out of runs/iter-*, which ledger/lineage walkers scan. Four
+        # levels below work_dir either way, so STOP_IMMEDIATE still resolves.
+        iter_name = f"iter-{iteration}" if iteration > 0 else "campaign"
+        inputs_dir = self.work_dir / "runs" / iter_name / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=True)
         self._event_log_path = inputs_dir / "executor_log.jsonl"
         phase_key = self._normalize_phase(phase)

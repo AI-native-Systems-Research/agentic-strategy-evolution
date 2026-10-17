@@ -44,7 +44,8 @@ def block_live_llm_calls(monkeypatch):
     api_key= explicitly (existing tests already do this). Tests that need
     to dispatch an agent should inject a fake — see tests/CLAUDE.md.
     """
-    for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY"):
+    for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY",
+                "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"):
         monkeypatch.delenv(var, raising=False)
 
     # #239: NOUS_CAMPAIGN_PARENT relocates campaign work_dirs. Strip it
