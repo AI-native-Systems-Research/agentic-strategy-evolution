@@ -1281,3 +1281,54 @@ class TestPhaseWallClockResolution:
             jsonschema.validate({"phase_wall_clock_seconds": v}, sub)
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate({"phase_wall_clock_seconds": {"desgin": 1}}, sub)
+
+
+class TestTurnRunnerClassification:
+    """#303 audit: the per-turn runner must not relabel or swallow errors."""
+
+    def test_a_timeout_inside_the_turn_is_not_reported_as_the_ceiling(self):
+        from orchestrator.sdk_dispatch import (
+            SDKWallClockError, run_turn_reaping_children,
+        )
+
+        async def turn():
+            raise TimeoutError("ReadTimeout from the transport")
+
+        with pytest.raises(TimeoutError) as exc:
+            run_turn_reaping_children(turn, wall_clock_seconds=60)
+        assert not isinstance(exc.value, SDKWallClockError)
+
+    def test_a_permanent_error_escapes_unretried(self, tmp_path, monkeypatch):
+        """A non-143 ProcessError from the real runner path fails on attempt 1."""
+        import sys
+        import types
+
+        class ProcessError(Exception):
+            exit_code = 1
+
+        async def _query(*, prompt, options):  # noqa: ARG001
+            raise ProcessError("bad request")
+            yield  # pragma: no cover
+
+        module = types.ModuleType("claude_agent_sdk")
+        module.ClaudeAgentOptions = lambda **kw: kw
+        module.query = _query
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+
+        d = SDKDispatcher(work_dir=tmp_path, campaign=_make_campaign(tmp_path),
+                          sdk_runner=_default_sdk_runner_factory(), max_retries=5)
+        with pytest.raises(ProcessError):
+            d.dispatch("planner", "design",
+                       output_path=tmp_path / "runs/iter-1/design_log.md",
+                       iteration=1)
+        assert _read_jsonl(tmp_path / "retry_log.jsonl") == []
+
+    def test_a_successful_turn_returns_its_result(self):
+        from orchestrator.sdk_dispatch import run_turn_reaping_children
+
+        async def turn():
+            return "done"
+
+        assert run_turn_reaping_children(turn, wall_clock_seconds=5) == "done"
+        assert run_turn_reaping_children(turn, wall_clock_seconds=None) == "done"

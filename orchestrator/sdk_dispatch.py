@@ -772,15 +772,18 @@ def run_turn_reaping_children(
         try:
             if ceiling is None:
                 return await turn()
-            try:
-                with anyio.fail_after(ceiling):
-                    return await turn()
-            except TimeoutError as exc:
+            # move_on_after, not fail_after: a TimeoutError raised INSIDE the
+            # turn (a transport timeout) must keep its own classification and
+            # not be relabelled as this ceiling.
+            with anyio.move_on_after(ceiling) as scope:
+                return await turn()
+            if scope.cancelled_caught:
                 raise SDKWallClockError(
                     f"SDK turn exceeded its {ceiling:.0f}s wall-clock ceiling "
                     f"(sdk_timeouts.phase_wall_clock_seconds); aborting so the "
                     f"dispatcher can count and retry it."
-                ) from exc
+                )
+            raise RuntimeError("SDK turn returned no result")  # unreachable
         finally:
             with anyio.CancelScope(shield=True):
                 await _reap_children(spawned)
