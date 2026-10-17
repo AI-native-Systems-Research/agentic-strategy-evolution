@@ -310,3 +310,35 @@ def test_an_unrecoverable_earlier_epoch_makes_a_charged_plan_infeasible():
         _c.deepcopy(camp), ep, {"mode": "charged", "campaign_total": 0.5, "cumulative": 0.1,
                                 "cumulative_is_lower_bound": True})
     assert lb["fits"] is False and "lower bound" in lb["note"]
+
+
+def test_an_inadequate_model_offers_the_bo_block_as_a_model_free_alternative(tmp_path,
+                                                                              monkeypatch):
+    """With planner.bo declared and the RSM model rejected, plan-next scores
+    nothing but offers bo_block: a next-epoch region bounding the TPE
+    proposals, with their provenance. The sampler is faked at the seam, so
+    no optuna is needed."""
+    from orchestrator.optimize import bo_proposer
+    from orchestrator.optimize.synthetic import ridge_cubic
+
+    def fake(trials, space, objectives, config, n):
+        assert config["seed"] == 5 and trials
+        return [{"A": 6, "B": 10}, {"A": 10, "B": 14}]
+
+    monkeypatch.setattr(bo_proposer, "_optuna_sampler", fake)
+    res = run_synthetic_campaign(ridge_cubic(), seed=1, parent_dir=tmp_path,
+                                 campaign_overrides={"planner": {"bo": {"seed": 5}}})
+    d, out = _decision(res)
+    if d["model"]["model_adequate"] is True:
+        pytest.skip("this seed's model was not rejected")
+    bo = next(o for o in d["options"] if o["id"] == "bo_block")
+    assert bo["feasible"] and bo["score"] is None
+    assert "bo_block" in d["model_free_alternatives"]
+    assert d["bo"]["seed"] == 5 and d["bo"]["n_trials_from_rows"] > 0
+    c = out["campaigns"]["bo_block"]
+    a = next(f for f in c["optimization"]["factors"] if f["id"] == "A")
+    assert (min(a["levels"]), max(a["levels"])) == (6, 10)
+    planner.write_plan(planner.plan(res.work_dir), choose="bo_block",
+                       reason="model rejected; try the TPE region")
+    dd = json.loads((res.work_dir / "plan_next/epoch-1/planner_decision.json").read_text())
+    assert dd["chosen"] == "bo_block" and dd["override"]["scored_choice"] == "stop"

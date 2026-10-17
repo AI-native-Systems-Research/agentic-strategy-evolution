@@ -3044,6 +3044,106 @@ the oracle with `build_checks.mechanism_paths`, above) and a re-snapshotted
 mechanism whose hash the policy never registered (recompile: a revised
 mechanism is a new experiment).
 
+### Planning the next epoch: `nous plan-next` (WP-D)
+
+Statistics owns inference; decision theory owns allocation. When an epoch has
+ended at `report`, `nous plan-next <campaign.yaml>` scores the candidate next
+epochs and writes the decision down **before** any of the next epoch's data
+exist. It makes zero model calls. Nothing it does decides a certificate: the
+next epoch is compiled, pre-registered and certified on its own fresh runs,
+at its own (charged) error budget.
+
+It writes `plan_next/epoch-<e>/`:
+
+| file | what |
+|---|---|
+| `planner_decision.json` | every option, its region, cost, score and error-budget check; the utility and how it is computed; the stopping threshold; the assumptions; the cross-epoch error and run budgets; `chosen`, `scored_choice`, `decision_basis`, `override` (schema: `orchestrator/schemas/planner_decision.schema.json`) |
+| `proposed_campaign.yaml` / `.diff` | the chosen next campaign, validated (schema, cross-field rules, compile), and its unified diff against `campaign.epoch-<e>.yaml` |
+| `options/<id>.campaign.yaml` | every option's proposal, so an override can be read before it is chosen |
+
+**The options.**
+- `pin_dead`: remove each held knob the screen found no main effect for on every objective (or that the certificate's TOST showed inert), folding its flag at the held level into `run_command`.
+- `narrow`: shrink each fitted range to the active region plus one candidate step. For a single objective that region is the configurations whose upper bound reaches the best lower bound; for several objectives it is the predicted front.
+- `widen_edge`: re-centre a boundary-optimum axis on its edge.
+- `raise_resolution`: after pinning, screen at resolution V and add refine.
+- `recombination`: keep only the values the measured front disagrees on, and pin the knobs it agrees on.
+- `bo_block`: the bounding box of the optional TPE proposals (see `planner.bo` below).
+- `replicate`: re-run the same region (offered only when the model is inadequate).
+- `stop`.
+
+**The utility, stated.** For a single objective a move is scored by
+`max_{x in region} EI(x) / runs`. EI is the expected improvement over the
+incumbent: the best posterior mean among this epoch's measured
+configurations, under the fitted model's predictive `yhat + se * t_nu`.
+`runs` is the next epoch's worst-case run count from the design preview. The
+maximum EI over a region is a lower bound on the region's expected
+improvement, whatever the dependence between points. It assumes the next
+epoch's design finds that point, which is optimistic, and the file says so.
+For several objectives the score is the same with EHVI: exact in 2-D,
+seeded Monte Carlo for three or more, in one normalised frame. A widened
+axis is scored past its fitted edge out to |coded| 2, and the option is
+marked `extrapolated: true`.
+
+**Stop.** `stop` is chosen when no feasible move's score per run exceeds the
+threshold. The threshold is `optimization.planner.stop_value_per_run`
+(compiled into the policy). Its default is one epsilon, or one epsilon-box
+of normalised hypervolume, per run this epoch spent: a whole epoch has to be
+expected to buy at least one epsilon. A move is **infeasible**, and cannot be
+overridden, in these cases:
+- `error_budget_insufficient`: its next epoch's delta does not fit what remains of a charged `campaign_delta` (binding at the smallest total any epoch declared). It is also infeasible when the cumulative spend is only a lower bound.
+- `run_budget_insufficient`: its worst-case runs exceed what remains of `optimization.planner.campaign_max_runs`.
+- `proposal_invalid`: the validator rejects it.
+
+**When the model is not adequate,** nothing is scored. Allocation spends only
+on an adequate model (WP-B). The planner chooses `stop` with
+`decision_basis: no_scorable_move` and lists the model-free alternatives
+(`bo_block`, `replicate`).
+
+**Accepting and overriding.**
+
+```
+nous plan-next campaign.yaml                         # decide, write the files; campaign.yaml untouched
+nous plan-next campaign.yaml --choose narrow --reason "the edge is a hard core-count limit"
+nous plan-next campaign.yaml --accept                # write the proposal over campaign.yaml
+nous validate campaign campaign.yaml --smoke
+nous resume campaign.yaml                            # compiles epoch e+1 from it
+```
+
+`--accept` refuses a stale decision, meaning one whose input hashes changed
+or whose proposal file was edited. It then writes `epoch_end.planned-<e>.json`.
+That record is what makes the next `nous resume` recompile into epoch `e+1`,
+and it is not a semantic exception. The next epoch's `report.json`
+`provenance.planner` names the chosen option, the scored choice and any
+override with its reason, and `compiled_matches_accepted` says whether the
+compiled campaign is the accepted one. `nous reanalyze` carries the record
+as an input.
+
+**Within an epoch,** `orchestrator/optimize/allocate.py` holds the same
+scoring as pure functions. It builds the recombination pool, which is the
+product of the values the measured front points disagree on, with the other
+knobs at the preferred point, plus the predicted front and any BO proposals.
+It ranks the pool by knowledge gradient per run (with EI also reported) or by
+EHVI per run, and every decline is named (`DECLINE_REASONS`). Seating these
+candidates in the confirm and gap-fill rounds is a later package. Selection
+is on predictions, and claims stay on fresh replicates.
+
+**The optional BO proposer** (`pip install 'nous[bo]'`):
+
+```yaml
+optimization:
+  planner:
+    bo: {sampler: tpe, n_startup: 10, seed: 0}
+    stop_value_per_run: 0.01      # optional; default above
+    campaign_max_runs: 400        # optional cross-epoch run cap
+```
+
+The block is compiled into `policy.json` and hashed. Each call rebuilds an
+in-memory Optuna study from the epoch's measured rows, so nothing is
+persisted and the same rows and seed give the same proposals. The sampler,
+seed, number of trials taken from rows and Optuna version are recorded with
+every proposal. The proposer only proposes. No certificate, effect or decide
+module imports it, and a test enforces that.
+
 ### An apparatus change is an epoch boundary, not an edit
 
 This is a **workflow rule**, and it is the one most likely to be broken by
