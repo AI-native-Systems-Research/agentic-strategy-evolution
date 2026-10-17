@@ -1703,7 +1703,14 @@ campaign that is missing any of these:
    interpreter the command runs, resolved with the command's own `PATH` (an
    `env PATH=...` assignment included), with exactly the command's
    environment and interpreter flags; flags keep their arguments (`-W ignore`,
-   `-X dev`). Any other command is not refused but is recorded in
+   `-X dev`). Resolution is exec-exact: the child's environment is the target
+   environment with the command's `env` assignments applied and its `env -u`
+   unsets removed, the interpreter is the file `execvp` would run with that
+   `PATH` (the default when it is unset), every relative or empty entry is
+   anchored at the clean tree, and the probe runs with that environment and
+   cwd. Wrapper and interpreter options are parsed exactly; an option the
+   table does not model, or an option value that could itself be the program
+   (`time -o python3 ...`), is not guessed. Any other command is not refused but is recorded in
    `clean_tree.probe.json` and listed in `provenance.waivers` as not probed.
    That covers one whose first program is not a Python interpreter: a
    launcher (`uv run`, `conda run`, `poetry run`, `make`, `sh -c`), a script
