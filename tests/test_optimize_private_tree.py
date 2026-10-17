@@ -584,3 +584,42 @@ def test_a_shell_style_assignment_is_recorded_as_not_probed(setup):
     ct.probe_imports(wd, repo, [f"PYTHONPATH={repo} python harness.py"], work_dir=wd)
     rec = json.loads((wd / ct.PROBE_RECORD).read_text())
     assert "shell-style assignment" in rec["not_probed"][0]["reason"]
+
+
+# ─── round 6, item 5: every listed wrapper parses as documented ──────────────
+
+_PARSE_CASES = [
+    ("timeout 5 PY b.py", []), ("timeout --signal=KILL 5 PY b.py", []),
+    ("timeout -s KILL 5 PY b.py", []), ("timeout -sKILL 5 PY b.py", []),
+    ("timeout --kill-after 3 5 PY b.py", []), ("timeout -k3 5 PY b.py", []),
+    ("nice -n 5 timeout 5 env A=1 PY b.py", []), ("nice -5 PY b.py", []),
+    ("nice --adjustment=5 PY b.py", []), ("nice -n5 PY b.py", []),
+    ("time -p PY b.py", []), ("/usr/bin/time -o out PY b.py", []), ("nohup PY b.py", []),
+    ("stdbuf -oL PY b.py", []), ("stdbuf -o L PY b.py", []),
+    ("taskset -c 0 PY b.py", []), ("taskset 0x1 PY b.py", []),
+    ("chrt -f 10 PY b.py", []), ("chrt 10 PY b.py", []),
+    ("caffeinate -i PY b.py", []), ("caffeinate -t 10 PY b.py", []),
+    ("ionice -c 2 -n 7 PY b.py", []),
+    ("env -- A=1 PY b.py", []), ("env A=1 -- PY b.py", []), ("env -u X A=1 PY b.py", []),
+    ("PY -W ignore -X dev -m b", ["-W", "ignore", "-X", "dev"]),
+    ("PY --check-hash-based-pycs always b.py", ["--check-hash-based-pycs", "always"]),
+]
+
+
+@pytest.mark.parametrize("cmd,flags", _PARSE_CASES)
+def test_each_documented_wrapper_is_unwrapped_to_the_interpreter(cmd, flags, tmp_path):
+    import sys
+
+    found, reasons = ct._interpreters(cmd.replace("PY", sys.executable), tmp_path)
+    assert not reasons and len(found) == 1, (cmd, found, reasons)
+    assert Path(found[0][0]).resolve() == Path(sys.executable).resolve()
+    assert found[0][1] == flags
+
+
+@pytest.mark.parametrize("cmd", ["env -S 'PY b.py'", "env -i PY b.py", "timeout 5 ./b.sh",
+                                 "sh -c 'PY b.py'", "timeout"])
+def test_what_cannot_be_unwrapped_is_not_probed(cmd, tmp_path):
+    import sys
+
+    found, reasons = ct._interpreters(cmd.replace("PY", sys.executable), tmp_path)
+    assert not found and reasons, (cmd, found)

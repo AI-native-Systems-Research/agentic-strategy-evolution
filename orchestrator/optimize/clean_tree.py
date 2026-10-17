@@ -529,12 +529,51 @@ def _resolve_interpreter(tok: str, cwd: Path, path: str | None = None
 
 
 #: Wrappers that run the rest of the command line unchanged; unwrapped before
-#: the interpreter is determined. ``{name: number of option ARGUMENTS taken by
-#: the options listed}`` is handled per wrapper below.
-_WRAPPERS = frozenset({"timeout", "gtimeout", "nice", "time", "nohup", "env", "ionice",
-                       "taskset", "chrt", "stdbuf", "caffeinate"})
+#: the interpreter is determined. Per wrapper: the short options that take a
+#: SEPARATE argument (an attached form such as ``-sKILL`` needs none), the long
+#: options that take one (``--signal KILL``; ``--signal=KILL`` needs none), and
+#: how many positional arguments precede the wrapped command (``timeout 5``,
+#: ``taskset 0x1``, ``chrt 10``). The guide's list is generated from this
+#: table's keys (tests/test_optimize_guide_security_claims.py compares them).
+WRAPPER_SPECS: dict[str, tuple[frozenset, frozenset, int]] = {
+    "timeout": (frozenset({"-s", "-k"}), frozenset({"--signal", "--kill-after"}), 1),
+    "gtimeout": (frozenset({"-s", "-k"}), frozenset({"--signal", "--kill-after"}), 1),
+    "nice": (frozenset({"-n"}), frozenset({"--adjustment"}), 0),
+    "time": (frozenset({"-o", "-f"}), frozenset({"--output", "--format"}), 0),
+    "nohup": (frozenset(), frozenset(), 0),
+    "ionice": (frozenset({"-c", "-n", "-p", "-P", "-u"}),
+               frozenset({"--class", "--classdata", "--pid", "--pgid", "--uid"}), 0),
+    "taskset": (frozenset(), frozenset(), 1),
+    "chrt": (frozenset({"-T", "-P", "-D"}),
+             frozenset({"--sched-runtime", "--sched-period", "--sched-deadline"}), 1),
+    "stdbuf": (frozenset({"-i", "-o", "-e"}), frozenset({"--input", "--output", "--error"}), 0),
+    "caffeinate": (frozenset({"-t", "-w"}), frozenset(), 0),
+}
+_WRAPPERS = frozenset(WRAPPER_SPECS) | {"env"}
 #: Python options that take a separate argument.
 _PY_ARG_FLAGS = frozenset({"-W", "-X", "-Q"})
+_PY_LONG_ARG_FLAGS = frozenset({"--check-hash-based-pycs"})
+
+
+def _skip_wrapper(name: str, toks: list[str], i: int) -> int | None:
+    """Index just past wrapper ``name``'s own options and positionals, or None
+    when they cannot be parsed."""
+    short_arg, long_arg, npos = WRAPPER_SPECS[name]
+    while i < len(toks) and toks[i].startswith("-") and toks[i] != "-":
+        t = toks[i]
+        if t == "--":
+            i += 1
+            break
+        if t.startswith("--"):
+            i += 2 if (t in long_arg and "=" not in t) else 1
+        elif t in short_arg:
+            i += 2
+        elif name == "nice" and t[1:].lstrip("-").isdigit():
+            i += 1                                  # nice -5
+        else:
+            i += 1                                  # a flag, or an attached argument
+    i += npos                                       # timeout 5, taskset 0x1, chrt 10
+    return i if i <= len(toks) else None
 
 
 def _unwrap(toks: list[str]) -> tuple[list[str], dict[str, str], str | None]:
@@ -547,25 +586,19 @@ def _unwrap(toks: list[str]) -> tuple[list[str], dict[str, str], str | None]:
         if name not in _WRAPPERS:
             break
         i += 1
-        if name in ("timeout", "gtimeout"):
-            while i < len(toks) and toks[i].startswith("-"):
-                i += 2 if toks[i] in ("-s", "--signal", "-k", "--kill-after") else 1
-            i += 1                                   # the duration
-        elif name == "nice":
-            if i < len(toks) and toks[i] == "-n":
-                i += 2
-            elif i < len(toks) and toks[i].startswith("-"):
-                i += 1
-        elif name == "time":
-            while i < len(toks) and toks[i].startswith("-"):
-                i += 2 if toks[i] in ("-o", "-f") else 1
-        elif name == "env":
+        if name == "env":
             while i < len(toks):
                 t = toks[i]
-                if t in ("-i", "--ignore-environment"):
+                if t == "--":
+                    i += 1
+                    continue
+                if t in ("-i", "--ignore-environment") or t == "-":
                     return [], {}, "`env -i` replaces the environment; not probed"
                 if t in ("-u", "--unset"):
                     i += 2
+                    continue
+                if t.startswith(("-u", "--unset=")):
+                    i += 1
                     continue
                 if t.startswith("-"):
                     return [], {}, f"`env {t}` is not understood; not probed"
@@ -575,14 +608,11 @@ def _unwrap(toks: list[str]) -> tuple[list[str], dict[str, str], str | None]:
                     i += 1
                     continue
                 break
-        elif name in ("ionice", "taskset", "chrt", "stdbuf"):
-            while i < len(toks) and toks[i].startswith("-"):
-                i += 2 if len(toks[i]) == 2 else 1
-            if name in ("taskset", "chrt") and i < len(toks) and not toks[i].startswith("-"):
-                i += 1
-        elif name == "caffeinate":
-            while i < len(toks) and toks[i].startswith("-"):
-                i += 1
+            continue
+        j = _skip_wrapper(name, toks, i)
+        if j is None:
+            return [], {}, f"`{name}`'s arguments cannot be parsed; not probed"
+        i = j
     return toks[i:], env, None
 
 
@@ -627,9 +657,13 @@ def _interpreters(cmd: str, cwd: Path) -> tuple[list[tuple[str, list[str], dict]
         t = toks[i]
         if t in ("-m", "-c") or not t.startswith("-") or t == "-":
             break
-        if t in _PY_ARG_FLAGS and i + 1 < len(toks):
+        if (t in _PY_ARG_FLAGS or t in _PY_LONG_ARG_FLAGS) and i + 1 < len(toks):
             flags += [t, toks[i + 1]]
             i += 2
+            continue
+        if t.startswith("--") and t.split("=", 1)[0] in _PY_LONG_ARG_FLAGS:
+            flags.append(t)
+            i += 1
             continue
         if t.startswith(("-W", "-X")) or (len(t) <= 3 and t[1:].isalpha()):
             flags.append(t)
