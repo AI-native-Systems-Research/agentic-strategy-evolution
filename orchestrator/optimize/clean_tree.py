@@ -537,6 +537,17 @@ def _resolve_interpreter(tok: str, cwd: Path, env: dict) -> tuple[str | None, st
     return exe, None
 
 
+def _shebang_flags(script) -> list[str]:
+    """The interpreter flags on ``script``'s ``#!`` line (after the interpreter
+    path); ``[]`` when there are none or the line cannot be read."""
+    try:
+        first = Path(script).read_text(errors="replace").splitlines()[0]
+    except (OSError, IndexError, UnicodeDecodeError, TypeError):
+        return []
+    parts = first[2:].strip().split() if first.startswith("#!") else []
+    return parts[1:]
+
+
 #: Wrappers that run the rest of the command line unchanged; unwrapped before
 #: the interpreter is determined. Each is modelled EXACTLY, getopt-style:
 #:   (short flags taking no argument, short options taking one,
@@ -820,8 +831,19 @@ def _interpreters(cmd: str, cwd: Path, base_env: dict | None = None
     if exe is None:
         return [], [f"the program{after} is `{rest[0]}`, which is not a Python interpreter; "
                     f"what it imports is not probed"]
+    # The interpreter's flags come from what the INTERPRETER is given. For a
+    # `python ...` command that is the command line; for `pytest ...` the
+    # command line carries PYTEST's arguments (`-s` = no capture, `-x`, `-q`),
+    # which the shebang interpreter never sees -- reading them as CPython flags
+    # made `pytest -s` probe as `python -s` (user site off) while the real run
+    # imported from a user-site .pth into the agent's repo: a false pass. The
+    # flags then come from the shebang line instead.
+    name = Path(rest[0]).name
     try:
-        flags = _py_flags(rest[1:])
+        if name in ("pytest", "py.test"):
+            flags = _py_flags(_shebang_flags(exec_lookup(rest[0], cwd, env)))
+        else:
+            flags = _py_flags(rest[1:])
     except _Ambiguous as exc:
         return [], [f"{exc}; not probed"]
     assignments = {}

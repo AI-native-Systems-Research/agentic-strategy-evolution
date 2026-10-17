@@ -693,3 +693,53 @@ def test_combined_interpreter_flags_stay_together(tmp_path):
 
     found, reasons = ct._interpreters(f"{sys.executable} -bW ignore b.py", tmp_path)
     assert not reasons and found[0][1] == ["-bW", "ignore"]
+
+
+def test_pytests_own_s_flag_is_not_read_as_the_interpreters(tmp_path, monkeypatch):
+    """`pytest -s` is pytest's "no capture"; reading it as CPython's `-s`
+    probed with the user site OFF while the real run imported a user-site .pth
+    into the agent's repo -- a false pass. The interpreter's flags come from the
+    shebang line, so `-s` and `-q` must probe identically (both refused)."""
+    import shutil
+    import subprocess
+    import sys
+
+    # A NON-venv interpreter (a venv disables the user site, so the defect
+    # cannot show there): the base interpreter this venv was created from.
+    base = getattr(sys, "_base_executable", None) or shutil.which("python3")
+    if not base or base == sys.executable and sys.prefix != sys.base_prefix:
+        pytest.skip("no non-venv interpreter available")
+    agent = tmp_path / "agentrepo"
+    agent.mkdir()
+    dest = tmp_path / "clean"
+    dest.mkdir()
+    ub = tmp_path / "userbase"
+    monkeypatch.setenv("PYTHONUSERBASE", str(ub))
+    usite = subprocess.run([base, "-c", "import site;print(site.getusersitepackages())"],
+                           capture_output=True, text=True).stdout.strip()
+    if not usite or subprocess.run(
+            [base, "-c", "import site,sys;sys.exit(0 if site.ENABLE_USER_SITE else 1)"]
+    ).returncode != 0:
+        pytest.skip("this interpreter has the user site disabled (e.g. a venv)")
+    Path(usite).mkdir(parents=True)
+    (Path(usite) / "_e.pth").write_text(str(agent) + "\n")
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    script = bindir / "pytest"
+    script.write_text(f"#!{base}\nimport sys\n")
+    script.chmod(0o755)
+    for cmd in (f"{script} -q t.py", f"{script} -s t.py"):
+        found, _ = ct._interpreters(cmd, dest)
+        assert found and "-s" not in found[0][1], (cmd, found)
+        with pytest.raises(ct.CleanTreeError):
+            ct.probe_imports(dest, agent, [cmd])
+
+
+def test_shebang_interpreter_flags_reach_the_probe(tmp_path):
+    import sys
+
+    script = tmp_path / "pytest"
+    script.write_text(f"#!{sys.executable} -E\n")
+    script.chmod(0o755)
+    found, _ = ct._interpreters(f"{script} -s x.py", tmp_path)
+    assert found and found[0][1] == ["-E"], found

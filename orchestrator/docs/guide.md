@@ -1819,6 +1819,15 @@ protected file into the patch.
 - **A planted data file in the clean tree** (no code suffix or name).
 - **Non-Python import paths.** A Go `replace`, an `npm link` or a `GOPATH`
   pointing at the agent's repo is not probed.
+- **The script itself.** The import probe checks the interpreter's `sys.path`
+  and `.pth` roots, not the script a command runs: `python /abs/agent-repo/x.py`
+  puts the agent's repo at `sys.path[0]` and the probe still passes. Name
+  scripts by paths inside the clean tree (relative to `repo_path`).
+- **Shebang flags are honoured, the command's are not invented.** A `pytest`
+  command's interpreter flags come from the script's `#!` line, never from
+  pytest's own arguments (`pytest -s` is not `python -s`).
+- **Probes run one at a time** (120 s each, no total limit); a probe that cannot
+  finish fails closed.
 
 **The build review gate: a human only without `--auto-approve`.** After the
 build's automatic oracles pass, and before it compiles the policy, `verify`
