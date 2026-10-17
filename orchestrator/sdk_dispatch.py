@@ -51,6 +51,27 @@ class SDKTransientError(RuntimeError):
     """Runner raises this for retryable transport-level failures."""
 
 
+class SDKWallClockError(SDKTransientError):
+    """One SDK turn exceeded its phase wall-clock ceiling (#303).
+
+    A subclass of :class:`SDKTransientError` so the bounded retry loop counts
+    it like any other transient failure; ``call_sdk_with_retry`` logs it to
+    ``retry_log.jsonl`` as ``failure_type: "wall_clock"`` so a hang is a
+    counted, named failure rather than a run that looks "still running".
+    """
+
+
+# #303: default per-attempt wall-clock ceiling for one SDK turn. Real turns
+# measured up to ~3,600s (execute_analyze) and ~3,000s (design, build) across
+# the local campaign corpus, so 7,200s leaves 2x headroom over the slowest
+# observed turn while capping the 3h28m hang #303 reported. 0 disables.
+DEFAULT_PHASE_WALL_CLOCK_SECONDS = 7200.0
+
+# Grace periods for reaping a turn's child processes after it ends (#303).
+_CHILD_TERM_GRACE_SECONDS = 5.0
+_CHILD_KILL_GRACE_SECONDS = 5.0
+
+
 # Exception class-name substrings that mark a retryable/transient SDK failure.
 # Matched by *name* so we don't import SDK/transport error types here.
 _TRANSIENT_SIGNALS = (
@@ -419,6 +440,7 @@ class SDKRunner(Protocol):
         permission_mode: Literal["bypassPermissions"] | None = None,
         turn_silence_threshold: float | None = None,
         effort: str | None = None,
+        wall_clock_seconds: float | None = None,
     ) -> SDKResult:
         """One SDK turn.
 
@@ -436,6 +458,9 @@ class SDKRunner(Protocol):
         or ``<= 0`` disables the watchdog. Different from
         ``campaign.sdk_timeouts.silence_threshold_seconds`` (which is
         post-mortem; this one is live).
+
+        ``wall_clock_seconds``: ceiling on the whole turn (#303). Past it,
+        raise :class:`SDKWallClockError`. ``None`` or ``<= 0`` disables it.
         """
         ...
 
@@ -459,6 +484,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
         permission_mode: Literal["bypassPermissions"] | None = "bypassPermissions",
         turn_silence_threshold: float | None = None,
         effort: str | None = None,
+        wall_clock_seconds: float | None = None,
     ) -> SDKResult:
         try:
             import anyio
@@ -605,13 +631,162 @@ def _default_sdk_runner_factory() -> SDKRunner:
             )
 
         try:
-            return anyio.run(_run)
+            return run_turn_reaping_children(
+                _run, wall_clock_seconds=wall_clock_seconds,
+            )
+        except SDKTransientError:
+            raise
         except Exception as exc:
             if _is_transient_sdk_error(exc):
                 raise SDKTransientError(f"{type(exc).__name__}: {exc}") from exc
             raise
 
     return _runner
+
+
+_WALL_CLOCK_PHASES = ("design", "execute_analyze", "report", "plan", "build")
+
+
+def resolve_phase_wall_clock(campaign: dict, phase: str) -> float | None:
+    """Wall-clock ceiling (seconds) for one SDK turn of ``phase`` (#303).
+
+    Reads ``campaign.sdk_timeouts.phase_wall_clock_seconds``: a scalar applies
+    to every phase; a map is looked up by ``phase`` and an unlisted phase gets
+    :data:`DEFAULT_PHASE_WALL_CLOCK_SECONDS`. Unset uses that default. ``0``
+    disables the ceiling (returns ``None``).
+    """
+    timeouts = campaign.get("sdk_timeouts") or {}
+    raw = timeouts.get("phase_wall_clock_seconds")
+    label = "campaign.sdk_timeouts.phase_wall_clock_seconds"
+    if isinstance(raw, dict):
+        unknown = sorted(set(raw) - set(_WALL_CLOCK_PHASES))
+        if unknown:
+            raise ValueError(
+                f"{label} has unknown phase key(s) {unknown}; "
+                f"allowed: {list(_WALL_CLOCK_PHASES)}"
+            )
+        raw = raw.get(phase)
+        label += f".{phase}"
+    if raw is None:
+        raw = DEFAULT_PHASE_WALL_CLOCK_SECONDS
+    if isinstance(raw, bool):
+        raise ValueError(f"{label} must be a non-negative number, got {raw!r}")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{label} must be a non-negative number, got {raw!r}"
+        ) from exc
+    if value < 0:
+        raise ValueError(f"{label} must be >= 0, got {value}")
+    return value or None
+
+
+def _tracking_loop_factory(spawned: list) -> Callable[[], asyncio.AbstractEventLoop]:
+    """A loop factory whose loops record every subprocess transport they spawn.
+
+    ``anyio.open_process`` and ``asyncio.create_subprocess_exec`` both go
+    through ``loop.subprocess_exec``, so wrapping it on the instance sees every
+    ``claude`` child the SDK starts without importing SDK internals.
+    """
+
+    def _factory() -> asyncio.AbstractEventLoop:
+        loop = asyncio.new_event_loop()
+        original = loop.subprocess_exec
+
+        async def subprocess_exec(*args, **kwargs):
+            transport, protocol = await original(*args, **kwargs)
+            spawned.append(transport)
+            return transport, protocol
+
+        loop.subprocess_exec = subprocess_exec  # type: ignore[method-assign]
+        return loop
+
+    return _factory
+
+
+async def _reap_children(spawned: list) -> None:
+    """Terminate, then kill, every still-running child; wait for each to exit.
+
+    Runs while the turn's event loop is still open, so the child watcher's
+    exit callback lands on a live loop. Without this, an aborted turn whose
+    SDK cleanup did not finish (the watchdog's ``aclose`` is bounded at 5s)
+    leaves the ``claude`` child running; when it later exits, the watcher
+    calls back into a closed loop ("Loop ... that handles pid N is closed")
+    and the orphan keeps the worktree as its cwd (#303).
+    """
+    import anyio
+
+    async def _wait_exit(transport, seconds: float) -> bool:
+        with anyio.move_on_after(seconds):
+            while transport.get_returncode() is None:
+                await anyio.sleep(0.02)
+        return transport.get_returncode() is not None
+
+    for transport in spawned:
+        if transport.get_returncode() is not None:
+            transport.close()
+            continue
+        pid = transport.get_pid()
+        try:
+            transport.terminate()
+        except ProcessLookupError:
+            pass
+        if not await _wait_exit(transport, _CHILD_TERM_GRACE_SECONDS):
+            try:
+                transport.kill()
+            except ProcessLookupError:
+                pass
+            if not await _wait_exit(transport, _CHILD_KILL_GRACE_SECONDS):
+                logger.error(
+                    "SDK child pid %s did not exit after SIGKILL; it may be "
+                    "orphaned.", pid,
+                )
+        transport.close()
+        logger.info("Reaped SDK child pid %s left running by the turn.", pid)
+
+
+def run_turn_reaping_children(
+    turn: Callable[[], "object"], *, wall_clock_seconds: float | None = None,
+):
+    """Run one async SDK turn in a private event loop; leave no child behind.
+
+    * ``turn`` is an async callable (the SDK turn). Its result is returned.
+    * Every subprocess the turn spawned is terminated (SIGTERM, then SIGKILL)
+      and reaped BEFORE the loop closes, on every exit path -- success,
+      watchdog abort, wall-clock abort, or error -- so repeated retries
+      cannot accumulate orphaned children or closed-loop watchers (#303).
+    * ``wall_clock_seconds`` > 0 bounds the turn; past it the turn is
+      cancelled and :class:`SDKWallClockError` raised. ``None``/``<= 0``
+      disables the ceiling.
+    """
+    import anyio
+
+    spawned: list = []
+    ceiling = (
+        float(wall_clock_seconds)
+        if wall_clock_seconds is not None and wall_clock_seconds > 0 else None
+    )
+
+    async def _main():
+        try:
+            if ceiling is None:
+                return await turn()
+            try:
+                with anyio.fail_after(ceiling):
+                    return await turn()
+            except TimeoutError as exc:
+                raise SDKWallClockError(
+                    f"SDK turn exceeded its {ceiling:.0f}s wall-clock ceiling "
+                    f"(sdk_timeouts.phase_wall_clock_seconds); aborting so the "
+                    f"dispatcher can count and retry it."
+                ) from exc
+        finally:
+            with anyio.CancelScope(shield=True):
+                await _reap_children(spawned)
+
+    with asyncio.Runner(loop_factory=_tracking_loop_factory(spawned)) as runner:
+        return runner.run(_main())
 
 
 def resume_hint(prompt: str, original_prompt: str, kind: str) -> str:
@@ -716,7 +891,10 @@ def call_sdk_with_retry(
             result = runner(prompt=prompt, **runner_kwargs)
         except SDKTransientError as exc:
             failure_count += 1
-            _log("transient", failure_count, str(exc))
+            _log(
+                "wall_clock" if isinstance(exc, SDKWallClockError) else "transient",
+                failure_count, str(exc),
+            )
             if retries_exhausted(failure_count, max_retries):
                 raise SDKCallFailed(
                     f"SDK still failing after {failure_count} attempt(s): {exc}",
@@ -899,6 +1077,13 @@ class SDKDispatcher(CLIDispatcher):
                 k: self._turn_silence_threshold
                 for k in self._phase_silence_thresholds
             }
+        # #303: per-attempt wall-clock ceiling, resolved per phase at dispatch.
+        # Validate the campaign value now so a bad one fails before any work.
+        for _phase in ("design", "execute_analyze", "report"):
+            resolve_phase_wall_clock(campaign, _phase)
+        self._wall_clock_seconds: float | None = resolve_phase_wall_clock(
+            campaign, "design",
+        )
         # #127 Phase B: event log path is recomputed per-dispatch (it depends
         # on the iteration), so we don't store it on the dispatcher.
         self._event_log_path: Path | None = None
@@ -956,6 +1141,7 @@ class SDKDispatcher(CLIDispatcher):
         phase_key = self._normalize_phase(phase)
         original_threshold = self._turn_silence_threshold
         self._turn_silence_threshold = self._resolve_turn_silence_threshold(phase_key)
+        self._wall_clock_seconds = resolve_phase_wall_clock(self.campaign, phase_key)
         try:
             super().dispatch(
                 role, phase,
@@ -1041,6 +1227,7 @@ class SDKDispatcher(CLIDispatcher):
                 permission_mode=self._permission_mode,
                 turn_silence_threshold=self._turn_silence_threshold,
                 effort=self._effort,
+                wall_clock_seconds=self._wall_clock_seconds,
             ),
             max_retries=self.max_retries,
             metrics_path=self._metrics_path,

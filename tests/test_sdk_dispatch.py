@@ -1126,3 +1126,158 @@ class TestSDKTransientClassification:
         from orchestrator.sdk_dispatch import _is_transient_sdk_error
         assert not _is_transient_sdk_error(ValueError("bad bundle schema"))
         assert not _is_transient_sdk_error(KeyError("missing field"))
+
+
+# ─── #303: aborted turns reap their children; a hang becomes a counted failure ─
+
+
+def _pid_alive(pid: int) -> bool:
+    import os
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+class TestAbortedTurnsReapChildren:
+    """#303 parts 2-3, through the REAL default runner.
+
+    ``claude_agent_sdk`` is replaced with a fake whose ``query`` spawns a real
+    short-lived child (``sleep``) -- standing in for the ``claude`` CLI -- and
+    then stalls. No LLM is involved. The fake deliberately never closes its
+    child, which is what an SDK cleanup that did not finish looks like.
+    """
+
+    @staticmethod
+    def _install_fake_sdk(monkeypatch, pids: list, *, mode: str):
+        import subprocess
+        import sys
+        import types
+
+        import anyio
+
+        class _Options:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class _Assistant:
+            content = []
+
+        async def _query(*, prompt, options):  # noqa: ARG001
+            proc = await anyio.open_process(
+                ["sleep", "30"], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            pids.append(proc.pid)
+            if mode == "silent":
+                await anyio.sleep(60)  # no events: the silence watchdog trips
+            while True:  # "chatty": events keep coming, the turn never ends
+                await anyio.sleep(0.05)
+                yield _Assistant()
+
+        module = types.ModuleType("claude_agent_sdk")
+        module.ClaudeAgentOptions = _Options
+        module.query = _query
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
+
+    @pytest.fixture
+    def pids(self):
+        spawned: list[int] = []
+        yield spawned
+        import os
+        import signal
+        for pid in spawned:  # never leave a sleep behind, even on failure
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def _dispatcher(self, tmp_path, campaign, max_retries):
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+        return SDKDispatcher(
+            work_dir=tmp_path, campaign=campaign,
+            sdk_runner=_default_sdk_runner_factory(), max_retries=max_retries,
+        )
+
+    def test_repeated_silence_aborts_leave_no_child_and_no_closed_loop_watcher(
+            self, tmp_path, monkeypatch, pids, caplog):
+        import logging
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        self._install_fake_sdk(monkeypatch, pids, mode="silent")
+        campaign = _make_campaign(tmp_path)
+        campaign["sdk_timeouts"] = {"turn_silence_threshold_seconds": 0.3}
+        d = self._dispatcher(tmp_path, campaign, max_retries=3)
+
+        with caplog.at_level(logging.WARNING, logger="asyncio"):
+            with pytest.raises(RuntimeError, match="still failing after 4"):
+                d.dispatch("planner", "design",
+                           output_path=tmp_path / "runs/iter-1/design_log.md",
+                           iteration=1)
+
+        rows = _read_jsonl(tmp_path / "retry_log.jsonl")
+        assert [r["failure_type"] for r in rows] == ["transient"] * 4
+        assert len(pids) == 4
+        assert [p for p in pids if _pid_alive(p)] == [], "aborted turns left children running"
+        assert "that handles pid" not in caplog.text
+
+    def test_a_turn_past_its_wall_clock_is_a_counted_logged_failure(
+            self, tmp_path, monkeypatch, pids):
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        self._install_fake_sdk(monkeypatch, pids, mode="chatty")
+        campaign = _make_campaign(tmp_path)
+        campaign["sdk_timeouts"] = {
+            "turn_silence_threshold_seconds": 30,  # events keep it from tripping
+            "phase_wall_clock_seconds": {"design": 0.5},
+        }
+        d = self._dispatcher(tmp_path, campaign, max_retries=1)
+
+        import time as _t
+        t0 = _t.monotonic()
+        with pytest.raises(RuntimeError, match="wall-clock ceiling"):
+            d.dispatch("planner", "design",
+                       output_path=tmp_path / "runs/iter-1/design_log.md",
+                       iteration=1)
+        assert _t.monotonic() - t0 < 20, "the ceiling must end the hang"
+
+        rows = _read_jsonl(tmp_path / "retry_log.jsonl")
+        assert [r["failure_type"] for r in rows] == ["wall_clock", "wall_clock"]
+        assert all(r["phase"] == "design" for r in rows)
+        assert [p for p in pids if _pid_alive(p)] == []
+
+
+class TestPhaseWallClockResolution:
+    """#303(b): ``sdk_timeouts.phase_wall_clock_seconds`` shape and defaults."""
+
+    def test_default_applies_when_unset(self):
+        from orchestrator.sdk_dispatch import (
+            DEFAULT_PHASE_WALL_CLOCK_SECONDS, resolve_phase_wall_clock,
+        )
+        assert resolve_phase_wall_clock({}, "design") == DEFAULT_PHASE_WALL_CLOCK_SECONDS
+
+    def test_scalar_applies_to_every_phase_and_zero_disables(self):
+        from orchestrator.sdk_dispatch import resolve_phase_wall_clock
+        c = {"sdk_timeouts": {"phase_wall_clock_seconds": 900}}
+        assert {resolve_phase_wall_clock(c, p) for p in ("design", "report")} == {900.0}
+        off = {"sdk_timeouts": {"phase_wall_clock_seconds": 0}}
+        assert resolve_phase_wall_clock(off, "design") is None
+
+    def test_map_is_per_phase_and_bad_values_fail_at_init(self, tmp_path):
+        from orchestrator.sdk_dispatch import (
+            DEFAULT_PHASE_WALL_CLOCK_SECONDS, resolve_phase_wall_clock,
+        )
+        c = {"sdk_timeouts": {"phase_wall_clock_seconds": {"report": 60}}}
+        assert resolve_phase_wall_clock(c, "report") == 60.0
+        assert resolve_phase_wall_clock(c, "design") == DEFAULT_PHASE_WALL_CLOCK_SECONDS
+        bad = _make_campaign(tmp_path)
+        bad["sdk_timeouts"] = {"phase_wall_clock_seconds": -1}
+        with pytest.raises(ValueError, match="phase_wall_clock_seconds"):
+            SDKDispatcher(work_dir=tmp_path, campaign=bad, sdk_runner=_ScriptedRunner([]))
+
+    def test_schema_accepts_scalar_and_map(self):
+        schema = _load_schema("campaign.schema.yaml")
+        sub = schema["properties"]["sdk_timeouts"]
+        for v in (600, {"design": 600, "build": 9000}):
+            jsonschema.validate({"phase_wall_clock_seconds": v}, sub)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"phase_wall_clock_seconds": {"desgin": 1}}, sub)
