@@ -207,8 +207,11 @@ def test_verify_abort_on_a_killed_suite_names_the_timeout(tmp_path: Path, monkey
     repo = _repo(tmp_path)
     cmd = _slow_suite(tmp_path, passes=["tests/test_a.py::test_one"],
                       sleep_sec=30)
+    # 4s, not 1s: the partial-output assertion below needs the suite to have
+    # printed its first line before the kill, which a loaded machine (the full
+    # suite under -n 4) can delay past a 1s ceiling.
     campaign = _campaign(
-        repo, test_cmd=cmd, test_timeout_sec=1,
+        repo, test_cmd=cmd, test_timeout_sec=4,
         native_tests=["tests/test_a.py::test_one",
                       "tests/test_late.py::test_never_reached"],
     )
@@ -216,7 +219,7 @@ def test_verify_abort_on_a_killed_suite_names_the_timeout(tmp_path: Path, monkey
     with pytest.raises(OptimizationAborted) as exc:
         run_stage(campaign, work, iteration=1, auto_approve=True)
     msg = str(exc.value)
-    assert "KILLED at the 1s timeout" in msg, msg
+    assert "KILLED at the 4s timeout" in msg, msg
     assert "optimization.test_timeout_sec" in msg, msg
     log = work / "runs" / "iter-1" / "test_output.log"
     assert "tests/test_a.py::test_one PASSED" in log.read_text()

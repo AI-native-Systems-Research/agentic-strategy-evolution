@@ -2101,6 +2101,12 @@ def test_a_finalist_measured_infeasible_is_excluded_from_the_recommendation(
         {"metric": "p99", "op": "<", "value": 50},
     ]
     c["optimization"]["design"]["confirm"] = {"replicates": 2, "shortlist_size": 3}
+    # The shortlist here is decided among candidates TIED on the deterministic
+    # surface (every A-edge configuration measures 20.75), and which tied
+    # candidate is seated follows the row order. The scenario was built under
+    # the iteration-index run order, so it pins that rule (#321): a random
+    # salt would seat a different tied candidate on some draws.
+    c["optimization"]["policy"] = {"run_order_concealment": False}
     wd = _init_work_dir(tmp_path, c)
     _run(c, wd, stage="verify", iteration=1, runner=sla_runner)
     _advance_engine(wd)

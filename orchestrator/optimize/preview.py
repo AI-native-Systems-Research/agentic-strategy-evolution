@@ -134,6 +134,16 @@ def build_preview(
             f"{n} baseline run(s) before and after build",
         ))
 
+    from orchestrator.optimize.factors import manipulation_evidence as _man_ev
+
+    _echo = [f.id for f in factors if _man_ev(f.manipulation) == "echo"]
+    if _echo:
+        pv.warnings.append(
+            f"manipulation check(s) for {', '.join(_echo)} read only `applied.*` "
+            f"(Nous's record of what it set): they show the lever was SENT, not "
+            f"that the target received it. Point them at a target-emitted field "
+            f"and add `evidence: target` if the target reports its state.")
+
     screen = _build_design(factors, design_cfg, Stage.SCREEN.value)
     n_centre = sum(1 for p in screen.points if p.role == "center")
     pv.screen_corners = len(screen.corners)
@@ -290,6 +300,16 @@ def build_preview(
                 f"holds factors)",
             ))
 
+    from orchestrator.optimize.held_out import held_out_seed_cost
+
+    _ho = held_out_seed_cost(campaign)
+    if _ho:
+        pv.stages.append(StageRuns(
+            "held-out seeds", _ho, _ho, False,
+            f"after the report: the winner and the baseline x "
+            f"{_ho // 2} unseen workload seed(s), paired; reported, never certifies",
+        ))
+
     # B3: D-efficiency of each fitting stage's planned model matrix.
     from orchestrator.optimize import adequacy as _adq
     from orchestrator.optimize.effects import model_matrix as _mm
@@ -315,10 +335,12 @@ def build_preview(
     pv.max_runs = sum(s.max_runs for s in pv.stages)
     budget = design_cfg.get("max_runs")
     pv.budget_max_runs = int(budget) if isinstance(budget, int) else None
-    if pv.budget_max_runs is not None and pv.guaranteed_runs > pv.budget_max_runs:
+    # Held-out-seed runs come after the report, outside design.max_runs.
+    _in_budget = pv.guaranteed_runs - _ho
+    if pv.budget_max_runs is not None and _in_budget > pv.budget_max_runs:
         pv.warnings.append(
             f"design.max_runs={pv.budget_max_runs} is below the "
-            f"{pv.guaranteed_runs} run(s) the screen + first confirm round "
+            f"{_in_budget} run(s) the screen + first confirm round "
             f"register: the epoch will run out of budget mid-design.",
         )
 

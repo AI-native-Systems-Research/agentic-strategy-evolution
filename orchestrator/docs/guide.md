@@ -210,6 +210,15 @@ downstream measurement describes worse code. An explicit
 `campaign.models.<phase>` still wins, so pin a cheaper model per phase when you
 want one.
 
+**`claude-opus-5` is an alias, not a dated snapshot.** No dated snapshot of it
+could be verified, so Nous does not pin one. Instead every plan and build
+attempt's `llm_metrics.jsonl` row records `model` (the ID requested) and
+`model_resolved` (the ID the SDK reported serving the turn, or null when it
+reported none). `report.json` `provenance.model` lists both per call, and
+`report.md` prints them. A rerun after the alias moves is a different build;
+that record is what lets a reader see it. Pin a dated ID yourself with
+`campaign.models.build` when one is available to you.
+
 **Do not add a `build` stage you do not need.** It is the only stage that
 spends an agent call on the target repo, so a campaign varying existing
 flags should omit it and stay at zero *substantive* model calls. Add it only
@@ -664,6 +673,16 @@ else has a default.
   "{level}"` substituting the level under test. The validator rejects
   trivially-true predicates (`> 0`, `!= null`, bare truthiness) — see
   anti-pattern §6.1.
+
+  **Echo-only checks are flagged.** A predicate over `applied.*`,
+  `applied_args`, `applied_env` or `applied_patches` reads Nous's own record of
+  the level it set, so it shows the lever was *sent*, never that the target
+  *received* it. Such a predicate is allowed, and is listed as echo-only in the
+  `--liveness` preview, in `report.json` `provenance.manipulation_evidence` and
+  in `report.md`. Add `evidence: target` to a factor's `manipulation` to require
+  a target-emitted field: validation then fails if the predicate reads only the
+  echo. A target field is judged by its root name, so a target that emits its
+  own top-level `applied` key is still counted as echo.
 - **`relations`** (required, `>= 1`, and at least one must be
   `kind: correctness`) — Family B: is the mechanism correct?
   `correctness`: a violation hard-fails the whole campaign (the apparatus
@@ -1956,6 +1975,24 @@ protected file into the patch.
   build agent and target code run as the same OS user, so code that knows to
   look in `~/.nous/keys/` can read the key and forge a seal. Moving the key
   removed every relative path to it; it did not remove the absolute one.
+  What that means precisely:
+  - **Can be forged by same-user code:** any sealed gate record, together with
+    its seal; `policy.json` with `policy.sha256`; the state-home anchors, an
+    `--out` anchor file and an unpushed anchor ref. Each of these is a file your
+    user can write.
+  - **Cannot be forged by it:** a ref already pushed to a remote that refuses
+    force-pushes, and a third-party timestamp of an anchor `digest`. A forgery
+    made after either exists is a mismatch that `nous reanalyze` and
+    `nous anchor --verify` report.
+  - **How to move the key out of reach:** Nous starts the build agent and every
+    target command as child processes of itself, under your user, and there is
+    no setting that changes that. Moving the key to an environment variable or
+    the OS keychain would not help: a child process inherits the first and can
+    query the second as you. The key is out of reach only when the agent and the
+    target run as a different OS user, or in a container or VM, that cannot read
+    `$NOUS_STATE_HOME`. That is a deployment you set up around Nous (for example
+    a `claude` wrapper under `CLAUDE_CLI_PATH` that drops to another user, plus
+    a `run_command` that does the same); Nous does not check that you did.
 - **Changes undone within one measurement batch.** Target code can modify the
   clean tree during a batch and restore it before the check that follows. The
   check runs before and after each batch, so the window is the batch itself.
@@ -2351,6 +2388,56 @@ it buys nothing, and the certificate on disk will record a paired method for
 an experiment that paired nothing. Wire the variable into the workload
 generator's seed, and verify it with the two-run recipe in
 [`docs/targets.md`](targets.md) §3 before you trust any paired bound.
+
+**Held-out seeds on the winner.** `workload.held_out_seeds: [ ... ]` declares
+workload seeds that no measured row uses. Validation rejects any that also
+appear in `seeds`. After the report ladder has fixed the answer, the winner and
+the `known_valid_baseline` each run once per held-out seed. Both arms share
+each seed (paired), and the order alternates per seed. `report.json`
+`held_out_seeds` then reports:
+
+- the per-seed pairs;
+- the gain with a two-sided paired-t interval at `1 - delta_terminal`;
+- the in-sample `gain_over_baseline` beside it.
+
+A gain that holds in-sample and vanishes here is the overfit this exists to
+show: a mechanism, or a build agent, tuned to the draws the campaign selected
+on. The block:
+
+- **feeds nothing.** Its rows go to `held_out_seeds.epoch-<e>.jsonl` at the
+  work-dir root, outside `runs/iter-*`, where no fit, ranking, budget or
+  certificate reads. `feeds_certification` is always `false`.
+- **costs `2 x len(held_out_seeds)` runs**, shown as its own line in the
+  `--liveness` preview, on top of `design.max_runs`.
+- **declines by name** when it cannot measure: `no_baseline`,
+  `multi_objective`, `no_winner` (the answer is the baseline rung or `none`),
+  `winner_is_baseline`, `no_runner`, `measurement_error`, or
+  `clean_tree_modified` / `processes_left_running` when the target misbehaved
+  during the block. A declined block never changes the report's answer.
+- **is replayed, not re-measured, by `nous reanalyze`.** If the rows file is
+  missing, the replayed block declines (`not_in_record`) and the report differs.
+
+The seeds are pre-registered, because `policy.json` copies the whole `workload`
+block before the first run. "Unseen" means unseen by this work dir's rows:
+`unseen` is false, with the overlap listed, if a seed collides with one a
+measured row derived.
+
+**Run order is concealed per campaign.** Every iteration's run order (and every
+derived workload seed) is drawn from `sha256(policy hash, iteration)`. The
+policy hash covers a random 32-hex salt Nous draws at compile, records in
+`run_order.epoch-<e>.json`, and compiles into `policy.json` as
+`run_order: {derivation: 2, salt}`. Two campaigns therefore run their rows in
+different orders, so a periodic effect on the machine (a nightly job, a thermal
+cycle) cannot line up with the same rows in every campaign. Every order is
+still recomputable from the record. To reproduce another campaign's orders
+exactly, copy its salt into `optimization.policy.run_order_salt`;
+`optimization.policy.run_order_concealment: false` returns to the old rule (the
+synthetic harness uses it, so its seeded scenarios stay fixed). A policy
+compiled before this release has no `run_order` block; its seed is the
+iteration index (derivation 1), and `nous reanalyze` keeps reproducing it that
+way. Concealment is from other campaigns, not from the target: the seed is
+exported in `seed_env` when you declare one, and the order is on disk before
+the first run.
 
 ### `design.confirm.shortlist_size`: terminal discrimination, not replication
 
@@ -2804,6 +2891,63 @@ reason. Exit codes:
 - 1: something differs, and each input that changed after the report and each
   differing artifact is listed;
 - 2: the work dir cannot be reanalysed at all.
+
+#### Anchoring the pre-registration outside the work dir
+
+`policy.json` and `policy.sha256` sit side by side in the work dir. A process
+that rewrites both consistently passes the in-run hash check. So the moment
+`verify` compiles the policy, before the first benchmark run, Nous writes an
+**anchor** elsewhere. The anchor records:
+
+- the policy hash;
+- the sha256 of `policy.json`, `campaign.epoch-<e>.yaml`, the run-order salt
+  record and `mechanism.sha256`;
+- the input hashes at that moment (the plan/build/verify rows);
+- a `digest` over all of it.
+
+It is appended to `$NOUS_STATE_HOME/anchors/<hash>/epoch-<e>.jsonl` (default
+`~/.nous`). `nous anchor <campaign.yaml|work_dir>` adds copies on request:
+
+- `--out FILE` writes the anchor as JSON. Timestamp its `digest` with an
+  RFC 3161 timestamp authority or OpenTimestamps; the `anchored_at` field is
+  the local clock, not a proof of time.
+- `--git REPO` commits it to `refs/nous/anchors/<run_id>/epoch-<e>` in REPO.
+- `--push REMOTE` (opt-in, needs `--git`) pushes that ref.
+
+Verification is automatic. `report.json` `provenance.anchor` says whether an
+anchor exists and whether the policy, the registered files, the anchored inputs
+and every transition's `policy_hash` still match it; `report.md` prints the
+result. `nous reanalyze` checks the same anchors (and the git refs `nous anchor`
+recorded in `anchors.json`), and any mismatch makes its verdict NOT identical.
+`nous anchor --verify [--file FILE]` exits 0 on a match, 1 on a mismatch and 2
+when no anchor exists. No anchor means the pre-registration is self-attested,
+and every output says so rather than reporting a match.
+
+The state-home copy is on the machine that ran the campaign. A third party who
+receives only the work dir sees `provenance.anchor` as written, but cannot
+re-check it. Give them the `--out` file (`nous anchor <work_dir> --verify
+--file anchor.json`) or the pushed ref.
+
+**What an anchor protects against depends on where it is.** The state-home copy,
+an `--out` file and an unpushed git ref can all be rewritten by any process
+running as your OS user. A same-user agent that knows this layout can rewrite
+`policy.json`, its sidecar and these anchors together, and nothing on this
+machine will notice. These copies catch a partial or careless edit, an edit by
+code that does not know about anchors, and a work dir copied elsewhere and
+altered. Against a same-user forger only two things hold: a ref pushed to a
+remote that refuses force-pushes and deletions, and a third-party timestamp of
+the `digest` taken before the first run. Push or timestamp at verify, before the
+screen starts, if that is the claim you need, and check it by naming the
+remote yourself: `nous anchor <work_dir> --verify --git <repo> --remote <remote>`
+fetches the ref from the remote and never reads the work dir's `anchors.json`
+(which a forger can edit) or the local ref.
+
+Two rules keep the product's own commands from laundering a revision. An anchor
+ref is created once and never moved: a second, different anchor for the same
+epoch is refused. And `nous anchor` refuses to register a different policy for
+an epoch that already has data; if one is appended by hand anyway, verification
+binds the epoch to its last anchor written BEFORE data and reports the later one
+as a mismatch. A revised design is a new epoch: resume recompiles one.
 
 `error_budget` gives the family-wise figure. Each epoch spends
 `delta_screen + delta_terminal` (+ `delta_constraint` when constraint-model

@@ -65,6 +65,7 @@ NOT_DERIVED = frozenset({
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
     "clean_tree.manifest.json", "clean_tree.extras.json", "clean_tree.probe.json",
+    "anchors.json", "anchor_failure.json",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
@@ -96,6 +97,7 @@ class Reanalysis:
     not_rederived: list[str] = field(default_factory=list)
     excluded: list[dict] = field(default_factory=list)
     skipped_iterations: list[dict] = field(default_factory=list)
+    anchor: dict | None = None
     nous_then: dict | None = None
     nous_now: dict | None = None
     scratch_dir: str | None = None
@@ -185,6 +187,9 @@ def _load(path: Path, roots: list[str]):
             # (durations, attempts), so their bytes never hash alike.
             (doc.get("provenance") or {}).pop("nous", None)
             (doc.get("provenance") or {}).pop("inputs", None)
+            # Checked against the ORIGINAL work_dir by anchor.verify, below:
+            # the scratch dir has no external anchor of its own.
+            (doc.get("provenance") or {}).pop("anchor", None)
         return doc
     text = path.read_text()
     for r in roots:
@@ -323,6 +328,11 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
     orig = Path(work_dir).resolve()
     result = Reanalysis(identical=False)
     result.input_changes = check_inputs(orig)
+    # The external anchor of the pre-registration (#321): a mismatch makes the
+    # verdict NOT identical, however cleanly the analysis re-derives.
+    from orchestrator.optimize import anchor as _anchor
+
+    result.anchor = _anchor.verify(orig, use_git=True)
     try:
         result.nous_then = ((json.loads((orig / "report.json").read_text())
                              .get("provenance") or {}).get("nous"))
@@ -397,9 +407,23 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
             scratch_key = kp
         else:
             scratch_key = None
-        for name in ("mechanism.sha256", "mechanism.patch", *CARRIED_RECORDS):
+        # llm_metrics.jsonl is carried because provenance.model is READ from
+        # it: which model the plan/build calls requested and were served is a
+        # record of agent calls, not something a replay can re-derive.
+        for name in ("mechanism.sha256", "mechanism.patch", "llm_metrics.jsonl",
+                     *CARRIED_RECORDS):
             if (orig / name).exists():
                 shutil.copy2(orig / name, new / name)
+        # The run-order salt each epoch drew at compile (#321). It is random,
+        # so it is carried rather than re-drawn; the recompiled policy then
+        # hashes to the registered one only if the file is unaltered, and a
+        # policy written before concealment has none (derivation 1).
+        # Held-out-seed rows (#321) are measurements taken after the report;
+        # carried, then re-read (never re-measured) by the replayed report.
+        for p in sorted(orig.glob("held_out_seeds.epoch-*.jsonl")):
+            shutil.copy2(p, new / p.name)
+        for p in sorted(orig.glob("run_order.epoch-*.json")):
+            shutil.copy2(p, new / p.name)
         last = iters[-1] if iters else 0
         for i in iters:
             e = epoch_of.get(i, max(campaigns))
@@ -465,7 +489,7 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         a, b = _files(orig, result.excluded), _files(new)
         for rel in sorted(a | b):
             name = rel.rsplit("/", 1)[-1]
-            if name in NOT_DERIVED:
+            if name in NOT_DERIVED or name.startswith("held_out_seeds.epoch-"):
                 result.not_rederived.append(rel)
                 continue
             if rel not in b:
@@ -482,7 +506,8 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
             if x != y:
                 result.differences.append({"file": rel, "difference": _first_diff(x, y)})
         result.identical = not (result.differences or result.input_changes
-                                or result.replay_mismatches)
+                                or result.replay_mismatches
+                                or (result.anchor or {}).get("matches") is False)
         if keep:
             result.scratch_dir = str(new)
     finally:
@@ -501,8 +526,11 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
 
 
 def format_result(r: Reanalysis) -> str:
+    unanchored = not (r.anchor or {}).get("present")
     lines = [("ANALYSIS RE-DERIVED: every re-derived artifact matches the recorded one "
-              "(the measurements themselves were not re-run)."
+              "(the measurements themselves were not re-run)"
+              + (" -- UNANCHORED: the pre-registration is self-attested only."
+                 if unanchored else ".")
               if r.identical else "ANALYSIS NOT RE-DERIVED IDENTICALLY: differences below."),
              f"  compared {len(r.compared)} derived artifact(s)"]
     if r.excluded:
@@ -521,6 +549,15 @@ def format_result(r: Reanalysis) -> str:
     if r.not_rederived:
         lines.append("  not re-derived (measurements or agent output): "
                      + ", ".join(r.not_rederived))
+    a = r.anchor or {}
+    if not a.get("present"):
+        lines.append("  anchor: none outside the work_dir; the pre-registration is "
+                     "self-attested only")
+    elif a.get("matches"):
+        lines.append(f"  anchor: the pre-registration matches its external anchor "
+                     f"({a.get('where')})")
+    for m in a.get("mismatches") or []:
+        lines.append(f"  ANCHOR MISMATCH {m}")
     for c in r.input_changes:
         lines.append(f"  INPUT {c['file']}: {c['change']}")
     for m in r.replay_mismatches:

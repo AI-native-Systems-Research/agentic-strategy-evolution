@@ -49,6 +49,11 @@
     "budget": {"type": "object", "required": ["max_runs"], "properties": {"max_runs": {"type": ["integer", "null"]}}},
     "known_valid_baseline": {"type": ["object", "null"]},
     "workload": {"type": ["object", "null"]},
+    "run_order": {
+      "description": "Run-order concealment (#321): derivation 2 draws every iteration's run-order seed from sha256(policy hash, iteration); the policy hash covers this random salt, recorded at compile in run_order.epoch-<e>.json. Absent = derivation 1 (the seed is the iteration index).",
+      "type": "object", "required": ["derivation", "salt"], "additionalProperties": false,
+      "properties": {"derivation": {"const": 2}, "salt": {"type": "string", "pattern": "^[0-9a-f]{32}$"}}
+    },
     "initial": {"type": "string"},
     "states": {
       "type": "object",

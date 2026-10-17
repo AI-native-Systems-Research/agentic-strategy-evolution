@@ -1727,6 +1727,7 @@ def _compile_and_write_policy(campaign: dict, work_dir: Path) -> dict:
     pol = policy_mod.compile_policy(
         campaign, mechanism_patch_hash=_read_mechanism_hash(work_dir),
         epoch=_epoch_index(work_dir),
+        run_order_salt=_run_order_salt(campaign, work_dir, _epoch_index(work_dir)),
     )
     errs = policy_mod.check_policy(pol)
     if errs:
@@ -1755,7 +1756,53 @@ def _compile_and_write_policy(campaign: dict, work_dir: Path) -> dict:
             yaml.safe_dump(campaign, default_flow_style=False, sort_keys=False))
     except (OSError, yaml.YAMLError) as exc:
         logger.warning("could not record the epoch's campaign: %s", exc)
+    if not _REANALYSIS.get():
+        # Anchor the registration OUTSIDE the work_dir before any benchmark
+        # run (#321; orchestrator/optimize/anchor.py, which states what this
+        # does and does not protect against).
+        from orchestrator.optimize import anchor as _anchor
+
+        _anchor.anchor_at_compile(work_dir)
     return pol
+
+
+def _run_order_salt(campaign: dict, work_dir: Path, epoch: int) -> str | None:
+    """The epoch's run-order salt (#321 run-order concealment), or None.
+
+    Recorded in ``run_order.epoch-<e>.json`` the first time the epoch compiles
+    and READ BACK on every later compile of the same epoch (a resume, or
+    ``nous reanalyze``'s scratch dir, which carries the file), so the policy
+    hash is reproducible from the record. ``optimization.policy.run_order_salt``
+    pins it (to reproduce an earlier campaign's orders);
+    ``optimization.policy.run_order_concealment: false`` opts out (derivation
+    1, the iteration index, recorded by the policy's absent ``run_order``
+    block). Under reanalysis an
+    epoch with no recorded salt was compiled before concealment existed, and
+    gets None: the old derivation (the iteration index).
+    """
+    import secrets
+
+    p = Path(work_dir) / f"run_order.epoch-{int(epoch)}.json"
+    if p.exists():
+        try:
+            return str(json.loads(p.read_text())["salt"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise OptimizationGateFailed(
+                f"{p.name} exists but does not record a salt ({exc}); the "
+                f"epoch's run orders cannot be reproduced from it") from exc
+    if _REANALYSIS.get():
+        return None
+    _pcfg = (_opt_block(campaign) or {}).get("policy") or {}
+    if _pcfg.get("run_order_concealment") is False:
+        # Declared opt-out: derivation 1, the iteration index. The declaration
+        # is in the campaign, so campaign_hash in the policy covers it.
+        return None
+    declared = _pcfg.get("run_order_salt")
+    salt = str(declared) if declared else secrets.token_hex(16)
+    _write_json(p, {"epoch": int(epoch), "salt": salt,
+                    "derivation": policy_mod.RUN_ORDER_DERIVATION,
+                    "source": "declared" if declared else "random"})
+    return salt
 
 
 def _load_or_compile_policy(campaign: dict, work_dir: Path) -> dict:
@@ -2006,7 +2053,8 @@ def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool,
         # a small multiplier would (base*2+i aliases base+1 at i=2).
         return (base * 7919 + i) % (2 ** 31)
 
-    base = iteration if confirm else int(payload.get("run_order_seed", iteration))
+    base = (policy_mod.run_order_seed(pol, iteration) if confirm
+            else int(payload.get("run_order_seed", iteration)))
     out, rec = [], {}
     for r in rows:
         i = r.replicate if confirm else r.row_index
@@ -2234,6 +2282,9 @@ import contextvars
 #: Set while run_stage serves ``nous reanalyze``: nothing is measured, and the
 #: scratch work_dir has no clean tree to check.
 _REANALYSIS = contextvars.ContextVar("nous_reanalysis", default=False)
+#: The stage's config_runner, for the post-report held-out-seed block (#321),
+#: which runs inside `_run_report` where no runner is threaded.
+_RUNNER = contextvars.ContextVar("nous_config_runner", default=None)
 
 
 def _check_survivors(work_dir, iteration, what: str) -> None:
@@ -2452,6 +2503,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         recommendation=levels,
         finalists=(conf.get("finalists") if conf else []) or [],
     )
+    held_seeds_block = _held_out_seeds(campaign, work_dir, pol, levels, basis,
+                                       metric, direction, conf)
     _write_json(Path(work_dir) / "report.json", {
         "recommendation": {
             "levels": levels, "basis": basis,
@@ -2538,6 +2591,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # carries the full record next to it.
         **({"epoch_ended": epoch_ended} if epoch_ended else {}),
         **({"held_out": held_out_block} if held_out_block else {}),
+        **({"held_out_seeds": held_seeds_block} if held_seeds_block else {}),
         **({"pareto": mo_front} if mo_front is not None else {}),
         **({"certification_caveats": list(conf["certification_caveats"])}
            if conf and conf.get("certification_caveats") else {}),
@@ -2582,13 +2636,67 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     engine.transition("DONE")
 
 
+def _held_out_seeds(campaign, work_dir, pol, levels, basis, metric, direction, conf):
+    """``workload.held_out_seeds`` on the winner, AFTER every decision above is
+    fixed (orchestrator/optimize/held_out.py). A measurement failure, or target
+    code that modified the clean tree or left processes during the block,
+    declines the block with that reason; it never changes the report's answer."""
+    from orchestrator.optimize import held_out as _ho
+    from orchestrator.optimize import reaper as _reaper
+
+    try:
+        block = _ho.held_out_seed_block(
+            Path(work_dir), pol=pol, campaign=campaign, levels=levels, basis=basis,
+            metric=metric, direction=direction, runner=_RUNNER.get(),
+            replay=_REANALYSIS.get(),
+            in_sample_gain=(conf or {}).get("gain_over_baseline"))
+    except Exception as exc:  # noqa: BLE001 -- named, recorded, never fatal
+        logger.error("held-out seeds: not measured: %s", exc)
+        detail = f"{type(exc).__name__}: {exc}"
+        if not _REANALYSIS.get():
+            try:
+                _ho.record_decline(Path(work_dir), pol, "measurement_error", detail)
+            except OSError:
+                pass
+        return _ho._decline(
+            ((pol.get("workload") or {}).get("held_out_seeds") or []),
+            "measurement_error", detail)
+    if not block or block.get("declined") or _REANALYSIS.get():
+        return block
+    left = _reaper.take_survivors()
+    verdict = None
+    try:
+        _check_clean_tree_after(campaign, work_dir, "held-out-seed runs")
+    except OptimizationGateFailed as exc:
+        verdict = ("clean_tree_modified", str(exc))
+    if verdict is None and left:
+        verdict = ("processes_left_running",
+                   f"{len(left)} target process(es) outlived the runs")
+    if verdict is not None:
+        _ho.record_decline(Path(work_dir), pol, *verdict)
+        return {**_ho._decline(block["seeds"], *verdict), "file": block.get("file")}
+    return block
+
+
 def _report_provenance(work_dir, pol, campaign) -> dict:
     """``provenance`` and ``error_budget`` for report.json (provenance.py)."""
     from orchestrator.optimize import provenance as prov_mod
 
+    _prov = prov_mod.build_provenance(
+        Path(work_dir), policy_mod.policy_hash(pol), campaign=campaign)
+    if not _REANALYSIS.get():
+        # The anchor check is a fact about THIS work_dir's external record, so
+        # a reanalysis scratch dir (which has none) does not re-derive it.
+        from orchestrator.optimize import anchor as _anchor
+
+        _v = _anchor.verify(Path(work_dir))
+        _prov["anchor"] = {k: _v[k] for k in ("present", "matches", "mismatches", "where",
+                                              "reanchored", "absent_because")}
+        if _v["present"] and not _v["matches"]:
+            logger.error("report: the pre-registration does NOT match its external "
+                         "anchor: %s", "; ".join(_v["mismatches"]))
     return {
-        "provenance": prov_mod.build_provenance(
-            Path(work_dir), policy_mod.policy_hash(pol), campaign=campaign),
+        "provenance": _prov,
         "error_budget": prov_mod.error_budget(Path(work_dir), pol),
     }
 
@@ -2761,6 +2869,7 @@ def run_stage(
 
     _reaper.take_survivors()          # none from an earlier stage count here
     _reanalysis_token = _REANALYSIS.set(bool(reanalysis))
+    _runner_token = _RUNNER.set(config_runner)
     try:
         return _run_stage_body(
             campaign, work_dir, iteration=iteration, stage=stage,
@@ -2769,6 +2878,7 @@ def run_stage(
             model=model, sdk_runner=sdk_runner, reanalysis=reanalysis, **_ignored)
     finally:
         _REANALYSIS.reset(_reanalysis_token)
+        _RUNNER.reset(_runner_token)
 
 
 def _run_stage_body(
@@ -2919,6 +3029,7 @@ def _run_stage_body(
             timeout=resolve_run_timeout(opt),
             log_dir=Path(work_dir) / "runs" / f"iter-{iteration}" / "failed_runs",
         )
+        _RUNNER.set(config_runner)
 
     if _is_build:
         from orchestrator.optimize import build as build_mod
@@ -3418,7 +3529,8 @@ def _run_stage_body(
         # What the two blocks TOGETHER still alias, read off the combined
         # matrix (stage-1 M3) -- never assumed from the fold rule.
         _left = design_mod.alias_pairs(design_mod.combine(screen_design, design))
-        payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
+        payload = matrix.matrix_payload(
+            design, factors, run_order_seed=policy_mod.run_order_seed(pol, iteration))
         rows = matrix.expand(design, factors)
         # Provenance the combined fit rests on: WHICH column was negated, and
         # WHICH iteration's runs are the other half of the response vector. A
@@ -3444,7 +3556,8 @@ def _run_stage_body(
         )
     else:
         design = _build_design(factors, design_cfg, stage_name)
-        payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
+        _ros = policy_mod.run_order_seed(pol, iteration)
+        payload = matrix.matrix_payload(design, factors, run_order_seed=_ros)
         rows = matrix.expand(design, factors)
         _n_val = sum(1 for p in design.points if p.role == "validation")
         if _n_val:
@@ -3456,9 +3569,9 @@ def _run_stage_body(
             # only make the prediction check reject (the conservative side).
             _n0 = len(rows) - _n_val
             payload["run_order"] = (
-                matrix.randomized_run_order(_n0, iteration)
+                matrix.randomized_run_order(_n0, _ros)
                 + [_n0 + j for j in matrix.randomized_run_order(
-                    _n_val, iteration * 7919 + 1)])
+                    _n_val, _ros * 7919 + 1)])
             from orchestrator.optimize import adequacy as _adq
 
             _rcfg = design_cfg.get("refine") or {}
@@ -6263,8 +6376,10 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
 
     rows: list[ConfigRow] = []
     idx = 0
+    # The iteration under derivation 1 (old policies), the concealed seed under 2.
+    _ros = policy_mod.run_order_seed(pol, iteration)
     for i in range(r):
-        for j in randomized_run_order(len(finalists), seed=iteration * 1000 + i):
+        for j in randomized_run_order(len(finalists), seed=_ros * 1000 + i):
             lv = finalists[j]
             rows.append(ConfigRow(
                 row_index=idx, levels=dict(lv), role="confirm", replicate=i,
@@ -6287,7 +6402,7 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         # shuffle. A second permutation over the whole matrix would undo the
         # "every finalist once before any twice" property.
         "run_order": list(range(len(rows))),
-        "run_order_seed": iteration,
+        "run_order_seed": _ros,
         "round": rnd,
         "finalists": [
             {"key": f"f{j}", "levels": lv, "why": why}

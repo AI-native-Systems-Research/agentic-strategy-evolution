@@ -21,8 +21,9 @@ row_index" reuse is NOT sound in this codebase, and the reason is specific:
 
 ``_assign_workload_seeds`` derives each row's workload seed from
 ``run_order_seed``, and ``matrix_payload`` is called with
-``run_order_seed=iteration``. So iteration 4's row 0 and iteration 5's row 0
-carry DIFFERENT seeds (31676 vs 39595 on the real formula). Under
+``run_order_seed=policy.run_order_seed(pol, iteration)`` (the iteration itself
+under derivation 1). So iteration 4's row 0 and iteration 5's row 0 carry
+DIFFERENT seeds (31676 vs 39595 on the derivation-1 formula). Under
 ``optimization.workload.seed_env`` — which nearly every real campaign
 declares — those are measurements of two different workload draws. Carrying
 iteration 4's number forward as though it answered iteration 5's registered

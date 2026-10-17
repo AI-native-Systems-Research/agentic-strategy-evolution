@@ -31,6 +31,22 @@ from typing import Any
 VALID_TYPES = ("numeric", "choice")
 _CMP_KEYS = frozenset({"observable", "metric", "op", "value", "when", "when_not"})
 
+#: Observable roots that are Nous's OWN record of what it set (runner.
+#: _applied_namespace), not something the target emitted. A manipulation
+#: predicate over only these shows the lever was SENT, never that it was
+#: RECEIVED (#321 "manipulation checks beyond echo").
+ECHO_ROOTS = frozenset({"applied", "applied_args", "applied_env", "applied_patches"})
+
+
+def manipulation_evidence(man: dict | None) -> str:
+    """``"echo"`` when the predicate reads only Nous's rendered configuration,
+    ``"target"`` when it reads a target-emitted field. Classified by the
+    observable's root segment: a target that itself emits a top-level
+    ``applied`` key would win the collision at check time but is still
+    classified ``echo`` here (the conservative side)."""
+    path = str((man or {}).get("observable") or (man or {}).get("metric") or "")
+    return "echo" if path.split(".", 1)[0] in ECHO_ROOTS else "target"
+
 
 @dataclass(frozen=True)
 class Factor:
@@ -78,7 +94,7 @@ def _check_manipulation(man: Any, factor_id: str) -> dict:
             f"how Nous verifies the lever actually engaged. Use "
             f"{{observable: <telemetry path>, op: '==', value: '{{level}}'}}.",
         )
-    unknown = set(man) - _CMP_KEYS
+    unknown = set(man) - _CMP_KEYS - {"evidence"}
     if unknown:
         raise ValueError(
             f"factor {factor_id!r}: manipulation has unknown key(s) "
@@ -91,6 +107,18 @@ def _check_manipulation(man: Any, factor_id: str) -> dict:
         )
     if not man.get("op"):
         raise ValueError(f"factor {factor_id!r}: manipulation needs an 'op'.")
+    ev = man.get("evidence")
+    if ev is not None and ev not in ("target", "any"):
+        raise ValueError(
+            f"factor {factor_id!r}: manipulation.evidence must be 'target' or "
+            f"'any' (got {ev!r}).")
+    if ev == "target" and manipulation_evidence(man) == "echo":
+        raise ValueError(
+            f"factor {factor_id!r}: manipulation.evidence is 'target' but the "
+            f"predicate reads {man.get('observable') or man.get('metric')!r}, "
+            f"which is Nous's own record of what it set ({sorted(ECHO_ROOTS)}), "
+            f"not a field the target emitted. Point it at a target-reported "
+            f"field (e.g. telemetry.<x>), or drop 'evidence: target'.")
     return dict(man)
 
 

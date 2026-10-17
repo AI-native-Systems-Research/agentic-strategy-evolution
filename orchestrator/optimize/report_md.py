@@ -856,6 +856,35 @@ def render_report_markdown(work_dir: Path) -> str:
                 )
         lines.append("")
 
+    hs = report.get("held_out_seeds")
+    if isinstance(hs, dict):
+        lines += ["## Held-out seeds", ""]
+        if hs.get("declined"):
+            lines += [f"Not measured: `{hs['declined']}` -- {hs.get('detail', '')}", ""]
+        else:
+            g = hs.get("gain") or {}
+            ins = hs.get("in_sample_gain") or {}
+            lines += [
+                f"After the answer was fixed, the winner and the baseline ran on "
+                f"{len(hs.get('seeds') or [])} workload seed(s) "
+                + ("no measured row used" if hs.get("unseen") else
+                   f"of which {hs.get('overlap_with_measured_seeds')} WERE used by "
+                   f"measured rows (not fully held out)")
+                + ". This decides nothing and certifies nothing.",
+                "",
+                "| | gain over baseline | interval | pairs |",
+                "|---|---|---|---|",
+                f"| held-out seeds | {_fmt(g.get('estimate'))} | "
+                f"[{_fmt(g.get('low'))}, {_fmt(g.get('high'))}] at {_fmt(g.get('level'))} | "
+                f"{g.get('n_pairs', 0)} |",
+            ]
+            if ins:
+                lines.append(f"| in-sample (confirm) | {_fmt(ins.get('estimate'))} | "
+                             f"[{_fmt(ins.get('low'))}, {_fmt(ins.get('high'))}] | |")
+            if g.get("no_interval_because"):
+                lines.append(f"\nNo held-out interval: {g['no_interval_because']}.")
+            lines.append("")
+
     baseline = report.get("known_valid_baseline")
     lines += [
         "## Provenance",
@@ -927,6 +956,30 @@ def _provenance_lines(report: dict) -> list[str]:
                "(`runs.jsonl`, `design_matrix.json`, `relations.json`, each epoch's "
                "registered campaign); `nous reanalyze` re-derives this report's "
                "analysis from them")
+    mdl = prov.get("model") if isinstance(prov.get("model"), dict) else None
+    if mdl and mdl.get("calls"):
+        seen = sorted({f"{c.get('requested')} -> {c.get('resolved') or 'not reported'}"
+                       for c in mdl["calls"]})
+        out.append("- **Model (requested -> served):** " + "; ".join(seen)
+                   + ("" if mdl.get("snapshot_pinned") else
+                      " (the requested ID is an alias, not a dated snapshot)"))
+    anc = prov.get("anchor") if isinstance(prov.get("anchor"), dict) else None
+    if anc and not anc.get("present"):
+        out.append("- **External anchor:** none; the pre-registration is self-attested"
+                   + (f" ({anc['absent_because']})" if anc.get("absent_because") else ""))
+    if anc and anc.get("present"):
+        out.append("- **External anchor:** " + (
+            f"matches ({anc.get('where')})" if anc.get("matches") else
+            "**MISMATCH**: " + "; ".join(anc.get("mismatches") or [])))
+        if anc.get("reanchored"):
+            out.append(f"- **Re-registered before running:** epoch(s) {anc['reanchored']} "
+                       "were anchored with more than one policy; the latest is checked")
+    echo = [m for m in prov.get("manipulation_evidence") or [] if m.get("evidence") == "echo"]
+    if echo:
+        out.append("- **Manipulation checks that are echo-only:** "
+                   + ", ".join(f"`{m['factor']}` (`{m.get('observable')}`)" for m in echo)
+                   + ". These read Nous's own record of the level it set, so they show "
+                     "the lever was sent, not that the target received it")
     for w in prov.get("waivers") or []:
         out.append(f"- **Gate waived:** `{w.get('gate')}` -- {w.get('reason')}"
                    + (f" ({w['note']})" if w.get("note") else ""))

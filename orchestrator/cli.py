@@ -2620,6 +2620,75 @@ def _cmd_reanalyze(args):
     sys.exit(0 if res.identical else 1)
 
 
+def _cmd_anchor(args):
+    """Anchor a kind:optimization pre-registration outside its work_dir, or
+    verify the anchors it has (#321; orchestrator/optimize/anchor.py)."""
+    import json as _json
+
+    from orchestrator.optimize import anchor as _anchor
+
+    work_dir = Path(resolve_work_dir(args.target))
+    if args.verify:
+        extra = [_json.loads(Path(f).read_text()) for f in (args.file or [])]
+        if args.remote and not args.git:
+            print("anchor: --remote needs --git <repo>", file=sys.stderr)
+            sys.exit(2)
+        v = _anchor.verify(work_dir, extra=extra, use_git=True,
+                           git_repo=Path(args.git) if args.git else None,
+                           remote=args.remote)
+        if args.json:
+            print(_json.dumps(v, indent=2))
+        elif not v["present"]:
+            print("anchor: NONE outside the work_dir; the pre-registration is "
+                  f"self-attested only ({v['absent_because']})")
+        elif v["matches"]:
+            print(f"anchor: matches ({v['anchors']} anchor(s): {v['where']})")
+        else:
+            print("ANCHOR MISMATCH: the pre-registration on disk is not the one anchored")
+            for m in v["mismatches"]:
+                print(f"  {m}")
+        sys.exit(0 if v["matches"] else (2 if not v["present"] else 1))
+    if args.push and not args.git:
+        print("anchor: --push needs --git <repo>", file=sys.stderr)
+        sys.exit(2)
+    run_id = None
+    if args.target.endswith((".yaml", ".yml")):
+        run_id = (yaml.safe_load(Path(args.target).read_text()) or {}).get("run_id")
+    try:
+        a = _anchor.build_anchor(work_dir, run_id=run_id)
+        _anchor.refuse_reanchor_after_data(work_dir, a)
+    except ValueError as exc:
+        print(f"anchor: {exc}", file=sys.stderr)
+        sys.exit(1)
+    where = [f"state home: {_anchor.record_local(work_dir, a)}"]
+    if args.out:
+        Path(args.out).write_text(_json.dumps(a, indent=2, sort_keys=True) + "\n")
+        _anchor.add_locator(work_dir, {"kind": "file", "path": str(Path(args.out).resolve())})
+        where.append(f"file: {args.out} (timestamp its `digest` with an RFC 3161 TSA "
+                     f"or OpenTimestamps for a time no local process can set)")
+    if args.git:
+        try:
+            commit = _anchor.write_git(Path(args.git), a)
+            ref = _anchor.ref_name(a)
+            _anchor.add_locator(work_dir, {"kind": "git", "repo": str(Path(args.git).resolve()),
+                                           "ref": ref})
+            where.append(f"git: {ref} -> {commit[:12]} in {args.git}")
+            if args.push:
+                _anchor.push_git(Path(args.git), args.push, a)
+                where.append(f"pushed: {ref} to {args.push}")
+        except RuntimeError as exc:
+            print(f"anchor: {exc}", file=sys.stderr)
+            sys.exit(1)
+    print(f"anchored epoch {a['epoch']} policy {a['policy_sha256'][:12]} digest {a['digest']}")
+    for w in where:
+        print(f"  {w}")
+    if not args.push:
+        print("  note: every copy above is rewritable by a process running as you; only "
+              "a pushed ref on a remote that refuses force-pushes, or a third-party "
+              "timestamp of the digest, holds against a same-user forger")
+    sys.exit(0)
+
+
 def _cmd_create_campaign(args):
     """Scaffold a heavily-commented campaign.yaml (issue #89)."""
     from orchestrator.create_campaign import scaffold_campaign
@@ -3231,6 +3300,29 @@ def build_parser():
                              help="keep the re-derived scratch work_dir")
     p_reanalyze.add_argument("--json", action="store_true")
     p_reanalyze.set_defaults(func=_cmd_reanalyze)
+
+    p_anchor = subparsers.add_parser(
+        "anchor",
+        help="kind:optimization: anchor policy.sha256 and the input hashes outside "
+             "the work_dir (state home always; --out file, --git ref, --push opt-in), "
+             "or --verify the anchors on record.",
+    )
+    p_anchor.add_argument("target", help="campaign.yaml or work_dir")
+    p_anchor.add_argument("--out", help="also write the anchor JSON here (for a timestamp)")
+    p_anchor.add_argument("--git", metavar="REPO",
+                          help="also commit it to refs/nous/anchors/<run_id>/epoch-<e> in REPO")
+    p_anchor.add_argument("--push", metavar="REMOTE",
+                          help="push that ref to REMOTE (opt-in; needs --git)")
+    p_anchor.add_argument("--verify", action="store_true",
+                          help="check the recorded anchors instead of writing one")
+    p_anchor.add_argument("--file", action="append",
+                          help="with --verify: also check this exported anchor file")
+    p_anchor.add_argument("--remote", metavar="REMOTE",
+                          help="with --verify --git REPO: read the anchor ref from REMOTE "
+                               "(fetched), not the local ref -- the check that holds "
+                               "against a same-user forger")
+    p_anchor.add_argument("--json", action="store_true")
+    p_anchor.set_defaults(func=_cmd_anchor)
 
     p_reports = subparsers.add_parser(
         "reports",

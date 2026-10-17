@@ -215,6 +215,9 @@ def input_hashes(work_dir: Path) -> dict[str, str]:
     # The campaign each epoch registered: the analysis is a function of it too.
     for p in sorted(Path(work_dir).glob("campaign.epoch-*.yaml")):
         out[p.name] = sha256_file(p)
+    # Held-out-seed rows (#321): measured after the decisions, before report.json.
+    for p in sorted(Path(work_dir).glob("held_out_seeds.epoch-*.jsonl")):
+        out[p.name] = sha256_file(p)
     return out
 
 
@@ -315,6 +318,60 @@ WAIVER_KEYS = ("allow_unarmed_baseline", "allow_nondiscriminating_tests",
                "allow_out_of_scope_writes")
 
 
+def model_record(work_dir: Path) -> dict:
+    """Which model authored what (audit Q10): the kind's configured default,
+    and for every plan/build attempt in ``llm_metrics.jsonl`` the ID REQUESTED
+    and the ID the SDK reported SERVING it (``model_resolved``; None when the
+    SDK reported none, e.g. a row written by an older Nous).
+
+    ``OPTIMIZATION_MODEL`` is an ALIAS. No dated snapshot of it could be
+    verified when this was written, so none is pinned (inventing one would
+    make every build call fail, or worse, silently resolve elsewhere); the
+    resolved ID per call is the record of what actually ran. ``snapshot_pinned``
+    says which of the two situations a report is in."""
+    import json
+
+    from orchestrator.campaign import OPTIMIZATION_MODEL
+
+    calls: list[dict] = []
+    p = Path(work_dir) / "llm_metrics.jsonl"
+    if p.exists():
+        for ln in p.read_text().splitlines():
+            try:
+                r = json.loads(ln)
+            except ValueError:
+                continue
+            if isinstance(r, dict) and r.get("phase") in ("plan", "build") and r.get("model"):
+                calls.append({"phase": r["phase"], "requested": r["model"],
+                              "resolved": r.get("model_resolved")})
+    return {
+        "configured_default": OPTIMIZATION_MODEL,
+        "snapshot_pinned": False,
+        "pin_note": ("the configured default is an alias with no verifiable dated "
+                     "snapshot; each call's resolved ID is recorded instead"),
+        "calls": calls,
+    }
+
+
+def manipulation_evidence(campaign: dict | None) -> list[dict]:
+    """Per factor: does its manipulation predicate read a TARGET-emitted field
+    or only Nous's echo of what it set (``applied.*``)? Echo-only means the
+    check shows the lever was SENT, never that it was RECEIVED (#321)."""
+    from orchestrator.optimize.factors import manipulation_evidence as _ev
+
+    opt = ((campaign or {}).get("optimization") or {}) if isinstance(campaign, dict) else {}
+    out = []
+    for f in opt.get("factors") or []:
+        if not isinstance(f, dict):
+            continue
+        man = f.get("manipulation") or {}
+        out.append({"factor": str(f.get("id")),
+                    "observable": man.get("observable") or man.get("metric"),
+                    "evidence": _ev(man),
+                    "required": man.get("evidence") or "any"})
+    return out
+
+
 def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None = None) -> dict:
     return {
         "nous": nous_version_info(),
@@ -323,6 +380,8 @@ def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None 
         "inputs": input_hashes(work_dir),
         "analysis_constants": analysis_constants(),
         "waivers": waivers(work_dir, campaign),
+        "model": model_record(work_dir),
+        "manipulation_evidence": manipulation_evidence(campaign),
     }
 
 
