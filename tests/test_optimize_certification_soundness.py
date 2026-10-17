@@ -42,7 +42,13 @@ def test_a_wide_model_bound_withholds_the_certificate(tmp_path):
     model bound over the candidates screening did not shortlist was 1.39. The
     delta_s half of the claim was never read. Now it is: withheld, named."""
     s = dataclasses.replace(SURFACES["bowl"](), noise_sd=0.4)
-    r = run_synthetic_campaign(s, seed=27, parent_dir=tmp_path)
+    # The regression input ran 3 confirm replicates (pre-#321 P3 default);
+    # it now also withholds replicates_below_floor, but the MODEL half's
+    # reason must still be there on its own merits.
+    r = run_synthetic_campaign(s, seed=27, parent_dir=tmp_path, campaign_overrides={
+        "design": {"screen": {"resolution": 5, "center_points": 4},
+                   "refine": {"kind": "central_composite", "center_points": 4},
+                   "confirm": {"replicates": 3}}})
     assert r.true_gap > r.report["epsilon"]
     assert not r.report["certified"]
     assert "model_bound_above_epsilon" in r.report["certification_withheld"]
@@ -64,7 +70,10 @@ def test_a_certificate_states_both_halves_within_epsilon(tmp_path):
             gb = _confirmations(r.work_dir)[-1]["global_bound"]
             assert gb["x_hat_key"] is not None
             assert gb["value"] <= r.report["epsilon"]
-    assert n >= 6
+    # Was >= 6 of 8 before #321 P3; the A5 skewness pretest (a veto at 0.25)
+    # now withholds 2 of the 8 as noise_skewed on Gaussian noise, its
+    # measured cost (spec §7).
+    assert n >= 4
 
 
 def test_the_model_bound_outside_a_shortlist_drops_only_measured_members():

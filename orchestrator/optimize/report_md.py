@@ -147,6 +147,17 @@ WITHHELD_MEANING = {
                                        "replicated groups, or zero spread), so "
                                        "the model half's equal-variance "
                                        "assumption is untested",
+    "replicates_below_floor": "a finalist has fewer confirm replicates than "
+                              "the registered floor at which the robust "
+                              "(sign-flip) terminal bound exists at this "
+                              "level -- raise design.confirm.replicates",
+    "noise_skewed": "the confirm replicates are skewed (studentized third "
+                    "moment rejected at the registered level), so neither the "
+                    "t nor the sign-flip bound holds its level at this n -- "
+                    "raise design.confirm.replicates or transform the metric",
+    "robust_bound_not_computable": "the robust terminal bound could not be "
+                                   "computed (zero spread, or too few "
+                                   "replicates)",
     "shortlist_refilled": "the shortlist was refilled after finalists were "
                           "measured inadmissible; the replacements were "
                           "compared, but the ranking that nominated the "

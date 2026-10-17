@@ -99,6 +99,8 @@ class Reanalysis:
     nous_then: dict | None = None
     nous_now: dict | None = None
     scratch_dir: str | None = None
+    #: The policy predates #321 P3 and was recompiled without its noise checks.
+    legacy_pre_p3: bool = False
 
     def to_dict(self) -> dict:
         return dict(self.__dict__)
@@ -368,6 +370,17 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
                     {"file": name, "difference": f"build record seal {st}"})
     run_id = (campaigns[min(campaigns)] or {}).get("run_id") or orig.name
 
+    # A policy compiled before #321 P3 is recompiled as it was (no noise
+    # checks, confirm replicates defaulting to 3), so its epoch reproduces.
+    try:
+        _orig_pol = json.loads((orig / "policy.json").read_text())
+        _legacy = ("confirm" in (_orig_pol.get("states") or {})
+                   and not (_orig_pol.get("objective") or {}).get("objectives")
+                   and "terminal_robustness" not in (_orig_pol.get("objective") or {}))
+    except (OSError, ValueError):
+        _legacy = False
+    result.legacy_pre_p3 = _legacy
+    _legacy_token = policy_mod.LEGACY_PRE_P3.set(_legacy)
     parent = Path(tempfile.mkdtemp(prefix="nous-reanalyze-"))
     prior = os.environ.get("NOUS_CAMPAIGN_PARENT")
     os.environ["NOUS_CAMPAIGN_PARENT"] = str(parent)
@@ -486,6 +499,7 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         if keep:
             result.scratch_dir = str(new)
     finally:
+        policy_mod.LEGACY_PRE_P3.reset(_legacy_token)
         if prior is None:
             os.environ.pop("NOUS_CAMPAIGN_PARENT", None)
         else:

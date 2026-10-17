@@ -5089,7 +5089,8 @@ def _run_stage_body(
         # was pooled from, so confirm can test M3 (Brown-Forsythe) against
         # the finalists' replicates without the Fit.
         **({"pure_error_cells": [list(g) for g in fit.pure_error_cells]}
-           if fit.pure_error_cells else {}),
+           if fit.pure_error_cells
+           and pol["objective"].get("heteroscedasticity") else {}),
         "epsilon": epsilon,
         "alias_consequential": [list(p) for p in alias_pairs_consequential],
         # 2fi NOT fitted because their corner column lies in the span of kept
@@ -7098,6 +7099,17 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         bound = certificate.terminal_regret_bound(
             ok, best, delta=delta_t, direction=direction, paired=paired,
         )
+    # A5 (#321 P3 item 2): small-n diagnostics and the robust terminal family.
+    # Registered in the policy (absent in pre-P3 policies, which keep the
+    # t family alone). The robust family is max(t, sign-flip | bootstrap-t)
+    # per challenger at the same per-look Bonferroni level, so it is never
+    # narrower; the diagnostics can only withhold.
+    _robust_rule = pol["objective"].get("terminal_robustness")
+    noise_diag = None
+    if _robust_rule and best is not None and bound.value is not None:
+        bound, noise_diag = certificate.robust_terminal_bound(
+            ok, best, delta=delta_t, direction=direction, paired=paired,
+            rule=_robust_rule)
 
     # AN UNMEASURED FINALIST MAKES THE TERMINAL BOUND UNKNOWN, NOT SMALLER.
     #
@@ -7345,6 +7357,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
         and not fit_bias and not model_inadequate and not refilled
         and not adequacy_unknown
+        and not (noise_diag or {}).get("withheld")
         and (bool(pareto_stage.objectives(pol)) or not model_reasons)
     )
     # NO ADMISSIBLE FINALIST is its own reason, not `bound_not_computable`. Every
@@ -7475,6 +7488,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("model_inadequate", model_inadequate),
                 (adequacy_reason, adequacy_unknown),
                 ("campaign_delta_exhausted", budget_exhausted),
+                *((r, True) for r in ((noise_diag or {}).get("withheld") or [])),
                 ("campaign_delta_exceeded", budget_exceeded),
             ) if hit
         ] + ([] if pareto_stage.objectives(pol) else model_reasons),
@@ -7489,6 +7503,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             "rule": "Bonferroni over the registered confirm looks: "
                     "delta_terminal / (confirm_max_rounds + 1 if the refill "
                     "branch is registered)"},
+        **({"noise_diagnostics": noise_diag} if noise_diag is not None else {}),
         **({"terminal_bound_measured_only": measured_only.as_dict()}
            if measured_only is not None else {}),
         **({"certification_caveats": ["finalist_measured_infeasible"]}
@@ -8215,10 +8230,11 @@ def _heteroscedasticity_check(rec: dict, ok: dict, rule: dict) -> tuple[dict, st
     predicts the optimum, so their spread is the evidence that tests M3 where
     it matters.
 
-    Brown-Forsythe (median-centred Levene, structural zeros removed;
-    ``noise.brown_forsythe``) over the pure-error cells plus every admissible
-    finalist with >= 2 replicates, at the REGISTERED level (``rule.alpha``,
-    compiled into the policy before any data). A rejection withholds the
+    Brown-Forsythe's deviation scale (median-centred, structural zeros
+    removed), decided by the planned ONE-SIDED contrast "finalists spread more
+    than the pure-error cells" (``noise.brown_forsythe_contrast``) at the
+    REGISTERED level (``rule.alpha``, compiled before any data); the omnibus F
+    over every group is recorded beside it. A rejection withholds the
     model half (``heteroscedastic_pure_error``). Fewer than two testable
     groups, or a degenerate spread, withholds too
     (``heteroscedasticity_not_testable``): the bound rests on M3, and an
@@ -8235,14 +8251,17 @@ def _heteroscedasticity_check(rec: dict, ok: dict, rule: dict) -> tuple[dict, st
     cells = [list(map(float, g)) for g in (rec.get("pure_error_cells") or [])
              if len(g) >= 2]
     fin = {k: list(map(float, v)) for k, v in sorted(ok.items()) if len(v) >= 2}
-    test = noise_mod.brown_forsythe(cells + list(fin.values()))
+    test = noise_mod.brown_forsythe_contrast(cells, list(fin.values()))
+    omni = noise_mod.brown_forsythe(cells + list(fin.values()))
     alpha = float(rule.get("alpha", 0.05))
     record = {"alpha": alpha, "method": test["method"], "p": test["p"],
-              "w": test["w"], "df": test["df"],
+              "t": test["t"], "df": test["df"],
+              "omnibus": {"method": omni["method"], "p": omni["p"], "w": omni["w"],
+                          "df": omni["df"]},
               "pure_error_cells": len(cells), "finalists": sorted(fin),
               "rejected": None if test["p"] is None else bool(test["p"] < alpha)}
-    if test["reason"] is not None or not cells:
-        record["reason"] = test["reason"] or "no_pure_error_cells"
+    if test["reason"] is not None:
+        record["reason"] = test["reason"]
         return record, "heteroscedasticity_not_testable"
     return record, ("heteroscedastic_pure_error" if record["rejected"] else None)
 

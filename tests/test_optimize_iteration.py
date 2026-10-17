@@ -921,7 +921,10 @@ def test_confirm_findings_validate_and_report_reproduction(tmp_path, work_dir):
     # WP-A A1: this deterministic runner gives the screen zero pure error, so
     # there is NO model bound, and the delta_s half of the certificate is
     # unknown -- withheld and named, never certified on the terminal half.
-    assert conf["certification_withheld"] == ["model_bound_not_computable"]
+    # (#321 P3: this fixture declares 3 confirm replicates, below the A5 floor,
+    # which is named too.)
+    assert [r for r in conf["certification_withheld"]
+            if r != "replicates_below_floor"] == ["model_bound_not_computable"]
     assert findings["arms"][0]["status"] == "PARTIALLY_CONFIRMED"
     assert "fresh runs" in findings["arms"][0]["observed"]
     assert conf["terminal_bound"]["method"] == "trivial", (
@@ -2594,7 +2597,10 @@ def test_the_terminal_bound_is_not_the_model_bound_under_another_name(
     conf = json.loads(
         (Path(wd) / "runs" / "iter-3" / "confirmation.json").read_text(),
     )
-    assert conf["terminal_bound"]["method"] == "bonferroni_one_sided_welch_t"
+    # #321 P3: unpaired, the terminal family is max(Welch, bootstrap-t); below
+    # the A5 floor it is still reported, and certification is withheld, named.
+    assert conf["terminal_bound"]["method"] == "bonferroni_max_welch_bootstrap_t"
+    assert "replicates_below_floor" in conf["certification_withheld"]
     rec = json.loads(
         (Path(wd) / "runs" / "iter-2" / "recommendation.json").read_text(),
     )

@@ -150,6 +150,7 @@ def analysis_constants() -> dict:
         design,
         effects,
         exclusions,
+        noise,
         pareto,
         pareto_stage,
         policy,
@@ -190,6 +191,11 @@ def analysis_constants() -> dict:
         "stage_runner.DEFAULT_BASELINE_REPLICATES": _get(stage_runner, "DEFAULT_BASELINE_REPLICATES"),
         "policy._REFILL_VACATED": _get(policy, "_REFILL_VACATED"),
         "pareto_stage._FRONT_GAP_FILL": _get(pareto_stage, "_FRONT_GAP_FILL"),
+        "noise.SKEW_NULL_DRAWS": _get(noise, "SKEW_NULL_DRAWS"),
+        "noise.SKEW_NULL_SEED": _get(noise, "SKEW_NULL_SEED"),
+        "noise.BOOT_RESAMPLES": _get(noise, "BOOT_RESAMPLES"),
+        "noise.BOOT_SEED": _get(noise, "BOOT_SEED"),
+        "noise.SIGN_FLIP_EXACT_MAX_N": _get(noise, "SIGN_FLIP_EXACT_MAX_N"),
     }
 
 

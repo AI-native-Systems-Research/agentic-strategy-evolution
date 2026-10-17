@@ -127,7 +127,7 @@ def synthetic_campaign(surface: Surface, **overrides) -> dict:
         "factors": [dict(f) for f in surface.factors],
         "design": {"screen": {"resolution": 5, "center_points": 4},
                    "refine": {"kind": "central_composite", "center_points": 4},
-                   "confirm": {"replicates": 3}},
+                   "confirm": {}},
     }
     opt.update(overrides)
     return {
