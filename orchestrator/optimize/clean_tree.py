@@ -550,6 +550,12 @@ WRAPPER_SPECS: dict[str, tuple[frozenset, frozenset, int]] = {
     "caffeinate": (frozenset({"-t", "-w"}), frozenset(), 0),
 }
 _WRAPPERS = frozenset(WRAPPER_SPECS) | {"env"}
+
+
+def wrapper_list_markdown() -> str:
+    """The guide's list of unwrapped wrappers, generated from WRAPPER_SPECS so
+    the two cannot drift (tests/test_optimize_guide_security_claims.py)."""
+    return ", ".join(f"`{w}`" for w in WRAPPER_SPECS) + ", `env A=B`"
 #: Python options that take a separate argument.
 _PY_ARG_FLAGS = frozenset({"-W", "-X", "-Q"})
 _PY_LONG_ARG_FLAGS = frozenset({"--check-hash-based-pycs"})

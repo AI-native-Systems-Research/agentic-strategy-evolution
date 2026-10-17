@@ -1699,16 +1699,17 @@ campaign that is missing any of these:
      measure the agent's tree;
    - the probe cannot run, fails, or prints something unparseable.
 
-   Known wrappers are unwrapped first, and `env` assignments are passed to the
-   probe: `timeout`, `nice`, `time`, `nohup`, `env A=B`, `ionice`, `taskset`,
-   `chrt`, `stdbuf`, `caffeinate`. Interpreter flags keep their arguments
-   (`-W ignore`, `-X dev`). Any other command, one whose first program is not a
-   Python interpreter, is not refused but is recorded in `clean_tree.probe.json`
-   and listed in `provenance.waivers` as not probed. That covers a launcher
-   (`uv run`, `conda run`, `poetry run`, `make`, `sh -c`), a script such as
-   `./bench.sh`, another runtime, a pyenv or asdf shim, and `env -i`. Install
-   the package non-editably, and prefer a run command that names its
-   interpreter.
+   Known wrappers are unwrapped first: `timeout`, `gtimeout`, `nice`, `time`, `nohup`, `ionice`, `taskset`, `chrt`, `stdbuf`, `caffeinate`, `env A=B`. The probe then runs the
+   interpreter the command runs, resolved with the command's own `PATH` (an
+   `env PATH=...` assignment included), with exactly the command's
+   environment and interpreter flags; flags keep their arguments (`-W ignore`,
+   `-X dev`). Any other command is not refused but is recorded in
+   `clean_tree.probe.json` and listed in `provenance.waivers` as not probed.
+   That covers one whose first program is not a Python interpreter: a
+   launcher (`uv run`, `conda run`, `poetry run`, `make`, `sh -c`), a script
+   such as `./bench.sh`, another runtime, a pyenv or asdf shim, `env -i`,
+   `env -S`, or a shell-style `VAR=value` prefix. Install the package
+   non-editably, and prefer a run command that names its interpreter.
 6. **Ignored assets.** A data set, built binaries or a virtualenv go in
    `target_system.worktree_extras`. Each is COPIED (never symlinked) into the
    clean tree, and every copied file is hashed into `clean_tree.extras.json`.
@@ -1759,11 +1760,15 @@ campaign that is missing any of these:
   - whatever is left in its process group;
   - every descendant the poller saw that is still alive, whatever group it is
     in now. Its group is re-read at that moment, so a `setsid()` before or
-    after the first poll does not escape.
+    after the first poll does not escape, on a normal exit, a timeout or an
+    interrupt alike. A pid whose start time no longer matches the one recorded
+    when it was first seen has been reused by an unrelated process; it is
+    recorded and never killed.
 - **A run dir is copied back safely.** Each attempt's copy goes to a fresh
   `row-K.attempt-N` directory, regular files only, under a size and file-count
-  cap. A symlink or other special file is skipped and recorded in
-  `_nous_keep.json`, never written through.
+  cap that counts the bytes actually read. A symlink or other special file is
+  skipped and recorded in `_nous_keep.json`, never written through; an
+  unreadable file is recorded and the rest is still kept.
 
 **No planted bytecode.** Every target command runs with `PYTHONPYCACHEPREFIX`
 set to a Nous-owned directory. Other runtimes' caches are not redirected.
