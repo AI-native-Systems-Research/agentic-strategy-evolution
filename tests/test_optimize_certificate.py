@@ -12,6 +12,7 @@ import pytest
 from orchestrator.optimize.certificate import (
     _challenger_bounds,
     model_regret_bound,
+    simultaneous_critical,
     resolve_epsilon,
     terminal_regret_bound,
 )
@@ -131,7 +132,9 @@ def _model_challenger_bounds(fit, cands, xhat, *, delta, direction="maximize"):
         )
         return est, math.sqrt(var), float(fit.pure_error_df)
 
-    raw = _challenger_bounds(others, contrast, delta=delta)
+    # The SHIPPED critical value (#321 H3: min(Bonferroni, Scheffe)).
+    crit = simultaneous_critical(delta, len(others), len(terms), fit.pure_error_df)
+    raw = _challenger_bounds(others, contrast, delta=delta, crit=crit["value"])
     return [(others[i], raw[i]) for i in sorted(raw)]
 
 
@@ -190,42 +193,62 @@ def test_the_reported_R_is_the_max_of_the_shipped_challenger_bounds():
     assert b.challenger == max(family, key=lambda p: p[1])[0].levels
 
 
-def test_model_coverage_on_a_central_composite_fit():
-    """The quadratic-term blind spot Task 8 acknowledged, measured.
+def test_model_coverage_needs_the_response_class_and_lack_of_fit_guards_it():
+    """The bound covers UNDER the registered response class (M1); outside it
+    nothing is claimed, and lack of fit is what withholds.
 
-    ``effects.py`` documents that pure-quadratic columns on a central
-    composite are CORRELATED, so the variance sum in ``model_regret_bound``
-    (which assumes uncorrelated coefficients) understates the true variance of
-    a difference involving them — by ~1.46x on the designs this package
-    builds. Task 8's coverage tests all ran on ``additive``, a plane, whose
-    fit has no quadratic term at all, so nothing measured whether the
-    optimism actually costs coverage.
-
-    ``bowl`` is a genuine quadratic surface, and ``_fit_and_rank`` builds a
-    full factorial with centre points over it — which is exactly the
-    mis-specified case (no axial points, so the quadratic term is not
-    estimable and the response class is wrong for the surface). Measured at
-    ``noise_sd=1.0``: the argmax misses the true optimum on 300/300 replays
-    with gaps up to 2.3, and coverage still holds at 0/300 misses. So the
-    known optimism does not show up as under-coverage here — the
-    conservatism Bonferroni buys dominates it.
-
-    This does NOT retire the assumption: the bound still carries the response
-    class, as spec §3.5 says. What it retires is the worry that the
-    correlated-quadratic factor silently breaks the delta guarantee on the
-    designs this package actually generates.
-    """
+    ``bowl`` is quadratic, and ``_fit_and_rank`` fits a first-order + 2fi model
+    on a 2^2 factorial with centre points -- misspecified on purpose. Measured
+    at noise 1.0 over 300 replays: the argmax misses the optimum every time,
+    lack of fit rejects in 299/300, and the bound misses the true gap in
+    120/300 -- every miss on a replay whose lack of fit REJECTED. Before #321
+    H3 the bound happened to cover here (0/300), but only because Bonferroni
+    over 80 challengers (t = 11.98 at df 3) was conservative enough to hide the
+    misspecification; Scheffe over q = 3 terms (5.27) is not, and must not be
+    relied on to. The product path withholds on a rejected lack of fit
+    (``model_inadequate``), so these misses never become certificates."""
     import dataclasses
     s = dataclasses.replace(SURFACES["bowl"](), noise_sd=1.0)
-    delta, misses, n, nonzero = 0.10, 0, 300, 0
+    delta, n, miss_when_adequate, adequate = 0.10, 300, 0, 0
     for seed in range(n):
+        fit, _ = _fit_and_rank(s, seed)
         bound, gap = _replay(s, seed, delta)
-        assert bound.value is not None and bound.value >= 0
-        if gap > 1e-9:
-            nonzero += 1
-        if gap > bound.value + 1e-12:
-            misses += 1
-    assert nonzero > n // 4, f"gap degenerate ({nonzero}/{n} nonzero)"
+        rejected = fit.lack_of_fit_p is not None and fit.lack_of_fit_p < 0.05
+        if not rejected:
+            adequate += 1
+            miss_when_adequate += gap > bound.value + 1e-12
+    assert adequate <= n // 50          # the check has power here
+    assert miss_when_adequate == 0
+
+
+def test_model_coverage_on_a_correctly_specified_second_order_fit():
+    """Coverage of the min(Bonferroni, Scheffe) bound where M1 HOLDS: bowl
+    fitted with the second-order model on a central composite (axial points
+    clamped to the declared range are coded as run), noise 1.0, 300 replays."""
+    import dataclasses
+
+    from orchestrator.optimize.design import central_composite
+    from orchestrator.optimize.matrix import coded_as_run
+
+    s = dataclasses.replace(SURFACES["bowl"](), noise_sd=1.0)
+    factors = parse_factors(list(s.factors))
+    ids = [f.id for f in factors]
+    _, best = true_optimum(s)
+    delta, n, misses, nonzero = 0.10, 300, 0, 0
+    for seed in range(n):
+        d = central_composite(ids, center_points=4)
+        rows = expand(d, factors)
+        rng = random.Random(seed)
+        ys = [s.fn(r.levels) + rng.gauss(0, s.noise_sd) for r in rows]
+        d, _ = coded_as_run(d, factors, [r.levels for r in rows])
+        fit = fit_effects(d, ys, factor_ids=ids)
+        cands = ranked(fit, factors, direction="maximize", fitted_ids=ids,
+                       held_fixed={}, top=None)
+        b = model_regret_bound(fit, cands, cands[0], delta=delta, direction="maximize")
+        gap = best - s.fn(cands[0].levels)
+        nonzero += gap > 1e-9
+        misses += gap > b.value + 1e-12
+    assert nonzero > n // 4
     assert misses / n <= delta, misses
 
 
@@ -244,7 +267,8 @@ def test_bound_names_the_challenger_keeping_it_large():
     s = dataclasses.replace(SURFACES["additive"](), noise_sd=0.5)
     fit, cands = _fit_and_rank(s, 3)
     b = model_regret_bound(fit, cands, cands[0], delta=0.05, direction="maximize")
-    assert b.value > 0 and b.method == "bonferroni_one_sided_t"
+    assert b.value > 0
+    assert b.method in ("bonferroni_one_sided_t", "scheffe_one_sided")
     assert b.challenger in [c.levels for c in cands]
     assert b.challenger != cands[0].levels
     assert f"M={len(cands) - 1}" in b.detail

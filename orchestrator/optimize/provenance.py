@@ -142,6 +142,7 @@ def nous_version_info() -> dict:
 def analysis_constants() -> dict:
     """The analysis switches and constants outside the policy hash, read live."""
     from orchestrator.optimize import (
+        certificate,
         constraint_models,
         decide,
         design,
@@ -169,6 +170,7 @@ def analysis_constants() -> dict:
         "decide.SEARCH_SEED": _get(decide, "SEARCH_SEED"),
         "decide.SEARCH_STARTS": _get(decide, "SEARCH_STARTS"),
         "decide.SEARCH_STARTS_WEIGHTED": _get(decide, "SEARCH_STARTS_WEIGHTED"),
+        "certificate.REGION_NODE_BUDGET": _get(certificate, "REGION_NODE_BUDGET"),
         "design._RESTARTS": _get(design, "_RESTARTS"),
         "effects.fit_effects.alpha": _default(effects.fit_effects, "alpha"),
         "stage._LOF_ALPHA": _get(stage, "_LOF_ALPHA"),

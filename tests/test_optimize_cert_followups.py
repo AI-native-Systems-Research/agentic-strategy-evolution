@@ -112,3 +112,102 @@ def test_delta_constraint_is_range_checked():
 
     assert _rule14_policy_ranges({"policy": {"delta_constraint": 0.7}})
     assert not _rule14_policy_ranges({"policy": {"delta_constraint": 0.01}})
+
+
+# ── item 1 (H3): a model bound independent of the candidate count ───────────
+
+def _ccd_fit(surface, seed, noise=None):
+    import dataclasses
+    import random
+
+    from orchestrator.optimize.decide import ranked
+    from orchestrator.optimize.design import central_composite
+    from orchestrator.optimize.effects import fit_effects
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.matrix import coded_as_run, expand
+
+    s = dataclasses.replace(surface, noise_sd=noise) if noise else surface
+    factors = parse_factors(list(s.factors))
+    ids = [f.id for f in factors]
+    d = central_composite(ids, center_points=4)
+    rows = expand(d, factors)
+    rng = random.Random(seed)
+    ys = [s.fn(r.levels) + rng.gauss(0, s.noise_sd) for r in rows]
+    d, _ = coded_as_run(d, factors, [r.levels for r in rows])
+    fit = fit_effects(d, ys, factor_ids=ids)
+    cands = ranked(fit, factors, direction="maximize", fitted_ids=ids,
+                   held_fixed={}, top=None)
+    return fit, factors, ids, cands
+
+
+def test_scheffe_is_chosen_from_the_design_alone_and_beats_bonferroni_on_large_m():
+    from orchestrator.optimize.certificate import simultaneous_critical
+
+    small = simultaneous_critical(0.05, 8, 3, 3)       # 8 challengers, 3 terms
+    large = simultaneous_critical(0.05, 6560, 14, 3)   # 9^4 grid, quadratic in 4
+    assert small["used"] == "scheffe" or small["bonferroni"] <= small["scheffe"]
+    assert large["used"] == "scheffe" and large["value"] < large["bonferroni"] / 4
+    for c in (small, large):
+        assert c["value"] == min(c["bonferroni"], c["scheffe"])
+
+
+def test_the_region_bound_equals_brute_force_over_the_grid():
+    """certificate.region_bound (branch and bound, no enumeration) must return
+    exactly max_z U(z, x_hat) over the whole grid at the same constant -- the
+    number enumeration would give -- when it converges."""
+    from orchestrator.optimize.certificate import model_regret_bound, region_bound
+    from orchestrator.optimize.synthetic import SURFACES
+
+    for name, seed in (("bowl", 3), ("saddle", 5), ("choice_x_numeric", 2)):
+        fit, factors, ids, cands = _ccd_fit(SURFACES[name](), seed, noise=0.5) \
+            if name != "choice_x_numeric" else _fo_fit(SURFACES[name](), seed)
+        b = model_regret_bound(fit, cands, cands[0], delta=0.05, direction="maximize")
+        rg = region_bound(fit, factors, ids, cands[0], crit=b.critical["value"],
+                          direction="maximize")
+        assert rg["converged"], (name, rg)
+        assert abs(rg["value"] - b.value) < 1e-9, (name, rg["value"], b.value)
+
+
+def _fo_fit(surface, seed):
+    import random
+
+    from orchestrator.optimize.decide import ranked
+    from orchestrator.optimize.design import full_factorial, with_center_points
+    from orchestrator.optimize.effects import fit_effects
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.matrix import coded_as_run, expand
+
+    factors = parse_factors(list(surface.factors))
+    ids = [f.id for f in factors]
+    d = with_center_points(full_factorial(ids), 4)
+    rows = expand(d, factors)
+    rng = random.Random(seed)
+    ys = [surface.fn(r.levels) + rng.gauss(0, 0.5) for r in rows]
+    d, _ = coded_as_run(d, factors, [r.levels for r in rows])
+    fit = fit_effects(d, ys, factor_ids=ids)
+    return fit, factors, ids, ranked(fit, factors, direction="maximize",
+                                     fitted_ids=ids, held_fixed={}, top=None)
+
+
+def test_a_searched_space_is_no_longer_a_permanent_veto(tmp_path, monkeypatch):
+    """Before #321 every searched campaign withheld with
+    model_bound_not_exhaustive. With CANDIDATE_CAP forced to 1 the bowl
+    campaign is SEARCHED, its unevaluated grid is bounded by branch and
+    bound, and it certifies on seeds where the enumerated campaign does."""
+    from orchestrator.optimize import decide
+    from orchestrator.optimize.synthetic import SURFACES
+
+    monkeypatch.setattr(decide, "CANDIDATE_CAP", 1)
+    certified = 0
+    for seed in range(1, 5):
+        r = run_synthetic_campaign(SURFACES["bowl"](), seed=seed,
+                                   parent_dir=tmp_path / str(seed))
+        assert "model_bound_not_exhaustive" not in r.report["certification_withheld"]
+        rec = [json.loads(p.read_text()) for p in r.work_dir.glob(
+            "runs/iter-*/recommendation.json")]
+        assert any("unevaluated" in (x["residual_regret_model"].get("critical") or {})
+                   for x in rec)
+        certified += r.report["certified"]
+        if r.report["certified"]:
+            assert r.true_gap <= r.report["epsilon"] + 1e-9
+    assert certified >= 2

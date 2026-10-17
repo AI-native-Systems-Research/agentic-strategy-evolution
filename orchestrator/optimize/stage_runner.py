@@ -4860,16 +4860,35 @@ def _run_stage_body(
         # confirm round can fill from this record (top_candidates, the best
         # measured, the supported-feasible seat) with headroom.
         profile=3 * _shortlist + 5,
+        # #321 H3: the critical value is min(Bonferroni over the DECLARED
+        # grid, Scheffe over the model's terms) -- a function of the design,
+        # never of which candidates the data excluded.
+        m_declared=max(1, int(candidate_space.size) - 1),
     )
-    if not candidate_space.exhaustive:
-        # Above the cap the max in eq. (2) ran over the EVALUATED set only, so
-        # the number bounds the regret against those challengers -- not
-        # against every z in X_valid. Said where the number is, not elsewhere.
-        rb = dataclasses.replace(rb, detail=(
-            f"{rb.detail}; NOT over all of X_valid: max over the "
+    if not candidate_space.exhaustive and rb.value is not None and rb.critical:
+        # SEARCHED (#321 H3). The family's critical value covers every grid
+        # point (Bonferroni over the whole declared grid, or Scheffe over the
+        # model space), so the challengers the search never evaluated are
+        # bounded too -- by branch and bound over the grid
+        # (`certificate.region_bound`) rather than by enumeration. Their max
+        # enters the profile's `rest`, so confirm's R_model_outside covers
+        # them and `model_bound_not_exhaustive` no longer vetoes.
+        _rg = certificate.region_bound(
+            fit, factors, fitted_ids, rec, crit=float(rb.critical["value"]),
+            direction=direction, skip_coded=[c.coded for c in scored])
+        _crit = dict(rb.critical, unevaluated=_rg)
+        _prof = dict(rb.profile) if rb.profile else None
+        if _prof is not None and _rg["value"] is not None:
+            _prof["rest"] = max(float(_prof["rest"] or 0.0), float(_rg["value"]))
+            _prof["challengers"] = max(1, int(candidate_space.size) - 1)
+        _val = max(float(rb.value), float(_rg["value"] or 0.0))
+        rb = dataclasses.replace(rb, value=_val, critical=_crit, profile=_prof, detail=(
+            f"{rb.detail}; searched, not enumerated: max over the "
             f"{len(scored)} evaluated valid candidate(s) of a "
-            f"{candidate_space.size}-configuration space searched by "
-            f"{candidate_space.method} (recommendation.json candidate_space)"))
+            f"{candidate_space.size}-configuration space ({candidate_space.method}), "
+            f"and over the unevaluated rest by branch and bound "
+            f"({_rg['nodes']} boxes, {'converged' if _rg['converged'] else 'node budget hit: a looser valid bound'}) "
+            f"= {_rg['value']:.6g} (recommendation.json candidate_space)"))
     epsilon = certificate.resolve_epsilon(pol["objective"]["epsilon"], rec.predicted)
 
     # ── is the aliasing CONSEQUENTIAL? (spec §3.4, paper §Illustrative) ────
@@ -7539,9 +7558,12 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
         r_out = float(r_model)
         out["residual_regret_model_outside"] = r_out
     reasons: list[str] = []
-    if rec.get("candidate_space"):
-        # Searched, not enumerated: R_model is a max over the EVALUATED
-        # candidates only, so it is silent about the rest of X_valid.
+    if rec.get("candidate_space") and "unevaluated" not in (rb.get("critical") or {}):
+        # Searched, not enumerated, by a record written before #321 H3: its
+        # R_model is a max over the EVALUATED candidates only, so it is
+        # silent about the rest of X_valid. A record with `critical.unevaluated`
+        # bounds the rest by branch and bound under a simultaneous constant
+        # that covers the whole grid, and is not vetoed.
         reasons.append("model_bound_not_exhaustive")
     key = next((f["key"] for f in fin
                 if xhat and _same_levels(dict(f["levels"]), dict(xhat))), None)

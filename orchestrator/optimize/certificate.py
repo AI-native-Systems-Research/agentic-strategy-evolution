@@ -76,6 +76,7 @@ from dataclasses import dataclass
 from statistics import mean, variance
 from typing import Callable
 
+from scipy.stats import f as fisher_f
 from scipy.stats import t as student_t
 
 from orchestrator.optimize.decide import Candidate, predict
@@ -109,11 +110,57 @@ class RegretBound:
     #: Model flavour only, on request: the largest per-challenger bounds and
     #: the max over the rest (``model_bound_outside``). Not part of as_dict.
     profile: dict | None = None
+    #: Model flavour only: which simultaneous critical value was used and the
+    #: two it was chosen between (``simultaneous_critical``), plus, for a
+    #: SEARCHED space, how the bound over the unevaluated candidates was got.
+    critical: dict | None = None
 
     def as_dict(self) -> dict:
         """The JSON shape written into ``recommendation.json`` / ``report.json``."""
-        return {"value": self.value, "challenger": self.challenger,
-                "delta": self.delta, "method": self.method, "detail": self.detail}
+        out = {"value": self.value, "challenger": self.challenger,
+               "delta": self.delta, "method": self.method, "detail": self.detail}
+        if self.critical is not None:
+            out["critical"] = dict(self.critical)
+        return out
+
+
+def simultaneous_critical(delta: float, m: int, q: int, df: float) -> dict:
+    """The model family's critical value: ``min(Bonferroni, Scheffe)`` (#321 H3).
+
+    Both constants give a one-sided bound ``est + c * se`` on every contrast
+    ``d'beta`` of the family SIMULTANEOUSLY at level ``1 - delta``, under the
+    registered response class with independent normal errors and the
+    pure-error variance estimate on ``df`` degrees of freedom (independent of
+    the coefficients: the fitted coefficients are functions of the design-point
+    means, pure error of the within-point deviations).
+
+    * Bonferroni over the ``m`` challengers: ``t_{1 - delta/m, df}``.
+    * Scheffe (1953; the Working-Hotelling band is its regression case) over
+      the q-dimensional space spanned by the differences ``x(z) - x(x_hat)``:
+      ``sqrt(q F_{q, df, 1 - delta})``, valid for EVERY ``d`` in that space at
+      once (two-sided, so each one-sided bound too) -- hence for any number of
+      candidates, enumerated or not. The intercept cancels in a difference, so
+      ``q`` is the number of non-intercept model terms (an upper bound on the
+      span's dimension, which is conservative).
+
+    Taking the smaller of two valid simultaneous constants is valid because the
+    choice is a function of ``(delta, m, q, df)`` only: it is fixed before the
+    response values are read (the family's event is then the chosen one's,
+    whose probability is >= 1 - delta). ``m`` is the DECLARED candidate count
+    (the product of the axes), not the count left after data-driven
+    exclusions. Returns the record ``RegretBound.critical`` carries.
+    """
+    df = max(float(df), 1.0)
+    m = max(1, int(m))
+    q = max(1, int(q))
+    c_b = float(student_t.ppf(1.0 - delta / m, df))
+    c_s = math.sqrt(q * float(fisher_f.ppf(1.0 - delta, q, df)))
+    used = "scheffe" if c_s < c_b else "bonferroni"
+    return {"used": used, "value": min(c_b, c_s), "bonferroni": c_b,
+            "scheffe": c_s, "m": m, "q": q, "df": df,
+            "rule": "min(t_{1-delta/m,df}, sqrt(q F_{q,df,1-delta})), both "
+                    "simultaneous at 1 - delta; chosen from (delta, m, q, df) "
+                    "only, before the responses are read"}
 
 
 def _challenger_bounds(
@@ -121,6 +168,7 @@ def _challenger_bounds(
     contrast: Callable[[object], tuple[float, float, float]],
     *,
     delta: float,
+    crit: float | None = None,
 ) -> dict:
     """Every challenger's one-sided upper bound on its true gain, at level
     ``delta / M`` (Bonferroni), keyed by the challenger itself.
@@ -139,14 +187,16 @@ def _challenger_bounds(
     out: dict = {}
     for i, z in enumerate(challengers):
         est, se, df = contrast(z)
-        tcrit = float(student_t.ppf(1 - delta / m, max(float(df), 1.0)))
+        tcrit = (float(crit) if crit is not None
+                 else float(student_t.ppf(1 - delta / m, max(float(df), 1.0))))
         out[i] = est + tcrit * se
     return out
 
 
 def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
                        delta: float, direction: str,
-                       profile: int = 0) -> RegretBound:
+                       profile: int = 0,
+                       m_declared: int | None = None) -> RegretBound:
     """``max_z U_delta(z, x_hat)`` under the fitted response model.
 
     ``cands`` should be the WHOLE valid candidate space (``decide.ranked(...,
@@ -165,6 +215,15 @@ def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
     (levels and value) and the max over the rest, so a later stage can take
     the max over the challengers OUTSIDE a shortlist (``model_bound_outside``)
     without the fit.
+
+    THE CRITICAL VALUE (#321 H3) is ``simultaneous_critical``: the smaller of
+    Bonferroni over ``m_declared`` challengers and Scheffe over the model's
+    ``q`` non-intercept terms. ``m_declared`` is the DECLARED candidate count
+    minus one (the product of the axis sizes) and defaults to the challengers
+    passed. It is not the count left after data-driven exclusions (measured-
+    inadmissible, confidently infeasible): Bonferroni over a subset chosen by
+    data correlated with the primary has no stated level, and the declared
+    count makes the constant a function of the design alone.
     """
     terms = list(fit.effects) + list(fit.quadratic)
     if fit.pure_error_df <= 0 or any(e.se is None for e in terms):
@@ -192,12 +251,21 @@ def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
             var += (e.se or 0.0) ** 2 * dz * dz
         return est, math.sqrt(var), float(fit.pure_error_df)
 
-    bounds = _challenger_bounds(others, contrast, delta=delta)
+    m = max(len(others), int(m_declared or 0))
+    crit = simultaneous_critical(delta, m, len(terms), fit.pure_error_df)
+    bounds = _challenger_bounds(others, contrast, delta=delta, crit=crit["value"])
     arg = max(bounds, key=lambda i: bounds[i])
-    tcrit = float(student_t.ppf(1 - delta / len(others), fit.pure_error_df))
+    if crit["used"] == "bonferroni":
+        method = "bonferroni_one_sided_t"
+        detail = (f"M={m} challengers, df={fit.pure_error_df}, t={crit['value']:.3f}"
+                  f" (Scheffe would be {crit['scheffe']:.3f})")
+    else:
+        method = "scheffe_one_sided"
+        detail = (f"Scheffe over q={crit['q']} terms, df={fit.pure_error_df}, "
+                  f"sqrt(qF)={crit['value']:.3f} (Bonferroni over M={m} would be "
+                  f"t={crit['bonferroni']:.3f}); {len(others)} challenger(s) evaluated")
     out = RegretBound(max(0.0, bounds[arg]), others[arg].levels, delta,
-                      "bonferroni_one_sided_t",
-                      f"M={len(others)} challengers, df={fit.pure_error_df}, t={tcrit:.3f}")
+                      method, detail, critical=crit)
     if profile:
         order = sorted(bounds, key=lambda i: -bounds[i])
         head, tail = order[:profile], order[profile:]
@@ -206,6 +274,150 @@ def model_regret_bound(fit: Fit, cands: list[Candidate], xhat: Candidate, *,
             "rest": max((bounds[i] for i in tail), default=None),
             "challengers": len(others)})
     return out
+
+
+#: Boxes ``region_bound`` may open before stopping with a looser (still valid)
+#: bound. Measured on a quadratic bowl in k knobs (9-point axes, CCD, 6 centre
+#: points, noise 0.4): k = 4 (6561 points) converges in 895 boxes / 0.04 s;
+#: k = 6 (531k points) in 56,508 boxes / 5.2 s; k = 8 (43M points) does not
+#: converge at 200,000 boxes (36 s, bound 3.8 vs 9.5 at 4,000). A constant,
+#: recorded in provenance's analysis constants like CANDIDATE_CAP.
+REGION_NODE_BUDGET = 60_000
+
+
+def region_bound(fit: Fit, factors, fitted_ids, xhat: Candidate, *, crit: float,
+                 direction: str, skip_coded=(), node_budget: int = REGION_NODE_BUDGET) -> dict:
+    """An upper bound on ``max_z U(z, x_hat)`` over the WHOLE axis grid, without
+    enumerating it (#321 H3) -- the searched-space half of the model bound.
+
+    ``U(z) = sign (f_hat(z) - f_hat(x_hat)) + crit * se(z - x_hat)`` with the
+    simultaneous ``crit`` of ``simultaneous_critical``: under Scheffe the
+    family covers every ``z`` of the grid, evaluated or not, so ``max_z U``
+    over the grid bounds ``max_z f(z) - f(x_hat)`` on the family's event. The
+    grid is the product of the fitted factors' axes (``decide._axes``), i.e.
+    exactly the space enumeration would score; a configuration excluded from
+    the ranking (measured inadmissible, confidently infeasible) stays in it,
+    which is conservative.
+
+    BRANCH AND BOUND over sub-boxes (a subset of axis values per factor). On a
+    sub-box every model column lies in a known interval, so by interval
+    arithmetic (Moore 1966) the estimate is bounded by the sum of each term's
+    interval maximum, and ``se^2 = d' V d`` by
+    ``sum_i V_ii max d_i^2 + sum_{i != j} max(V_ij d_i d_j)``, ``d_i`` the
+    interval of column i minus x_hat's value. Both are exact on a singleton
+    box. The largest-bound box is split on its widest axis; a singleton is
+    evaluated exactly, and one in ``skip_coded`` (the EVALUATED candidates,
+    bounded per challenger by the caller) is dropped. It stops when the
+    largest open bound is at or below the best exact singleton (converged:
+    the max over the unevaluated grid) or after ``node_budget`` boxes; the
+    bound is then the largest open box's, still a valid upper bound, only
+    looser. ``V`` is ``s^2 (X'X)^-1`` when the fit carries the covariance,
+    else ``diag(se_j^2)`` -- the per-term arithmetic the enumerated bound uses
+    for two-level fits (exact for their orthogonal columns).
+
+    Returns ``{"value", "converged", "nodes", "grid_size"}``; ``value`` is
+    floored at 0.0 and is ``None`` when the fit has no variance estimate.
+    """
+    import heapq
+
+    from orchestrator.optimize.decide import _axes, _flat
+    from orchestrator.optimize.factors import model_columns
+
+    terms = list(fit.effects) + list(fit.quadratic)
+    if fit.pure_error_df <= 0 or any(e.se is None for e in terms):
+        return {"value": None, "converged": False, "nodes": 0, "grid_size": None}
+    sign = 1.0 if direction != "minimize" else -1.0
+    by_id = {f.id: f for f in factors}
+    ids, axes = _axes(fitted_ids, factors)
+    # column -> (axis j, component); each axis value's coded vector
+    col_of: dict[str, tuple[int, int]] = {}
+    vals: list[list[tuple[float, ...]]] = []
+    for j, fid in enumerate(ids):
+        cols = model_columns(by_id[fid])
+        for c_i, c in enumerate(cols):
+            col_of[c] = (j, c_i)
+        vals.append([tuple(v for _c, v in _flat(by_id[fid], c)) for c, _lv in axes[j]])
+    grid = math.prod(len(a) for a in axes)
+    beta = [float(e.estimate) for e in terms]
+    tts = [tuple(e.terms) for e in terms]
+    p = len(terms)
+    if fit.covariance is not None and fit.pure_error_var:
+        s2 = float(fit.pure_error_var)
+        V = [[s2 * float(fit.covariance[i + 1][j + 1]) for j in range(p)] for i in range(p)]
+    else:
+        V = [[(float(terms[i].se) ** 2 if i == j else 0.0) for j in range(p)]
+             for i in range(p)]
+    gx = [math.prod(float(xhat.coded[t]) for t in ts) for ts in tts]
+    skip = {tuple(sorted((k, round(float(v), 12)) for k, v in sc.items()))
+            for sc in skip_coded}
+
+    def imul(a, b):
+        ps = (a[0] * b[0], a[0] * b[1], a[1] * b[0], a[1] * b[1])
+        return (min(ps), max(ps))
+
+    def col_iv(box, c):
+        j, ci = col_of[c]
+        xs = [vals[j][k][ci] for k in box[j]]
+        return (min(xs), max(xs))
+
+    def term_iv(box, ts):
+        if len(ts) == 2 and ts[0] == ts[1]:
+            lo, hi = col_iv(box, ts[0])
+            sq = (lo * lo, hi * hi)
+            return (0.0 if lo <= 0.0 <= hi else min(sq), max(sq))
+        iv = (1.0, 1.0)
+        for t in ts:
+            iv = imul(iv, col_iv(box, t))
+        return iv
+
+    def upper(box) -> float:
+        g = [term_iv(box, ts) for ts in tts]
+        est = sum(max(sign * beta[i] * g[i][0], sign * beta[i] * g[i][1])
+                  for i in range(p))
+        est -= sign * sum(beta[i] * gx[i] for i in range(p))
+        d = [(g[i][0] - gx[i], g[i][1] - gx[i]) for i in range(p)]
+        q = 0.0
+        for i in range(p):
+            if V[i][i]:
+                q += V[i][i] * max(d[i][0] ** 2, d[i][1] ** 2)
+            for j in range(i + 1, p):
+                if V[i][j]:
+                    lo, hi = imul(d[i], d[j])
+                    q += 2.0 * max(V[i][j] * lo, V[i][j] * hi)
+        return est + crit * math.sqrt(max(q, 0.0))
+
+    def singleton_key(box):
+        out = {}
+        for j, fid in enumerate(ids):
+            for c, v in _flat(by_id[fid], axes[j][box[j][0]][0]):
+                out[c] = v
+        return tuple(sorted((k, round(float(v), 12)) for k, v in out.items()))
+
+    root = tuple(tuple(range(len(a))) for a in axes)
+    heap = [(-upper(root), 0, root)]
+    best, nodes, tick = -math.inf, 0, 1
+    while heap and nodes < node_budget:
+        ub = -heap[0][0]
+        if ub <= best:
+            break
+        _, _, box = heapq.heappop(heap)
+        nodes += 1
+        if all(len(b) == 1 for b in box):
+            if singleton_key(box) not in skip:
+                best = max(best, ub)        # exact on a singleton
+            continue
+        j = max(range(len(box)), key=lambda a: len(box[a]))
+        order = sorted(box[j], key=lambda k: vals[j][k])
+        half = len(order) // 2
+        for part in (tuple(order[:half]), tuple(order[half:])):
+            child = box[:j] + (part,) + box[j + 1:]
+            heapq.heappush(heap, (-upper(child), tick, child))
+            tick += 1
+    open_ub = -heap[0][0] if heap else -math.inf
+    converged = (not heap) or open_ub <= best
+    value = best if converged else max(best, open_ub)
+    return {"value": max(0.0, value) if math.isfinite(value) else 0.0,
+            "converged": bool(converged), "nodes": nodes, "grid_size": grid}
 
 
 def model_bound_outside(profile: dict | None, inside: list[dict]) -> float | None:
