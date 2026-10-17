@@ -305,3 +305,71 @@ def test_an_inadequate_model_never_supplies_the_answer_and_report_md_says_so(tmp
     assert "NOT well approximated" in md
     assert "scale: log" in md and "narrow the ranges" in md
     assert "best MEASURED valid configuration" in md
+
+
+# ── review round: H1 (a same-class refit never erases a rejection) ──────────
+
+def test_a_foldover_pass_does_not_erase_a_screen_rejection(tmp_path):
+    """interaction_only at resolution IV, seed 14: the screen's lack of fit
+    rejects, the registered foldover's combined fit passes. The foldover is
+    the SAME first-order model refitted on more rows, so the epoch verdict
+    stays false and nothing certifies on it."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parent))
+    from test_optimize_foldover import _RES4_OVERRIDES
+
+    r = run_synthetic_campaign(SURFACES["interaction_only"](), seed=14,
+                               parent_dir=tmp_path,
+                               campaign_overrides=dict(_RES4_OVERRIDES))
+    recs = {x["stage"]: x for x in _recs(r.work_dir)}
+    assert recs["screen"]["model_adequacy"]["this_stage"]["verdict"] is False
+    assert recs["foldover"]["model_adequacy"]["this_stage"]["verdict"] is True
+    assert recs["foldover"]["model_adequate"] is False
+    assert r.report.get("model_adequate") is False
+    assert not r.report.get("certified")
+    assert "model_inadequate" in (r.report.get("certification_withheld") or [])
+
+
+def test_the_epoch_rule_is_strictly_higher_class_with_validation():
+    from orchestrator.optimize import adequacy
+
+    ev = adequacy.epoch_verdict
+    assert ev([("screen", 1, False, False), ("foldover", 1, True, False)])[0] is False
+    assert ev([("screen", 1, False, False), ("refine", 2, True, True)])[0] is True
+    v, _by, basis = ev([("screen", 1, False, False), ("refine", 2, True, False)])
+    assert v is None and basis == "screen_rejection_unresolved"
+    assert ev([("refine", 2, False, True), ("refine", 2, True, True)])[0] is False
+    assert ev([("screen", 1, True, False), ("foldover", 1, None, False)])[0] is None
+
+
+# ── review round: H2 (a reused row is counted once) ─────────────────────────
+
+def test_reuse_does_not_double_count_measurements(tmp_path):
+    """With reuse_screen the screen's rows appear twice on disk (the screen's
+    own and refine's copy). Measured means and their replicate counts are
+    identical with and without the copies."""
+    from orchestrator.optimize.stage_runner import _top_measured
+
+    def _stage_reused(row):
+        return bool((row.get("reused_from") or {}).get("stage"))
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path,
+                               campaign_overrides=_REUSE)
+    assert any(_stage_reused(json.loads(ln))
+               for p in r.work_dir.glob("runs/iter-*/runs.jsonl")
+               for ln in p.read_text().splitlines() if ln.strip())
+    with_copies = _top_measured(r.work_dir, "m", k=50)
+    # Truth: means over the genuine measurements only.
+    sums: dict = {}
+    for p in r.work_dir.glob("runs/iter-*/runs.jsonl"):
+        for ln in p.read_text().splitlines():
+            row = json.loads(ln) if ln.strip() else None
+            if not row or row.get("status") != "complete" or _stage_reused(row):
+                continue
+            k = json.dumps(row["levels"], sort_keys=True)
+            sums.setdefault(k, []).append(row["response"]["m"])
+    for t in with_copies:
+        vs = sums[json.dumps(t["levels"], sort_keys=True)]
+        assert t["n"] == len(vs)
+        assert t["m"] == pytest.approx(sum(vs) / len(vs))

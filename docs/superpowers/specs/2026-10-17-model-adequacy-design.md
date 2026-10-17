@@ -88,17 +88,26 @@ predicted from the same three-level structure.
 ### 2.3 Stickiness
 
 `model_adequate` is the **epoch verdict**, recorded in
-`model_adequacy.epoch`:
-- A stage's verdict is superseded only by a LATER stage of at least its model
-  class. Class 1 is first order + 2fi (screen, foldover); class 2 is second
-  order (refine).
-- Refine supersedes a screen rejection because it is that rejection's
-  registered augmentation (CURVATURE_ACCOUNTING).
-- Whatever is not superseded combines three-valued: any false gives false;
-  otherwise any null gives null; otherwise true.
-- Refine supersedes a lower-class rejection **only with a completed
-  validation check**. Without one (`validation_points: 0`, or not
-  computable) the epoch verdict is null, `screen_rejection_unresolved`.
+`model_adequacy.epoch` (`adequacy.epoch_verdict`). Model classes: class 1 is
+first order + 2fi (screen, foldover); class 2 is second order (refine).
+
+- A **rejection** (false) is overturned ONLY by a later stage of a
+  **strictly higher** model class that **completed a validation check**.
+  Refine is the registered augmentation for a screen rejection
+  (CURVATURE_ACCOUNTING), and only its held-out check has power against the
+  one-dimensional misspecification the screen saw.
+- A **same-class refit never overturns a rejection.** A foldover's combined
+  fit after a screen rejection is the same first-order model, with the same
+  blindness, refitted on more rows. The verdict stays false.
+- A strictly higher class **without** a completed check
+  (`validation_points: 0`, or not computable) makes the verdict UNKNOWN,
+  `screen_rejection_unresolved`.
+- Any other verdict (true / null) is superseded by a later stage of at least
+  its class.
+
+Whatever is not superseded combines three-valued: any false gives false;
+otherwise any null gives null; otherwise true. INV-STAT19's checker enforces
+exactly this.
 
 ### 2.4 D-efficiency and VIFs (B3)
 
@@ -328,26 +337,27 @@ Two existing tests were updated for the intended change:
 
 ## 6. Limits and open questions for the expert audit
 
-1. **Power is local.** The check sees misfit at ±0.5 only. A narrow feature
-   between validation points (two_peaks' peak) or a misfit below noise
-   (ridge_cubic ×4) can still pass: 3/40 and 1/40 false at ×4. Should the
-   count scale with k, or should points be added sequentially?
-2. **The pure-error variance is the denominator.** If centre replicates
-   understate run-to-run variance, the check is anti-conservative on smooth
-   surfaces. Should validation residuals be pooled into a combined error
-   estimate?
-3. **Validation runs are an α cost on smooth surfaces**: a true model is
-   rejected about 5% of the time, which loses about 2/144 certificates here.
-   Is α = 0.05 per refine right when the check sits beside lack of fit (two
-   tests, no multiplicity correction across them)?
-4. **Validation rows as shortlist nominees.** Under a rejected model, measured
-   leaders may include validation rows. They are re-measured before they can
-   win, which improved `geometric_knob`. Is that acceptable provenance, or
-   should nominees be restricted to the composite?
-5. **Reuse.** Opt-in only, and refused with choice factors because the cyclic
-   centre assignment does not match refine's held level. A partial reuse
-   across choice slices is a design question left open.
-6. **Screen and foldover get no validation points.** Their curvature
-   detection still relies on centre points (one df).
-7. **D-efficiency** is reported on the ±1 coded scale with an intercept, so it
-   compares designs of one model only. G- and I-efficiency are not reported.
+Items 1-6 are the design's own limits; 7-11 come from the WP-B review; 12 is
+a design choice. Items 1-4 are open questions for the audit.
+
+1. **Power is local to ±0.5.** A narrow feature between validation points (`two_peaks`' peak) or a misfit below noise (`ridge_cubic` ×4) can still pass. Measured at 40 seeds: 3/40 and 1/40 false certificates at ×4.
+2. **The denominator is pure error from the centre replicates.** If they understate run-to-run variance, the check is anti-conservative on smooth surfaces.
+3. **The α cost on smooth surfaces.** A true quadratic is rejected about 5% of the time (2 of 144 certificates lost at seeds 1-8). The check sits beside lack of fit with no multiplicity correction across the two tests.
+4. **Validation rows can be shortlist nominees under a rejected model** (as measured leaders). They are re-measured before they can win.
+5. **No validation points at screen or foldover.** Their curvature detection rests on the centre points (one df).
+6. **Efficiency reporting is D only.** D-efficiency is on the ±1 coded scale with an intercept, so it compares designs of one model; G- and I-efficiency are not reported.
+7. **Under `screen_rejection_unresolved`** (reachable only with `validation_points: 0`), the report's `model` rung still answers with the model's argmax. Certification is withheld.
+8. **Snapping can cancel a point's power.** On a `levels_only` or coarse-grid knob, ±0.5 can snap onto a lattice level, and that point then adds no power.
+9. **The objective-model check builds V from the full design columns**, while the model may have been fitted on a subset of rows (where that metric is missing). V is then slightly too small.
+10. **The Pareto path ignores a validation rejection.** The `modelled` flag and `shortlist_plan` do not read it. Predicted rivals are the conservative side, but predicted extremes are still seated.
+11. **The mixed-fit V would omit the centre indicators.** Refine fits are never mixed, so this is not reachable today.
+12. **`reuse_screen` is refused with any choice factor declared** (the cyclic centre assignment does not match refine's held level). A refusal is logged at INFO; partial reuse across choice slices is not attempted.
+
+Review items fixed rather than documented:
+- H1: a same-class refit never overturns a rejection (§2.3).
+- H2: refine's copies of screen rows are skipped by `_top_measured` and the
+  measured front, using the same `_stage_reused` test the budget uses.
+- The reuse refusal is now logged.
+- A retry of a reusing refine keeps `reused_from.stage`, so the budget never
+  charges it twice.
+- The always-True expression at `_adequacy_record` is simplified.

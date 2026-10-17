@@ -1648,5 +1648,12 @@ def test_adequacy_determination_checker_has_teeth():
     # a later refine adequate after an EARLIER refine (same class) rejected
     assert any("model class" in e for e in inv.check_adequacy_determination(
         [rec("refine", False, False, val=True), rec("refine", True, True, val=False)]))
+    # a same-class refit (foldover) may not erase the screen's rejection (H1)
+    assert any("STRICTLY higher" in e for e in inv.check_adequacy_determination(
+        [screen_rej, rec("foldover", True, True)]))
+    assert any("STRICTLY higher" in e for e in inv.check_adequacy_determination(
+        [screen_rej, rec("foldover", True, None)]))
+    assert inv.check_adequacy_determination(
+        [screen_rej, rec("foldover", True, False)]) == []
     # records predating the field are skipped
     assert inv.check_adequacy_determination([{"stage": "refine", "model_adequate": True}]) == []

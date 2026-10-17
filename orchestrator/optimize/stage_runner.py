@@ -1770,6 +1770,13 @@ def _resolve_state(campaign: dict, work_dir: Path, iteration: int,
     return policy_mod.current_state(pol, work_dir), pol
 
 
+def _stage_reused(row: dict) -> bool:
+    """A row refine FILLED from a measured screen row (WP-B B4): a copy, not
+    a measurement. The one test every counter of measurements uses, so the
+    screen's measurement is counted once (budget, measured means, front)."""
+    return bool((row.get("reused_from") or {}).get("stage"))
+
+
 def _budget_remaining(pol: dict, work_dir: Path) -> int:
     """Benchmark runs still affordable — a RUN COUNT, not a round count.
 
@@ -1783,8 +1790,7 @@ def _budget_remaining(pol: dict, work_dir: Path) -> int:
     # A row refine filled from a measured SCREEN row (WP-B B4,
     # `reused_from.stage`) cost nothing: the screen's row is already counted.
     spent = sum(
-        sum(1 for r in artifacts.read_runs(d)
-            if not (r.get("reused_from") or {}).get("stage"))
+        sum(1 for r in artifacts.read_runs(d) if not _stage_reused(r))
         for d in (Path(work_dir) / "runs").glob("iter-*")
     )
     return int(cap) - spent
@@ -7177,9 +7183,11 @@ def _screen_reuse(work_dir, pol, design, rows, payload, factors):
     from orchestrator.optimize.factors import is_refinable
 
     if any(f.type == "choice" for f in factors):
+        logger.info("refine: reuse_screen refused -- a choice factor is declared (its centre rows cycle levels); every row is measured")
         return design, rows, payload, {}
     s_iter = _screen_iteration(work_dir, pol)
     if s_iter is None:
+        logger.info("refine: reuse_screen refused -- no screen ran in this epoch; every row is measured")
         return design, rows, payload, {}
     sdir = Path(work_dir) / "runs" / f"iter-{s_iter}"
     try:
@@ -7187,6 +7195,7 @@ def _screen_reuse(work_dir, pol, design, rows, payload, factors):
     except (OSError, ValueError):
         return design, rows, payload, {}
     if smat.get("policy_hash") != policy_mod.policy_hash(pol):
+        logger.info("refine: reuse_screen refused -- the screen ran under a different policy; every row is measured")
         return design, rows, payload, {}
     seeds = smat.get("workload_seeds") or {}
     srows = [r for r in artifacts.read_runs(sdir)
@@ -7356,7 +7365,7 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
             oc = adq.prediction_check(mod.fit, mcols, mterms, mpts, nuisance=nuis)
             rec.setdefault("validation_objectives", {})[metric] = oc
             if oc.get("rejected"):
-                validated = True if validated is None else (validated or True)
+                validated = True
                 causes.append(f"validation_prediction:{metric}")
         if check.get("rejected"):
             causes.append("validation_prediction")
@@ -7371,17 +7380,16 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
             continue
         st = (r.get("model_adequacy") or {}).get("this_stage") or {}
         v = st.get("verdict", r.get("model_adequate"))
+        val = ((r.get("model_adequacy") or {}).get("validation") or {}).get("rejected")
         hist.append((str(r.get("stage")), _stage_model_class(str(r.get("stage"))),
-                     v, st.get("basis", r.get("model_adequate_basis"))))
-    stages = [(h[0], h[1], h[2]) for h in hist] + [
-        (stage_name, _stage_model_class(stage_name), adequate)]
-    ep, decided_by = adq.epoch_verdict(stages)
-    ep_basis = basis if ep is None else None
+                     v, st.get("basis", r.get("model_adequate_basis")),
+                     val is not None))
     validation_done = rec.get("validation", {}).get("rejected") is not None
-    earlier_rejected = [h[0] for h in hist if h[2] is False]
-    if (ep is True and earlier_rejected and stage_name == Stage.REFINE.value
-            and not validation_done):
-        ep, ep_basis, decided_by = None, "screen_rejection_unresolved", earlier_rejected
+    stages = [(h[0], h[1], h[2], h[4]) for h in hist] + [
+        (stage_name, _stage_model_class(stage_name), adequate, validation_done)]
+    ep, decided_by, ep_basis = adq.epoch_verdict(stages)
+    if ep is None and ep_basis is None and adequate is None:
+        ep_basis = basis
     if ep is None and ep_basis is None:
         # An earlier stage's UNKNOWN decided it: carry that stage's basis.
         ep_basis = next((h[3] for h in hist if h[0] in decided_by and h[2] is None
@@ -7389,11 +7397,13 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
     rec["epoch"] = {
         "verdict": ep, "basis": ep_basis, "decided_by": decided_by,
         "stages": [{"stage": st, "model_class": c, "verdict": v}
-                   for st, c, v in stages],
-        "rule": ("a stage's verdict is superseded only by a later stage of at "
-                 "least its model class (1: first order + 2fi, 2: second "
-                 "order); a refine without a completed validation check "
-                 "cannot overturn an earlier rejection"),
+                   for st, c, v, _val in stages],
+        "rule": ("a rejection is overturned only by a later stage of a STRICTLY "
+                 "higher model class (1: first order + 2fi, 2: second order) "
+                 "that completed a validation check; a same-class refit never "
+                 "overturns it; a higher class without a completed check makes "
+                 "it unknown (screen_rejection_unresolved); any other verdict "
+                 "is superseded by a later stage of at least its class"),
     }
     return rec, ep, ep_basis
 
@@ -7644,6 +7654,8 @@ def _top_measured(work_dir, primary: str, *, direction: str = "maximize",
                 continue
             if row.get("status") != "complete":
                 continue
+            if _stage_reused(row):
+                continue    # the screen row it copies is already counted
             value = (row.get("response") or {}).get(primary)
             if value is None:
                 continue

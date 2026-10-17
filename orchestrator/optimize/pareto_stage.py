@@ -127,6 +127,10 @@ def measured_points_and_incomplete(work_dir, objs) -> tuple[list[MeasuredPoint],
             lv = row.get("levels")
             if row.get("status") != "complete" or not lv:
                 continue
+            from orchestrator.optimize.stage_runner import _stage_reused
+
+            if _stage_reused(row):
+                continue    # a copy of a screen row already counted (WP-B B4)
             if row.get("role") == "validation":
                 # WP-B: a validation row is an ADEQUACY instrument -- one
                 # replicate at a point placed to test the model, not nominated

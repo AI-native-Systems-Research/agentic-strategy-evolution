@@ -630,6 +630,13 @@ def _plan_from(src: Path, *, payload: dict, policy_hash: str, epoch: int,
 
         reused = dict(prior)
         reused["reused_from"] = {"iteration": src_iter, "epoch": int(epoch)}
+        _prior_src = prior.get("reused_from") or {}
+        if _prior_src.get("stage"):
+            # A row the prior attempt itself filled from the SCREEN (WP-B B4)
+            # keeps that provenance, so the budget never charges it twice.
+            reused["reused_from"].update(
+                {k: _prior_src[k] for k in ("stage", "row_index", "iteration")
+                 if k in _prior_src})
         rows_out.append(reused)
         verdicts.append(RowVerdict(
             idx, True, f"carried forward from iter-{src_iter} (status {status})",

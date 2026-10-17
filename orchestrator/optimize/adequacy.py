@@ -249,26 +249,46 @@ def prediction_check(fit, cols, terms, points, *, alpha: float = VALIDATION_ALPH
             "bonferroni_t": tcrit, "points": per}
 
 
-def epoch_verdict(stage_verdicts) -> tuple[object, list]:
+def epoch_verdict(stage_verdicts) -> tuple[object, list, str | None]:
     """The STICKY verdict over an epoch's fitting stages.
 
-    ``stage_verdicts`` is ``[(stage, model_class, verdict)]`` in order, with
-    ``model_class`` 1 (first-order + 2fi: screen, foldover) or 2 (second-order:
-    refine) and ``verdict`` True / False / None. A stage's verdict is
-    SUPERSEDED by a later stage whose class is at least its class -- refine's
-    second-order model is the registered augmentation for a screen rejection
-    (CURVATURE_ACCOUNTING), and a foldover's combined fit is the screen's
-    model refitted on a superset of its rows. Everything not superseded
-    combines three-valued: any False -> False, else any None -> None, else True.
-    Returns ``(verdict, [stages that decided it])``.
+    ``stage_verdicts`` is ``[(stage, model_class, verdict, validated)]`` in
+    order: ``model_class`` 1 (first order + 2fi: screen, foldover) or 2
+    (second order: refine); ``verdict`` True / False / None; ``validated``
+    whether the stage COMPLETED a validation prediction check.
+
+    * A REJECTION (False) is overturned only by a later stage of a STRICTLY
+      HIGHER model class that completed a validation check. A same-class
+      refit -- a foldover's combined fit after a screen rejection -- never
+      overturns it. Refine's second-order model is the registered augmentation
+      for a screen rejection (CURVATURE_ACCOUNTING), but its 3-level lack of
+      fit alone has ~alpha power against one-dimensional misspecification
+      (stage-0 audit Q3); without a completed check the verdict is UNKNOWN,
+      basis ``screen_rejection_unresolved``.
+    * Any other verdict (True / None) is superseded by any later stage of at
+      least its class.
+
+    Whatever is not superseded combines three-valued: any False -> False, else
+    any None -> None, else True. Returns ``(verdict, decided_by, basis)``;
+    ``basis`` is ``"screen_rejection_unresolved"`` or ``None``.
     """
-    live = []
-    for i, (st, cls, v) in enumerate(stage_verdicts):
-        if any(c2 >= cls for _s2, c2, _v2 in stage_verdicts[i + 1:]):
-            continue
-        live.append((st, v))
+    rows = [tuple(r) + (False,) * (4 - len(r)) for r in stage_verdicts]
+    live, unresolved = [], []
+    for i, (st, cls, v, _val) in enumerate(rows):
+        later = rows[i + 1:]
+        if v is False:
+            if any(c2 > cls and val2 for _s2, c2, _v2, val2 in later):
+                continue
+            if any(c2 > cls for _s2, c2, _v2, _val2 in later):
+                unresolved.append(st)
+                continue
+            live.append((st, v))
+        elif not any(c2 >= cls for _s2, c2, _v2, _val2 in later):
+            live.append((st, v))
     if any(v is False for _s, v in live):
-        return False, [s for s, v in live if v is False]
+        return False, [s for s, v in live if v is False], None
+    if unresolved:
+        return None, unresolved, "screen_rejection_unresolved"
     if any(v is None for _s, v in live):
-        return None, [s for s, v in live if v is None]
-    return True, [s for s, _v in live]
+        return None, [s for s, v in live if v is None], None
+    return True, [s for s, _v in live], None

@@ -747,10 +747,14 @@ not chosen freely.
     t test is the between-stage drift check (`model_adequacy.reuse`). It is
     refused when a choice factor is declared or when the screen ran under
     another policy. On `bowl` it saves 4 of 33 runs.
-  - **Model adequacy is sticky.** `model_adequate` is the EPOCH verdict. A
-    stage's verdict is superseded only by a later stage of the same or a
-    higher model class (screen and foldover are first order with 2fi; refine
-    is second order). `recommendation.json["model_adequacy"]` records how the
+  - **Model adequacy is sticky.** `model_adequate` is the EPOCH verdict.
+    A rejection is overturned ONLY by a later stage of a STRICTLY higher
+    model class that completed a validation check. Screen and foldover are
+    class 1 (first order with 2fi); refine is class 2 (second order). So a
+    foldover's combined fit never erases a screen rejection, and a refine
+    without a completed check leaves it unknown
+    (`screen_rejection_unresolved`). Any other verdict is superseded by a
+    later stage of at least its class. `recommendation.json["model_adequacy"]` records how the
     verdict was reached: lack of fit with its df, the validation check,
     PRESS / R²_pred (Allen 1974), and the D-efficiency and centred VIFs of
     the design as run.
@@ -790,6 +794,24 @@ level (corner marginal or centre mean). That assumes **no qualitative
 interaction** outside that slice, and the certificate's scope is the slice.
 Sequential reuse (`reuse_screen`) assumes **no between-stage drift beyond a
 constant shift**; the block term estimates that shift and tests it.
+
+#### Model adequacy: documented limits
+
+What the validation check and the sticky verdict do NOT do (spec
+2026-10-17-model-adequacy-design.md §6):
+
+1. **Power is local to ±0.5.** A narrow feature between validation points (`two_peaks`' peak) or a misfit below noise (`ridge_cubic` ×4) can still pass. Measured at 40 seeds: 3/40 and 1/40 false certificates at ×4.
+2. **The denominator is pure error from the centre replicates.** If they understate run-to-run variance, the check is anti-conservative on smooth surfaces.
+3. **The α cost on smooth surfaces.** A true quadratic is rejected about 5% of the time (2 of 144 certificates lost at seeds 1-8). The check sits beside lack of fit with no multiplicity correction across the two tests.
+4. **Validation rows can be shortlist nominees under a rejected model** (as measured leaders). They are re-measured before they can win.
+5. **No validation points at screen or foldover.** Their curvature detection rests on the centre points (one df).
+6. **Efficiency reporting is D only.** D-efficiency is on the ±1 coded scale with an intercept, so it compares designs of one model; G- and I-efficiency are not reported.
+7. **Under `screen_rejection_unresolved`** (reachable only with `validation_points: 0`), the report's `model` rung still answers with the model's argmax. Certification is withheld.
+8. **Snapping can cancel a point's power.** On a `levels_only` or coarse-grid knob, ±0.5 can snap onto a lattice level, and that point then adds no power.
+9. **The objective-model check builds V from the full design columns**, while the model may have been fitted on a subset of rows (where that metric is missing). V is then slightly too small.
+10. **The Pareto path ignores a validation rejection.** The `modelled` flag and `shortlist_plan` do not read it. Predicted rivals are the conservative side, but predicted extremes are still seated.
+11. **The mixed-fit V would omit the centre indicators.** Refine fits are never mixed, so this is not reachable today.
+12. **`reuse_screen` is refused with any choice factor declared** (the cyclic centre assignment does not match refine's held level). A refusal is logged at INFO; partial reuse across choice slices is not attempted.
 
 #### How many knobs: any number, at resolution III, IV or V
 

@@ -593,10 +593,11 @@ def check_adequacy_determination(recommendations: list[dict]) -> list[str]:
     ``recommendations`` are one epoch's fitting-stage ``recommendation.json``
     records in order. For each that carries ``model_adequacy`` (WP-B):
     ``model_adequate`` equals ``model_adequacy.epoch.verdict``; a rejected
-    validation check makes this stage's verdict false; and no later stage
-    reports True while an EARLIER stage of the same or a higher model class
-    rejected, nor while an earlier screen/foldover rejection stands with no
-    completed validation check at refine. Records without the field (written
+    validation check makes this stage's verdict false; a rejection is
+    overturned only by a later stage of a STRICTLY higher model class that
+    completed a validation check -- so no later stage of the same or a lower
+    class reports anything but false (a foldover never erases a screen
+    rejection), and a refine without a completed check never reports True. Records without the field (written
     before it existed) are skipped.
     """
     out: list[str] = []
@@ -618,12 +619,13 @@ def check_adequacy_determination(recommendations: list[dict]) -> list[str]:
         if this is False and r.get("model_adequate") is not False:
             out.append(f"{st}: this stage rejected its model but model_adequate "
                        f"is {r.get('model_adequate')!r}")
-        if r.get("model_adequate") is True:
+        if r.get("model_adequate") is not False:
             for st0, c0, v0 in seen:
                 if v0 is False and c0 >= cls:
-                    out.append(f"{st}: reports adequate although earlier {st0} "
-                               f"(model class {c0} >= {cls}) rejected")
-                if (v0 is False and c0 < cls
+                    out.append(f"{st}: reports {r.get('model_adequate')!r} although "
+                               f"earlier {st0} (model class {c0} >= {cls}) rejected "
+                               f"-- only a STRICTLY higher class overturns a rejection")
+                if (v0 is False and c0 < cls and r.get("model_adequate") is True
                         and (ma.get("validation") or {}).get("rejected") is None):
                     out.append(f"{st}: overturns {st0}'s rejection without a "
                                f"completed validation check")
@@ -1975,10 +1977,10 @@ _ENTRIES: tuple[Invariant, ...] = (
                             "model_adequacy (lack of fit with its df, PRESS, the design's "
                             "D-efficiency and VIFs, at refine the held-out validation "
                             "check); model_adequate is its epoch verdict; a rejected "
-                            "validation check makes the stage inadequate; and no stage "
-                            "reports adequate while an earlier stage of the same or a "
-                            "higher model class rejected, or overturns a lower-class "
-                            "rejection without a completed validation check.",
+                            "validation check makes the stage inadequate; a rejection "
+                            "is overturned only by a later stage of a STRICTLY higher "
+                            "model class that completed a validation check (a "
+                            "same-class refit such as a foldover never overturns it).",
               "STAT", "epoch", "stage_runner._adequacy_record; adequacy.epoch_verdict; "
               "spec 2026-10-17-model-adequacy-design.md", TEST,
               check_adequacy_determination,
