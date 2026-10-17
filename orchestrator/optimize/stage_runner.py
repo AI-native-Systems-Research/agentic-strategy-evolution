@@ -8090,7 +8090,9 @@ def _certificate_scope(rec: dict, boundary: dict | None,
                 + ", ".join(inertness["shown_inert"])
                 + f" to any other level changes the response by less than "
                 f"{inertness.get('margin')!r} (TOST, Bonferroni over flips at "
-                f"delta_terminal) -- a local equivalence, not a certificate over "
+                f"delta_terminal, a SEPARATE claim from the certificate with its "
+                f"own error budget delta_terminal, not part of the certificate's "
+                f"union bound) -- a local equivalence, not a certificate over "
                 f"those slices")
     return out
 
