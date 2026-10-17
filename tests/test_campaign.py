@@ -73,6 +73,15 @@ def _patch_for_stub(monkeypatch):
 
     # Also patch the LLMDispatcher in run_campaign (used for summarize)
     monkeypatch.setattr(rc, "LLMDispatcher", stub_factory)
+    # #304: report.md routes by agent; stub it too.
+    monkeypatch.setattr(rc, "_report_phase_dispatcher",
+                        lambda campaign, work_dir, model, **_k: stub_factory(work_dir, campaign))
+
+
+def _quiet_stub(work_dir):
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        return StubDispatcher(work_dir)
 
 
 def _patch_gates_approve(monkeypatch):
@@ -405,6 +414,8 @@ class TestCampaignFailureResilience:
 
         import orchestrator.campaign as rc
         monkeypatch.setattr(rc, "run_iteration", failing_then_complete)
+        monkeypatch.setattr(rc, "_report_phase_dispatcher",
+                            lambda campaign, work_dir, model, **_k: _quiet_stub(work_dir))
 
         run_campaign(SAMPLE_CAMPAIGN, work_dir, max_iterations=2, auto_approve=True)
 
@@ -643,3 +654,100 @@ class TestMetadataEnrichment:
         enriched = yaml.safe_load(enriched_path.read_text())
         assert "runtime" in enriched
         assert enriched["metadata"]["tags"] == ["prefix-caching", "ttft"]
+
+
+class TestReportPhaseRouting304:
+    """#304: under ``--agent sdk`` the report-model calls use the SDK backend,
+    and an OpenAI-compatible call never silently defaults to api.openai.com."""
+
+    def test_sdk_agent_writes_report_md_through_the_sdk_runner(
+            self, tmp_path, monkeypatch):
+        import orchestrator.sdk_dispatch as sdk_mod
+        from orchestrator.campaign import _generate_report
+        from orchestrator.sdk_dispatch import SDKResult
+
+        def fake_runner(**_kwargs):
+            return SDKResult(text="# Report via SDK\n", input_tokens=3,
+                             output_tokens=4)
+
+        monkeypatch.setattr(sdk_mod, "_default_sdk_runner_factory",
+                            lambda: fake_runner)
+        work_dir = _setup_work_dir(tmp_path)
+        _generate_report(SAMPLE_CAMPAIGN, work_dir, None, agent="sdk")
+
+        assert (work_dir / "report.md").read_text() == "# Report via SDK\n"
+        rows = [json.loads(l) for l in
+                (work_dir / "llm_metrics.jsonl").read_text().splitlines()]
+        assert [(r["dispatcher"], r["phase"]) for r in rows] == [("sdk", "report")]
+        # The campaign-end report is not an iteration: no runs/iter-0 dir.
+        assert not (work_dir / "runs" / "iter-0").exists()
+
+    def test_openai_call_with_only_anthropic_base_fails_loudly(
+            self, tmp_path, monkeypatch):
+        from orchestrator.llm_dispatch import LLMDispatcher
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-stale")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+        d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN)
+        with pytest.raises(RuntimeError) as exc:
+            d.dispatch("extractor", "report",
+                       output_path=tmp_path / "report.md", iteration=0)
+        msg = str(exc.value)
+        assert "OPENAI_BASE_URL" in msg and "api.openai.com" in msg
+        assert "OPENAI_BASE_URL=https://api.openai.com/v1" in msg
+        assert not (tmp_path / "report.md").exists()
+
+    def test_explicit_openai_base_is_still_honoured(self, tmp_path, monkeypatch):
+        from orchestrator.llm_dispatch import LLMDispatcher
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-x")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://proxy.example.com/v1")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+        d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN)
+        assert "api.openai.com" not in d._disabled_reason
+
+
+class TestReportPhaseRoutingReviewFixes:
+    """P1 review fixes for #304."""
+
+    def test_a_permanent_sdk_error_at_report_time_does_not_crash_the_campaign(
+            self, tmp_path, monkeypatch):
+        import orchestrator.sdk_dispatch as sdk_mod
+        from orchestrator.campaign import _generate_report
+
+        class ProcessError(Exception):
+            exit_code = 1
+
+        def failing_runner(**_kwargs):
+            raise ProcessError("Command failed with exit code 1")
+
+        monkeypatch.setattr(sdk_mod, "_default_sdk_runner_factory",
+                            lambda: failing_runner)
+        work_dir = _setup_work_dir(tmp_path)
+        _generate_report(SAMPLE_CAMPAIGN, work_dir, None, agent="sdk")  # no raise
+        assert not (work_dir / "report.md").exists()
+
+    def test_a_real_openai_model_with_an_anthropic_gateway_is_not_refused(
+            self, tmp_path, monkeypatch):
+        """OPENAI_API_KEY for api.openai.com plus ANTHROPIC_BASE_URL for the
+        SDK phases is a valid setup; an OpenAI model must still run."""
+        from orchestrator.llm_dispatch import LLMDispatcher
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-real")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+        d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN,
+                          model="gpt-4o")
+        assert "api.openai.com" not in d._disabled_reason
+
+    def test_the_refusal_names_how_to_really_call_openai(
+            self, tmp_path, monkeypatch):
+        from orchestrator.llm_dispatch import LLMDispatcher
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-stale")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+        d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN,
+                          model="claude-sonnet-4-6")
+        with pytest.raises(RuntimeError) as exc:
+            d.dispatch("extractor", "report",
+                       output_path=tmp_path / "report.md", iteration=0)
+        assert "OPENAI_BASE_URL=https://api.openai.com/v1" in str(exc.value)

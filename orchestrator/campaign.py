@@ -15,9 +15,9 @@ design prompt so that each hypothesis bundle is informed by all prior learning.
 
 Dispatch backends:
     --agent sdk (default): Uses the Claude Agent SDK for code phases (native
-        streaming, programmatic prompt caching, parallel subagents) and
-        LLMDispatcher for structured phases. OPENAI_API_KEY is optional —
-        gate summaries are skipped if not set.
+        streaming, programmatic prompt caching, parallel subagents) and for
+        report.md (#304). Gate summaries still use LLMDispatcher;
+        OPENAI_API_KEY is optional and they are skipped if it is not set.
     --agent inline: Emits prompts to stdout for the calling agent to reason
         about. No subprocess, no API key — the agent that invoked run_campaign.py
         sees the prompt and writes artifacts directly. Ideal for embedded use
@@ -224,6 +224,28 @@ def _optimization_halt_reason(campaign: dict, iteration: int,
     }
 
 
+def _report_phase_dispatcher(
+    campaign: dict, work_dir: Path, model: str | None, *,
+    agent: str, timeout: int,
+):
+    """The dispatcher for the campaign-end report.md call.
+
+    #304: under ``--agent sdk`` it goes through ``SDKDispatcher`` -- the same
+    backend and ``ANTHROPIC_*`` routing as design/execute -- instead of an
+    OpenAI-compatible client that silently defaulted to api.openai.com.
+    """
+    resolved = _resolve_model(campaign, "report", model)
+    if agent == "inline":
+        return InlineDispatcher(work_dir=work_dir, campaign=campaign, timeout=timeout)
+    if agent == "sdk":
+        from orchestrator.sdk_dispatch import SDKDispatcher
+
+        return SDKDispatcher(
+            work_dir=work_dir, campaign=campaign, model=resolved, timeout=timeout,
+        )
+    return LLMDispatcher(work_dir=work_dir, campaign=campaign, model=resolved)
+
+
 def _generate_report(
     campaign: dict, work_dir: Path, model: str | None,
     agent: str = "sdk", timeout: int = 1800,
@@ -244,22 +266,21 @@ def _generate_report(
             print(f"  Report rendering skipped: {exc}")
         return
     try:
-        resolved = _resolve_model(campaign, "report", model)
-        if agent == "inline":
-            dispatcher = InlineDispatcher(
-                work_dir=work_dir, campaign=campaign, timeout=timeout,
-            )
-        else:
-            dispatcher = LLMDispatcher(work_dir=work_dir, campaign=campaign, model=resolved)
+        dispatcher = _report_phase_dispatcher(
+            campaign, work_dir, model, agent=agent, timeout=timeout,
+        )
         dispatcher.dispatch(
             "extractor", "report",
             output_path=work_dir / "report.md",
             iteration=0,
         )
         print(f"  -> {work_dir / 'report.md'}")
-    except (RuntimeError, FileNotFoundError, OSError) as exc:
-        logger.warning("Report generation failed: %s", exc)
-        print(f"  Report generation skipped: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort, as before #304: the SDK path re-raises permanent errors
+        # raw (ProcessError, a bare Exception from an SDK error message), and
+        # a report failure must not crash a campaign whose iterations all ran.
+        logger.warning("Report generation failed: %s: %s", type(exc).__name__, exc)
+        print(f"  Report generation skipped: {type(exc).__name__}: {exc}")
 
 
 def _persist_max_iterations(work_dir: Path, max_iterations: int) -> None:

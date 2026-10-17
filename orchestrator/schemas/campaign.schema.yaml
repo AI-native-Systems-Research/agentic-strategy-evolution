@@ -245,6 +245,32 @@ properties:
           ``build`` to max(600, optimization.test_timeout_sec + 120): the
           build verifies itself with ``test_command``, and a foreground test
           run streams no events until it returns.
+      phase_wall_clock_seconds:
+        oneOf:
+          - type: number
+            minimum: 0
+          - type: object
+            additionalProperties: false
+            properties:
+              design: { type: number, minimum: 0 }
+              execute_analyze: { type: number, minimum: 0 }
+              report: { type: number, minimum: 0 }
+              plan: { type: number, minimum: 0 }
+              build: { type: number, minimum: 0 }
+        description: >
+          Ceiling on the wall-clock time of ONE SDK turn (one attempt), per
+          phase (#303). Past it the turn is cancelled, its ``claude`` child
+          processes are terminated, and the attempt is logged to
+          retry_log.jsonl as ``failure_type: wall_clock`` and counted against
+          the retry budget (``--max-cli-retries``), so a hang becomes a
+          counted failure instead of a run that looks "still running". Scalar
+          form applies to every phase; map form per phase, unlisted phases
+          get the default. Default 7200s (2x the slowest turn observed);
+          ``execute_analyze`` defaults to 21600s, because a reflective
+          execute turn runs the whole experiment matrix (raise it when the
+          matrix is longer); ``build`` defaults to max(7200, 3 x its silence
+          window). 0
+          disables the ceiling.
 
   sandbox:
     type: string

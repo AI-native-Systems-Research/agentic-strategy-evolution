@@ -167,6 +167,24 @@ def resolve_agent_silence_threshold(campaign: dict, phase: str) -> float:
     return value
 
 
+def _agent_wall_clock(campaign: dict, phase: str) -> float | None:
+    """Wall-clock ceiling for one plan/build attempt (#303).
+
+    ``sdk_timeouts.phase_wall_clock_seconds`` when the campaign sets it for
+    this phase. Otherwise the shared default -- raised for ``build`` to three
+    of its silence windows, because the build reruns the author's own
+    ``test_command`` (each run up to ``test_timeout_sec``) while verifying.
+    """
+    from orchestrator.sdk_dispatch import resolve_phase_wall_clock
+
+    raw = (campaign.get("sdk_timeouts") or {}).get("phase_wall_clock_seconds")
+    explicit = raw is not None and not (isinstance(raw, dict) and phase not in raw)
+    value = resolve_phase_wall_clock(campaign, phase)
+    if explicit or phase != "build" or value is None:
+        return value
+    return max(value, 3 * _default_silence(campaign, phase))
+
+
 def run_agent_call(
     runner: Callable,
     *,
@@ -202,6 +220,7 @@ def run_agent_call(
     kwargs["turn_silence_threshold"] = resolve_agent_silence_threshold(
         campaign, phase,
     )
+    kwargs["wall_clock_seconds"] = _agent_wall_clock(campaign, phase)
     rows: list[dict] = []
 
     def _log(result) -> None:

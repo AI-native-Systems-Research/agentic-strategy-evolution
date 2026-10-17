@@ -452,6 +452,19 @@ def _cmd_resume(args):
                 f"(from campaign.yaml / default — state.json had no "
                 f"persisted value)."
             )
+    # #281: operator override for the live silence watchdog on resume, so a
+    # campaign stuck on a too-tight threshold can be unstuck without editing
+    # campaign.yaml. Applies to every phase; replaces any campaign value.
+    silence = getattr(args, "silence_threshold", None)
+    if silence is not None:
+        if silence < 0:
+            print("--silence-threshold must be >= 0 (0 disables the watchdog)",
+                  file=sys.stderr)
+            sys.exit(2)
+        campaign.setdefault("sdk_timeouts", {})[
+            "turn_silence_threshold_seconds"] = float(silence)
+        print(f"Resuming with turn_silence_threshold_seconds={silence:g} for "
+              f"every phase (CLI override).")
     run_campaign(
         campaign,
         work_dir,
@@ -2973,8 +2986,9 @@ def build_parser():
     )
     p_run.add_argument(
         "--timeout", type=int, default=1800,
-        help="Per-phase wall-clock timeout in seconds (default 1800 = "
-             "30 minutes).",
+        help="Seconds the inline agent has to answer one prompt (default "
+             "1800). SDK turns are bounded by campaign "
+             "sdk_timeouts.phase_wall_clock_seconds instead (#303).",
     )
     p_run.add_argument(
         "--max-cli-retries", type=int, default=10,
@@ -3029,6 +3043,12 @@ def build_parser():
     p_resume.add_argument("--timeout", type=int, default=1800)
     p_resume.add_argument("--max-cli-retries", type=int, default=10)
     p_resume.add_argument("--agent", choices=["inline", "sdk"], default="sdk")
+    p_resume.add_argument(
+        "--silence-threshold", type=float, default=None, metavar="SECONDS",
+        help="Override the live SDK silence watchdog for every phase on this "
+             "resume (#281); replaces campaign.sdk_timeouts."
+             "turn_silence_threshold_seconds. 0 disables the watchdog.",
+    )
     p_resume.set_defaults(func=_cmd_resume)
 
     p_schema = subparsers.add_parser(

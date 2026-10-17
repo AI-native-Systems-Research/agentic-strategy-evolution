@@ -800,3 +800,103 @@ class TestEndToEndIntegration:
             "applied_amendments.jsonl, the gate should promote."
         )
         assert "BA-1" in result_after["applied_amendments"]
+
+
+class TestLiveThresholdRegression303:
+    """#264 / #281 / #303 part 1 (fixed on main by #307, de95d91).
+
+    End to end through ``dispatch``: the threshold the runner is handed for
+    each phase. The #303 repro value (a bundle scalar of 10s) must not reach
+    DESIGN; campaign config is the only control, and ``nous resume
+    --silence-threshold`` overrides it for every phase.
+    """
+
+    @staticmethod
+    def _seen_thresholds(tmp_path: Path, campaign: dict) -> dict[str, float]:
+        from orchestrator.sdk_dispatch import SDKDispatcher, SDKResult
+
+        seen: dict[str, float] = {}
+        current: list[str] = []
+
+        def runner(*, turn_silence_threshold=None, **_):
+            seen[current[-1]] = turn_silence_threshold
+            return SDKResult(text="ok", input_tokens=1, output_tokens=1)
+
+        d = SDKDispatcher(work_dir=tmp_path, campaign=campaign,
+                          sdk_runner=runner, max_retries=0)
+        out = tmp_path / "runs" / "iter-2"
+        current.append("design")
+        d.dispatch("planner", "design", output_path=out / "design_log.md",
+                   iteration=2)
+        current.append("report")
+        d.dispatch("extractor", "report", output_path=tmp_path / "report.md",
+                   iteration=0)
+        return seen
+
+    def _write_bundle_with_10s(self, tmp_path: Path) -> None:
+        (tmp_path / "runs" / "iter-1").mkdir(parents=True)
+        b = _make_bundle(experiment_spec={"timing_observations": {
+            "recommended_turn_silence_threshold_seconds": 10,
+        }})
+        jsonschema.validate(b, _load_bundle_schema())  # old bundles still load
+        (tmp_path / "runs" / "iter-1" / "bundle.yaml").write_text(yaml.safe_dump(b))
+
+    def test_bundle_10s_leaves_design_at_its_600s_default(self, tmp_path):
+        self._write_bundle_with_10s(tmp_path)
+        campaign = _campaign_with_default_threshold(tmp_path)
+        assert self._seen_thresholds(tmp_path, campaign)["design"] == 600.0
+
+    def test_campaign_map_is_honoured_per_phase_despite_the_bundle(self, tmp_path):
+        self._write_bundle_with_10s(tmp_path)
+        campaign = _campaign_with_default_threshold(tmp_path)
+        campaign["sdk_timeouts"] = {"turn_silence_threshold_seconds": {
+            "design": 900, "report": 45}}
+        assert self._seen_thresholds(tmp_path, campaign) == {
+            "design": 900.0, "report": 45.0}
+
+    def test_campaign_scalar_applies_to_every_phase(self, tmp_path):
+        campaign = _campaign_with_default_threshold(tmp_path)
+        campaign["sdk_timeouts"] = {"turn_silence_threshold_seconds": 333}
+        assert self._seen_thresholds(tmp_path, campaign) == {
+            "design": 333.0, "report": 333.0}
+
+    def test_bundle_schema_marks_the_field_deprecated_and_ignored(self):
+        props = _load_bundle_schema()
+        text = yaml.safe_dump(props)
+        assert "DEPRECATED" in text and "no longer read" in text
+
+    def test_resume_silence_threshold_overrides_every_phase(
+            self, tmp_path, monkeypatch):
+        """#281 option 4: ``nous resume --silence-threshold`` unsticks a
+        campaign whose campaign.yaml carries a too-tight per-phase map."""
+        import argparse
+        import orchestrator.campaign as campaign_mod
+        from orchestrator.cli import _cmd_resume
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        work_dir = repo / ".nous" / "r1"
+        work_dir.mkdir(parents=True)
+        (work_dir / "state.json").write_text(json.dumps(
+            {"phase": "DESIGN", "iteration": 2, "run_id": "r1"}))
+        cfile = tmp_path / "campaign.yaml"
+        cfile.write_text(yaml.safe_dump({
+            "run_id": "r1", "research_question": "?",
+            "target_system": {"name": "t", "description": "t",
+                              "repo_path": str(repo)},
+            "sdk_timeouts": {"turn_silence_threshold_seconds": {
+                "design": 10, "report": 10}},
+        }))
+        monkeypatch.delenv("NOUS_CAMPAIGN_PARENT", raising=False)
+        resumed: list[dict] = []
+        monkeypatch.setattr(campaign_mod, "run_campaign",
+                            lambda c, *a, **k: resumed.append(c))
+        args = argparse.Namespace(
+            target=str(cfile), max_iterations=None, model=None,
+            auto_approve=True, interactive=False, timeout=1800,
+            max_cli_retries=0, agent="sdk", verbose=False,
+            silence_threshold=600.0,
+        )
+        _cmd_resume(args)
+        assert self._seen_thresholds(tmp_path, resumed[0]) == {
+            "design": 600.0, "report": 600.0}
