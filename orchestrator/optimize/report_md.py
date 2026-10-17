@@ -108,6 +108,17 @@ WITHHELD_MEANING = {
                                       "measured inadmissible: the declaration "
                                       "contradicts a measurement, so check the "
                                       "baseline or the constraint",
+    "front_model_bound_not_computable": "the front certificate's model half "
+                                        "could not be computed (no objective "
+                                        "model fit or pure error, an unknown "
+                                        "epsilon, or the chosen point outside the "
+                                        "fitted slice), so nothing bounds the "
+                                        "configurations nobody measured",
+    "front_point_possibly_dominated_unmeasured": "an unmeasured configuration "
+                                                 "may epsilon-dominate the chosen "
+                                                 "front point on every objective "
+                                                 "(the objective models cannot "
+                                                 "rule it out)",
     "model_bound_not_exhaustive": "the candidate space was searched, not "
                                   "enumerated, so the model bound is silent "
                                   "about candidates the search never evaluated",

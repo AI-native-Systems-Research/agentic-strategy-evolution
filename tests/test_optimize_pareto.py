@@ -974,7 +974,13 @@ def _check_mo_refill(seed, tmp_path, ov, REFILL_ACCOUNTING) -> bool:
     assert last["delta_terminal"] == pytest.approx(0.05 / 2)
     assert sum(f["status"] == "ok" for f in last["finalists"]) >= 2
     assert r.report["certified"] is False
-    return last["certification_withheld"] == ["shortlist_refilled"]
+    # #321 item 4: the front's model half may ALSO withhold here (on this
+    # constraint-cut surface an unmeasured interior point can still dominate
+    # the chosen one in the objective models), which is a second, independent
+    # reason; the refill rule is still the one this test is about.
+    others = [x for x in last["certification_withheld"]
+              if x != "front_point_possibly_dominated_unmeasured"]
+    return others == ["shortlist_refilled"]
 
 
 def test_scalar_direction_is_the_declared_weights():

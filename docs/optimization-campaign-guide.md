@@ -2655,6 +2655,26 @@ certification POWER, concentrated on near-tied surfaces with few pure-error df
 `saddle` 6 -> 0 and `interaction_only` 7 -> 1, where the model bound is 2-3x ε).
 More centre points (pure-error df) are the cheapest remedy.
 
+**The multi-objective model half (#321).** The measured front's statuses rule
+out every MEASURED rival. A configuration nobody measured is bounded only by
+the objective models. For every objective k and every grid point `z`, there is
+a one-sided bound `U_k(z, w)` on how far `z` beats the chosen point `w`. `z`
+can ε-dominate `w` only if it beats it by `ε_k` on every objective, so the
+certificate needs `D = max_z min_k (U_k(z, w) − ε_k) < 0`
+(`confirmation.json` `pareto.model_half`). Each `U_k` uses Scheffé's
+`sqrt(q_k F_{q_k, df_k, 1−δ/K})`, which covers every contrast `x(z) − x(w)`
+even though `w` was chosen from the data and may be off the grid, with
+Bonferroni over the K objectives at `δ_screen`. Measured configurations are
+excluded from the max, since the measured statuses already settle them. A
+searched space takes `min_k max_z` by branch and bound, which is a valid,
+looser bound. Withheld reasons: `front_point_possibly_dominated_unmeasured`
+(`D ≥ 0`) and `front_model_bound_not_computable` (no fit or pure error, an
+unknown ε, or `w` at another level of a factor the fitting stage held fixed).
+Measured over the 8 Pareto oracle surfaces, seeds 1-8: certificates 37 → 29,
+0 false either way. The losses: `pareto_choice_split` 6 → 0 (its preferred
+point sits on the branch refine did not fit, so nothing bounds the other
+slice), `pareto_noisy` 1 → 0 and `pareto_three` 6 → 5.
+
 **The certificate's scope** is in `report.json` `certificate_scope`. Refine
 holds every non-refinable factor (choice, two-level) at the screen's best
 level. A certificate after refine therefore covers that SLICE only:
@@ -2809,9 +2829,9 @@ What a certificate does NOT cover (spec
    then names only the other finalists). You declared it valid, so the
    contradiction is evidence about the declaration or the constraint, and it
    is never silenced.
-9. **Multi-objective certificates** do not use the global bound or the
-   baseline seat. They use alpha-spending over looks and the front's own
-   rules (INV-SEM18).
+9. **Multi-objective certificates** do not use the single-objective global
+   bound or the baseline seat. They use alpha-spending over looks, the
+   front's own rules (INV-SEM18), and since #321 a model half (below).
 
 ### Artifacts the epoch writes
 

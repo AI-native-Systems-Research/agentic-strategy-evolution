@@ -6981,6 +6981,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             unmeasured=unmeasured, fit_bias=fit_bias,
             model_inadequate=model_inadequate,
             adequacy_unknown=(adequacy_reason if adequacy_unknown else None),
+            factors=factors,
         )
 
     # Did the winning finalist actually beat everything the campaign measured?
@@ -7217,10 +7218,33 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     )
 
 
+def _front_model_half(pol, work_dir, rec: dict, par: dict, factors) -> dict | None:
+    """``confirmation.json["pareto"]["model_half"]`` (#321 item 4), or None
+    when there is no fitting record to take it from."""
+    from orchestrator.optimize import certificate as cert_mod
+
+    pref = par.get("preference") or {}
+    chosen = dict(pref.get("chosen") or {})
+    if not rec or not chosen or factors is None:
+        return None
+    fits = {m: cert_mod.fit_from_record(d)
+            for m, d in (rec.get("objective_fits") or {}).items()}
+    measured = [dict(f["levels"]) for f in par.get("front") or []]
+    measured += [dict(p.levels) for p in pareto_stage.measured_points(
+        work_dir, pareto_stage.objectives(pol))]
+    measured += [dict(lv) for lv in _measured_infeasible(work_dir)]
+    return cert_mod.front_model_half(
+        fits, pareto_stage.objectives(pol), dict(par.get("epsilon") or {}), chosen,
+        factors=factors, fitted_ids=list(rec.get("fitted_ids") or []),
+        held_fixed=dict(rec.get("held_fixed") or {}),
+        delta=float(pol["objective"]["delta_screen"]), exclude=measured)
+
+
 def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: dict,
                            ok: dict, unmeasured: list, fit_bias: bool,
                            model_inadequate: bool,
-                           adequacy_unknown: str | None = None) -> tuple[bool, list]:
+                           adequacy_unknown: str | None = None,
+                           factors=None) -> tuple[bool, list]:
     """The multi-objective verdict of a confirm round, written into ``summary``.
 
     Spec steps 5-8: the measured front over every admissible configuration of
@@ -7264,10 +7288,31 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
     # UNMEASURED here, like a timed-out one (pareto.excluded_incomplete).
     incomplete = any(x.get("source") == "confirm" and x.get("dropped", True)
                      for x in par.get("excluded_incomplete") or [])
+    # THE MODEL HALF (#321 item 4). The measured front's statuses settle every
+    # MEASURED rival; a configuration nobody measured is bounded only by the
+    # objective models. Computed whenever the models are not already rejected
+    # or of unknown adequacy (those withhold on their own).
+    mh = None if (model_inadequate or adequacy_unknown) else _front_model_half(
+        pol, work_dir, rec, par, factors)
+    if mh is not None:
+        par["model_half"] = {k: v for k, v in mh.items()
+                             if k not in ("critical",)} | {
+            "critical": {m: {k: c[k] for k in ("used", "value", "scheffe", "q", "df")}
+                         for m, c in (mh.get("critical") or {}).items()}}
+        if par["model_half"].get("value") == -math.inf:
+            par["model_half"]["value"] = None
+            par["model_half"]["no_unmeasured_point"] = True
+    mh_reason = None
+    if mh is None and not (model_inadequate or adequacy_unknown):
+        mh_reason = "front_model_bound_not_computable"
+    elif mh is not None and not mh.get("computable"):
+        mh_reason = "front_model_bound_not_computable"
+    elif mh is not None and mh.get("value") is not None and mh["value"] >= 0.0:
+        mh_reason = "front_point_possibly_dominated_unmeasured"
     certified = bool(pref["chosen"]) and chosen_ok and within and not unmeasured \
         and not infeasible_veto and not fit_bias and not model_inadequate \
         and not refilled and not eps_unknown and not incomplete \
-        and not adequacy_unknown
+        and not adequacy_unknown and mh_reason is None
     reasons = [r for r, hit in (
         ("no_admissible_finalist", no_admissible),
         ("no_feasible_rival", no_rival and not no_admissible),
@@ -7281,6 +7326,7 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
         ("model_inadequate", model_inadequate),
         (adequacy_unknown or "", bool(adequacy_unknown)),
         ("shortlist_refilled", refilled),
+        (mh_reason or "", bool(mh_reason)),
     ) if hit]
     if not certified and not reasons:
         reasons = ["no_front_point"]

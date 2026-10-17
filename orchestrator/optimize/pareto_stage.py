@@ -267,10 +267,16 @@ def fit_record(pol, *, scored, omodels, delta_s: float, stage_name: str,
                             if unfit else "no predicted front point matched a "
                                           "scored candidate")
                  + f"; the recommendation is objective {objs[0].metric!r}'s argmax"}
+    from orchestrator.optimize.certificate import fit_to_record
+
     record = {
         "objectives": [o.metric for o in objs],
         "preferred_basis": basis,
         "objective_models": {m: om.as_dict() for m, om in omodels.items()},
+        # #321 item 4: what confirm's front model half needs of each fitted
+        # objective model (the Fit is gone by then).
+        "objective_fits": {m: fit_to_record(om.fit) for m, om in omodels.items()
+                           if om.fit is not None},
         "predicted_front": entries,
         "front_size_predicted": n_nd,
     }

@@ -267,7 +267,11 @@ pure error (M3).
 6. **No post-selection validation block** (§5). The gain estimate is biased,
    and the ε reference still comes from the best finalist's mean on the
    selecting data (stage-0 Q5).
-7. **Multi-objective** has no global (model-half) bound.
+7. **Multi-objective** has a model half since #321 (`pareto.model_half`,
+   Scheffé per objective, Bonferroni over objectives at δ_screen); the
+   certified probability is then δ_screen + δ_terminal (+ δ_constraint).
+   It covers only the fitted slice: a chosen point at another level of a held
+   factor is withheld (`front_model_bound_not_computable`).
 8. **Conservatism of the simultaneous constants.** Large X with few
    pure-error df gives a wide `R_model,out`; expect
    `model_bound_above_epsilon`. Since #321 the model constant is

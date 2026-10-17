@@ -618,3 +618,204 @@ def resolve_epsilon(spec: dict, reference: float) -> float:
     if "abs" in spec:
         return float(spec["abs"])
     return abs(float(reference)) * float(spec.get("pct", 2.0)) / 100.0
+
+
+# ── multi-objective: the model half of a front certificate (#321 item 4) ────
+
+
+def fit_to_record(fit: Fit) -> dict:
+    """What ``front_model_half`` needs of a fitted objective model, as JSON:
+    the coefficients, their per-term SEs, the exact ``(X'X)^-1`` when the fit
+    kept it, and the pure error. Persisted at the fitting stage because the
+    Fit is gone by confirm (as ``model_adequate`` is persisted)."""
+    def eff(e):
+        return {"terms": list(e.terms), "estimate": float(e.estimate),
+                "se": None if e.se is None else float(e.se)}
+    return {"intercept": float(fit.intercept),
+            "effects": [eff(e) for e in fit.effects],
+            "quadratic": [eff(e) for e in fit.quadratic],
+            "pure_error_var": fit.pure_error_var, "pure_error_df": int(fit.pure_error_df),
+            "term_terms": [list(t) for t in fit.term_terms],
+            "covariance": (None if fit.covariance is None
+                           else [list(r) for r in fit.covariance]),
+            "n_runs": int(fit.n_runs)}
+
+
+def fit_from_record(d: dict) -> Fit:
+    """The inverse of ``fit_to_record`` (only the fields prediction and its
+    variance read)."""
+    from orchestrator.optimize.effects import Effect
+
+    def eff(e):
+        return Effect(label="".join(e["terms"]), terms=tuple(e["terms"]),
+                      estimate=float(e["estimate"]), se=e.get("se"))
+    return Fit(intercept=float(d["intercept"]),
+               effects=tuple(eff(e) for e in d.get("effects") or []),
+               quadratic=tuple(eff(e) for e in d.get("quadratic") or []),
+               n_runs=int(d.get("n_runs") or 0),
+               pure_error_var=d.get("pure_error_var"),
+               pure_error_df=int(d.get("pure_error_df") or 0),
+               term_terms=tuple(tuple(t) for t in d.get("term_terms") or []),
+               covariance=(None if d.get("covariance") is None
+                           else tuple(tuple(float(x) for x in r) for r in d["covariance"])))
+
+
+def _contrast(fit: Fit, za: dict, zb: dict) -> tuple[float, float]:
+    """``(f_hat(za) - f_hat(zb), se)`` -- the exact ``s^2 d'(X'X)^-1 d`` when
+    the fit carries the covariance, else the per-term sum (exact for the
+    orthogonal columns of a two-level fit), as ``model_regret_bound`` does."""
+    from orchestrator.optimize.effects import prediction_variance
+
+    est = predict(fit, za) - predict(fit, zb)
+    exact = prediction_variance(fit, za, zb)
+    if exact is not None:
+        return est, math.sqrt(exact)
+    var = 0.0
+    for e in list(fit.effects) + list(fit.quadratic):
+        dz = (math.prod(float(za[t]) for t in e.terms)
+              - math.prod(float(zb[t]) for t in e.terms))
+        var += (e.se or 0.0) ** 2 * dz * dz
+    return est, math.sqrt(var)
+
+
+def front_model_half(fits: dict, objectives, eps: dict, chosen: dict, *,
+                     factors, fitted_ids, held_fixed: dict, delta: float,
+                     exclude: list[dict] = (), cap: int | None = None) -> dict:
+    """Can a configuration nobody measured epsilon-dominate the chosen front
+    point ``w``? (#321 item 4: the model half of a front certificate.)
+
+    For every objective k and every grid point ``z``, a one-sided bound
+    ``U_k(z, w) = s_k (f_k_hat(z) - f_k_hat(w)) + c_k se_k(z - w)`` on
+    ``s_k (f_k(z) - f_k(w))`` (``s_k`` the objective's sign). ``z``
+    epsilon-dominates ``w`` only if ``s_k (f_k(z) - f_k(w)) >= eps_k`` for
+    EVERY k, so on the event that every bound holds, ``z`` cannot dominate
+    once ``min_k (U_k(z, w) - eps_k) < 0``. The statistic is
+    ``D = max_z min_k (U_k(z, w) - eps_k)``; the front certificate needs
+    ``D < 0``.
+
+    The level. ``w`` is chosen FROM the data and need not lie on the grid (a
+    measured axial point), so the family must cover ``x(z) - x(w)`` for every
+    ``z`` and every possible ``w``: ``c_k = sqrt(q_k F_{q_k, df_k, 1 -
+    delta/K})``, Scheffe over objective k's q_k model terms, which covers
+    every contrast in the model space at once and is therefore
+    selection-proof. Bonferroni over the K objectives makes the whole family
+    hold with probability >= 1 - delta (``delta`` = delta_screen). Bonferroni
+    over grid pairs is NOT used here: it would not cover an off-grid ``w``.
+    The constants depend on (delta, K, q_k, df_k) only.
+
+    The grid is the fitting stage's: the fitted factors' axes with
+    ``held_fixed``. ``exclude`` (the MEASURED configurations, whose rivalry the
+    measured front's statuses already settle at delta_terminal) are left out;
+    a model family that holds simultaneously holds on any subset. Enumerated at
+    or below ``cap`` (``decide.CANDIDATE_CAP``). Above it the bound is
+    ``min_k max_z (U_k - eps_k)`` with each inner max taken by
+    ``region_bound`` -- a valid upper bound on D (max-min <= min-max), looser.
+
+    Returns ``{"value", "computable", "reason", "critical", "method",
+    "dominator"}``. Not computable (``value None``) when an objective model has
+    no variance estimate, an epsilon is unknown, ``w`` lies outside the fitted
+    slice (a held factor at another level), or no fit was recorded.
+    """
+    from orchestrator.optimize.decide import CANDIDATE_CAP, _axes, _flat
+    from orchestrator.optimize.factors import code_vector, model_columns
+
+    cap = CANDIDATE_CAP if cap is None else int(cap)
+    out = {"value": None, "computable": False, "reason": "", "critical": {},
+           "method": "", "dominator": None, "delta": float(delta)}
+    metrics = [o.metric for o in objectives]
+    if not fits or any(m not in fits or fits[m] is None for m in metrics):
+        out["reason"] = "no objective model fit recorded for every objective"
+        return out
+    if any(eps.get(m) is None for m in metrics):
+        out["reason"] = "an objective's epsilon is unknown"
+        return out
+    by_id = {f.id: f for f in factors}
+    if any(k in chosen and chosen[k] != v for k, v in held_fixed.items()):
+        out["reason"] = ("the chosen point sits at another level of a factor the "
+                         "fitting stage held fixed, so its model says nothing about it")
+        return out
+    for o in objectives:
+        f_ = fits[o.metric]
+        if f_.pure_error_df <= 0 or any(e.se is None for e in
+                                        list(f_.effects) + list(f_.quadratic)):
+            out["reason"] = f"objective {o.metric!r} has no pure-error variance estimate"
+            return out
+
+    def coded(levels):
+        c = {}
+        for fid in fitted_ids:
+            for col, v in zip(model_columns(by_id[fid]), code_vector(by_id[fid], levels[fid])):
+                c[col] = v
+        return c
+
+    try:
+        w = coded(chosen)
+    except (KeyError, TypeError, ValueError) as exc:
+        out["reason"] = f"the chosen point cannot be coded in the fitted space ({exc})"
+        return out
+    ids, axes = _axes(fitted_ids, factors)
+    size = math.prod(len(a) for a in axes)
+    K = len(objectives)
+    crit = {}
+    for o in objectives:
+        f_ = fits[o.metric]
+        q = len(f_.effects) + len(f_.quadratic)
+        c = simultaneous_critical(delta / K, 1, q, f_.pure_error_df)
+        crit[o.metric] = dict(c, used="scheffe", value=c["scheffe"], m=None,
+                              rule="Scheffe sqrt(q F_{q,df,1-delta/K}): covers every "
+                                   "contrast x(z) - x(w), w data-chosen and possibly "
+                                   "off the grid; Bonferroni over the K objectives")
+    out["critical"] = crit
+    sgn = {o.metric: (1.0 if o.direction != "minimize" else -1.0) for o in objectives}
+
+    def key(lv):
+        return tuple(sorted((k, repr(lv.get(k))) for k in fitted_ids))
+
+    # A measured configuration masks a grid point only when it sits in this
+    # slice (every held factor at its held level).
+    in_slice = [lv for lv in list(exclude) + [chosen]
+                if all(lv.get(k) == v for k, v in held_fixed.items())]
+    skip = {key(lv) for lv in in_slice if all(fid in lv for fid in fitted_ids)}
+    if size <= cap:
+        import itertools
+
+        best, arg = -math.inf, None
+        for combo in itertools.product(*axes):
+            lv = {fid: lev for fid, (_c, lev) in zip(ids, combo)}
+            if key(lv) in skip:
+                continue
+            z = {}
+            for fid, (c, _lev) in zip(ids, combo):
+                z.update(_flat(by_id[fid], c))
+            g = math.inf
+            for o in objectives:
+                est, se = _contrast(fits[o.metric], z, w)
+                g = min(g, sgn[o.metric] * est + crit[o.metric]["value"] * se
+                        - float(eps[o.metric]))
+                if g < best:
+                    break                      # cannot raise the max
+            if g > best:
+                best, arg = g, {**dict(held_fixed), **lv}
+        out.update(value=None if arg is None else best, computable=arg is not None,
+                   dominator=arg, method="enumerated: max_z min_k (U_k(z, w) - eps_k)",
+                   reason="" if arg is not None else "no unmeasured grid point")
+        if arg is None:
+            out.update(value=-math.inf, computable=True)
+        return out
+    xw = Candidate(levels=dict(chosen), coded=w, predicted=float("nan"))
+    per = {}
+    for o in objectives:
+        rg = region_bound(fits[o.metric], factors, fitted_ids, xw,
+                          crit=crit[o.metric]["value"], direction=o.direction)
+        per[o.metric] = rg
+    vals = [per[m]["value"] - float(eps[m]) for m in metrics if per[m]["value"] is not None]
+    if len(vals) != K:
+        out["reason"] = "the region bound was not computable"
+        return out
+    out.update(value=min(vals), computable=True, critical=crit,
+               method=("searched: min_k max_z (U_k(z, w) - eps_k) by branch and "
+                       "bound, an upper bound on max_z min_k"),
+               region={m: {k: per[m][k] for k in ("value", "converged", "nodes")}
+                       for m in metrics})
+    return out
+

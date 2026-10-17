@@ -211,3 +211,71 @@ def test_a_searched_space_is_no_longer_a_permanent_veto(tmp_path, monkeypatch):
         if r.report["certified"]:
             assert r.true_gap <= r.report["epsilon"] + 1e-9
     assert certified >= 2
+
+
+# ── item 4: the multi-objective model half ───────────────────────────────────
+
+def _mo_fits(surface, seed, noise=0.05):
+    import random
+
+    from orchestrator.optimize.constraint_models import fit_objective_models
+    from orchestrator.optimize.design import central_composite
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.matrix import coded_as_run, expand
+    from orchestrator.optimize.synthetic import objective_values
+
+    factors = parse_factors(list(surface.factors))
+    ids = [f.id for f in factors]
+    d = central_composite(ids, center_points=4)
+    rows = expand(d, factors)
+    rng = random.Random(seed)
+    recs = []
+    for r in rows:
+        v = objective_values(surface, r.levels)
+        recs.append(("complete", {m: x + rng.gauss(0, noise) for m, x in v.items()}))
+    d, _ = coded_as_run(d, factors, [r.levels for r in rows])
+    om = fit_objective_models([{"metric": o["metric"], "direction": o["direction"]}
+                               for o in surface.objectives], d, recs, fitted_ids=ids)
+    return {m: o.fit for m, o in om.items()}, factors, ids
+
+
+def test_the_front_model_half_bounds_an_unmeasured_dominator():
+    """On pareto_convex, B raises both objectives: {A: 2, B: 2} is dominated
+    by {A: 2, B: 16} on both by 1.0 >> epsilon, so an honest model half
+    must refuse to rule out an unmeasured dominator of it (D >= 0), while a
+    true front point is cleared (D < 0). Before #321 a front certificate had
+    no model half at all."""
+    from orchestrator.optimize import pareto
+    from orchestrator.optimize.certificate import front_model_half
+
+    s = PARETO_SURFACES["pareto_convex"]()
+    fits, factors, ids = _mo_fits(s, seed=1)
+    objs = [pareto.Objective(o["metric"], o["direction"], {}) for o in s.objectives]
+    eps = {"f1": 0.25, "f2": 0.25}
+    bad = front_model_half(fits, objs, eps, {"A": 2, "B": 2}, factors=factors,
+                           fitted_ids=ids, held_fixed={}, delta=0.05)
+    good = front_model_half(fits, objs, eps, {"A": 2, "B": 16}, factors=factors,
+                            fitted_ids=ids, held_fixed={}, delta=0.05)
+    assert bad["computable"] and bad["value"] >= 0.0, bad
+    assert bad["dominator"]["B"] > 2
+    assert good["computable"] and good["value"] < 0.0, good
+
+
+def test_a_front_certificate_states_its_model_half(tmp_path):
+    """Every multi-objective certificate now carries a computable model half
+    below zero: no unmeasured configuration can epsilon-dominate the chosen
+    point on the event the objective-model family holds."""
+    from orchestrator.optimize.harness import evaluate_pareto_campaign
+
+    n = 0
+    for seed in (1, 2):
+        r = evaluate_pareto_campaign(PARETO_SURFACES["pareto_convex"](), seed=seed,
+                                     parent_dir=tmp_path / str(seed))
+        rep = json.loads((Path(r["work_dir"]) / "report.json").read_text())
+        if rep["certified"]:
+            n += 1
+            mh = rep["pareto"]["model_half"]
+            assert mh["computable"] and mh["value"] < 0.0
+            assert all(c["used"] == "scheffe" for c in mh["critical"].values())
+        assert not r["false_certified"]
+    assert n >= 1
