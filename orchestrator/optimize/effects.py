@@ -31,11 +31,12 @@ an explicit ``(X^T X)^-1`` inverse: main effects and ``AB`` match exactly
 (e.g. 0.353553 vs. 0.353553, 0.500000 vs. 0.500000); the intercept and
 ``A^2``/``B^2`` are optimistic by a factor of about 1.46 **on a 2-factor
 CCD with 3 centre points** (0.420813 exact
-vs. 0.288675 from the per-column formula). This is accepted rather than
-fixed with a full matrix inverse: quadratic terms exist to describe
-surface curvature (consumed by ``solve_stationary_point`` as point
-estimates, never gated on their CIs), and ``dropped_factors``/the stage
-rule only ever look at main-effect significance, which is exact.
+vs. 0.288675 from the per-column formula). So every SECOND-ORDER fit (and
+every mixed or blocked fit) takes its SEs and covariance from the exact
+``(X'X)^-1`` (``_exact_inference``): the certificate's model regret bound is
+gated on contrasts that involve the quadratics, and the per-column shortcut
+would understate it. First-order fits keep the per-column formula, which is
+exact for their orthogonal columns.
 """
 from __future__ import annotations
 
@@ -551,10 +552,11 @@ def fit_effects(design: Design, responses, *, factor_ids,
             # centre count: 1.458 at 3 centres, 1.313 at 5 — so the figure
             # is only reproducible if the configuration is stated), the
             # exact SE is 0.420813 vs. 0.288675 from this formula — about
-            # 1.46x too narrow. Accepted rather than fixed with a full
-            # matrix inverse: quadratic terms describe surface curvature
-            # and are consumed by solve_stationary_point as point
-            # estimates only, never gated on their CIs.
+            # 1.46x too narrow. For a second-order fit these per-column SEs
+            # are REPLACED below by the exact (X'X)^-1 (the certificate's
+            # model bound is gated on contrasts that involve the quadratics,
+            # final expert audit H1); they stand only for first-order fits,
+            # whose columns are orthogonal.
             ss_j = sum(v * v for v in cols[idx])
             se = math.sqrt(pe_var / ss_j)
             lo, hi = est - tcrit * se, est + tcrit * se
@@ -581,6 +583,18 @@ def fit_effects(design: Design, responses, *, factor_ids,
             design, labels, terms, cols, coefs, built, quads, quad_start,
             alias_classes, pe_var, pe_df, tcrit, have_se, alpha,
             extra_cols=[blk])
+    elif quads and not mixed:
+        # A SECOND-ORDER fit (refine's composite): the pure quadratics are
+        # correlated with each other and with the intercept, so the per-column
+        # SE is optimistic (measured 1.3-1.5x too narrow). WP-A gates the
+        # certificate on the MODEL regret bound, whose contrasts involve those
+        # terms, so the per-column shortcut would understate it (final expert
+        # audit H1). Every SE and the kept covariance come from the exact
+        # (X'X)^-1 -- prediction_variance, and so the certificate, use it.
+        # First-order fits (screen, foldover) are orthogonal: unchanged.
+        built, quads, extra = _exact_inference(
+            design, labels, terms, cols, coefs, built, quads, quad_start,
+            alias_classes, pe_var, pe_df, tcrit, have_se, alpha)
     if mixed:
         built, quads, extra = _exact_inference(
             design, labels, terms, cols, coefs, built, quads, quad_start,

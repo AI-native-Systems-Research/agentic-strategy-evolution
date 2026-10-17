@@ -1,5 +1,17 @@
 # Matched-budget benchmark: Nous vs random search, Latin hypercube, GP-BO
 
+> **Read this first: the certification figures below predate model adequacy
+> (WP-B) and certification soundness (WP-A).** The REGRET comparisons stand
+> (they do not depend on certification). The CERTIFICATE counts do not: after
+> WP-B and WP-A, false certificates on the non-quadratic family went from
+> 21/48 to **0/48** (WP-B oracle, seeds 1-8; 0/40 at 40 seeds), and on the
+> stage-0 noise sweep from 17/621 to **0/425** (WP-A, every noise cell). The
+> cost is certification POWER on near-tied surfaces with few pure-error df.
+> Sources: `docs/superpowers/specs/2026-10-17-model-adequacy-design.md` and
+> `2026-10-17-certification-soundness.md`; independently re-run in
+> `docs/optimization-expert-audit.md`. Regenerating this benchmark under the
+> final code is a tracked follow-up.
+
 Zero LLM tokens: every campaign is the in-process synthetic harness
 (`orchestrator.optimize.harness`). Reproduce with
 `python -m benchmarks.optimization.run` (the suite) and
@@ -170,7 +182,7 @@ The audit reported Nous against its crude GP-BO over 360 head-to-heads as
   baseline with replicated confirmation would narrow it.
 - **What no baseline offers:**
   - a certificate with stated deltas (162 of 336 suite campaigns certified, of
-    which **26 are false**: true regret > ε);
+    which **26 are false** at the code this table was generated with; **0 false** after WP-B/WP-A, see the note at the top);
   - a pre-registered policy and an audit trail;
   - provenance, `nous reanalyze`, and a cross-epoch error budget.
 
@@ -185,9 +197,10 @@ The audit reported Nous against its crude GP-BO over 360 head-to-heads as
   - Nous's regret here is identical on every seed (standard deviation 0). It
     converges to the same wrong answer because the second-order model cannot
     represent a cliff, a cubic or two peaks.
-  - **And it certifies those answers.** The lack-of-fit test, at three levels per
+  - **At the code this table was generated with, it certified those answers.** The lack-of-fit test, at three levels per
     axis, had too little power to withhold certification in 22 of these 48
-    campaigns, and all 22 certificates are false.
+    campaigns, and all 22 certificates were false. WP-B's off-lattice validation
+    check now withholds them: **0 of 48** false after WP-B/WP-A (note at the top).
   - The certificate is conditional on the response class (audit Q3; WP-A's
     scope).
 - **Geometric knobs coded linearly** (`geometric_knob` without `scale: log`).

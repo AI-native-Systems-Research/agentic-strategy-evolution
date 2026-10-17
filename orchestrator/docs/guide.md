@@ -2529,14 +2529,17 @@ not a rung at all.
 **A certificate needs an adequate model behind the shortlist (INV-SEM17).**
 `R_δ^term` is a within-shortlist claim; `certified` is the global one, and it
 leans on `delta_screen`'s premise that screening did not exclude the winner.
-When the latest fitting stage's lack-of-fit test rejected the model
-(`recommendation.json` `model_adequate: false`), the shortlist was seeded from
+When the epoch's adequacy verdict rejects the model -- lack of fit at any
+stage, or refine's off-lattice validation check, under the sticky rule that
+only a strictly higher model class with a completed validation check can
+overturn a rejection (`recommendation.json` `model_adequate: false`) -- the shortlist was seeded from
 measured leaders and a rejected ranking, so nothing supports that premise:
 the campaign reports `terminal_best` with `certification_withheld:
 ["model_inadequate"]` and still reports the within-shortlist bound. The cost
 is honest and bounded: on a surface the response class does describe, the
-test falsely rejects at about its alpha, and those campaigns lose a
-certificate they would have earned (measured: 2 of 20 seeds on `bowl`). If
+checks falsely reject at about their alpha, and those campaigns lose a
+certificate they would have earned (measured after WP-B: the validation check
+rejects a smooth surface 1-3 times in 40; see the model-adequacy spec). If
 your factor is geometric, `scale: log` is usually what makes the model
 adequate.
 
@@ -2589,9 +2592,11 @@ Each withheld reason names the half that failed:
   model bound cannot be linked to the winner.
 
 Measured on the stage-0 noise sweep (2016 campaigns), this took false
-certificates from 17 to 0 (the spec has the table). It costs no power on
-surfaces the model describes; on `saddle` it withholds the 6/8 certificates
-the terminal half alone had issued, because the model bound there is 2-3x ε.
+certificates from 17 to 0 (the spec has the table). It is NOT free: it costs
+certification POWER, concentrated on near-tied surfaces with few pure-error df
+(621 -> 425 certificates on the sweep; smooth oracle surfaces 61 -> 48 at x1;
+`saddle` 6 -> 0 and `interaction_only` 7 -> 1, where the model bound is 2-3x ε).
+More centre points (pure-error df) are the cheapest remedy.
 
 **The certificate's scope** is in `report.json` `certificate_scope`. Refine
 holds every non-refinable factor (choice, two-level) at the screen's best
@@ -2683,8 +2688,10 @@ bound over every epoch on the work dir, and `report.md` prints it beside the
 per-epoch deltas. Read it with three qualifications:
 
 - It is valid only under each epoch's own response-model assumptions. It does
-  not cover misspecification: on the benchmark's non-quadratic family, 22 of
-  22 certificates were false at a nominal 0.10.
+  not cover misspecification. Before model adequacy (WP-B) the benchmark's
+  non-quadratic family showed 22 of 22 false certificates at a nominal 0.10;
+  WP-B's validation check withholds those (0 of 48 after), but the bound is
+  still a statement CONDITIONAL on the response class the checks did not reject.
 - An earlier epoch's deltas are recovered by recompiling its registered campaign
   with the current Nous (`deltas_from` says which).
 - `cumulative_is_lower_bound` is true when an earlier epoch's campaign could not
