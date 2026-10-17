@@ -745,7 +745,20 @@ are the follow-up.
 
 ## 12. Claims the code does not back
 
-**HIGH (fix before release):**
+**Resolution (commit 2f2c913, after this audit was written).** All four HIGH
+items and the three MEDIUM items below were fixed before release:
+H1 -- second-order fits now take SEs and covariance from the exact
+`(X'X)^-1` (`tests/test_optimize_exact_second_order.py`, checked against
+numpy; the WP-B oracle re-run on step_cliff / ridge_cubic / saddle / bowl at
+x1 and x4 gives 0 false certificates, bowl power 6/8 and 2/8); H2 -- the
+benchmark document carries a banner that its certificate columns predate
+WP-B/WP-A, with the current figures; H3 -- the quickstart states that
+many-knob campaigns find the optimum but do not certify; H4 -- the guide states
+the measured power cost. The Scheffé-band bound (H3's real fix) and the
+benchmark regeneration are tracked follow-ups (section 13). The findings are
+kept below as found.
+
+**HIGH (as found):**
 
 - **H1. The model half of the certificate uses an optimistic SE on second-order fits.**
   - Location: `certificate.py:186-191`, with `effects.py:525-560`.
