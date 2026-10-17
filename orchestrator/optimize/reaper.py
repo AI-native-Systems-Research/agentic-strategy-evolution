@@ -343,8 +343,21 @@ def _reap_leftover_group(pgid: int, cmd, seen=None) -> None:
         alive_group = False
     except PermissionError:
         pass
-    escaped = sorted(p for p, pg in descendants.items()
-                     if pg != pgid and isolation._alive(p))
+    # EVERY descendant seen while the command ran that is still alive is a
+    # survivor -- whatever group it was in when first seen. Its group is
+    # RE-READ now: a child that called setsid() after the first poll has a new
+    # one, and a cached pgid would point the kill at the wrong group (round 5).
+    escaped: list[int] = []
+    current: dict[int, int | None] = {}
+    for p in sorted(descendants):
+        if not isolation._alive(p):
+            continue
+        try:
+            current[p] = os.getpgid(p)
+        except (ProcessLookupError, PermissionError):
+            current[p] = None
+        if current[p] != pgid:
+            escaped.append(p)
     if not alive_group and not escaped and not errors:
         return
     if alive_group:
@@ -352,10 +365,11 @@ def _reap_leftover_group(pgid: int, cmd, seen=None) -> None:
             os.killpg(pgid, signal.SIGKILL)
         except (ProcessLookupError, PermissionError):
             pass
+    me = os.getpgid(0)
     for p in escaped:
-        pg = descendants[p]
+        pg = current.get(p)
         try:
-            if pg != os.getpgid(0):
+            if pg is not None and pg != me:
                 os.killpg(pg, signal.SIGKILL)
             else:
                 os.kill(p, signal.SIGKILL)

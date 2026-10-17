@@ -703,3 +703,33 @@ def test_a_target_child_that_calls_setsid_is_still_reaped_and_recorded(tmp_path)
         pass
     with pytest.raises(ProcessLookupError):
         os.kill(pid, 0)
+
+
+def test_a_child_that_calls_setsid_after_the_first_poll_is_reaped(tmp_path):
+    """Round 5, item 2 (repro a_setsid.py 'late'): seen in the command's group,
+    then setsid() -- the pgid must be re-read at reap time."""
+    import os
+    import sys
+    import time
+
+    from orchestrator.optimize import reaper
+
+    pidf = tmp_path / "pid"
+    child = (
+        "import os, sys, time\n"
+        "if os.fork() == 0:\n"
+        "    fd = os.open(os.devnull, os.O_RDWR); [os.dup2(fd, i) for i in (0, 1, 2)]\n"
+        "    time.sleep(0.5)\n"
+        "    os.setsid()\n"
+        f"    open({str(pidf)!r}, 'w').write(str(os.getpid()))\n"
+        "    time.sleep(30); os._exit(0)\n"
+        "time.sleep(1.0)\n")
+    reaper.take_survivors()
+    reaper.run_in_process_group([sys.executable, "-c", child], capture_output=True,
+                                text=True, timeout=30)
+    left = reaper.take_survivors()
+    pid = int(pidf.read_text())
+    assert left and pid in left[0]["escaped_session"], left
+    time.sleep(0.3)
+    with pytest.raises(ProcessLookupError):
+        os.kill(pid, 0)
