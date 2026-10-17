@@ -456,3 +456,78 @@ def test_tost_is_an_equivalence_test_of_size_alpha():
     wrong = sum(bool(tost([rng.gauss(1.0, 1.0) for _ in range(6)], margin=1.0,
                           alpha=0.05, paired=True)["equivalent"]) for _ in range(4000))
     assert wrong / 4000 <= 0.05 + 0.01
+
+
+# ── P2 review fixes: H1 (fresh pinned seeds), M2 (binding charged budget) ───
+
+def _seeds_by_stage(work_dir) -> dict[str, set]:
+    """Workload seeds per replicate stage, keyed by the artifact each writes."""
+    out: dict[str, set] = {}
+    for dm in work_dir.glob("runs/iter-*/design_matrix.json"):
+        it = dm.parent
+        st = ("validate" if (it / "validation.json").exists()
+              else "confirm" if (it / "confirmation.json").exists() else None)
+        if st is None:
+            continue
+        d = json.loads(dm.read_text())
+        out.setdefault(st, set()).update(int(v) for v in (d.get("workload_seeds") or {}).values())
+    return out
+
+
+def test_pinned_seeds_give_validation_draws_confirm_never_used(tmp_path):
+    """P2 review H1. Pre-fix, replicate i got seeds[i % len] in every replicate
+    stage, so validation re-measured the winner on confirm's exact draws and
+    its 'unbiased' value kept the winner's curse. This also runs the paired
+    (CRN) path end to end, which the Welch test above never reaches."""
+    from orchestrator.optimize.synthetic import SURFACES
+
+    ov = {**_VAL_OV, "workload": {"seed_env": "NOUS_WORKLOAD_SEED",
+                                  "seeds": [11, 22, 33, 44, 55, 66, 77]}}
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=2, parent_dir=tmp_path,
+                               campaign_overrides=ov, max_iterations=10)
+    assert "validate" in r.path
+    by = _seeds_by_stage(r.work_dir)
+    assert by.get("confirm") and by.get("validate")
+    assert not (by["confirm"] & by["validate"]), by
+    assert r.report["post_selection_validation"]["gain"]["method"] != "welch_t"
+
+
+def test_a_pinned_seed_list_too_short_for_fresh_validation_is_refused():
+    from orchestrator.validate import _rule31_validate_block
+
+    opt = {"known_valid_baseline": {"A": 2},
+           "workload": {"seed_env": "S", "seeds": [1, 2, 3, 4]},
+           "design": {"confirm": {"replicates": 3}, "validate": {"replicates": 4}}}
+    errs = _rule31_validate_block(opt)
+    assert any("fresh draws" in e and "= 7" in e for e in errs), errs
+    opt["workload"]["seeds"] = list(range(1, 8))
+    assert not _rule31_validate_block(opt)
+
+
+def test_a_later_epoch_cannot_raise_the_charged_total(tmp_path, monkeypatch):
+    """P2 review M2. Epoch 1 declared total 0.1; epoch 2 re-declares 0.2 and
+    front-loads it. Pre-fix `within_total` was computed against the CURRENT
+    total and never gated, so epoch 2 certified past the original budget."""
+    import yaml
+
+    from orchestrator.optimize import policy as pm
+    from orchestrator.optimize.synthetic import SURFACES
+
+    real = pm.compile_policy
+    monkeypatch.setattr(pm, "compile_policy",
+                        lambda c, **kw: real(c, **{**kw, "epoch": 2}))
+    work_parent = tmp_path / "c"
+    r0 = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=work_parent,
+                                campaign_overrides={"policy": {"campaign_delta": {
+                                    "total": 0.2, "schedule": [0.01, 0.19]}}})
+    # Plant epoch 1's registered campaign, declaring the ORIGINAL total 0.1.
+    e1 = yaml.safe_load((r0.work_dir / "campaign.epoch-2.yaml").read_text())
+    e1["optimization"]["policy"]["campaign_delta"] = {"total": 0.1}
+    (r0.work_dir / "campaign.epoch-1.yaml").write_text(yaml.safe_dump(e1))
+    from orchestrator.optimize.policy import read_policy
+    from orchestrator.optimize.provenance import campaign_delta_exceeded, error_budget
+
+    eb = error_budget(r0.work_dir, read_policy(r0.work_dir))
+    assert eb["campaign_total"] == 0.1 and eb["declared_totals"] == {"1": 0.1, "2": 0.2}
+    assert not eb["within_total"]
+    assert campaign_delta_exceeded(r0.work_dir, read_policy(r0.work_dir))

@@ -1915,7 +1915,29 @@ def _budget_remaining(pol: dict, work_dir: Path) -> int:
     return int(cap) - spent
 
 
-def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool):
+def _pinned_seed_offset(pol: dict, stage_name: str) -> int:
+    """Where a post-selection block starts in a PINNED ``workload.seeds`` list.
+
+    ``validate`` and ``inertness`` claim fresh draws: their numbers must not
+    come from the workload draws that selected the winner (P2 review H1). With
+    derived seeds the iteration base already makes them fresh. With pinned
+    seeds, replicate ``i`` would get ``seeds[i % len]`` -- confirm's exact draws
+    -- so these blocks start past every confirm replicate (validate first, then
+    inertness). Rule 31 refuses a seed list too short for that, so the modulo
+    never wraps back onto a confirm draw."""
+    if stage_name not in (Stage.VALIDATE.value, Stage.INERTNESS.value):
+        return 0
+    if not ((pol or {}).get("workload") or {}).get("seeds"):
+        return 0
+    st = (pol or {}).get("states") or {}
+    off = int(((st.get("confirm") or {}).get("design") or {}).get("replicates") or 0)
+    if stage_name == Stage.INERTNESS.value:
+        off += int(((st.get("validate") or {}).get("design") or {}).get("replicates") or 0)
+    return off
+
+
+def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool,
+                           fresh_offset: int = 0):
     """Give every measurement row a recorded workload seed. Spec §3.7(3), §3.8.
 
     Returns ``(rows, payload)`` — NEW objects both, never mutated in place: the
@@ -1988,7 +2010,7 @@ def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool)
     out, rec = [], {}
     for r in rows:
         i = r.replicate if confirm else r.row_index
-        sd = _seed(int(i or 0), base)
+        sd = _seed(int(i or 0) + fresh_offset, base)
         env = {**((r.apply or {}).get("env") or {}), env_name: sd}
         out.append(dataclasses.replace(r, apply={**(r.apply or {}), "env": env}))
         rec[str(r.row_index)] = sd
@@ -3674,6 +3696,7 @@ def _run_stage_body(
     rows, payload = _assign_workload_seeds(
         rows, payload, pol,
         iteration=iteration, confirm=stage_name in _REPLICATE_STATES,
+        fresh_offset=_pinned_seed_offset(pol, stage_name),
     )
     if stage_reuse and "workload_seeds" in payload:
         # A reused row is the screen's measurement, under the SCREEN's
@@ -7314,8 +7337,10 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # exhausted certifies nothing (the epoch may still answer, uncertified).
     budget_exhausted = bool(((pol["objective"].get("campaign_delta") or {})
                              .get("exhausted")))
+    from orchestrator.optimize import provenance as _prov_mod
+    budget_exceeded = _prov_mod.campaign_delta_exceeded(Path(work_dir), pol)
     certified = (
-        not budget_exhausted
+        not budget_exhausted and not budget_exceeded
         and bound.value is not None and eps is not None and bound.value <= eps
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
         and not fit_bias and not model_inadequate and not refilled
@@ -7450,6 +7475,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("model_inadequate", model_inadequate),
                 (adequacy_reason, adequacy_unknown),
                 ("campaign_delta_exhausted", budget_exhausted),
+                ("campaign_delta_exceeded", budget_exceeded),
             ) if hit
         ] + ([] if pareto_stage.objectives(pol) else model_reasons),
         # The certificate's two halves and how they combine (WP-A A1).
@@ -7831,6 +7857,9 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
         and not refilled and not eps_unknown and not incomplete \
         and not adequacy_unknown and mh_reason is None \
         and not ((pol["objective"].get("campaign_delta") or {}).get("exhausted"))
+    from orchestrator.optimize import provenance as _prov_mod
+    _pareto_budget_exceeded = _prov_mod.campaign_delta_exceeded(Path(work_dir), pol)
+    certified = certified and not _pareto_budget_exceeded
     reasons = [r for r, hit in (
         ("no_admissible_finalist", no_admissible),
         ("no_feasible_rival", no_rival and not no_admissible),
@@ -7847,6 +7876,7 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
         (mh_reason or "", bool(mh_reason)),
         ("campaign_delta_exhausted",
          bool((pol["objective"].get("campaign_delta") or {}).get("exhausted"))),
+        ("campaign_delta_exceeded", _pareto_budget_exceeded),
     ) if hit]
     if not certified and not reasons:
         reasons = ["no_front_point"]

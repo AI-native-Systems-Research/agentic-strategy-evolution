@@ -1357,7 +1357,38 @@ def _rule31_validate_block(opt: dict) -> list[str]:
     if not isinstance(r, int) or isinstance(r, bool) or r < 2:
         errs.append(f"optimization.design.validate.replicates={r!r} must be an integer "
                     f">= 2 (a variance estimate needs two).")
-    return errs
+    return errs + _rule31_pinned_seeds_are_fresh(opt)
+
+
+def _rule31_pinned_seeds_are_fresh(opt: dict) -> list[str]:
+    """Pinned ``workload.seeds`` with a post-selection block (P2 review H1).
+
+    ``validate`` and ``inertness`` report numbers that must not come from the
+    draws that selected the winner. Pinned seeds are used as ``seeds[i % len]``,
+    so they get fresh draws only when the list is long enough to hold every
+    confirm replicate AND these blocks' replicates after it."""
+    design = opt.get("design") or {}
+    seeds = ((opt.get("workload") or {}).get("seeds")) or []
+    if not seeds:
+        return []
+
+    def _reps(block):
+        r = (block or {}).get("replicates") if isinstance(block, dict) else None
+        return r if isinstance(r, int) and not isinstance(r, bool) and r > 0 else 0
+
+    post = _reps(design.get("validate")) + _reps(design.get("inertness"))
+    if not post:
+        return []
+    confirm = design.get("confirm") or {}   # the compile reads design.confirm
+    conf_reps = _reps(confirm) or 3
+    need = conf_reps + post
+    if len(seeds) >= need:
+        return []
+    return [f"optimization.workload.seeds has {len(seeds)} seed(s), but design.validate / "
+            f"design.inertness need fresh draws: {conf_reps} confirm replicate(s) plus "
+            f"{post} post-selection replicate(s) = {need}. With fewer, those blocks would "
+            f"re-measure the winner on the draws that selected it. Declare at least "
+            f"{need} seeds, or omit workload.seeds so seeds are derived per iteration."]
 
 
 def _rule15_build_requires_baseline(opt: dict) -> list[str]:

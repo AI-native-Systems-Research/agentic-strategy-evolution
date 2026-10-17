@@ -250,7 +250,7 @@
           "baseline_measured_inadmissible",
           "front_model_bound_not_computable",
           "front_point_possibly_dominated_unmeasured",
-          "campaign_delta_exhausted",
+          "campaign_delta_exhausted", "campaign_delta_exceeded",
           "heteroscedastic_pure_error",
           "heteroscedasticity_not_testable"
         ]
