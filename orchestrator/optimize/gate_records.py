@@ -82,7 +82,11 @@ def _key(work_dir: Path, *, create: bool = False) -> bytes:
 
 
 def ensure_key(work_dir: Path) -> None:
-    _key(work_dir, create=True)
+    """Create the key for a work_dir that has never been sealed; once a seal
+    file exists, a missing key is an error, never a reason to mint a new one
+    (round 5, item 4: the build stage called this unconditionally)."""
+    wd = Path(work_dir)
+    _key(wd, create=not (wd / SEAL_FILE).exists())
 
 
 def _mac(key: bytes, name: str, data: bytes) -> str:

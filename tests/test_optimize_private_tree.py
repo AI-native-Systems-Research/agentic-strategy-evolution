@@ -510,3 +510,31 @@ def test_interpreter_flags_with_arguments_are_kept_together(setup, flags):
     ct.probe_imports(wd, repo, [cmd], work_dir=wd)
     rec = json.loads((wd / ct.PROBE_RECORD).read_text())
     assert rec["probed"][0]["flags"] == flags and not rec["not_probed"]
+
+
+def test_ensure_key_never_mints_a_replacement_for_a_deleted_key(setup):
+    """Round 5, item 4: a resumed build stage calls ensure_key; after seals
+    exist, a deleted key must stay an error."""
+    from orchestrator.optimize import gate_records as gr
+
+    repo, wd = setup
+    ct.ensure(repo, wd, fresh=True)          # seals exist now
+    gr.key_path(wd).unlink()
+    with pytest.raises(gr.GateRecordError, match="missing"):
+        gr.ensure_key(wd)
+    assert not gr.key_path(wd).exists()
+
+
+def test_a_rerun_build_stage_after_the_key_was_deleted_fails(tmp_path, monkeypatch):
+    """The same through run_stage: the build stage's ensure_key path."""
+    from orchestrator.optimize import gate_records as gr
+    from orchestrator.optimize.stage_runner import OptimizationAborted
+    from tests.test_optimize_build_scope import _adversarial
+
+    wd, build, _ = _adversarial(tmp_path, monkeypatch,
+                                lambda repo, wd: (repo / "mech.py").write_text("X = 2\n"))
+    build()
+    gr.key_path(Path(wd)).unlink()
+    with pytest.raises((OptimizationAborted, gr.GateRecordError), match="missing"):
+        build()
+    assert not gr.key_path(Path(wd)).exists()
