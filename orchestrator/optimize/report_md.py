@@ -910,10 +910,15 @@ def _provenance_lines(report: dict) -> list[str]:
                    + ("" if mdl.get("snapshot_pinned") else
                       " (the requested ID is an alias, not a dated snapshot)"))
     anc = prov.get("anchor") if isinstance(prov.get("anchor"), dict) else None
+    if anc and not anc.get("present"):
+        out.append("- **External anchor:** none; the pre-registration is self-attested")
     if anc and anc.get("present"):
         out.append("- **External anchor:** " + (
             f"matches ({anc.get('where')})" if anc.get("matches") else
             "**MISMATCH**: " + "; ".join(anc.get("mismatches") or [])))
+        if anc.get("reanchored"):
+            out.append(f"- **Re-registered before running:** epoch(s) {anc['reanchored']} "
+                       "were anchored with more than one policy; the latest is checked")
     for w in prov.get("waivers") or []:
         out.append(f"- **Gate waived:** `{w.get('gate')}` -- {w.get('reason')}"
                    + (f" ({w['note']})" if w.get("note") else ""))

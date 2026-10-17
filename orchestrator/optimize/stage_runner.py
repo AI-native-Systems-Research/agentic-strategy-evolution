@@ -1748,6 +1748,13 @@ def _compile_and_write_policy(campaign: dict, work_dir: Path) -> dict:
             yaml.safe_dump(campaign, default_flow_style=False, sort_keys=False))
     except (OSError, yaml.YAMLError) as exc:
         logger.warning("could not record the epoch's campaign: %s", exc)
+    if not _REANALYSIS.get():
+        # Anchor the registration OUTSIDE the work_dir before any benchmark
+        # run (#321; orchestrator/optimize/anchor.py, which states what this
+        # does and does not protect against).
+        from orchestrator.optimize import anchor as _anchor
+
+        _anchor.anchor_at_compile(work_dir)
     return pol
 
 
@@ -2568,9 +2575,21 @@ def _report_provenance(work_dir, pol, campaign) -> dict:
     """``provenance`` and ``error_budget`` for report.json (provenance.py)."""
     from orchestrator.optimize import provenance as prov_mod
 
+    _prov = prov_mod.build_provenance(
+        Path(work_dir), policy_mod.policy_hash(pol), campaign=campaign)
+    if not _REANALYSIS.get():
+        # The anchor check is a fact about THIS work_dir's external record, so
+        # a reanalysis scratch dir (which has none) does not re-derive it.
+        from orchestrator.optimize import anchor as _anchor
+
+        _v = _anchor.verify(Path(work_dir))
+        _prov["anchor"] = {k: _v[k] for k in ("present", "matches", "mismatches", "where",
+                                              "reanchored")}
+        if _v["present"] and not _v["matches"]:
+            logger.error("report: the pre-registration does NOT match its external "
+                         "anchor: %s", "; ".join(_v["mismatches"]))
     return {
-        "provenance": prov_mod.build_provenance(
-            Path(work_dir), policy_mod.policy_hash(pol), campaign=campaign),
+        "provenance": _prov,
         "error_budget": prov_mod.error_budget(Path(work_dir), pol),
     }
 

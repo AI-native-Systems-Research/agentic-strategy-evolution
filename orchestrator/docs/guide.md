@@ -1965,6 +1965,24 @@ protected file into the patch.
   build agent and target code run as the same OS user, so code that knows to
   look in `~/.nous/keys/` can read the key and forge a seal. Moving the key
   removed every relative path to it; it did not remove the absolute one.
+  What that means precisely:
+  - **Can be forged by same-user code:** any sealed gate record, together with
+    its seal; `policy.json` with `policy.sha256`; the state-home anchors, an
+    `--out` anchor file and an unpushed anchor ref. Each of these is a file your
+    user can write.
+  - **Cannot be forged by it:** a ref already pushed to a remote that refuses
+    force-pushes, and a third-party timestamp of an anchor `digest`. A forgery
+    made after either exists is a mismatch that `nous reanalyze` and
+    `nous anchor --verify` report.
+  - **How to move the key out of reach:** Nous starts the build agent and every
+    target command as child processes of itself, under your user, and there is
+    no setting that changes that. Moving the key to an environment variable or
+    the OS keychain would not help: a child process inherits the first and can
+    query the second as you. The key is out of reach only when the agent and the
+    target run as a different OS user, or in a container or VM, that cannot read
+    `$NOUS_STATE_HOME`. That is a deployment you set up around Nous (for example
+    a `claude` wrapper under `CLAUDE_CLI_PATH` that drops to another user, plus
+    a `run_command` that does the same); Nous does not check that you did.
 - **Changes undone within one measurement batch.** Target code can modify the
   clean tree during a batch and restore it before the check that follows. The
   check runs before and after each batch, so the window is the batch itself.
@@ -2704,6 +2722,48 @@ reason. Exit codes:
 - 1: something differs, and each input that changed after the report and each
   differing artifact is listed;
 - 2: the work dir cannot be reanalysed at all.
+
+#### Anchoring the pre-registration outside the work dir
+
+`policy.json` and `policy.sha256` sit side by side in the work dir. A process
+that rewrites both consistently passes the in-run hash check. So the moment
+`verify` compiles the policy, before the first benchmark run, Nous writes an
+**anchor** elsewhere. The anchor records:
+
+- the policy hash;
+- the sha256 of `policy.json`, `campaign.epoch-<e>.yaml`, the run-order salt
+  record and `mechanism.sha256`;
+- the input hashes at that moment (the plan/build/verify rows);
+- a `digest` over all of it.
+
+It is appended to `$NOUS_STATE_HOME/anchors/<hash>/epoch-<e>.jsonl` (default
+`~/.nous`). `nous anchor <campaign.yaml|work_dir>` adds copies on request:
+
+- `--out FILE` writes the anchor as JSON. Timestamp its `digest` with an
+  RFC 3161 timestamp authority or OpenTimestamps; the `anchored_at` field is
+  the local clock, not a proof of time.
+- `--git REPO` commits it to `refs/nous/anchors/<run_id>/epoch-<e>` in REPO.
+- `--push REMOTE` (opt-in, needs `--git`) pushes that ref.
+
+Verification is automatic. `report.json` `provenance.anchor` says whether an
+anchor exists and whether the policy, the registered files, the anchored inputs
+and every transition's `policy_hash` still match it; `report.md` prints the
+result. `nous reanalyze` checks the same anchors (and the git refs `nous anchor`
+recorded in `anchors.json`), and any mismatch makes its verdict NOT identical.
+`nous anchor --verify [--file FILE]` exits 0 on a match, 1 on a mismatch and 2
+when no anchor exists. No anchor means the pre-registration is self-attested,
+and every output says so rather than reporting a match.
+
+**What an anchor protects against depends on where it is.** The state-home copy,
+an `--out` file and an unpushed git ref can all be rewritten by any process
+running as your OS user. A same-user agent that knows this layout can rewrite
+`policy.json`, its sidecar and these anchors together, and nothing on this
+machine will notice. These copies catch a partial or careless edit, an edit by
+code that does not know about anchors, and a work dir copied elsewhere and
+altered. Against a same-user forger only two things hold: a ref pushed to a
+remote that refuses force-pushes and deletions, and a third-party timestamp of
+the `digest` taken before the first run. Push or timestamp at verify, before the
+screen starts, if that is the claim you need.
 
 `error_budget` gives the family-wise figure. Each epoch spends
 `delta_screen + delta_terminal`, and every epoch after the first was compiled

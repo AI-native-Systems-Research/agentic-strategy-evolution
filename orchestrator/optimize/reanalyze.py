@@ -65,7 +65,7 @@ NOT_DERIVED = frozenset({
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
     "clean_tree.manifest.json", "clean_tree.extras.json", "clean_tree.probe.json",
-    "anchor.json",
+    "anchors.json",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
@@ -97,6 +97,7 @@ class Reanalysis:
     not_rederived: list[str] = field(default_factory=list)
     excluded: list[dict] = field(default_factory=list)
     skipped_iterations: list[dict] = field(default_factory=list)
+    anchor: dict | None = None
     nous_then: dict | None = None
     nous_now: dict | None = None
     scratch_dir: str | None = None
@@ -186,6 +187,9 @@ def _load(path: Path, roots: list[str]):
             # (durations, attempts), so their bytes never hash alike.
             (doc.get("provenance") or {}).pop("nous", None)
             (doc.get("provenance") or {}).pop("inputs", None)
+            # Checked against the ORIGINAL work_dir by anchor.verify, below:
+            # the scratch dir has no external anchor of its own.
+            (doc.get("provenance") or {}).pop("anchor", None)
         return doc
     text = path.read_text()
     for r in roots:
@@ -324,6 +328,11 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
     orig = Path(work_dir).resolve()
     result = Reanalysis(identical=False)
     result.input_changes = check_inputs(orig)
+    # The external anchor of the pre-registration (#321): a mismatch makes the
+    # verdict NOT identical, however cleanly the analysis re-derives.
+    from orchestrator.optimize import anchor as _anchor
+
+    result.anchor = _anchor.verify(orig, use_git=True)
     try:
         result.nous_then = ((json.loads((orig / "report.json").read_text())
                              .get("provenance") or {}).get("nous"))
@@ -493,7 +502,8 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
             if x != y:
                 result.differences.append({"file": rel, "difference": _first_diff(x, y)})
         result.identical = not (result.differences or result.input_changes
-                                or result.replay_mismatches)
+                                or result.replay_mismatches
+                                or (result.anchor or {}).get("matches") is False)
         if keep:
             result.scratch_dir = str(new)
     finally:
@@ -532,6 +542,15 @@ def format_result(r: Reanalysis) -> str:
     if r.not_rederived:
         lines.append("  not re-derived (measurements or agent output): "
                      + ", ".join(r.not_rederived))
+    a = r.anchor or {}
+    if not a.get("present"):
+        lines.append("  anchor: none outside the work_dir; the pre-registration is "
+                     "self-attested only")
+    elif a.get("matches"):
+        lines.append(f"  anchor: the pre-registration matches its external anchor "
+                     f"({a.get('where')})")
+    for m in a.get("mismatches") or []:
+        lines.append(f"  ANCHOR MISMATCH {m}")
     for c in r.input_changes:
         lines.append(f"  INPUT {c['file']}: {c['change']}")
     for m in r.replay_mismatches:

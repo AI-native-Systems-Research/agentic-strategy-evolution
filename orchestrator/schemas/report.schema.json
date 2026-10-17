@@ -96,7 +96,8 @@
             "present": {"type": "boolean"},
             "matches": {"type": ["boolean", "null"]},
             "mismatches": {"type": "array", "items": {"type": "string"}},
-            "where": {"type": ["string", "null"]}
+            "where": {"type": ["string", "null"]},
+            "reanchored": {"type": "array", "items": {"type": "integer"}, "description": "Epochs anchored with more than one policy hash (recompiled before any benchmark run); the latest anchor is the one checked."}
           }
         }
       }
