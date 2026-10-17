@@ -26,7 +26,9 @@ Design decisions worth knowing:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -66,6 +68,14 @@ class SDKWallClockError(SDKTransientError):
 # the local campaign corpus, so 7,200s leaves 2x headroom over the slowest
 # observed turn while capping the 3h28m hang #303 reported. 0 disables.
 DEFAULT_PHASE_WALL_CLOCK_SECONDS = 7200.0
+# A reflective execute_analyze turn runs the whole experiment matrix inside
+# one session (arms x simulator runs), so its legitimate length scales with
+# the matrix, not with model thinking. It gets 3x the default; a longer
+# matrix sets ``phase_wall_clock_seconds.execute_analyze`` (or 0 to disable).
+DEFAULT_EXECUTE_ANALYZE_WALL_CLOCK_SECONDS = 21600.0
+
+# #304: turn budget for the campaign-end report (read artifacts, write one doc).
+REPORT_MAX_TURNS = 10
 
 # Grace periods for reaping a turn's child processes after it ends (#303).
 _CHILD_TERM_GRACE_SECONDS = 5.0
@@ -406,6 +416,11 @@ class SDKResult:
     num_turns: int = 1
     is_error: bool = False
     error_message: str = ""
+    # The session's final answer: ``ResultMessage.result`` when the SDK gives
+    # it, else the assistant text after the last tool use. ``text`` joins
+    # every assistant block of a multi-turn session (narration included), so
+    # a phase whose output IS the reply (report.md) reads this instead (#304).
+    final_text: str = ""
 
     def __post_init__(self) -> None:
         if self.is_error and not self.error_message.strip():
@@ -539,6 +554,8 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     **({"cli_path": _cli_path} if _cli_path else {}),
                 )
             text_chunks: list[str] = []
+            tail_chunks: list[str] = []  # assistant text since the last tool use
+            final_text = ""
             usage: dict = {}
             cost_usd = 0.0
             duration_ms = 0
@@ -588,7 +605,15 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     for block in getattr(message, "content", []):
                         if hasattr(block, "text"):
                             text_chunks.append(block.text)
+                            tail_chunks.append(block.text)
+                        elif type(block).__name__ == "ToolUseBlock":
+                            tail_chunks = []
                 elif cls == "ResultMessage":
+                    result_text = getattr(message, "result", None)
+                    final_text = (
+                        result_text if isinstance(result_text, str) and result_text.strip()
+                        else "".join(tail_chunks)
+                    )
                     usage = getattr(message, "usage", {}) or {}
                     cost_usd = float(getattr(message, "total_cost_usd", 0.0) or 0.0)
                     duration_ms = int(getattr(message, "duration_ms", 0) or 0)
@@ -617,6 +642,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
                         )
             return SDKResult(
                 text="".join(text_chunks),
+                final_text=final_text or "".join(tail_chunks),
                 input_tokens=int(usage.get("input_tokens", 0) or 0),
                 output_tokens=int(usage.get("output_tokens", 0) or 0),
                 cache_read_input_tokens=int(
@@ -668,7 +694,8 @@ def resolve_phase_wall_clock(campaign: dict, phase: str) -> float | None:
         raw = raw.get(phase)
         label += f".{phase}"
     if raw is None:
-        raw = DEFAULT_PHASE_WALL_CLOCK_SECONDS
+        raw = (DEFAULT_EXECUTE_ANALYZE_WALL_CLOCK_SECONDS
+               if phase == "execute_analyze" else DEFAULT_PHASE_WALL_CLOCK_SECONDS)
     if isinstance(raw, bool):
         raise ValueError(f"{label} must be a non-negative number, got {raw!r}")
     try:
@@ -695,6 +722,12 @@ def _tracking_loop_factory(spawned: list) -> Callable[[], asyncio.AbstractEventL
         original = loop.subprocess_exec
 
         async def subprocess_exec(*args, **kwargs):
+            # Own process group per child, so reaping reaches the tools the
+            # ``claude`` CLI started (a hung simulator, test_command), not only
+            # the CLI itself; otherwise they outlive the turn and pile up
+            # beside each retry (#303).
+            if os.name == "posix":
+                kwargs.setdefault("start_new_session", True)
             transport, protocol = await original(*args, **kwargs)
             spawned.append(transport)
             return transport, protocol
@@ -703,6 +736,36 @@ def _tracking_loop_factory(spawned: list) -> Callable[[], asyncio.AbstractEventL
         return loop
 
     return _factory
+
+
+async def _reap_group(pgid: int) -> None:
+    """SIGTERM, then SIGKILL, every process left in group ``pgid``."""
+    import signal
+
+    import anyio
+
+    def _alive() -> bool:
+        try:
+            os.killpg(pgid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+
+    if not _alive():
+        return
+    for sig, grace in ((signal.SIGTERM, _CHILD_TERM_GRACE_SECONDS),
+                       (signal.SIGKILL, _CHILD_KILL_GRACE_SECONDS)):
+        try:
+            os.killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        with anyio.move_on_after(grace):
+            while _alive():
+                await anyio.sleep(0.02)
+        if not _alive():
+            logger.info("Reaped process group %s left by an SDK turn.", pgid)
+            return
+    logger.error("Process group %s survived SIGKILL; it may be orphaned.", pgid)
 
 
 async def _reap_children(spawned: list) -> None:
@@ -724,26 +787,29 @@ async def _reap_children(spawned: list) -> None:
         return transport.get_returncode() is not None
 
     for transport in spawned:
-        if transport.get_returncode() is not None:
-            transport.close()
-            continue
         pid = transport.get_pid()
-        try:
-            transport.terminate()
-        except ProcessLookupError:
-            pass
-        if not await _wait_exit(transport, _CHILD_TERM_GRACE_SECONDS):
+        if transport.get_returncode() is None:
             try:
-                transport.kill()
+                transport.terminate()
             except ProcessLookupError:
                 pass
-            if not await _wait_exit(transport, _CHILD_KILL_GRACE_SECONDS):
-                logger.error(
-                    "SDK child pid %s did not exit after SIGKILL; it may be "
-                    "orphaned.", pid,
-                )
+            if not await _wait_exit(transport, _CHILD_TERM_GRACE_SECONDS):
+                try:
+                    transport.kill()
+                except ProcessLookupError:
+                    pass
+                if not await _wait_exit(transport, _CHILD_KILL_GRACE_SECONDS):
+                    logger.error(
+                        "SDK child pid %s did not exit after SIGKILL; it may be "
+                        "orphaned.", pid,
+                    )
+            logger.info("Reaped SDK child pid %s left running by the turn.", pid)
+        # The child led its own process group (start_new_session above), so
+        # its pid is the group id. Whatever it started and left behind -- even
+        # after it exited cleanly -- is still in that group: end it too.
+        if pid is not None and os.name == "posix":
+            await _reap_group(pid)
         transport.close()
-        logger.info("Reaped SDK child pid %s left running by the turn.", pid)
 
 
 def run_turn_reaping_children(
@@ -1148,14 +1214,28 @@ class SDKDispatcher(CLIDispatcher):
         phase_key = self._normalize_phase(phase)
         original_threshold = self._turn_silence_threshold
         self._turn_silence_threshold = self._resolve_turn_silence_threshold(phase_key)
+        original_wall_clock = self._wall_clock_seconds
         self._wall_clock_seconds = resolve_phase_wall_clock(self.campaign, phase_key)
+        # #304: the campaign-end report reads campaign artifacts and writes
+        # one document. It runs in work_dir (where those artifacts live), not
+        # the target repo, with a small turn budget.
+        report_scope = (
+            self.override_cwd(self.work_dir) if phase_key == "report"
+            else contextlib.nullcontext()
+        )
+        original_max_turns = self.max_turns
+        if phase_key == "report":
+            self.max_turns = min(self.max_turns, REPORT_MAX_TURNS)
         try:
-            super().dispatch(
-                role, phase,
-                output_path=output_path, iteration=iteration,
-                perspective=perspective, h_main_result=h_main_result,
-            )
+            with report_scope:
+                super().dispatch(
+                    role, phase,
+                    output_path=output_path, iteration=iteration,
+                    perspective=perspective, h_main_result=h_main_result,
+                )
         finally:
+            self.max_turns = original_max_turns
+            self._wall_clock_seconds = original_wall_clock
             self._turn_silence_threshold = original_threshold
             try:
                 self._maybe_log_silence(iteration=iteration, phase=phase)
@@ -1218,7 +1298,9 @@ class SDKDispatcher(CLIDispatcher):
             )
         turns = max_turns or self.max_turns
         logger.info(
-            "SDK turn (model=%s, cwd=%s, max_turns=%d)", self.model, cwd, turns,
+            "SDK turn (model=%s, cwd=%s, max_turns=%d, wall_clock=%s)",
+            self.model, cwd, turns,
+            f"{self._wall_clock_seconds:.0f}s" if self._wall_clock_seconds else "none",
         )
 
         result = call_sdk_with_retry(
@@ -1243,6 +1325,10 @@ class SDKDispatcher(CLIDispatcher):
             },
             on_result=self._log_metrics_row,
         )
+        if self._normalize_phase(self._current_phase or "") == "report":
+            # #304: report.md is the session's final answer, not every
+            # narration block the agent emitted while reading files.
+            return result.final_text or result.text
         return result.text
 
     # ------------------------------------------------------------------

@@ -463,6 +463,15 @@ def _format_theory_references(refs) -> str:
     return "\n".join(lines)
 
 
+_ANTHROPIC_MODEL_PREFIXES = ("claude", "anthropic/", "aws/", "bedrock/", "vertex_ai/claude")
+
+
+def _is_anthropic_model(model: str | None) -> bool:
+    """True for a Claude model name (bare, or behind a provider prefix)."""
+    name = (model or "").lower()
+    return name.startswith(_ANTHROPIC_MODEL_PREFIXES) or "/claude" in name
+
+
 class LLMDispatcher:
     """Dispatch agent roles to an LLM and produce schema-conformant artifacts."""
 
@@ -499,18 +508,23 @@ class LLMDispatcher:
                 "the OPENAI_API_KEY environment variable."
             )
             anthropic_base = os.environ.get("ANTHROPIC_BASE_URL")
-            if not resolved_base and anthropic_base:
-                # #304: an OpenAI client with no base URL silently targets
-                # api.openai.com, while this environment routes models through
-                # ANTHROPIC_BASE_URL. Refuse rather than send the call there.
+            if (not resolved_base and anthropic_base and api_key is None
+                    and _is_anthropic_model(model)):
+                # #304: a Claude model sent through an OpenAI client with no
+                # base URL goes to api.openai.com, which does not serve it,
+                # while this environment routes Claude through
+                # ANTHROPIC_BASE_URL. Refuse rather than send it there. An
+                # OpenAI model (gpt-*) or an explicit api_key= is left alone.
                 self._disabled_reason = (
-                    f"OPENAI_BASE_URL is unset but ANTHROPIC_BASE_URL is set "
-                    f"({anthropic_base}), so this OpenAI-compatible call would "
-                    f"go to api.openai.com instead of your proxy. Set "
+                    f"model {model!r} is a Claude model, OPENAI_BASE_URL is "
+                    f"unset and ANTHROPIC_BASE_URL is set ({anthropic_base}), "
+                    f"so this OpenAI-compatible call would go to "
+                    f"api.openai.com instead of your proxy. Set "
                     f"OPENAI_BASE_URL to the proxy's OpenAI-compatible route "
                     f"(for LiteLLM usually \"$ANTHROPIC_BASE_URL/v1\") and "
-                    f"OPENAI_API_KEY to its key, or run with --agent sdk, which "
-                    f"routes the report through the Claude Agent SDK."
+                    f"OPENAI_API_KEY to its key. To really call OpenAI, set "
+                    f"OPENAI_BASE_URL=https://api.openai.com/v1 and use an "
+                    f"OpenAI model."
                 )
                 logger.warning("LLMDispatcher disabled: %s", self._disabled_reason)
                 resolved_key = None

@@ -266,7 +266,10 @@ properties:
           counted failure instead of a run that looks "still running". Scalar
           form applies to every phase; map form per phase, unlisted phases
           get the default. Default 7200s (2x the slowest turn observed);
-          ``build`` defaults to max(7200, 3 x its silence window). 0
+          ``execute_analyze`` defaults to 21600s, because a reflective
+          execute turn runs the whole experiment matrix (raise it when the
+          matrix is longer); ``build`` defaults to max(7200, 3 x its silence
+          window). 0
           disables the ceiling.
 
   sandbox:

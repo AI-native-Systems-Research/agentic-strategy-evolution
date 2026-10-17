@@ -275,9 +275,12 @@ def _generate_report(
             iteration=0,
         )
         print(f"  -> {work_dir / 'report.md'}")
-    except (RuntimeError, FileNotFoundError, OSError) as exc:
-        logger.warning("Report generation failed: %s", exc)
-        print(f"  Report generation skipped: {exc}")
+    except Exception as exc:  # noqa: BLE001
+        # Best-effort, as before #304: the SDK path re-raises permanent errors
+        # raw (ProcessError, a bare Exception from an SDK error message), and
+        # a report failure must not crash a campaign whose iterations all ran.
+        logger.warning("Report generation failed: %s: %s", type(exc).__name__, exc)
+        print(f"  Report generation skipped: {type(exc).__name__}: {exc}")
 
 
 def _persist_max_iterations(work_dir: Path, max_iterations: int) -> None:
