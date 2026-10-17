@@ -6664,7 +6664,11 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     # goes: the registered `confirm -> confirm` / `confirm -> report` transitions
     # are untouched, and `certified` is an observation the compiled policy already
     # reads.
-    _rec_for_bias = _read_recommendation(work_dir) or {}
+    # THIS epoch's latest fitting record (as everywhere else in the report and
+    # confirm paths): safe today only because every epoch begins at `screen`,
+    # which writes a fresh record -- reading the epoch's own makes that
+    # independent of the stage order.
+    _rec_for_bias = (_epoch_recommendations(work_dir) or [{}])[-1]
     fit_bias = bool(
         (_rec_for_bias.get("exclusion_balance") or {}).get("level_correlated"),
     )

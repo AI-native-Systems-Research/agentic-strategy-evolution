@@ -513,11 +513,6 @@ rather than of what must hold.
 **Open violations — invariants the current code is known to break: NONE.**
 Queryable as `invariants.open_violations()`, which now returns an empty list.
 
-Five entries carried the flag when this inventory was first written, and all five
-have since been closed. They are listed here because the closures are the clearest
-argument for keeping an honest open-violations list at all — every one was
-disclosed by the inventory rather than by a test failing:
-
 Five entries carried the flag when this inventory was first written; all five have
 since been closed, each verified empirically — violation reproduced, fix applied,
 absence reproduced — before its flag was cleared. The closures are the clearest
