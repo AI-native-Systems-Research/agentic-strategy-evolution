@@ -1332,3 +1332,128 @@ class TestTurnRunnerClassification:
 
         assert run_turn_reaping_children(turn, wall_clock_seconds=5) == "done"
         assert run_turn_reaping_children(turn, wall_clock_seconds=None) == "done"
+
+
+class TestP1ReviewFixes:
+    """Fix round for the P1 review: grandchild reaping (#303) and the
+    campaign-end report reading the session's final answer (#304)."""
+
+    @staticmethod
+    def _fake_sdk(monkeypatch, query):
+        import sys
+        import types
+
+        class _Options:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        module = types.ModuleType("claude_agent_sdk")
+        module.ClaudeAgentOptions = _Options
+        module.query = query
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
+
+    def test_a_tool_process_the_child_started_is_reaped_with_it(
+            self, tmp_path, monkeypatch):
+        """The child ``claude`` starts a tool (here a ``sleep``) and the turn
+        hangs. Past the ceiling, both the child and its tool must be gone --
+        a surviving tool would run beside the retry (#303)."""
+        import os
+        import signal
+        import subprocess
+
+        import anyio
+
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+
+        pidfile = tmp_path / "grandchild.pid"
+        child_pids: list[int] = []
+
+        class _Assistant:
+            content = []
+
+        async def _query(*, prompt, options):  # noqa: ARG001
+            proc = await anyio.open_process(
+                ["/bin/sh", "-c", f"sleep 30 & echo $! > {pidfile}; wait"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            child_pids.append(proc.pid)
+            while True:
+                await anyio.sleep(0.05)
+                yield _Assistant()
+
+        self._fake_sdk(monkeypatch, _query)
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        campaign = _make_campaign(tmp_path)
+        campaign["sdk_timeouts"] = {
+            "turn_silence_threshold_seconds": 30,
+            "phase_wall_clock_seconds": {"design": 0.5},
+        }
+        d = SDKDispatcher(work_dir=tmp_path, campaign=campaign,
+                          sdk_runner=_default_sdk_runner_factory(), max_retries=0)
+        grandchild = None
+        try:
+            with pytest.raises(RuntimeError, match="wall-clock ceiling"):
+                d.dispatch("planner", "design",
+                           output_path=tmp_path / "runs/iter-1/design_log.md",
+                           iteration=1)
+            grandchild = int(pidfile.read_text().strip())
+            assert child_pids and not _pid_alive(child_pids[0])
+            assert not _pid_alive(grandchild), "the tool outlived its turn"
+        finally:
+            for pid in child_pids + ([grandchild] if grandchild else []):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_report_md_is_the_final_answer_and_runs_in_work_dir(
+            self, tmp_path, monkeypatch):
+        """A report session narrates, calls tools, then answers. report.md
+        must hold the answer only, and the session runs in work_dir (where
+        the artifacts are), never in the target repo."""
+        seen: dict = {}
+
+        class _Text:
+            def __init__(self, text):
+                self.text = text
+
+        class ToolUseBlock:
+            name = "Read"
+
+        class AssistantMessage:
+            def __init__(self, content):
+                self.content = content
+
+        class ResultMessage:
+            usage = {}
+            total_cost_usd = 0.0
+            duration_ms = 1
+            num_turns = 3
+            is_error = False
+
+            def __init__(self, result):
+                self.result = result
+
+        async def _query(*, prompt, options):  # noqa: ARG001
+            seen.update(options.kwargs)
+            yield AssistantMessage([_Text("I'll read the ledger first."), ToolUseBlock()])
+            yield AssistantMessage([_Text("Now iter-2."), ToolUseBlock()])
+            yield AssistantMessage([_Text("# Research Report\n\nBody.\n")])
+            yield ResultMessage(None)
+
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+
+        self._fake_sdk(monkeypatch, _query)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        work = tmp_path / "work"
+        work.mkdir()
+        d = SDKDispatcher(work_dir=work, campaign=_make_campaign(repo),
+                          sdk_runner=_default_sdk_runner_factory())
+        d.dispatch("extractor", "report", output_path=work / "report.md",
+                   iteration=0)
+
+        assert (work / "report.md").read_text() == "# Research Report\n\nBody.\n"
+        assert seen["cwd"] == str(work)
+        assert seen["max_turns"] <= 10

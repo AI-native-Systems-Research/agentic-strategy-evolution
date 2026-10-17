@@ -726,8 +726,11 @@ def _tracking_loop_factory(spawned: list) -> Callable[[], asyncio.AbstractEventL
             # ``claude`` CLI started (a hung simulator, test_command), not only
             # the CLI itself; otherwise they outlive the turn and pile up
             # beside each retry (#303).
-            if os.name == "posix":
-                kwargs.setdefault("start_new_session", True)
+            # anyio.open_process passes start_new_session=False explicitly,
+            # so this overrides rather than defaults. Ctrl-C still ends the
+            # child: it cancels the turn, and the reap below runs shielded.
+            if os.name == "posix" and kwargs.get("process_group") is None:
+                kwargs["start_new_session"] = True
             transport, protocol = await original(*args, **kwargs)
             spawned.append(transport)
             return transport, protocol

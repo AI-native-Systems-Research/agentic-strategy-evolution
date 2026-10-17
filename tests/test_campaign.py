@@ -694,7 +694,7 @@ class TestReportPhaseRouting304:
                        output_path=tmp_path / "report.md", iteration=0)
         msg = str(exc.value)
         assert "OPENAI_BASE_URL" in msg and "api.openai.com" in msg
-        assert "--agent sdk" in msg
+        assert "OPENAI_BASE_URL=https://api.openai.com/v1" in msg
         assert not (tmp_path / "report.md").exists()
 
     def test_explicit_openai_base_is_still_honoured(self, tmp_path, monkeypatch):
@@ -704,4 +704,50 @@ class TestReportPhaseRouting304:
         monkeypatch.setenv("OPENAI_BASE_URL", "https://proxy.example.com/v1")
         monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com")
         d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN)
-        assert d._completion is not None
+        assert "api.openai.com" not in d._disabled_reason
+
+
+class TestReportPhaseRoutingReviewFixes:
+    """P1 review fixes for #304."""
+
+    def test_a_permanent_sdk_error_at_report_time_does_not_crash_the_campaign(
+            self, tmp_path, monkeypatch):
+        import orchestrator.sdk_dispatch as sdk_mod
+        from orchestrator.campaign import _generate_report
+
+        class ProcessError(Exception):
+            exit_code = 1
+
+        def failing_runner(**_kwargs):
+            raise ProcessError("Command failed with exit code 1")
+
+        monkeypatch.setattr(sdk_mod, "_default_sdk_runner_factory",
+                            lambda: failing_runner)
+        work_dir = _setup_work_dir(tmp_path)
+        _generate_report(SAMPLE_CAMPAIGN, work_dir, None, agent="sdk")  # no raise
+        assert not (work_dir / "report.md").exists()
+
+    def test_a_real_openai_model_with_an_anthropic_gateway_is_not_refused(
+            self, tmp_path, monkeypatch):
+        """OPENAI_API_KEY for api.openai.com plus ANTHROPIC_BASE_URL for the
+        SDK phases is a valid setup; an OpenAI model must still run."""
+        from orchestrator.llm_dispatch import LLMDispatcher
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-real")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+        d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN,
+                          model="gpt-4o")
+        assert "api.openai.com" not in d._disabled_reason
+
+    def test_the_refusal_names_how_to_really_call_openai(
+            self, tmp_path, monkeypatch):
+        from orchestrator.llm_dispatch import LLMDispatcher
+
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-stale")
+        monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://proxy.example.com")
+        d = LLMDispatcher(work_dir=tmp_path, campaign=SAMPLE_CAMPAIGN,
+                          model="claude-sonnet-4-6")
+        with pytest.raises(RuntimeError) as exc:
+            d.dispatch("extractor", "report",
+                       output_path=tmp_path / "report.md", iteration=0)
+        assert "OPENAI_BASE_URL=https://api.openai.com/v1" in str(exc.value)
