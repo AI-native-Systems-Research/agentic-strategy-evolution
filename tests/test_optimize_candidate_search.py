@@ -334,7 +334,11 @@ def test_a_searched_campaign_records_candidate_space_and_still_finds_the_optimum
         cs = doc["candidate_space"]
         assert cs["exhaustive"] is False and cs["method"] == "sampled_coordinate_ascent"
         assert 1 <= cs["evaluated"] and cs["seed"] == decide.SEARCH_SEED
-        assert "NOT over all of X_valid" in doc["residual_regret_model"]["detail"]
+        rrm = doc["residual_regret_model"]
+        if rrm["value"] is not None:
+            # #321 H3: the unevaluated grid is bounded, not ignored.
+            assert "unevaluated rest by branch and bound" in rrm["detail"]
+            assert rrm["value"] >= rrm["critical"]["unevaluated"]["value"]
         assert doc["alias_consequential_basis"] == "searched"
         aa = doc["alias_assessment"]
         assert aa["readings"] == aa["assessed"] + len(aa["unassessed"])

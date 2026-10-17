@@ -45,7 +45,8 @@ all of the following hold:
    every fitting stage of the epoch;
 4. none of the earlier vetoes fired: an inadmissible or unmeasured finalist,
    a level-correlated exclusion, a refill round, or unknown adequacy;
-5. the candidate space was enumerated, not searched.
+5. the candidate space was enumerated, or searched with the unevaluated grid
+   bounded (`residual_regret_model.critical.unevaluated`, #321 H3).
 
 Assumptions:
 - **M1.** The registered response class (first order + 2fi at screen,
@@ -65,8 +66,17 @@ Assumptions:
 Two events:
 - **E_s, the model family** (`certificate.model_regret_bound`, δ_screen).
   The one-sided bounds `U_m(z, x̂) ≥ f(z) − f(x̂)` hold simultaneously for
-  every challenger `z ∈ X` (Bonferroni over all `M = |X| − 1` challengers),
-  with probability ≥ 1 − δ_screen under M1 and M3. Because the family is
+  every challenger `z ∈ X`, with probability ≥ 1 − δ_screen under M1 and M3.
+  The constant is `min(t_{1−δ/M, ν}, sqrt(q F_{q,ν,1−δ}))` (#321 H3):
+  Bonferroni over the `M = |grid| − 1` declared challengers, or Scheffé
+  (1953) over the q-dimensional space of differences `x(z) − x(x̂)`. Scheffé
+  covers every `d'β` in that space at once, so the family covers grid points
+  that were never evaluated. The minimum is taken over constants that are
+  functions of `(δ, M, q, ν)` alone, fixed before the data, so the family's
+  level is the chosen constant's. A searched space bounds its unevaluated
+  points by interval branch and bound at that constant
+  (`certificate.region_bound`; exact on convergence, a valid upper bound
+  otherwise). Because the family is
   simultaneous, any data-chosen subset of it holds on the same event. That
   is the only reason a max over "the candidates outside `S`" is legitimate.
 - **E_t, the terminal family** (`certificate.terminal_regret_bound`, at the
@@ -183,13 +193,35 @@ a valid claim at no extra runs, so the extra block is deferred (§7).
 |---|---|---|
 | stages within an epoch | δ_screen | one simultaneous model family at the latest fitting stage (§2). Earlier stages' decisions (screen drop, foldover, curvature routing) select the region but spend no stated δ: their errors are covered only through M1 (§7). |
 | confirm rounds within an epoch | δ_terminal | Bonferroni over the L registered looks (§3) |
-| one epoch's certificate | δ_screen + δ_terminal | union of the two families (§2) |
+| constraint exclusion within an epoch | δ_constraint | Bonferroni over the modelled constraints, only at `x*` (§6) |
+| one epoch's certificate | δ_screen + δ_terminal (+ δ_constraint) | union of the families (§2, §6) |
 | epochs | Σ_e (δ_s,e + δ_t,e) | recorded by WP-C in `report.json` `error_budget` (`cumulative`, union bound over epochs). Each epoch's certificate is judged at its own deltas. |
+| epochs, charged mode (#321) | `campaign_delta.total` D | epoch e certifies at share_e (D/2^e or a declared schedule, Σ ≤ D), split in the declared proportions; a stop at a continue gate is charged; `cumulative` is binding. |
 
-Constraint-model exclusions use δ_screen as well, via
-`constraint_models.per_constraint_delta`. They hold on the same event only
-for `x*` itself, as `constraint_models` documents. This is a third union
-term in the strict sense, and it is not yet added to the stated budget (§7).
+**The constraint-exclusion term (#321 P2 item 3, fixed).** Constraint-model
+exclusion removes a candidate when, for some modelled constraint, its
+one-sided bound lies entirely on the violating side
+(`constraint_models.confidently_infeasible`). Let `E_c` be the event that the
+TRUE constrained optimum `x*` is not removed. `x*` is a fixed point, not a
+data-chosen one, and it is feasible, so for each of the `C` modelled
+constraints a removal needs that constraint's one-sided bound at `x*` to fail:
+`Pr(E_c^c) ≤ C · δ_c/C = δ_c` (Bonferroni over constraints; no division by
+the candidate count is needed, since removing a truly infeasible candidate
+costs nothing). `E_c` is not implied by `E_s` (a different response, a
+different fit), so the statement in §1 holds on `E_s ∩ E_t ∩ E_c`:
+
+> Pr( certified and f(x*) − f(w) > ε ) ≤ δ_screen + δ_terminal + δ_constraint.
+
+`δ_constraint` is `policy.objective.delta_constraint`
+(`optimization.policy.delta_constraint`, default δ_screen, the level the
+exclusion always used). It is registered at compile time exactly when a
+declared constraint has a violating side and no `when` guard, so it is fixed
+before any data; it is charged even when the constraint later proves
+unmodellable (conservative). `report.json` carries `delta_constraint`, and
+`error_budget.epochs[].spent` includes it. A campaign without such a
+constraint spends the two terms as before (byte-identical policy). Caveat:
+like E_s, E_c rests on the constraint model's response class (M1) and on its
+pure error (M3).
 
 ## 7. Documented limits (deferred items and open questions)
 
@@ -198,11 +230,14 @@ term in the strict sense, and it is not yet added to the stated budget (§7).
 - The refill look is charged in `confirm_looks` but a refill round never
   certifies (`shortlist_refilled`), so the +1 costs power without buying
   validity: deliberate conservatism.
-- `_baseline_seat_extra` adds a seat even when the baseline is already a
-  finalist, so `runs_needed_confirm` can over-count by one seat and
-  `confirm_affordable` can stop a round early.
-- A baseline measured inadmissible vetoes the round (deliberate; it has no
-  dedicated withheld reason yet).
+- FIXED (#321 P2): `_baseline_seat_extra` no longer counts a seat when the
+  baseline is carried inside the cap. Fixing it exposed the opposite defect:
+  `_next_round_finalists` costed round r+1 at its carry-over, but
+  `_confirm_rows` tops a round up to `shortlist_size`, so 24/96 probe
+  campaigns (bowl/additive, noise 0.4, 4 rounds, max_runs 30-50) overspent
+  `max_runs`. The estimate is now `shortlist_size` (+ the baseline seat).
+- FIXED (#321 P2): a baseline measured inadmissible still vetoes, under its
+  own reason `baseline_measured_inadmissible`.
 - `test_spending_holds_the_sequential_error_at_delta` checks certificate
   arithmetic only; product-path coverage is `test_every_confirm_look_is_charged`.
 - Paired (CRN) gain intervals are not exercised end to end: the synthetic
@@ -227,18 +262,35 @@ term in the strict sense, and it is not yet added to the stated budget (§7).
    replicate passes", not a mean or chance constraint.
 3. **M1 is checked, not proved.** The global bound inherits the response
    class. WP-B's checks have local power only (its limits 1-12).
-4. **The constraint-exclusion δ** is not in the stated sum (§6).
-5. **Seat flips for held factors** are not implemented (§4). The scope is
-   recorded instead.
-6. **No post-selection validation block** (§5). The gain estimate is biased,
-   and the ε reference still comes from the best finalist's mean on the
-   selecting data (stage-0 Q5).
-7. **Multi-objective** has no global (model-half) bound.
-8. **Bonferroni conservatism.** Large X with few pure-error df gives a wide
-   `R_model,out`; expect `model_bound_above_epsilon`. The remedy is more
+4. **The constraint-exclusion δ** is in the stated sum since #321 (§6).
+5. **Seat flips for held factors: rejected (#321); inertness checks
+   instead.** Certifying the declared space through held factors needs a
+   model, and a model half, per slice, which is exponential in the held
+   factors. `design.inertness` (opt-in) runs TOST of each held-factor flip
+   against the winner at a declared margin, with Bonferroni over flips at
+   δ_terminal, and records `certificate_scope.inertness`. That is a local
+   equivalence at the winner, not a certificate over the other slices.
+6. **Post-selection validation block: opt-in since #321** (§5,
+   `design.validate`). It is registered as a `validate` state that every
+   `confirm -> report` exit passes through, and it costs `replicates × 2`
+   runs. Without it the gain estimate is biased and the ε reference comes
+   from the selecting data (stage-0 Q5). With it, the value, the gain and
+   the ε reference come from fresh replicates. Certification is not
+   re-decided.
+7. **Multi-objective** has a model half since #321 (`pareto.model_half`,
+   Scheffé per objective, Bonferroni over objectives at δ_screen); the
+   certified probability is then δ_screen + δ_terminal (+ δ_constraint).
+   It covers only the fitted slice: a chosen point at another level of a held
+   factor is withheld (`front_model_bound_not_computable`).
+8. **Conservatism of the simultaneous constants.** Large X with few
+   pure-error df gives a wide `R_model,out`; expect
+   `model_bound_above_epsilon`. Since #321 the model constant is
+   min(Bonferroni, Scheffé), and a max-t over the grid would be tighter still,
+   but it needs multivariate-t integration (no numpy). The remedy is more
    centre points (more pure-error df), not a weaker rule.
-9. **A baseline measured inadmissible** vetoes the round like any finalist.
-   The baseline is declared valid, so the contradiction is evidence.
+9. **A baseline measured inadmissible** vetoes the round, named
+   `baseline_measured_inadmissible` (#321 P2). The baseline is declared
+   valid, so the contradiction is evidence.
 
 ## 8. Evidence
 

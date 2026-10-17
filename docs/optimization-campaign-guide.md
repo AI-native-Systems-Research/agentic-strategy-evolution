@@ -809,7 +809,7 @@ What the validation check and the sticky verdict do NOT do (spec
 7. **Under `screen_rejection_unresolved`** (reachable only with `validation_points: 0`), the report's `model` rung still answers with the model's argmax. Certification is withheld.
 8. **Snapping can cancel a point's power.** On a `levels_only` or coarse-grid knob, ±0.5 can snap onto a lattice level, and that point then adds no power.
 9. **The objective-model check builds V from the full design columns**, while the model may have been fitted on a subset of rows (where that metric is missing). V is then slightly too small.
-10. **The Pareto path ignores a validation rejection.** The `modelled` flag and `shortlist_plan` do not read it. Predicted rivals are the conservative side, but predicted extremes are still seated.
+10. **The Pareto path and a rejected model (fixed in #321).** `shortlist_plan` reads the epoch's `model_adequate`: when it is false, round 1 seats no predicted extreme and no predicted preferred point; each objective's measured best and the measured nondominated points take those seats (up to `max(K, shortlist_size // 2)`), and the predicted front's spread fills the rest, as on the single-objective ladder. Predicted rivals stay in the front statuses: a rival can only remove confidence, so that is the conservative side. Certification is withheld (`model_inadequate`) as before. Cost: on `pareto_with_constraint` seed 3 the measured anchor makes a constraint-boundary point preferred, a later round strikes it off, and the hypervolume drops 0.967 -> 0.952 (1 of 16 seeds).
 11. **The mixed-fit V would omit the centre indicators.** Refine fits are never mixed, so this is not reachable today.
 12. **`reuse_screen` is refused with any choice factor declared** (the cyclic centre assignment does not match refine's held level). A refusal is logged at INFO; partial reuse across choice slices is not attempted.
 
@@ -2555,6 +2555,14 @@ delta.
 > recommended configuration is within ε of the best configuration in the
 > certificate's scope.
 
+With a declared constraint that has a violating side (`<`, `<=`, `>`, `>=`,
+no `when`), constraint models may drop candidates they predict confidently
+infeasible. Wrongly dropping the true constrained optimum is a third,
+separate risk, so the statement becomes `1 − delta_screen − delta_terminal −
+delta_constraint`. `optimization.policy.delta_constraint` sets it (default:
+`delta_screen`, Bonferroni over the modelled constraints); `report.json`
+records it as `delta_constraint`, and `error_budget` sums it.
+
 The terminal half alone is a WITHIN-SHORTLIST claim. The global claim also
 needs the model half, linked to the winner `w` through the fitted argmax
 `x̂`:
@@ -2584,12 +2592,62 @@ Each withheld reason names the half that failed:
   shortlist may still beat the winner by more than ε.
 - `model_bound_not_computable`: no fitting stage, or no pure error, so
   nothing bounds what screening left out.
-- `model_bound_not_exhaustive`: the candidate space was searched, not
-  enumerated, so the model bound is silent about candidates the search never
-  evaluated.
+- `model_bound_not_exhaustive`: written only by records from before #321. A
+  searched space is now bounded over the candidates the search never
+  evaluated (below), so this reason no longer fires.
+
+**The model family's critical value (#321 H3).** The per-challenger bounds
+`est + c * se` share one constant `c`, the smaller of two simultaneous
+constants:
+- Bonferroni over the declared grid's `m` challengers: `t_{1-δ/m, df}`;
+- Scheffé (1953; Working-Hotelling in regression) over the `q` non-intercept
+  model terms: `sqrt(q F_{q, df, 1-δ})`. It covers every contrast in the
+  model space at once, so it does not depend on how many candidates there
+  are.
+
+Both are valid at `1 − δ_screen`. Taking the smaller is valid because the
+choice depends only on `(δ, m, q, df)`, which are fixed before any response is
+read; `m` is the declared grid, never the count left after data-driven
+exclusions. `recommendation.json` `residual_regret_model.critical` records
+which one was used and both values. Cost against Bonferroni: Scheffé wins on
+almost every grid this kind builds. At df 3, Bonferroni over 15 challengers
+gives 6.74 against Scheffé's 5.28 (q = 3); over 80 challengers 11.98 against
+6.71 (q = 5); over a 9^4 grid 52.5 against 11.0 (q = 14). Bonferroni wins
+only on tiny grids with many terms. Measured on the WP-B oracle (smooth
+surfaces, seeds 1-8): certificates 46 → 50 at ×1 and 22 → 27 at ×4, 0 false.
+Noise sweep (1008 campaigns): 199 → 245 certificates, 0 false.
+
+**A searched space is bounded too.** Above `CANDIDATE_CAP` the candidates are
+searched, so most grid points are never scored. Under the simultaneous
+constant every grid point is covered anyway, and `certificate.region_bound`
+bounds the max over the unevaluated ones by branch and bound over sub-boxes,
+using interval arithmetic (Moore 1966) on the model columns. It is exact when
+it converges, and a valid but looser bound when it stops at its box budget
+(`REGION_NODE_BUDGET` = 60,000, capped at `REGION_WORK_BUDGET / p²` because a
+box costs O(p²)). The result is folded into
+`residual_regret_model` and the profile's `rest`, and recorded under
+`critical.unevaluated` (value, converged, nodes). Measured with the cap forced
+to 1 (every fitting stage searched; WP-B oracle, 288 campaigns): 0 → 77
+certificates, 0 false. Cost: well under a second at 4 knobs, about 5 s at 6 knobs
+(converges), and up to about 10 s per fitting stage at 8-16 knobs, where it
+does not converge and the bound is the valid looser one. Many-knob campaigns are no longer vetoed. They still usually withhold
+on width (`model_bound_above_epsilon`; `sparse_knobs` 5-8: R_model 0.76 against
+ε 0.50 at 3 pure-error df). The remedy is more centre points.
 - `model_recommendation_not_compared` / `model_recommendation_infeasible`:
   the fitted argmax was not measured admissibly in the final round, so the
   model bound cannot be linked to the winner.
+- `baseline_measured_inadmissible`: the declared `known_valid_baseline`,
+  seated as the reference finalist, measured inadmissible.
+
+**What a later confirm round costs.** Round r > 1 re-seats the previous
+winner, the fitted argmax and every finalist still above ε, then tops up to
+`shortlist_size` from the model's ranking. So `runs_needed_confirm` (the
+affordability guard's estimate) is always `shortlist_size × replicates`, plus
+`replicates` for the baseline seat unless the baseline is already carried
+inside the cap. It is an upper bound on the round, so a declined round is
+never one the budget could pay for twice over, and an accepted round never
+overspends `max_runs`. (Before #321 the estimate was the carry-over alone:
+24 of 96 probe campaigns with 4 registered rounds overspent `max_runs`.)
 
 Measured on the stage-0 noise sweep (2016 campaigns), this took false
 certificates from 17 to 0 (the spec has the table). It is NOT free: it costs
@@ -2598,6 +2656,52 @@ certification POWER, concentrated on near-tied surfaces with few pure-error df
 `saddle` 6 -> 0 and `interaction_only` 7 -> 1, where the model bound is 2-3x ε).
 More centre points (pure-error df) are the cheapest remedy.
 
+**The multi-objective model half (#321).** The measured front's statuses rule
+out every MEASURED rival. A configuration nobody measured is bounded only by
+the objective models. For every objective k and every grid point `z`, there is
+a one-sided bound `U_k(z, w)` on how far `z` beats the chosen point `w`. `z`
+can ε-dominate `w` only if it beats it by `ε_k` on every objective, so the
+certificate needs `D = max_z min_k (U_k(z, w) − ε_k) < 0`
+(`confirmation.json` `pareto.model_half`). Each `U_k` uses Scheffé's
+`sqrt(q_k F_{q_k, df_k, 1−δ/K})`, which covers every contrast `x(z) − x(w)`
+even though `w` was chosen from the data and may be off the grid, with
+Bonferroni over the K objectives at `δ_screen`. Measured configurations are
+excluded from the max, since the measured statuses already settle them. A
+searched space takes `min_k max_z` by branch and bound, which is a valid,
+looser bound. Withheld reasons: `front_point_possibly_dominated_unmeasured`
+(`D ≥ 0`) and `front_model_bound_not_computable` (no fit or pure error, an
+unknown ε, or `w` at another level of a factor the fitting stage held fixed).
+Measured over the 8 Pareto oracle surfaces, seeds 1-8: certificates 37 → 29,
+0 false either way. The losses: `pareto_choice_split` 6 → 0 (its preferred
+point sits on the branch refine did not fit, so nothing bounds the other
+slice), `pareto_noisy` 1 → 0 and `pareto_three` 6 → 5.
+
+**Post-selection validation (#321, opt-in).** Declare
+`design.validate: {replicates: r}` with a `known_valid_baseline` in a
+single-objective campaign. After confirm picks its winner, a registered
+`validate` state measures the winner and the baseline on `r` fresh paired
+blocks. That costs `r × 2` runs, which the `--liveness` preview shows. The
+winner is fixed before these rows exist, so `report.json`
+`post_selection_validation` gives unbiased numbers:
+- `value`: the winner's fresh mean, also used as `recommendation.value`;
+- `gain`: a paired t on CRN differences under `workload.seed_env`, Welch
+  otherwise, two-sided at `delta_terminal`;
+- `epsilon_reference`: the fresh winner mean.
+
+Confirm's selection-biased numbers stay beside them (`selection_estimate`,
+`selection_value`). The block decides nothing. `certified` is still
+confirm's, at confirm's ε (`epsilon_confirm`).
+
+Why opt-in, not the default: the spec already gives a selection-proof
+INTERVAL at no extra runs (the simultaneous confirm interval). The block buys
+an unbiased POINT estimate and ε reference for `2r` runs, which an author
+should choose knowingly. It is skipped, with the reason recorded, when there
+is no winner, the winner is the baseline, or fewer than `2r` runs remain.
+Measured on `bowl` at noise 0.4, `r = 4`, seeds 1-8: the fresh intervals cover
+the true gain in at least 7 of 8 campaigns. A zero-spread paired difference
+(a deterministic or perfectly CRN-cancelled target) reports `method: none`,
+never a zero-width interval.
+
 **The certificate's scope** is in `report.json` `certificate_scope`. Refine
 holds every non-refinable factor (choice, two-level) at the screen's best
 level. A certificate after refine therefore covers that SLICE only:
@@ -2605,6 +2709,26 @@ level. A certificate after refine therefore covers that SLICE only:
 `report.md` says so. It is never a claim about the other levels.
 `declared_space` means every factor varied. No certificate reaches past the
 declared ranges.
+
+**Held factors: inertness checks, not seat flips (#321).** A certificate over
+the whole declared space would need a fitted model, and its own model half, for
+every slice of the held factors. That cost is exponential in the number of
+held factors (a slice per level combination), so full-space certification is
+deliberately not offered. Instead, declare
+`design.inertness: {replicates: r, margin: {pct: 2}}`. At the confirm winner,
+each held factor is flipped to each alternative level and paired with the
+winner on `r` fresh blocks. That costs `r × (1 + F)` runs for F flips, which
+the preview shows. Equivalence is tested by TOST (two one-sided tests,
+Schuirmann 1987) at the margin, which is resolved against confirm's winner
+mean, so it is fixed before these data. Each flip's two one-sided tests run at
+`delta_terminal / F` (Bonferroni over flips), and each TOST is an
+intersection-union test of that size (Berger 1982). `certificate_scope.inertness`
+lists `shown_inert` and `not_shown_inert`, and the statement adds a LOCAL
+equivalence: at the recommended configuration, those factors move the
+response by less than the margin. It does not say the other slices'
+optima are covered. Measured: on `additive` (C worth 2.0) C is not shown inert;
+on a surface where C is worth 0.01 it is shown inert on at least 2 of 3 seeds
+at `r = 6`. Size at the margin boundary: at most 0.05 (4000-trial Monte Carlo).
 
 `report.json` carries each bound's *value*; the full record — `challenger`,
 `delta`, `method`, `detail` — is in `recommendation.json` (model) and
@@ -2682,7 +2806,8 @@ reason. Exit codes:
 - 2: the work dir cannot be reanalysed at all.
 
 `error_budget` gives the family-wise figure. Each epoch spends
-`delta_screen + delta_terminal`, and every epoch after the first was compiled
+`delta_screen + delta_terminal` (+ `delta_constraint` when constraint-model
+exclusion is registered), and every epoch after the first was compiled
 after the earlier epochs' data were seen. `cumulative` is therefore the union
 bound over every epoch on the work dir, and `report.md` prints it beside the
 per-epoch deltas. Read it with three qualifications:
@@ -2696,6 +2821,22 @@ per-epoch deltas. Read it with three qualifications:
   with the current Nous (`deltas_from` says which).
 - `cumulative_is_lower_bound` is true when an earlier epoch's campaign could not
   be recovered.
+
+**A binding campaign-wide budget (#321, opt-in).** Declare
+`optimization.policy.campaign_delta: {total: D}` and epoch `e` certifies at
+the share `D / 2^e`, or at the `e`-th entry of `schedule: [d_1, d_2, ...]`
+(whose sum the validator holds to `D`). The share is split over
+`delta_screen : delta_terminal (: delta_constraint)` in your declared
+proportions. Each share is a function of the declaration and the epoch index
+only, so it is fixed before any data. Then `Pr(any epoch certifies wrongly) ≤
+Σ_e share_e ≤ D` by the union bound, however the epochs were chosen.
+`error_budget` gains `mode: charged`, `binding: true` and `within_total`. A
+share is spent when the epoch's policy is compiled. An epoch stopped at a
+continue gate is charged the same and listed under `stops_at_continue_gate`.
+An epoch past a finite schedule certifies nothing
+(`campaign_delta_exhausted`). The cost is power: epoch 1 certifies at `D/2`,
+epoch 2 at `D/4`. Measured on the two-epoch test (total 0.1): 0.05 + 0.025 =
+0.075, against 0.15 spent without the mode.
 
 `certified` is still judged at this epoch's own deltas. Within an epoch,
 the stages are covered by the two halves above (`delta_screen` for the model
@@ -2721,24 +2862,50 @@ What a certificate does NOT cover (spec
    judged "every replicate passes", not as a mean or chance constraint.
 3. **Pure error stands in for every configuration.** The model bound's
    variance comes from the centre replicates only. If those under-state the
-   variance elsewhere, the model half is anti-conservative.
-4. **Bonferroni is conservative.** Both families divide δ by the number of
-   comparisons. On large candidate spaces with few pure-error df, this makes
-   `G ≤ ε` hard to reach. Expect `model_bound_above_epsilon` rather than
-   false certificates. Raise `design.screen.center_points` (more pure-error
-   df) or narrow the ranges.
+   variance elsewhere, the model half is anti-conservative. The Scheffé
+   constant (#321) is smaller than Bonferroni's, so it has less slack to
+   absorb this. Measured: bowl on a central composite, noise sd growing from
+   1× at the centre to (1 + h)× at the corners, δ = 0.05, 300 fits. Pr(the
+   model bound misses the true gap) is 0.023 / 0.11 / 0.53 at h = 1 / 3 / 8
+   with min(Bonferroni, Scheffé), against 0.010 / 0.037 / 0.25 with
+   Bonferroni alone. Lack of fit rejects most of those fits (pass rate 256 /
+   172 / 39 of 300). Counting only fits where it passes (the only ones that
+   can certify), the joint rate Pr(lack of fit passes AND the bound misses)
+   is 0.007 / 0.023 / 0.040 -- but that joint rate is not what an author who
+   has SEEN lack of fit pass faces. Conditional on passing, the miss rate is
+   0.14 at h = 8 with 3 centre points, and 0.24 at h = 10 with 4 (independent
+   review, 300 to 600 fits). A miss is not yet a false certificate, which also
+   needs the bound to fall below ε while the true gap is above it, and none
+   was observed; but under strong heteroscedasticity the model half's δ is
+   not delivered. A heteroscedasticity check on pure error (Brown-Forsythe) is
+   the remedy; see the noise-diagnostics section for whether it is enabled.
+   The post-selection validation gain interval and the inertness TOST verdicts
+   are each separate claims at `delta_terminal`, outside the certificate's
+   union bound.
+4. **The simultaneous constants are conservative.** The terminal family is
+   Bonferroni over the finalists. The model family takes the smaller of
+   Bonferroni and Scheffé, and Scheffé covers every contrast in the model
+   space, more than the grid needs. On large grids with few pure-error df,
+   expect `model_bound_above_epsilon` rather than false certificates. Raise
+   `design.screen.center_points` (more pure-error df) or narrow the ranges.
+   A max-t (Hothorn-Bretz-Westfall) quantile over the grid would be tighter,
+   but it needs multivariate-t integration, which this package does not ship
+   (no numpy).
 5. **The refill look is charged whether or not it is taken.** The per-look
    level must be fixed before the data decide how many looks there are.
-6. **The baseline's gain point estimate is selection-biased.** The interval
-   is not. Report the interval.
+6. **The baseline's gain point estimate is selection-biased** unless you
+   declare the post-selection validation block (below). The confirm interval
+   is not biased. Report the interval, or the block's estimate.
 7. **The fitted argmax is kept on every confirm round** (it links the model
    half to the winner), at a cost of up to `replicates` runs per round.
-8. **A baseline that measures inadmissible** vetoes the round like any
-   finalist (`finalist_measured_infeasible`). You declared it valid, so the
-   contradiction is evidence and is never silenced.
-9. **Multi-objective certificates** do not use the global bound or the
-   baseline seat. They use alpha-spending over looks and the front's own
-   rules (INV-SEM18).
+8. **A baseline that measures inadmissible** vetoes the round under its own
+   reason, `baseline_measured_inadmissible` (`finalist_measured_infeasible`
+   then names only the other finalists). You declared it valid, so the
+   contradiction is evidence about the declaration or the constraint, and it
+   is never silenced.
+9. **Multi-objective certificates** do not use the single-objective global
+   bound or the baseline seat. They use alpha-spending over looks, the
+   front's own rules (INV-SEM18), and since #321 a model half (below).
 
 ### Artifacts the epoch writes
 

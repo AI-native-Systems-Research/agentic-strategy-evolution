@@ -76,6 +76,22 @@ class Stage(str, Enum):
     FOLDOVER = "foldover"
     REFINE = "refine"
     CONFIRM = "confirm"
+    #: The POST-SELECTION VALIDATION block (#321 item 2, A3 remainder). Opt-in
+    #: (``design.validate.replicates``), never declared in
+    #: ``optimization.stages`` and never reached by index: the compiled policy
+    #: routes every ``confirm -> report`` exit through it when registered.
+    #: Fresh paired replicates of the confirm winner against the
+    #: ``known_valid_baseline``, so the reported value, the gain estimate and
+    #: the epsilon reference come from measurements the selection never saw.
+    #: It decides nothing: ``certified`` is still confirm's.
+    VALIDATE = "validate"
+    #: The HELD-FACTOR INERTNESS check (#321 item 8, A4 remainder). Opt-in
+    #: (``design.inertness``). At the confirm winner, each factor the fitting
+    #: stage held fixed is flipped to each alternative level, paired with the
+    #: winner on fresh replicates, and a TOST equivalence verdict at the
+    #: declared margin says whether that held factor was shown inert. It
+    #: widens ``certificate_scope``'s statement; it certifies nothing.
+    INERTNESS = "inertness"
     #: The two TERMINAL states of a compiled epoch. Neither is ever declared in
     #: ``optimization.stages`` and neither spends benchmark budget: the policy
     #: routes to one of them and ``_close_iteration`` runs it inline.

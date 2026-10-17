@@ -280,6 +280,67 @@ def _multi_objective_block(opt: dict) -> dict | None:
     }
 
 
+VALIDATE_ACCOUNTING = (
+    "post-selection validation block (#321): the winner is fixed by confirm "
+    "before these replicates are drawn, so they are independent of the "
+    "selection; reported value, gain point estimate and epsilon reference come "
+    "from them only; no certificate is decided here"
+)
+
+
+INERTNESS_ACCOUNTING = (
+    "held-factor inertness (#321): TOST (Schuirmann 1987) of each held-factor "
+    "flip vs the winner at a declared margin; each flip's two one-sided tests "
+    "at delta_terminal / F (F flips, Bonferroni, so the family of 'shown "
+    "inert' verdicts is wrong with probability <= delta_terminal; each TOST is "
+    "an intersection-union test, so its size is its one-sided level); widens "
+    "the certificate's scope statement only, decides no certificate"
+)
+
+
+def _constraint_exclusion_registered(opt: dict) -> bool:
+    """Can a constraint model exclude candidates in this epoch? True when a
+    declared constraint has a violating side (``<``, ``<=``, ``>``, ``>=``)
+    and no ``when`` guard -- the constraints ``constraint_models`` may model.
+    A pure function of the declaration, so the term is fixed before data."""
+    for c in (opt.get("response") or {}).get("constraints") or ():
+        if isinstance(c, dict) and c.get("op") in ("<", "<=", ">", ">=") \
+                and "when" not in c and "when_not" not in c:
+            return True
+    return False
+
+
+def campaign_delta_share(spec: dict | None, epoch: int) -> float | None:
+    """Epoch ``epoch``'s share of a declared campaign-wide budget (#321 item 7).
+
+    ``spec`` is ``optimization.policy.campaign_delta``: ``{total: D,
+    schedule: "geometric"}`` gives ``D / 2^e`` (so the sum over every epoch
+    is at most ``D``), and ``{total: D, schedule: [d_1, d_2, ...]}`` gives
+    ``d_e`` (the validator checks ``sum d_e <= D``) and ``0`` past the list
+    -- an exhausted budget, which certifies nothing. A pure function of the
+    declaration and the epoch index, so every share is fixed before any data:
+    Pr(any epoch certifies wrongly) <= sum_e share_e <= D by the union bound,
+    however the epochs were chosen (each later epoch is compiled after the
+    earlier data were seen, which is why only a union bound is claimed).
+    ``None`` when the mode is not declared."""
+    if not spec:
+        return None
+    total = float(spec["total"])
+    sched = spec.get("schedule", "geometric")
+    if sched == "geometric":
+        return total / (2 ** int(epoch))
+    lst = [float(x) for x in sched]
+    return lst[epoch - 1] if 1 <= epoch <= len(lst) else 0.0
+
+
+def delta_stated(policy: dict) -> float:
+    """The epoch's stated error budget: ``delta_screen + delta_terminal``,
+    plus ``delta_constraint`` when constraint exclusion is registered."""
+    o = policy["objective"]
+    return (float(o["delta_screen"]) + float(o["delta_terminal"])
+            + float(o.get("delta_constraint") or 0.0))
+
+
 def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1) -> dict:
     opt = campaign.get("optimization") or {}
     factors = parse_factors(opt["factors"])
@@ -577,6 +638,88 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             {"from": "confirm", "default": "confirm"},
         ]
 
+    # ── #321 item 2: the post-selection validation block ───────────────────
+    # Registered only when `design.validate.replicates` is declared AND a
+    # single-objective campaign has a known_valid_baseline to compare with
+    # (the validator refuses the block otherwise). Every `confirm -> report`
+    # exit is redirected through `validate`, so the block runs whichever rule
+    # ended confirm; `validate` itself always ends at `report` (a semantic
+    # NaN is the one exception). Compile-time facts only.
+    val_cfg = design.get("validate") or {}
+    validate_on = (confirm_on and val_cfg.get("replicates") is not None
+                   and bool(opt.get("known_valid_baseline")) and mo is None)
+    if validate_on:
+        states["validate"] = {
+            "spends": True,
+            "design": {"kind": "validation_replicate",
+                       "replicates": int(val_cfg["replicates"])},
+            "estimator": ("paired differences winner - baseline on fresh "
+                          "replicates sharing workload seeds (CRN); two-sided "
+                          "Student t at delta_terminal"),
+            "accounting": VALIDATE_ACCOUNTING,
+        }
+        for t in transitions:
+            if t.get("from") == "confirm" and t.get("to") == "report":
+                t["to"] = "validate"
+        transitions += [
+            {"from": "validate", "when": {"nan_response": True}, "to": "exception",
+             "accounting": sem},
+            {"from": "validate", "default": "report"},
+        ]
+
+    cd_spec = pol_cfg.get("campaign_delta")
+    share = campaign_delta_share(cd_spec, int(epoch))
+    _ds = float(pol_cfg.get("delta_screen", 0.05))
+    _dt = float(pol_cfg.get("delta_terminal", 0.05))
+    _dc = (float(pol_cfg.get("delta_constraint", _ds))
+           if _constraint_exclusion_registered(opt) else 0.0)
+    cd_block = None
+    if share is not None:
+        # The epoch certifies at its SHARE, split over its union terms in the
+        # declared proportions (delta_screen : delta_terminal [: delta_constraint]).
+        declared = _ds + _dt + _dc
+        exhausted = not share > 0.0
+        scale = (share / declared) if not exhausted else 1.0
+        cd_block = {"total": float(cd_spec["total"]),
+                    "schedule": cd_spec.get("schedule", "geometric"),
+                    "epoch_share": float(share), "exhausted": bool(exhausted),
+                    "declared_split": {"delta_screen": _ds, "delta_terminal": _dt,
+                                       **({"delta_constraint": _dc} if _dc else {})},
+                    "rule": "epoch e certifies at share_e of the campaign-wide "
+                            "budget, split in the declared proportions; "
+                            "sum_e share_e <= total (union bound over epochs)"}
+        if not exhausted:
+            _ds, _dt, _dc = _ds * scale, _dt * scale, _dc * scale
+
+    # ── #321 item 8: held-factor inertness checks (opt-in) ─────────────────
+    inert_cfg = design.get("inertness") or {}
+    inert_on = (confirm_on and inert_cfg.get("replicates") is not None
+                and mo is None)
+    if inert_on:
+        states["inertness"] = {
+            "spends": True,
+            "design": {"kind": "inertness_replicate",
+                       "replicates": int(inert_cfg["replicates"]),
+                       "margin": dict(inert_cfg.get("margin") or {"pct": 2.0})},
+            "estimator": ("paired differences flip - winner on fresh replicates "
+                          "sharing workload seeds; TOST (Schuirmann 1987) at the "
+                          "declared margin, each one-sided test at delta_terminal"),
+            "accounting": INERTNESS_ACCOUNTING,
+        }
+        # Every exit to `report` from confirm or validate passes through it.
+        for t in transitions:
+            if t.get("from") in ("confirm", "validate") and (
+                    t.get("to") == "report" or t.get("default") == "report"):
+                if "to" in t:
+                    t["to"] = "inertness"
+                else:
+                    t["default"] = "inertness"
+        transitions += [
+            {"from": "inertness", "when": {"nan_response": True}, "to": "exception",
+             "accounting": sem},
+            {"from": "inertness", "default": "report"},
+        ]
+
     policy = {
         "policy_version": 1,
         "epoch": int(epoch),
@@ -592,8 +735,23 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             "epsilon": (dict(mo["objectives"][0]["epsilon"]) if mo
                         else dict(pol_cfg.get("epsilon") or {"pct": 2.0})),
             **(mo or {}),
-            "delta_screen": float(pol_cfg.get("delta_screen", 0.05)),
-            "delta_terminal": float(pol_cfg.get("delta_terminal", 0.05)),
+            "delta_screen": _ds,
+            "delta_terminal": _dt,
+            # The THIRD union term (#321 P2 item 3). Constraint-model exclusion
+            # removes a candidate whose one-sided bound sits confidently on the
+            # violating side; the true constrained optimum x* is wrongly
+            # removed with probability <= delta_constraint (Bonferroni over the
+            # modelled constraints; only x*'s own exclusion matters, and x* is
+            # fixed, not data-chosen). That event is distinct from the model
+            # family E_s, so it is its own term in the stated sum. Registered
+            # exactly when a constraint with a violating side is DECLARED --
+            # known at compile time, never after the data -- and charged even
+            # if the constraint later turns out unmodellable (conservative).
+            # Defaults to delta_screen, the level exclusion always used.
+            **({"delta_constraint": _dc}
+               if _constraint_exclusion_registered(opt) else {}),
+            # #321 item 7: the charged cross-epoch mode, when declared.
+            **({"campaign_delta": cd_block} if cd_block is not None else {}),
         },
         "budget": {"max_runs": design.get("max_runs")},
         "known_valid_baseline": opt.get("known_valid_baseline"),

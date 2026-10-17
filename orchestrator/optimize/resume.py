@@ -129,7 +129,10 @@ REUSABLE_STATUSES = frozenset({"complete", "infeasible", "rejected"})
 #: Reuse is a wall-clock optimization for the SPENDING stages (screen /
 #: foldover / refine), which fit a surface and where a re-measured row is
 #: genuinely redundant. It is not a general-purpose cache.
-NEVER_REUSABLE_KINDS = frozenset({"shortlist_replicate"})
+#: ``validation_replicate`` (#321 item 2) for the same reason: its replicates
+#: exist to be independent of every earlier measurement.
+NEVER_REUSABLE_KINDS = frozenset({"shortlist_replicate", "validation_replicate",
+                                  "inertness_replicate"})
 
 #: The one status that must always be re-measured.
 RERUN_STATUSES = frozenset({"failed"})

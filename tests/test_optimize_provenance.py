@@ -137,3 +137,30 @@ def test_an_earlier_epochs_deltas_say_how_they_were_recovered(tmp_path, monkeypa
     e1, e2 = json.loads((wd / "report.json").read_text())["error_budget"]["epochs"]
     assert "recompiled by the current Nous" in e1["deltas_from"]
     assert e2["deltas_from"] == "this epoch's policy.json"
+
+
+def test_a_charged_campaign_budget_binds_across_real_epochs(tmp_path, monkeypatch):
+    """#321 item 7: with optimization.policy.campaign_delta {total: 0.1},
+    epoch 1 certifies at 0.05 and epoch 2 at 0.025 (geometric), each split in
+    its declared proportions (epoch 2 declared 0.02 : 0.03), and the sum is
+    within the total -- the union bound over epochs is then a guarantee, not
+    an observation. Before #321 each epoch spent its full declared deltas and
+    error_budget.cumulative (0.15 here) was informational only."""
+    from orchestrator.optimize import harness
+
+    orig = harness.synthetic_campaign
+
+    def charged(surface, **ov):
+        pol = dict(ov.get("policy") or {})
+        pol["campaign_delta"] = {"total": 0.1}
+        return orig(surface, **{**ov, "policy": pol})
+
+    monkeypatch.setattr(harness, "synthetic_campaign", charged)
+    wd, first = _two_epochs(tmp_path, monkeypatch)
+    rep = json.loads((wd / "report.json").read_text())
+    jsonschema.validate(rep, SCHEMA)
+    assert (first["delta_screen"], first["delta_terminal"]) == (0.025, 0.025)
+    assert abs(rep["delta_screen"] - 0.01) < 1e-12 and abs(rep["delta_terminal"] - 0.015) < 1e-12
+    eb = rep["error_budget"]
+    assert eb["mode"] == "charged" and eb["within_total"]
+    assert abs(eb["cumulative"] - 0.075) < 1e-12

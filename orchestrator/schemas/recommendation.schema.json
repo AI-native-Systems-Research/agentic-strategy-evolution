@@ -274,6 +274,10 @@
         "detail": {
           "type": "string",
           "description": "Human-readable provenance: challenger count M, degrees of freedom, the t multiplier."
+        },
+        "critical": {
+          "type": "object",
+          "description": "#321 H3 (certificate.simultaneous_critical): the simultaneous critical value used -- used (bonferroni | scheffe), value, both candidates (bonferroni = t_{1-delta/m,df} over the DECLARED grid m, scheffe = sqrt(q F_{q,df,1-delta}) over the q non-intercept model terms), m, q, df, rule -- chosen as their minimum from (delta, m, q, df) only. `unevaluated` is present when the space was SEARCHED: certificate.region_bound's branch-and-bound bound over the grid points the search never evaluated (value, converged, nodes, grid_size), already folded into value and into residual_regret_model_profile.rest."
         }
       }
     },
@@ -348,6 +352,11 @@
           }
         }
       }
+    },
+    "objective_fits": {
+      "type": "object",
+      "description": "Multi-objective campaigns only (#321 item 4): each estimable objective model's coefficients, per-term SEs, exact (X'X)^-1 when kept, and pure error (certificate.fit_to_record), so confirm can compute the front certificate's model half -- whether a configuration nobody measured could epsilon-dominate the chosen front point -- after the Fit is gone.",
+      "additionalProperties": {"type": "object"}
     },
     "predicted_front": {
       "type": "array",

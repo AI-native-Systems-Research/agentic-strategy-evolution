@@ -1333,6 +1333,43 @@ properties:
                   reproduces single-point confirmation, which measures only
                   how REPEATABLE one configuration is and leaves "is it the
                   best?" as a claim about the fitted model.
+          validate:
+            type: object
+            required: [replicates]
+            additionalProperties: false
+            description: >
+              The POST-SELECTION VALIDATION block (#321; opt-in). After confirm
+              picks the winner, measure the winner and the
+              ``known_valid_baseline`` on ``replicates`` fresh paired blocks
+              (``replicates x 2`` runs), so the reported value, the gain over
+              the baseline and the epsilon reference come from data the
+              selection never saw. Requires ``known_valid_baseline`` and a
+              single-objective campaign. Decides nothing: certification stays
+              confirm's.
+            properties:
+              replicates:
+                type: integer
+                minimum: 2
+                description: "Fresh paired blocks (each = one winner run + one baseline run)."
+          inertness:
+            type: object
+            required: [replicates]
+            additionalProperties: false
+            description: >
+              HELD-FACTOR INERTNESS checks (#321; opt-in). At the confirm
+              winner, flip each factor the fitting stage held fixed to each
+              alternative level and compare with the winner on ``replicates``
+              fresh paired blocks (``replicates x (1 + F)`` runs, F flips);
+              TOST at ``margin`` says which held factors were shown inert.
+              report.json ``certificate_scope.inertness``. Full-space
+              certification over held slices is NOT offered: it would need a
+              fitted model per slice, exponential in the held factors.
+              Single-objective only.
+            properties:
+              replicates: {type: integer, minimum: 2}
+              margin:
+                type: object
+                description: "Equivalence margin: {abs: a} or {pct: p} of the confirm winner's mean (default {pct: 2})."
           max_runs:
             type: integer
             minimum: 1
@@ -1517,6 +1554,38 @@ properties:
             description: >
               Error budget for the TERMINAL bound, computed from fresh
               finalist measurements only. Default 0.05.
+          campaign_delta:
+            type: object
+            required: [total]
+            additionalProperties: false
+            description: >
+              The CHARGED cross-epoch budget (#321; opt-in). Epoch e certifies
+              at its share of ``total`` -- ``total / 2^e`` (``schedule:
+              geometric``, the default) or the e-th entry of a declared
+              ``schedule`` list (whose sum must not exceed ``total``) -- split
+              over delta_screen : delta_terminal (: delta_constraint) in the
+              declared proportions. A stop at a continue gate is charged.
+              ``report.json`` ``error_budget.cumulative`` is then BINDING:
+              Pr(any epoch certifies wrongly) <= total. An epoch past the
+              schedule certifies nothing (``campaign_delta_exhausted``).
+            properties:
+              total: {type: number, exclusiveMinimum: 0, maximum: 0.5}
+              schedule:
+                anyOf:
+                  - {type: string, enum: [geometric]}
+                  - {type: array, minItems: 1, items: {type: number, exclusiveMinimum: 0}}
+          delta_constraint:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 0.5
+            description: >
+              Error budget for CONSTRAINT-MODEL EXCLUSION (#321): the level at
+              which a fitted constraint model may drop a candidate it predicts
+              confidently infeasible (Bonferroni over the modelled
+              constraints). Its own term in the stated budget, which becomes
+              ``delta_screen + delta_terminal + delta_constraint`` whenever a
+              constraint with a violating side is declared. Default:
+              ``delta_screen``.
           out_of_hull:
             type: string
             enum: [confirm, end_epoch]

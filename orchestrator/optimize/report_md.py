@@ -104,6 +104,26 @@ WITHHELD_MEANING = {
     "model_bound_not_computable": "no model bound exists for this epoch (no "
                                   "fitting stage, or no pure error), so nothing "
                                   "bounds what screening left out",
+    "baseline_measured_inadmissible": "the declared known_valid_baseline was "
+                                      "measured inadmissible: the declaration "
+                                      "contradicts a measurement, so check the "
+                                      "baseline or the constraint",
+    "front_model_bound_not_computable": "the front certificate's model half "
+                                        "could not be computed (no objective "
+                                        "model fit or pure error, an unknown "
+                                        "epsilon, or the chosen point outside the "
+                                        "fitted slice), so nothing bounds the "
+                                        "configurations nobody measured",
+    "front_point_possibly_dominated_unmeasured": "an unmeasured configuration "
+                                                 "may epsilon-dominate the chosen "
+                                                 "front point on every objective "
+                                                 "(the objective models cannot "
+                                                 "rule it out)",
+    "campaign_delta_exceeded": "the error spent across epochs exceeds the "
+                               "campaign-wide budget first declared",
+    "campaign_delta_exhausted": "the declared campaign-wide error budget "
+                                "(policy.campaign_delta) has no share left for "
+                                "this epoch, so it certifies nothing",
     "model_bound_not_exhaustive": "the candidate space was searched, not "
                                   "enumerated, so the model bound is silent "
                                   "about candidates the search never evaluated",
@@ -737,6 +757,8 @@ def render_report_markdown(work_dir: Path) -> str:
             f"| residual regret, model (first objective `{first}`, at its argmax) | "
             f"{_fmt(report.get('residual_regret_model'))} |",
             f"| delta, screen | {_fmt(report.get('delta_screen'))} |",
+            *([f"| delta, constraint exclusion | {_fmt(report.get('delta_constraint'))} |"]
+              if report.get("delta_constraint") is not None else []),
             f"| delta, front statuses | {_fmt(par.get('delta_front'))} |",
             f"| delta, certification | {_fmt(par.get('delta_certification'))} |",
             "",
@@ -752,6 +774,8 @@ def render_report_markdown(work_dir: Path) -> str:
         f"| residual regret, terminal | {_fmt(report.get('residual_regret_terminal'))} |",
         f"| delta, screen | {_fmt(report.get('delta_screen'))} |",
         f"| delta, terminal | {_fmt(report.get('delta_terminal'))} |",
+        *([f"| delta, constraint exclusion | {_fmt(report.get('delta_constraint'))} |"]
+          if report.get("delta_constraint") is not None else []),
         "",
     ]
     if basis != "model" and par is None:
@@ -857,7 +881,8 @@ def _error_budget_lines(report: dict) -> list[str]:
     if not isinstance(eb, dict):
         return []
     rows = [f"| {e.get('epoch')} | {_fmt(e.get('delta_screen'))} | "
-            f"{_fmt(e.get('delta_terminal'))} | {_fmt(e.get('spent'))} | "
+            f"{_fmt(e.get('delta_terminal'))} | {_fmt(e.get('delta_constraint') or 0.0)} | "
+            f"{_fmt(e.get('spent'))} | "
             f"{'yes' if e.get('compiled_after_data') else 'no'} |"
             for e in eb.get("epochs") or []]
     cum = _fmt(eb.get("cumulative"))
@@ -866,8 +891,8 @@ def _error_budget_lines(report: dict) -> list[str]:
     return [
         "## Error budget across epochs",
         "",
-        "| epoch | delta, screen | delta, terminal | spent | compiled after earlier data |",
-        "|---|---|---|---|---|",
+        "| epoch | delta, screen | delta, terminal | delta, constraint | spent | compiled after earlier data |",
+        "|---|---|---|---|---|---|",
         *rows,
         "",
         f"**Cumulative (union bound over epochs): {cum}.** Certification above is "

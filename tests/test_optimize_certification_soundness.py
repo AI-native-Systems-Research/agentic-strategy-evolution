@@ -153,6 +153,49 @@ def test_the_baseline_is_a_reference_finalist_with_a_gain_interval(tmp_path):
     assert covered >= 7
 
 
+def test_a_baseline_already_carried_costs_no_extra_seat():
+    """#321 P2: `_baseline_seat_extra` used to count a seat beyond the cap even
+    when round r+1 carries the baseline as one of its own finalists (it won,
+    or its bound still exceeds epsilon) -- over-stating the next round's cost
+    by `replicates` runs and letting `confirm_affordable` decline a round the
+    budget can pay for."""
+    from orchestrator.optimize.stage_runner import _baseline_seat_extra
+
+    pol = {"known_valid_baseline": {"A": 2, "B": 2},
+           "states": {"confirm": {"design": {"shortlist_size": 3}}}}
+    summ = {"epsilon": 0.1, "best": "f0", "bounds": {"f1": 0.05, "f3": 0.5},
+            "finalists": [{"key": "f0", "status": "ok", "levels": {"A": 9, "B": 11}},
+                          {"key": "f1", "status": "ok", "levels": {"A": 8, "B": 8}},
+                          {"key": "f3", "status": "ok", "levels": {"A": 2, "B": 2}}]}
+    assert _baseline_seat_extra(pol, summ) is False      # carried inside the cap
+    retired = dict(summ, bounds={"f1": 0.05, "f3": 0.01})
+    assert _baseline_seat_extra(pol, retired) is True     # retired: re-seated outside
+    tight = dict(summ, finalists=summ["finalists"] + [
+        {"key": "f2", "status": "ok", "levels": {"A": 4, "B": 4}}],
+        bounds={"f1": 0.5, "f2": 0.5, "f3": 0.5})
+    assert _baseline_seat_extra(pol, tight) is True       # may be cut at the cap
+
+
+def test_a_baseline_measured_inadmissible_is_named(tmp_path):
+    """#321 P2: the declared baseline violating a declared constraint used to
+    read as an ordinary `finalist_measured_infeasible`. It is now its own
+    reason (and still vetoes): sla's p99 = 2A + B, so {A:16, B:16} = 48 > 40."""
+    ov = {"response": {"primary": {"metric": "m", "direction": "maximize"},
+                       "constraints": [{"metric": "p99_ms", "op": "<=", "value": 40}]},
+          "known_valid_baseline": {"A": 16, "B": 16}}
+    r = run_synthetic_campaign(SURFACES["sla"](), seed=1, parent_dir=tmp_path,
+                               campaign_overrides=ov)
+    assert not r.report["certified"]
+    assert "baseline_measured_inadmissible" in r.report["certification_withheld"]
+    last = _confirmations(r.work_dir)[-1]
+    others_bad = any(f["status"] == "infeasible" and f["levels"] != {"A": 16, "B": 16}
+                     for f in last["finalists"])
+    assert ("finalist_measured_infeasible" in last["certification_withheld"]) == others_bad
+    from orchestrator.optimize.report_md import WITHHELD_MEANING
+
+    assert "baseline_measured_inadmissible" in WITHHELD_MEANING
+
+
 def test_no_baseline_means_no_reference_seat(tmp_path):
     r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
     assert len(_confirmations(r.work_dir)[-1]["finalists"]) == 3

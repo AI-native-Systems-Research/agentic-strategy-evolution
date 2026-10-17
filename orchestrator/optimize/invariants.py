@@ -1168,8 +1168,21 @@ def check_candidate_space(rec: dict, report: dict | None = None) -> list[str]:
     elif ev < len(rec.get("top_candidates") or []):
         out.append(f"evaluated={ev} is fewer than the {len(rec['top_candidates'])} "
                    f"top_candidates")
-    detail = str((rec.get("residual_regret_model") or {}).get("detail") or "")
-    if "NOT over all of X_valid" not in detail:
+    rrm = rec.get("residual_regret_model") or {}
+    detail = str(rrm.get("detail") or "")
+    unev = (rrm.get("critical") or {}).get("unevaluated")
+    if unev is not None:
+        # #321 H3: the unevaluated grid is bounded by branch and bound under
+        # the family's simultaneous constant; the detail must say so, and the
+        # reported value must dominate that bound.
+        if "unevaluated rest by branch and bound" not in detail:
+            out.append("residual_regret_model.detail does not say how the "
+                       "unevaluated candidates were bounded")
+        v, uv = rrm.get("value"), unev.get("value")
+        if isinstance(v, (int, float)) and isinstance(uv, (int, float)) and v < uv - 1e-12:
+            out.append(f"residual_regret_model.value {v} is below its own bound over "
+                       f"the unevaluated candidates {uv}")
+    elif "NOT over all of X_valid" not in detail:
         out.append("residual_regret_model.detail does not say the bound was taken over "
                    "the evaluated set only")
     aa = rec.get("alias_assessment")

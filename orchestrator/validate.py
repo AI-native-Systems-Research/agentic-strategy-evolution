@@ -1248,7 +1248,7 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
         return ["optimization.policy must be a mapping (epsilon, delta_screen, "
                 "delta_terminal, confirm_max_rounds, out_of_hull)."]
     errors: list[str] = []
-    for key in ("delta_screen", "delta_terminal"):
+    for key in ("delta_screen", "delta_terminal", "delta_constraint"):
         if key not in pol:
             continue
         raw = pol[key]
@@ -1269,6 +1269,27 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
                 f"measured as ahead. Use 0.05 (the default) or another value in "
                 f"(0, 0.5]."
             )
+    cd = pol.get("campaign_delta")
+    if cd is not None:
+        # #321 item 7: the charged cross-epoch budget.
+        if not isinstance(cd, dict) or not isinstance(cd.get("total"), (int, float)) \
+                or isinstance(cd.get("total"), bool) or not 0.0 < float(cd["total"]) <= 0.5:
+            errors.append("optimization.policy.campaign_delta must be {total: D, "
+                          "schedule: geometric | [d_1, d_2, ...]} with D in (0, 0.5].")
+        else:
+            sched = cd.get("schedule", "geometric")
+            if sched != "geometric":
+                if (not isinstance(sched, list) or not sched or any(
+                        not isinstance(x, (int, float)) or isinstance(x, bool)
+                        or not x > 0 for x in sched)):
+                    errors.append("optimization.policy.campaign_delta.schedule must be "
+                                  "'geometric' or a non-empty list of positive shares.")
+                elif sum(float(x) for x in sched) > float(cd["total"]) + 1e-12:
+                    errors.append(
+                        f"optimization.policy.campaign_delta.schedule sums to "
+                        f"{sum(float(x) for x in sched):g}, above total "
+                        f"{float(cd['total']):g}: the union bound over epochs would "
+                        f"not hold.")
     eps = pol.get("epsilon")
     if eps is not None:
         from orchestrator.optimize.objectives import is_epsilon_map
@@ -1315,6 +1336,59 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
                 f"discrimination has produced anything."
             )
     return errors
+
+
+def _rule31_validate_block(opt: dict) -> list[str]:
+    """Rule 31 (#321 item 2): ``design.validate`` needs a
+    ``known_valid_baseline`` and a single-objective campaign -- the block
+    measures the winner's gain OVER the baseline, and a front has no single
+    winner. Refusing beats compiling a block that silently never runs."""
+    v = ((opt.get("design") or {}).get("validate"))
+    if v is None:
+        return []
+    errs = []
+    if not opt.get("known_valid_baseline"):
+        errs.append("optimization.design.validate needs optimization.known_valid_baseline: "
+                    "the block measures the winner's gain over the baseline.")
+    if (opt.get("response") or {}).get("objectives"):
+        errs.append("optimization.design.validate is single-objective only: a "
+                    "multi-objective campaign has a front, not one winner to validate.")
+    r = (v or {}).get("replicates") if isinstance(v, dict) else None
+    if not isinstance(r, int) or isinstance(r, bool) or r < 2:
+        errs.append(f"optimization.design.validate.replicates={r!r} must be an integer "
+                    f">= 2 (a variance estimate needs two).")
+    return errs + _rule31_pinned_seeds_are_fresh(opt)
+
+
+def _rule31_pinned_seeds_are_fresh(opt: dict) -> list[str]:
+    """Pinned ``workload.seeds`` with a post-selection block (P2 review H1).
+
+    ``validate`` and ``inertness`` report numbers that must not come from the
+    draws that selected the winner. Pinned seeds are used as ``seeds[i % len]``,
+    so they get fresh draws only when the list is long enough to hold every
+    confirm replicate AND these blocks' replicates after it."""
+    design = opt.get("design") or {}
+    seeds = ((opt.get("workload") or {}).get("seeds")) or []
+    if not seeds:
+        return []
+
+    def _reps(block):
+        r = (block or {}).get("replicates") if isinstance(block, dict) else None
+        return r if isinstance(r, int) and not isinstance(r, bool) and r > 0 else 0
+
+    post = _reps(design.get("validate")) + _reps(design.get("inertness"))
+    if not post:
+        return []
+    confirm = design.get("confirm") or {}   # the compile reads design.confirm
+    conf_reps = _reps(confirm) or 3
+    need = conf_reps + post
+    if len(seeds) >= need:
+        return []
+    return [f"optimization.workload.seeds has {len(seeds)} seed(s), but design.validate / "
+            f"design.inertness need fresh draws: {conf_reps} confirm replicate(s) plus "
+            f"{post} post-selection replicate(s) = {need}. With fewer, those blocks would "
+            f"re-measure the winner on the draws that selected it. Declare at least "
+            f"{need} seeds, or omit workload.seeds so seeds are derived per iteration."]
 
 
 def _rule15_build_requires_baseline(opt: dict) -> list[str]:
@@ -2003,6 +2077,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule17_config_patch_path_reachable(campaign, opt, factors))
     errors.extend(_rule18_high_run_timeout_warning(opt, factors))
     errors.extend(_rule19_max_parallel_oversubscription(opt))
+    errors.extend(_rule31_validate_block(opt))
     errors.extend(_rule20_self_check_is_a_real_invariant(opt))
     errors.extend(_rule21_concurrency_declaration(opt))
     errors.extend(_rule22_completion_budgets(opt, factors))

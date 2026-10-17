@@ -379,45 +379,56 @@ def test_confirm_declines_a_round_the_budget_cannot_finish(tmp_path):
     assert spent <= 40, spent
 
 
-def test_an_empty_carry_over_is_costed_at_the_full_shortlist_not_at_one():
+def test_the_next_round_is_costed_at_the_full_shortlist_whatever_carries_over():
     """The affordability estimate must be an UPPER bound on the next round.
 
-    `_confirm_rows` does not run a smaller round when nothing carries over: its
-    `if not finalists:` branch falls through to the round-1 ladder and re-seats
-    up to `shortlist_size` from `recommendation.json` / `_top_measured`. An
-    estimate of 1 there would under-count the round by up to `shortlist_size`
-    and let the guard admit exactly the round it exists to decline — so the
-    empty case costs the full shortlist, and a partial carry-over costs what it
-    actually carries (capped at the shortlist size, which `_confirm_rows` also
-    caps at).
+    `_confirm_rows` does not run a smaller round when fewer finalists carry
+    over: round r > 1 keeps the carried finalists and the fitted argmax, then
+    TOPS UP to `shortlist_size` from the model's ranking, and an empty
+    carry-over falls through to the round-1 ladder, which also fills
+    `shortlist_size`. Costing the carry-over alone under-counted the round
+    (#321 P2: 24 of 96 campaigns overspent `max_runs` with confirm_max_rounds
+    4), so every summary costs the full shortlist (capped where
+    `_confirm_rows` caps).
     """
     from orchestrator.optimize.stage_runner import _next_round_finalists
 
-    # Every finalist excluded on measured invalidity -> nothing carries over.
     none_left = {"epsilon": 1.0, "best": None, "bounds": {},
                  "finalists": [{"key": "a", "status": "infeasible"},
                                {"key": "b", "status": "infeasible"}]}
-    assert _next_round_finalists(none_left, shortlist_size=3) == 3
-
-    # Every challenger's bound already at or below epsilon -> only the winner.
     settled = {"epsilon": 1.0, "best": "a", "bounds": {"b": 0.1, "c": 0.5},
-               "finalists": [{"key": "a", "status": "ok"},
-                             {"key": "b", "status": "ok"},
-                             {"key": "c", "status": "ok"}]}
-    assert _next_round_finalists(settled, shortlist_size=3) == 1
-
-    # An UNCOMPUTED bound is unknown, not small: that challenger stays.
+               "finalists": [{"key": k, "status": "ok"} for k in "abc"]}
     unknown = {"epsilon": 1.0, "best": "a", "bounds": {"b": None, "c": 0.5},
-               "finalists": [{"key": "a", "status": "ok"},
-                             {"key": "b", "status": "ok"},
-                             {"key": "c", "status": "ok"}]}
-    assert _next_round_finalists(unknown, shortlist_size=3) == 2
-
-    # Never over the cap `_confirm_rows` itself enforces.
+               "finalists": [{"key": k, "status": "ok"} for k in "abc"]}
+    for summary in (none_left, settled, unknown):
+        assert _next_round_finalists(summary, shortlist_size=3) == 3
     crowded = {"epsilon": 1.0, "best": "a",
                "bounds": {k: 9.0 for k in "bcde"},
                "finalists": [{"key": k, "status": "ok"} for k in "abcde"]}
     assert _next_round_finalists(crowded, shortlist_size=2) == 2
+
+
+def test_later_confirm_rounds_never_overspend_max_runs(tmp_path):
+    """#321 P2 (baseline-seat accounting review). bowl at noise 0.4, seed 1,
+    4 registered rounds, max_runs 38: round 1 left 5 runs, the old estimate
+    costed round 2 at its 1-finalist carry-over (3 runs), the round topped up
+    to 3 finalists and spent 9 -- 42 runs against a cap of 38."""
+    import dataclasses
+
+    from orchestrator.optimize import artifacts
+
+    s = dataclasses.replace(SURFACES["bowl"](), noise_sd=0.4)
+    res = run_synthetic_campaign(
+        s, seed=1, parent_dir=tmp_path,
+        campaign_overrides={"policy": {"confirm_max_rounds": 4},
+                            "design": {"screen": {"resolution": 5, "center_points": 4},
+                                       "refine": {"kind": "central_composite",
+                                                  "center_points": 4},
+                                       "confirm": {"replicates": 3},
+                                       "max_runs": 38}},
+        max_iterations=12)
+    spent = sum(len(artifacts.read_runs(d)) for d in (res.work_dir / "runs").glob("iter-*"))
+    assert spent <= 38, spent
 
 
 def test_bowl_out_of_hull_ends_the_epoch_under_end_epoch(tmp_path):

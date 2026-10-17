@@ -374,6 +374,13 @@ def resolve_max_parallel(opt: dict | None, *, stage_name: str,
     ).width
 
 
+#: States whose rows are REPLICATE BLOCKS of named configurations rather than
+#: a design over the factor space: no held-fixed merge, workload seeds keyed per
+#: replicate (CRN), never reused across attempts, scheduled as blocks.
+_REPLICATE_STATES = frozenset({Stage.CONFIRM.value, Stage.VALIDATE.value,
+                               Stage.INERTNESS.value})
+
+
 def resolve_concurrency(opt: dict | None, *, stage_name: str, measured=None):
     """``resolve_max_parallel``'s width TOGETHER WITH the reason for it.
 
@@ -384,8 +391,9 @@ def resolve_concurrency(opt: dict | None, *, stage_name: str, measured=None):
     projects it to an int for the call sites that only schedule.
     """
     return concurrency.resolve(
-        opt, stage_name=stage_name, confirm_stage=Stage.CONFIRM.value,
-        measured=measured,
+        opt, stage_name=(Stage.CONFIRM.value if stage_name in (
+            Stage.VALIDATE.value, Stage.INERTNESS.value) else stage_name),
+        confirm_stage=Stage.CONFIRM.value, measured=measured,
     )
 
 
@@ -1907,7 +1915,29 @@ def _budget_remaining(pol: dict, work_dir: Path) -> int:
     return int(cap) - spent
 
 
-def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool):
+def _pinned_seed_offset(pol: dict, stage_name: str) -> int:
+    """Where a post-selection block starts in a PINNED ``workload.seeds`` list.
+
+    ``validate`` and ``inertness`` claim fresh draws: their numbers must not
+    come from the workload draws that selected the winner (P2 review H1). With
+    derived seeds the iteration base already makes them fresh. With pinned
+    seeds, replicate ``i`` would get ``seeds[i % len]`` -- confirm's exact draws
+    -- so these blocks start past every confirm replicate (validate first, then
+    inertness). Rule 31 refuses a seed list too short for that, so the modulo
+    never wraps back onto a confirm draw."""
+    if stage_name not in (Stage.VALIDATE.value, Stage.INERTNESS.value):
+        return 0
+    if not ((pol or {}).get("workload") or {}).get("seeds"):
+        return 0
+    st = (pol or {}).get("states") or {}
+    off = int(((st.get("confirm") or {}).get("design") or {}).get("replicates") or 0)
+    if stage_name == Stage.INERTNESS.value:
+        off += int(((st.get("validate") or {}).get("design") or {}).get("replicates") or 0)
+    return off
+
+
+def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool,
+                           fresh_offset: int = 0):
     """Give every measurement row a recorded workload seed. Spec §3.7(3), §3.8.
 
     Returns ``(rows, payload)`` — NEW objects both, never mutated in place: the
@@ -1980,7 +2010,7 @@ def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool)
     out, rec = [], {}
     for r in rows:
         i = r.replicate if confirm else r.row_index
-        sd = _seed(int(i or 0), base)
+        sd = _seed(int(i or 0) + fresh_offset, base)
         env = {**((r.apply or {}).get("env") or {}), env_name: sd}
         out.append(dataclasses.replace(r, apply={**(r.apply or {}), "env": env}))
         rec[str(r.row_index)] = sd
@@ -2334,6 +2364,13 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
     elif conf and conf.get("best") and mo_front is None:
         basis = "certified" if conf.get("certified") else "terminal_best"
         levels, value = dict(conf.get("confirmed_at_levels") or {}), conf.get("mean")
+        # #321 item 2: when a post-selection validation block measured this
+        # winner, its value is the fresh (unbiased) mean, not the mean on the
+        # replicates that selected it.
+        _val = _latest_validation(work_dir)
+        if (_val and _val.get("value") is not None
+                and _same_levels(dict(_val.get("winner") or {}), levels)):
+            value = _val["value"]
     elif (
         rec.get("levels")
         # THE `model` RUNG IS UNAVAILABLE ONCE A SEMANTIC EXCEPTION ENDED THE
@@ -2469,6 +2506,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         "epsilon_reference": (conf.get("epsilon_reference") if conf else None),
         "delta_screen": pol["objective"]["delta_screen"],
         "delta_terminal": pol["objective"]["delta_terminal"],
+        **({"delta_constraint": pol["objective"]["delta_constraint"]}
+           if "delta_constraint" in pol["objective"] else {}),
         "certified": bool(conf and conf.get("certified")),
         # WHY `certified` is false, carried up from confirmation.json so the
         # report never states an unexplained boolean next to bounds that look
@@ -2508,9 +2547,21 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         # bound and candidate space are then over that SLICE only; a
         # certificate there says nothing about the other levels (measured:
         # ridge_cubic certified C=on while the optimum has C=off).
-        "certificate_scope": _certificate_scope(_epoch_rec, boundary_block),
+        "certificate_scope": _certificate_scope(
+            _epoch_rec, boundary_block,
+            _latest_inertness(work_dir) if "inertness" in (pol.get("states") or {})
+            else None),
         **({"gain_over_baseline": dict(conf["gain_over_baseline"])}
            if conf and conf.get("gain_over_baseline") else {}),
+        # #321 item 2: the post-selection validation block, when registered.
+        **({"post_selection_validation": {
+                k: v for k, v in (_latest_validation(work_dir) or {}).items()
+                if k in ("winner", "baseline", "replicates", "value", "gain",
+                         "selection_estimate", "selection_value",
+                         "epsilon_reference", "epsilon", "epsilon_confirm",
+                         "delta", "paired", "skipped", "status")}}
+           if "validate" in (pol.get("states") or {})
+           and _latest_validation(work_dir) is not None else {}),
         "policy_hash": policy_mod.policy_hash(pol),
         "iteration": iteration,
         # What this report rests on (audit Q7): code version, input hashes,
@@ -3327,6 +3378,17 @@ def _run_stage_body(
         rows, payload = _confirm_rows(
             pol, work_dir, factors, primary, direction, iteration,
         )
+    elif stage_name == Stage.VALIDATE.value:
+        rows, payload = _validate_rows(pol, work_dir, factors, iteration)
+        if not rows:
+            return _skip_validate(engine, campaign, work_dir, iter_dir, iteration,
+                                  pol, payload)
+    elif stage_name == Stage.INERTNESS.value:
+        rows, payload = _inertness_rows(pol, work_dir, factors, iteration)
+        if not rows:
+            return _skip_validate(engine, campaign, work_dir, iter_dir, iteration,
+                                  pol, payload, state=Stage.INERTNESS.value,
+                                  record="inertness.json")
     elif stage_name == Stage.FOLDOVER.value:
         # ── the registered foldover: a real block of runs, spent to resolve
         # ── an alias the screen showed could change the answer.
@@ -3454,7 +3516,7 @@ def _run_stage_body(
     # coincidence would leave the two facts free to drift apart, so say it.
     designed = set(_design_factor_ids(factors, design_cfg, stage_name))
     held = [f for f in factors if f.id not in designed]
-    if held and rows and stage_name != Stage.CONFIRM.value:
+    if held and rows and stage_name not in _REPLICATE_STATES:
         import dataclasses
 
         prev_rec = (
@@ -3633,7 +3695,8 @@ def _run_stage_body(
     # the artifact from the first attempt.
     rows, payload = _assign_workload_seeds(
         rows, payload, pol,
-        iteration=iteration, confirm=stage_name == Stage.CONFIRM.value,
+        iteration=iteration, confirm=stage_name in _REPLICATE_STATES,
+        fresh_offset=_pinned_seed_offset(pol, stage_name),
     )
     if stage_reuse and "workload_seeds" in payload:
         # A reused row is the screen's measurement, under the SCREEN's
@@ -3675,7 +3738,7 @@ def _run_stage_body(
     # `shortlist_replicate` on both sides as well; this is the same rule stated
     # at the call site so a reader of the epoch's flow sees it here too.
     _reuse_plan = None
-    if (_reuse_enabled(opt) and stage_name != Stage.CONFIRM.value
+    if (_reuse_enabled(opt) and stage_name not in _REPLICATE_STATES
             and _enter_phase_pending(engine, work_dir)):
         _prior = _prior_attempt_matrix(work_dir, iteration, stage_name)
         if _prior is not None:
@@ -3721,7 +3784,7 @@ def _run_stage_body(
     # `load_independent` declaration needs no probe at all and does not enter
     # here; `concurrency.resolve` honours it directly.
     measured = None
-    if (stage_name != Stage.CONFIRM.value
+    if (stage_name not in _REPLICATE_STATES
             and concurrency.contention_probe_levels(opt)
             and concurrency.declared_width(opt) > 1
             and config_runner is not None):
@@ -4101,6 +4164,14 @@ def _run_stage_body(
         if fit_blocks:
             fit_blocks = [fit_blocks[i] for i in _ki]
 
+    if stage_name == Stage.INERTNESS.value:
+        return _finish_inertness(engine, campaign, iteration, iter_dir, work_dir,
+                                 rows, outcomes, ys, factors, test_results, pol,
+                                 payload)
+    if stage_name == Stage.VALIDATE.value:
+        return _finish_validate(engine, campaign, iteration, iter_dir, work_dir,
+                                rows, outcomes, ys, factors, test_results, pol,
+                                payload)
     if stage_name == Stage.CONFIRM.value:
         # Confirm does NOT fit a model. It compares a SHORTLIST of finalists on
         # fresh replicates, so there is no coded design to estimate effects
@@ -4687,6 +4758,10 @@ def _run_stage_body(
     # entirely on the violating side; see `constraint_models` for the rule and
     # for every reason a constraint falls back to measurement only.
     delta_s = pol["objective"]["delta_screen"]
+    # The level constraint exclusion is taken at: its own union term
+    # (policy objective.delta_constraint, #321 item 3), delta_screen when the
+    # policy predates it.
+    delta_c = float(pol["objective"].get("delta_constraint", delta_s))
     cmods: list = []
     if _MODEL_CONSTRAINTS and (response_spec.get("constraints") or []):
         cmods = cmodels.fit_constraint_models(
@@ -4735,7 +4810,7 @@ def _run_stage_body(
     scored = decide.ranked(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded, top=None,
-        constraint_models=cmods, constraint_delta=delta_s,
+        constraint_models=cmods, constraint_delta=delta_c,
         objectives=_search_objectives, **_search,
     )
     candidate_space = scored.space
@@ -4835,7 +4910,7 @@ def _run_stage_body(
         })
     if _SUPPORTED_FEASIBLE_SEAT and _declared:
         supported_record = _supported_feasible_record(
-            work_dir, factors, _declared, cmods, scored, delta=delta_s,
+            work_dir, factors, _declared, cmods, scored, delta=delta_c,
             pool_size=max(5, _shortlist * 2),
         )
     # ── how much doubt remains: R_delta(x-hat) (spec §3.5, paper eq. 2) ────
@@ -4854,16 +4929,35 @@ def _run_stage_body(
         # confirm round can fill from this record (top_candidates, the best
         # measured, the supported-feasible seat) with headroom.
         profile=3 * _shortlist + 5,
+        # #321 H3: the critical value is min(Bonferroni over the DECLARED
+        # grid, Scheffe over the model's terms) -- a function of the design,
+        # never of which candidates the data excluded.
+        m_declared=max(1, int(candidate_space.size) - 1),
     )
-    if not candidate_space.exhaustive:
-        # Above the cap the max in eq. (2) ran over the EVALUATED set only, so
-        # the number bounds the regret against those challengers -- not
-        # against every z in X_valid. Said where the number is, not elsewhere.
-        rb = dataclasses.replace(rb, detail=(
-            f"{rb.detail}; NOT over all of X_valid: max over the "
+    if not candidate_space.exhaustive and rb.value is not None and rb.critical:
+        # SEARCHED (#321 H3). The family's critical value covers every grid
+        # point (Bonferroni over the whole declared grid, or Scheffe over the
+        # model space), so the challengers the search never evaluated are
+        # bounded too -- by branch and bound over the grid
+        # (`certificate.region_bound`) rather than by enumeration. Their max
+        # enters the profile's `rest`, so confirm's R_model_outside covers
+        # them and `model_bound_not_exhaustive` no longer vetoes.
+        _rg = certificate.region_bound(
+            fit, factors, fitted_ids, rec, crit=float(rb.critical["value"]),
+            direction=direction, skip_coded=[c.coded for c in scored])
+        _crit = dict(rb.critical, unevaluated=_rg)
+        _prof = dict(rb.profile) if rb.profile else None
+        if _prof is not None and _rg["value"] is not None:
+            _prof["rest"] = max(float(_prof["rest"] or 0.0), float(_rg["value"]))
+            _prof["challengers"] = max(1, int(candidate_space.size) - 1)
+        _val = max(float(rb.value), float(_rg["value"] or 0.0))
+        rb = dataclasses.replace(rb, value=_val, critical=_crit, profile=_prof, detail=(
+            f"{rb.detail}; searched, not enumerated: max over the "
             f"{len(scored)} evaluated valid candidate(s) of a "
-            f"{candidate_space.size}-configuration space searched by "
-            f"{candidate_space.method} (recommendation.json candidate_space)"))
+            f"{candidate_space.size}-configuration space ({candidate_space.method}), "
+            f"and over the unevaluated rest by branch and bound "
+            f"({_rg['nodes']} boxes, {'converged' if _rg['converged'] else 'node budget hit: a looser valid bound'}) "
+            f"= {_rg['value']:.6g} (recommendation.json candidate_space)"))
     epsilon = certificate.resolve_epsilon(pol["objective"]["epsilon"], rec.predicted)
 
     # ── is the aliasing CONSEQUENTIAL? (spec §3.4, paper §Illustrative) ────
@@ -4885,7 +4979,7 @@ def _run_stage_body(
         fit, factors, direction=direction, fitted_ids=fitted_ids,
         held_fixed=held_now, exclude_levels=excluded,
         epsilon_pct=float((pol["objective"]["epsilon"] or {}).get("pct", 2.0)),
-        constraint_models=cmods, constraint_delta=delta_s,
+        constraint_models=cmods, constraint_delta=delta_c,
         # The stage's own primary argmax (`scored` is sorted by the primary):
         # above the cap it came from the search that also climbed every
         # objective, so it can beat what alias_consequential's own search finds.
@@ -4897,7 +4991,7 @@ def _run_stage_body(
     constraint_record = _constraint_models_record(
         cmods,
         scored.unfiltered if any(m.modelled for m in cmods) else [],
-        rec, delta=delta_s,
+        rec, delta=delta_c,
         applied=(None if candidate_space.exhaustive
                  else bool(candidate_space.constraint_models_applied)),
         evaluated=None if candidate_space.exhaustive else candidate_space.evaluated,
@@ -6214,6 +6308,465 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
     return rows, payload
 
 
+# ── #321 item 2: the post-selection validation block ────────────────────────
+
+
+def _validate_rows(pol: dict, work_dir: Path, factors, iteration: int):
+    """``validate``'s rows: the confirm WINNER and the ``known_valid_baseline``,
+    ``replicates`` fresh blocks of two (every block measures both, in a
+    randomized order), sharing the block's workload seed (CRN under
+    ``workload.seed_env``).
+
+    The winner is read from this epoch's latest ``confirmation.json`` and is
+    FIXED before any of these rows exists, so the replicates are independent of
+    the selection: their mean difference is an unbiased estimate of the
+    winner's gain, and the winner's mean an unbiased estimate of its value
+    (no winner's curse; Hsu 1996 ch. 1 on why the selecting data cannot give
+    one). Empty rows (and the reason in the payload) when there is no winner,
+    the winner IS the baseline, or the block is unaffordable; ``run_stage``
+    then closes the iteration without measuring.
+    """
+    from orchestrator.optimize.matrix import ConfigRow, randomized_run_order, render_apply
+
+    cfg = (pol["states"]["validate"] or {})["design"]
+    r = max(1, int(cfg.get("replicates", 3)))
+    conf = _latest_confirmation(work_dir) or {}
+    win = dict(conf.get("confirmed_at_levels") or {}) if conf.get("best") else {}
+    base = dict(pol.get("known_valid_baseline") or {})
+    why = None
+    if not win:
+        why = "confirm produced no admissible winner"
+    elif _same_levels(win, base):
+        why = "the confirm winner IS the known_valid_baseline: there is no gain to validate"
+    elif _budget_remaining(pol, work_dir) < 2 * r:
+        why = (f"the block needs {2 * r} run(s) and only "
+               f"{_budget_remaining(pol, work_dir)} remain")
+    payload = {"factor_ids": [f.id for f in factors], "kind": "validation_replicate",
+               "resolution": None, "generators": [], "aliases": [],
+               "run_order": [], "run_order_seed": iteration, "round": 1,
+               "finalists": [{"key": "w", "levels": win, "why": "confirm winner"},
+                             {"key": "b", "levels": base, "why": "known_valid_baseline"}],
+               "rows": []}
+    if why:
+        payload["skipped"] = why
+        return [], payload
+    rows, idx = [], 0
+    for i in range(r):
+        for j in randomized_run_order(2, seed=iteration * 1000 + 500 + i):
+            lv = (win, base)[j]
+            rows.append(ConfigRow(row_index=idx, levels=dict(lv), role="confirm",
+                                  replicate=i,
+                                  apply={**render_apply(factors, lv), "finalist": j}))
+            idx += 1
+    payload["run_order"] = list(range(len(rows)))
+    payload["rows"] = [{"row_index": x.row_index, "levels": dict(x.levels),
+                        "role": x.role, "replicate": x.replicate, "apply": x.apply}
+                       for x in rows]
+    return rows, payload
+
+
+def _validation_summary(pol, conf: dict, w: list[float], b: list[float], *,
+                        paired: bool, status: dict, eps_spec: dict,
+                        direction: str) -> dict:
+    """``validation.json``: the unbiased value, gain and epsilon reference.
+
+    Gain ``g = f(w) - f(b)``, signed in the campaign's direction. Paired t on
+    the CRN differences when every block measured both (equal n) and the
+    campaign shares seeds, Welch otherwise; two-sided at ``delta_terminal``.
+    The winner was fixed BEFORE these replicates, so this is an ordinary
+    (not simultaneous) interval -- no selection to correct for. The epsilon
+    reference is the winner's fresh mean, and the epsilon it implies is
+    recorded beside confirm's (selection-biased) one; certification is
+    NOT re-decided (it was confirm's, at its own level).
+    """
+    from statistics import mean, variance
+
+    from scipy.stats import t as student_t
+
+    delta = float(pol["objective"]["delta_terminal"])
+    sign = 1.0 if direction != "minimize" else -1.0
+    out = {"winner": dict(conf.get("confirmed_at_levels") or {}),
+           "baseline": dict(pol.get("known_valid_baseline") or {}),
+           "replicates": {"winner": len(w), "baseline": len(b)},
+           "status": dict(status), "delta": delta,
+           "value": mean(w) if w else None,
+           "gain": None,
+           "selection_estimate": ((conf.get("gain_over_baseline") or {}).get("estimate")),
+           "selection_value": conf.get("mean"),
+           "epsilon_reference": ({"source": "validation_winner", "value": mean(w)}
+                                 if w else {"source": "none", "value": None}),
+           "epsilon": (certificate.resolve_epsilon(eps_spec, mean(w))
+                       if w and "abs" not in eps_spec else
+                       (float(eps_spec["abs"]) if "abs" in eps_spec else None)),
+           "epsilon_confirm": conf.get("epsilon"),
+           "accounting": policy_mod.VALIDATE_ACCOUNTING}
+    if any(v != "ok" for v in status.values()):
+        out["gain"] = {"estimate": None, "low": None, "high": None, "method": "none",
+                       "detail": "a configuration produced an inadmissible or "
+                                 "unusable replicate in the validation block"}
+        return out
+    if len(w) < 2 or len(b) < 2:
+        out["gain"] = {"estimate": None, "low": None, "high": None, "method": "none",
+                       "detail": "fewer than two usable replicates per configuration"}
+        return out
+    if paired and len(w) == len(b):
+        d = [sign * (x - y) for x, y in zip(w, b)]
+        vd = variance(d)
+        # Rounding-level spread is no spread: a deterministic (or perfectly
+        # CRN-cancelled) difference leaves float noise ~1e-15 relative, which
+        # would give an interval of width 1e-15 claimed as a measurement.
+        if not math.sqrt(max(vd, 0.0)) > 1e-9 * max(1.0, abs(mean(d))):
+            out["gain"] = {"estimate": mean(d), "low": None, "high": None,
+                           "method": "none",
+                           "detail": "paired differences carry zero spread: no "
+                                     "variance estimate (unknown is not zero)"}
+            return out
+        est, se, df, method = mean(d), math.sqrt(vd / len(d)), len(d) - 1, "paired_t"
+    else:
+        vw, vb = variance(w) / len(w), variance(b) / len(b)
+        den = vw ** 2 / (len(w) - 1) + vb ** 2 / (len(b) - 1)
+        if not den > 0.0:
+            out["gain"] = {"estimate": sign * (mean(w) - mean(b)), "low": None,
+                           "high": None, "method": "none",
+                           "detail": "no variance estimate"}
+            return out
+        est, se = sign * (mean(w) - mean(b)), math.sqrt(vw + vb)
+        df, method = (vw + vb) ** 2 / den, "welch_t"
+    tc = float(student_t.ppf(1 - delta / 2, max(float(df), 1.0)))
+    out["gain"] = {"estimate": est, "low": est - tc * se, "high": est + tc * se,
+                   "method": method, "df": float(df),
+                   "detail": "fresh replicates drawn after the winner was fixed: "
+                             "unbiased point estimate, two-sided t at delta_terminal"}
+    return out
+
+
+def _finish_validate(engine, campaign, iteration, iter_dir, work_dir, rows,
+                     outcomes, ys, factors, test_results, pol, payload):
+    """Write ``validation.json`` and route to ``report``."""
+    from orchestrator.iteration import _enter_phase, finalize_iteration
+    from orchestrator.ledger import append_ledger_row
+    from orchestrator.optimize import artifacts, relations
+
+    by_idx = {r.row_index: r for r in rows}
+    samples = {"w": [], "b": []}
+    status = {"w": "ok", "b": "ok"}
+    for o, y in zip(outcomes, ys):
+        row = by_idx.get(o.row_index)
+        if row is None:
+            continue
+        key = ("w", "b")[int((row.apply or {}).get("finalist", 0))]
+        if o.status != "complete" or y != y:
+            if status[key] != "infeasible":
+                status[key] = ("infeasible" if o.status in ("infeasible", "rejected")
+                               else "unmeasured")
+        else:
+            samples[key].append(float(y))
+    conf = _latest_confirmation(work_dir) or {}
+    summary = _validation_summary(
+        pol, conf, samples["w"], samples["b"], paired=bool(payload.get("paired")),
+        status=status, eps_spec=dict(pol["objective"]["epsilon"] or {}),
+        direction=pol["objective"]["direction"])
+    summary.update(iteration=iteration, paired=bool(payload.get("paired")),
+                   samples=samples)
+    _write_json(iter_dir / "validation.json", summary)
+    g = summary["gain"] or {}
+    _write_json(iter_dir / "findings.json", {
+        "iteration": iteration,
+        "bundle_ref": f"runs/iter-{iteration}/validation.json",
+        "experiment_valid": g.get("estimate") is not None,
+        "discrepancy_analysis": (
+            "Post-selection validation: the confirm winner and the "
+            "known_valid_baseline re-measured on fresh paired replicates drawn "
+            "after the winner was fixed, so the gain estimate is unbiased."),
+        "arms": [{"arm_type": "h-main",
+                  "predicted": "the confirm winner beats the known_valid_baseline",
+                  "observed": (f"gain {g.get('estimate')!r} "
+                               f"[{g.get('low')!r}, {g.get('high')!r}] at "
+                               f"delta {summary['delta']}"),
+                  "status": ("CONFIRMED" if (g.get("low") or 0) > 0 else
+                             "REFUTED" if g.get("high") is not None and g["high"] < 0
+                             else "PARTIALLY_CONFIRMED"),
+                  "error_type": None,
+                  "diagnostic_note": f"runs/iter-{iteration}/validation.json",
+                  "metadata": {k: summary[k] for k in ("winner", "baseline", "replicates")}}],
+    })
+    _write_json(iter_dir / "principle_updates.json", [])
+    artifacts.write_relations(iter_dir, relations.reconcile(factors, test_results or {}))
+    _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
+    finalize_iteration(work_dir=work_dir, iter_dir=iter_dir, iteration=iteration,
+                       campaign=campaign)
+    append_ledger_row(work_dir, iteration)
+    logger.info("validate: winner value %s, gain %s [%s, %s] (%s) on fresh replicates",
+                summary["value"], g.get("estimate"), g.get("low"), g.get("high"),
+                g.get("method"))
+    return _close_iteration(
+        engine, campaign, work_dir, iter_dir, iteration, Stage.VALIDATE.value, pol,
+        {"correctness_failed": False, "nan_response": False,
+         "budget_remaining": _budget_remaining(pol, work_dir)},
+        recommendation_levels=summary["winner"] or None)
+
+
+def _skip_validate(engine, campaign, work_dir, iter_dir, iteration, pol, payload,
+                   *, state: str = Stage.VALIDATE.value,
+                   record: str = "validation.json"):
+    """No block to measure (validate: no winner, winner == baseline,
+    unaffordable; inertness: no held factor, no winner, unaffordable): record
+    why in ``record`` and route on."""
+    from orchestrator.iteration import _enter_phase, finalize_iteration
+    from orchestrator.ledger import append_ledger_row
+
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    _write_json(iter_dir / record, {
+        "iteration": iteration, "skipped": payload.get("skipped"),
+        "winner": payload["finalists"][0]["levels"] if payload.get("finalists") else {},
+        **({"baseline": payload["finalists"][1]["levels"]}
+           if state == Stage.VALIDATE.value else {}),
+        "accounting": (policy_mod.VALIDATE_ACCOUNTING if state == Stage.VALIDATE.value
+                       else policy_mod.INERTNESS_ACCOUNTING)})
+    _write_json(iter_dir / "findings.json", {
+        "iteration": iteration, "bundle_ref": f"runs/iter-{iteration}/{record}",
+        "experiment_valid": False,
+        "discrepancy_analysis": f"{state} block skipped: {payload.get('skipped')}.",
+        "arms": [{"arm_type": "h-main", "predicted": "a validation block runs",
+                  "observed": f"skipped: {payload.get('skipped')}",
+                  "status": "PARTIALLY_CONFIRMED", "error_type": None,
+                  "diagnostic_note": f"runs/iter-{iteration}/{record}"}]})
+    _write_json(iter_dir / "principle_updates.json", [])
+    for ph in ("DESIGN", "HUMAN_DESIGN_GATE", "EXECUTE_ANALYZE", "HUMAN_FINDINGS_GATE"):
+        _enter_phase(engine, ph, work_dir)
+    finalize_iteration(work_dir=work_dir, iter_dir=iter_dir, iteration=iteration,
+                       campaign=campaign)
+    append_ledger_row(work_dir, iteration)
+    logger.info("%s: skipped -- %s", state, payload.get("skipped"))
+    return _close_iteration(
+        engine, campaign, work_dir, iter_dir, iteration, state, pol,
+        {"correctness_failed": False, "nan_response": False,
+         "budget_remaining": _budget_remaining(pol, work_dir)},
+        recommendation_levels=None)
+
+
+def _inertness_rows(pol: dict, work_dir: Path, factors, iteration: int):
+    """``inertness``'s rows (#321 item 8): the confirm winner and, for every
+    factor this epoch's latest fitting stage HELD FIXED, the winner with that
+    one factor flipped to each alternative declared level -- ``replicates``
+    fresh blocks of ``1 + F`` (randomized within a block, CRN seeds shared).
+
+    F, the flip list and the margin are fixed before any of these rows exists
+    (they depend on the declaration, the fitting record and confirm's winner),
+    so the Bonferroni divisor and the margin are not chosen from these data.
+    """
+    from orchestrator.optimize.matrix import ConfigRow, randomized_run_order, render_apply
+
+    cfg = (pol["states"]["inertness"] or {})["design"]
+    r = max(2, int(cfg.get("replicates", 3)))
+    conf = _latest_confirmation(work_dir) or {}
+    win = dict(conf.get("confirmed_at_levels") or {}) if conf.get("best") else {}
+    rec = (_epoch_recommendations(work_dir) or [{}])[-1]
+    held = dict(rec.get("held_fixed") or {})
+    by_id = {f.id: f for f in factors}
+    flips = []
+    for fid in sorted(held):
+        f = by_id.get(fid)
+        if f is None or not win:
+            continue
+        for lv in f.levels:
+            if lv != win.get(fid):
+                flips.append({"factor": fid, "level": lv,
+                              "levels": {**win, fid: lv}})
+    barred = _barred_levels(work_dir)
+    flips = [fl for fl in flips if not _names_barred_level(fl["levels"], barred)
+             and not _measured_infeasible_contains(work_dir, fl["levels"])]
+    why = None
+    if not win:
+        why = "confirm produced no admissible winner"
+    elif not held:
+        why = "the latest fitting stage held no factor fixed: the scope is already the declared space"
+    elif not flips:
+        why = "every alternative level of the held factors is barred or measured inadmissible"
+    elif _budget_remaining(pol, work_dir) < r * (1 + len(flips)):
+        why = (f"the block needs {r * (1 + len(flips))} run(s) and only "
+               f"{_budget_remaining(pol, work_dir)} remain")
+    configs = [{"key": "w", "levels": win, "why": "confirm winner"}] + [
+        {"key": f"x{j}", "levels": fl["levels"], "why": f"flip {fl['factor']}={fl['level']!r}",
+         "factor": fl["factor"], "level": fl["level"]} for j, fl in enumerate(flips)]
+    payload = {"factor_ids": [f.id for f in factors], "kind": "inertness_replicate",
+               "resolution": None, "generators": [], "aliases": [],
+               "run_order": [], "run_order_seed": iteration, "round": 1,
+               "finalists": [{k: c[k] for k in ("key", "levels", "why")} for c in configs],
+               "flips": [{k: c[k] for k in ("key", "factor", "level")} for c in configs[1:]],
+               "held_fixed": held, "rows": []}
+    if why:
+        payload["skipped"] = why
+        return [], payload
+    rows, idx = [], 0
+    for i in range(r):
+        for j in randomized_run_order(len(configs), seed=iteration * 1000 + 700 + i):
+            lv = configs[j]["levels"]
+            rows.append(ConfigRow(row_index=idx, levels=dict(lv), role="confirm",
+                                  replicate=i,
+                                  apply={**render_apply(factors, lv), "finalist": j}))
+            idx += 1
+    payload["run_order"] = list(range(len(rows)))
+    payload["rows"] = [{"row_index": x.row_index, "levels": dict(x.levels),
+                        "role": x.role, "replicate": x.replicate, "apply": x.apply}
+                       for x in rows]
+    return rows, payload
+
+
+def tost(diffs_or_pair, *, margin: float, alpha: float, paired: bool) -> dict:
+    """Two one-sided tests (Schuirmann 1987) of ``|mu| < margin``.
+
+    ``diffs_or_pair`` is the list of paired differences (``paired``) or the
+    pair ``(x, w)`` of independent samples (Welch). Equivalence is declared iff
+    BOTH one-sided ``1 - alpha`` bounds lie strictly inside ``(-margin,
+    margin)``, i.e. the ``1 - 2 alpha`` two-sided interval does. An
+    intersection-union test, so its size is ``alpha`` (Berger 1982). ``None``
+    estimable fields when there is no variance estimate (unknown is not zero).
+    """
+    from statistics import mean, variance
+
+    from scipy.stats import t as student_t
+
+    if paired:
+        d = list(diffs_or_pair)
+        if len(d) < 2:
+            return {"equivalent": None, "reason": "fewer than two pairs"}
+        vd = variance(d)
+        if not math.sqrt(max(vd, 0.0)) > 1e-9 * max(1.0, abs(mean(d))):
+            return {"equivalent": None, "estimate": mean(d),
+                    "reason": "paired differences carry zero spread"}
+        est, se, df, method = mean(d), math.sqrt(vd / len(d)), float(len(d) - 1), "paired_t"
+    else:
+        x, w = diffs_or_pair
+        if len(x) < 2 or len(w) < 2:
+            return {"equivalent": None, "reason": "fewer than two replicates"}
+        vx, vw = variance(x) / len(x), variance(w) / len(w)
+        den = vx ** 2 / (len(x) - 1) + vw ** 2 / (len(w) - 1)
+        if not den > 0.0:
+            return {"equivalent": None, "reason": "no variance estimate"}
+        est, se = mean(x) - mean(w), math.sqrt(vx + vw)
+        df, method = (vx + vw) ** 2 / den, "welch_t"
+    tc = float(student_t.ppf(1.0 - alpha, max(df, 1.0)))
+    lo, hi = est - tc * se, est + tc * se
+    return {"equivalent": bool(lo > -margin and hi < margin), "estimate": est,
+            "low": lo, "high": hi, "margin": margin, "alpha": alpha, "df": df,
+            "method": f"tost_{method}"}
+
+
+def _finish_inertness(engine, campaign, iteration, iter_dir, work_dir, rows,
+                      outcomes, ys, factors, test_results, pol, payload):
+    """Write ``inertness.json`` (one TOST verdict per flip) and route on."""
+    from orchestrator.iteration import _enter_phase, finalize_iteration
+    from orchestrator.ledger import append_ledger_row
+    from orchestrator.optimize import artifacts, relations
+
+    keys = [c["key"] for c in payload["finalists"]]
+    samples = {k: [] for k in keys}
+    status = {k: "ok" for k in keys}
+    by_idx = {r.row_index: r for r in rows}
+    for o, y in zip(outcomes, ys):
+        row = by_idx.get(o.row_index)
+        if row is None:
+            continue
+        k = keys[int((row.apply or {}).get("finalist", 0))]
+        if o.status != "complete" or y != y:
+            if status[k] != "infeasible":
+                status[k] = ("infeasible" if o.status in ("infeasible", "rejected")
+                             else "unmeasured")
+        else:
+            samples[k].append(float(y))
+    cfg = pol["states"]["inertness"]["design"]
+    conf = _latest_confirmation(work_dir) or {}
+    ref = conf.get("mean")
+    mspec = dict(cfg.get("margin") or {"pct": 2.0})
+    # The margin is resolved against confirm's winner mean: known before
+    # these replicates, so not chosen from them.
+    margin = (float(mspec["abs"]) if "abs" in mspec else
+              (abs(float(ref)) * float(mspec.get("pct", 2.0)) / 100.0 if ref else None))
+    nflip = max(1, len(payload.get("flips") or []))
+    alpha = float(pol["objective"]["delta_terminal"]) / nflip
+    paired = bool(payload.get("paired"))
+    sign = 1.0 if pol["objective"]["direction"] != "minimize" else -1.0
+    verdicts = []
+    for fl in payload.get("flips") or []:
+        k = fl["key"]
+        v = {"factor": fl["factor"], "level": fl["level"], "n": len(samples[k]),
+             "status": status[k]}
+        if status[k] != "ok" or status["w"] != "ok" or margin is None:
+            v.update(equivalent=None, reason=("inadmissible or unusable replicate"
+                                              if margin is not None else
+                                              "margin unknown (pct of a zero mean)"))
+        elif paired and len(samples[k]) == len(samples["w"]):
+            v.update(tost([sign * (a - b) for a, b in zip(samples[k], samples["w"])],
+                          margin=margin, alpha=alpha, paired=True))
+        else:
+            v.update(tost(([sign * a for a in samples[k]], [sign * b for b in samples["w"]]),
+                          margin=margin, alpha=alpha, paired=False))
+        verdicts.append(v)
+    by_factor: dict = {}
+    for v in verdicts:
+        by_factor.setdefault(v["factor"], []).append(v.get("equivalent"))
+    shown = sorted(f for f, vs in by_factor.items() if vs and all(x is True for x in vs))
+    summary = {"iteration": iteration, "winner": payload["finalists"][0]["levels"],
+               "held_fixed": payload.get("held_fixed") or {}, "margin": margin,
+               "margin_spec": mspec, "alpha_per_flip": alpha, "flips": verdicts,
+               "shown_inert": shown,
+               "not_shown_inert": sorted(set(by_factor) - set(shown)),
+               "paired": paired, "samples": samples,
+               "accounting": policy_mod.INERTNESS_ACCOUNTING}
+    _write_json(iter_dir / "inertness.json", summary)
+    _write_json(iter_dir / "findings.json", {
+        "iteration": iteration, "bundle_ref": f"runs/iter-{iteration}/inertness.json",
+        "experiment_valid": any(v.get("equivalent") is not None for v in verdicts),
+        "discrepancy_analysis": (
+            "Held-factor inertness: at the confirm winner each held factor was "
+            "flipped to every alternative level and compared on fresh paired "
+            "replicates by TOST at the declared margin."),
+        "arms": [{"arm_type": "h-main",
+                  "predicted": "the held factors are inert at the winner",
+                  "observed": f"shown inert: {shown}; not shown: {summary['not_shown_inert']}",
+                  "status": ("CONFIRMED" if not summary["not_shown_inert"] else
+                             "PARTIALLY_CONFIRMED" if shown else "REFUTED"),
+                  "error_type": None,
+                  "diagnostic_note": f"runs/iter-{iteration}/inertness.json"}]})
+    _write_json(iter_dir / "principle_updates.json", [])
+    artifacts.write_relations(iter_dir, relations.reconcile(factors, test_results or {}))
+    _enter_phase(engine, "HUMAN_FINDINGS_GATE", work_dir)
+    finalize_iteration(work_dir=work_dir, iter_dir=iter_dir, iteration=iteration,
+                       campaign=campaign)
+    append_ledger_row(work_dir, iteration)
+    logger.info("inertness: shown inert %s, not shown %s (margin %s, alpha/flip %s)",
+                shown, summary["not_shown_inert"], margin, alpha)
+    return _close_iteration(
+        engine, campaign, work_dir, iter_dir, iteration, Stage.INERTNESS.value, pol,
+        {"correctness_failed": False, "nan_response": False,
+         "budget_remaining": _budget_remaining(pol, work_dir)},
+        recommendation_levels=summary["winner"] or None)
+
+
+def _latest_inertness(work_dir) -> dict | None:
+    for d in reversed(_this_epoch_dirs(work_dir)):
+        p = d / "inertness.json"
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except (OSError, json.JSONDecodeError):
+                return None
+    return None
+
+
+def _latest_validation(work_dir) -> dict | None:
+    """This epoch's ``validation.json``, if a validation block ran."""
+    for d in reversed(_this_epoch_dirs(work_dir)):
+        p = d / "validation.json"
+        if p.exists():
+            try:
+                return json.loads(p.read_text())
+            except (OSError, json.JSONDecodeError):
+                return None
+    return None
+
+
 def _latest_confirmation(work_dir) -> dict | None:
     """The most recent ``confirmation.json``, if any.
 
@@ -6771,10 +7324,18 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         _rec_for_bias, fin, status, ok, best, bound, eps, delta_t=delta_t,
         skip=model_inadequate or adequacy_unknown,
         delta_s=float(pol["objective"]["delta_screen"]),
+        delta_c=pol["objective"].get("delta_constraint"),
         xhat_measured_infeasible=bool(_rec_for_bias.get("levels")) and
         _measured_infeasible_contains(work_dir, dict(_rec_for_bias["levels"])))
+    # #321 item 7: a charged campaign-wide budget whose share for THIS epoch is
+    # exhausted certifies nothing (the epoch may still answer, uncertified).
+    budget_exhausted = bool(((pol["objective"].get("campaign_delta") or {})
+                             .get("exhausted")))
+    from orchestrator.optimize import provenance as _prov_mod
+    budget_exceeded = _prov_mod.campaign_delta_exceeded(Path(work_dir), pol)
     certified = (
-        bound.value is not None and eps is not None and bound.value <= eps
+        not budget_exhausted and not budget_exceeded
+        and bound.value is not None and eps is not None and bound.value <= eps
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
         and not fit_bias and not model_inadequate and not refilled
         and not adequacy_unknown
@@ -6838,6 +7399,9 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     winner_levels = next(
         (f["levels"] for f in fin if f["key"] == best), {},
     )
+    _kvb = pol.get("known_valid_baseline")
+    _base_key = next((f["key"] for f in fin if _kvb
+                      and _same_levels(dict(f["levels"]), dict(_kvb))), None)
     summary = {
         "stage": stage_name,
         "iteration": iteration,
@@ -6881,8 +7445,17 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                  bound.value is not None and eps is not None
                  and bound.value > eps),
                 ("finalist_measured_infeasible",
-                 any(s == "infeasible" for s in status.values())
+                 any(s == "infeasible" for k_, s in status.items()
+                     if k_ != _base_key)
                  and not infeasible_caveat),
+                # The DECLARED known_valid_baseline measured inadmissible
+                # (#321): the author's "this configuration works" contradicts
+                # a measurement, which says something about the declaration or
+                # the constraint, not about screening's ranking -- so it is
+                # named apart from an ordinary inadmissible finalist. It still
+                # vetoes: a contradiction is evidence and is never silenced.
+                ("baseline_measured_inadmissible",
+                 _base_key is not None and status.get(_base_key) == "infeasible"),
                 # A certificate needs at least one MEASURED-FEASIBLE rival: with
                 # every other finalist inadmissible, R_terminal = 0 bounds the
                 # winner against nothing (a real campaign: 2 of 3 finalists
@@ -6895,6 +7468,8 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("fit_exclusions_level_correlated", fit_bias),
                 ("model_inadequate", model_inadequate),
                 (adequacy_reason, adequacy_unknown),
+                ("campaign_delta_exhausted", budget_exhausted),
+                ("campaign_delta_exceeded", budget_exceeded),
             ) if hit
         ] + ([] if pareto_stage.objectives(pol) else model_reasons),
         # The certificate's two halves and how they combine (WP-A A1).
@@ -6943,6 +7518,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             unmeasured=unmeasured, fit_bias=fit_bias,
             model_inadequate=model_inadequate,
             adequacy_unknown=(adequacy_reason if adequacy_unknown else None),
+            factors=factors,
         )
 
     # Did the winning finalist actually beat everything the campaign measured?
@@ -7147,13 +7723,17 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         max(1, int(_cfg.get("shortlist_size", 3))) if "pareto" in summary
         else _next_round_finalists(
             summary, shortlist_size=_cfg.get("shortlist_size", 3),
-            baseline_seat=_baseline_seat_extra(pol, summary))
+            baseline_seat=_baseline_seat_extra(
+                pol, summary, shortlist_size=_cfg.get("shortlist_size", 3)))
     )
     if "finalists_vacated" in obs and obs["feasible_finalists"] < 2 \
             and obs["refill_available"]:
         # A refill round re-seats the survivors AND every vacated seat.
+        # The refill re-seats from the ranking, which may or may not hold the
+        # baseline, so its extra seat stays counted (an upper bound).
         carry = max(1, int(_cfg.get("shortlist_size", 3))) + (
-            1 if _baseline_seat_extra(pol, summary) else 0)
+            1 if pol.get("known_valid_baseline")
+            and not pareto_stage.objectives(pol) else 0)
     obs["runs_needed_confirm"] = carry * max(1, int(_cfg.get("replicates", 3)))
     obs["confirm_affordable"] = (
         obs["budget_remaining"] >= obs["runs_needed_confirm"]
@@ -7175,10 +7755,33 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     )
 
 
+def _front_model_half(pol, work_dir, rec: dict, par: dict, factors) -> dict | None:
+    """``confirmation.json["pareto"]["model_half"]`` (#321 item 4), or None
+    when there is no fitting record to take it from."""
+    from orchestrator.optimize import certificate as cert_mod
+
+    pref = par.get("preference") or {}
+    chosen = dict(pref.get("chosen") or {})
+    if not rec or not chosen or factors is None:
+        return None
+    fits = {m: cert_mod.fit_from_record(d)
+            for m, d in (rec.get("objective_fits") or {}).items()}
+    measured = [dict(f["levels"]) for f in par.get("front") or []]
+    measured += [dict(p.levels) for p in pareto_stage.measured_points(
+        work_dir, pareto_stage.objectives(pol))]
+    measured += [dict(lv) for lv in _measured_infeasible(work_dir)]
+    return cert_mod.front_model_half(
+        fits, pareto_stage.objectives(pol), dict(par.get("epsilon") or {}), chosen,
+        factors=factors, fitted_ids=list(rec.get("fitted_ids") or []),
+        held_fixed=dict(rec.get("held_fixed") or {}),
+        delta=float(pol["objective"]["delta_screen"]), exclude=measured)
+
+
 def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: dict,
                            ok: dict, unmeasured: list, fit_bias: bool,
                            model_inadequate: bool,
-                           adequacy_unknown: str | None = None) -> tuple[bool, list]:
+                           adequacy_unknown: str | None = None,
+                           factors=None) -> tuple[bool, list]:
     """The multi-objective verdict of a confirm round, written into ``summary``.
 
     Spec steps 5-8: the measured front over every admissible configuration of
@@ -7222,10 +7825,35 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
     # UNMEASURED here, like a timed-out one (pareto.excluded_incomplete).
     incomplete = any(x.get("source") == "confirm" and x.get("dropped", True)
                      for x in par.get("excluded_incomplete") or [])
+    # THE MODEL HALF (#321 item 4). The measured front's statuses settle every
+    # MEASURED rival; a configuration nobody measured is bounded only by the
+    # objective models. Computed whenever the models are not already rejected
+    # or of unknown adequacy (those withhold on their own).
+    mh = None if (model_inadequate or adequacy_unknown) else _front_model_half(
+        pol, work_dir, rec, par, factors)
+    if mh is not None:
+        par["model_half"] = {k: v for k, v in mh.items()
+                             if k not in ("critical",)} | {
+            "critical": {m: {k: c[k] for k in ("used", "value", "scheffe", "q", "df")}
+                         for m, c in (mh.get("critical") or {}).items()}}
+        if par["model_half"].get("value") == -math.inf:
+            par["model_half"]["value"] = None
+            par["model_half"]["no_unmeasured_point"] = True
+    mh_reason = None
+    if mh is None and not (model_inadequate or adequacy_unknown):
+        mh_reason = "front_model_bound_not_computable"
+    elif mh is not None and not mh.get("computable"):
+        mh_reason = "front_model_bound_not_computable"
+    elif mh is not None and mh.get("value") is not None and mh["value"] >= 0.0:
+        mh_reason = "front_point_possibly_dominated_unmeasured"
     certified = bool(pref["chosen"]) and chosen_ok and within and not unmeasured \
         and not infeasible_veto and not fit_bias and not model_inadequate \
         and not refilled and not eps_unknown and not incomplete \
-        and not adequacy_unknown
+        and not adequacy_unknown and mh_reason is None \
+        and not ((pol["objective"].get("campaign_delta") or {}).get("exhausted"))
+    from orchestrator.optimize import provenance as _prov_mod
+    _pareto_budget_exceeded = _prov_mod.campaign_delta_exceeded(Path(work_dir), pol)
+    certified = certified and not _pareto_budget_exceeded
     reasons = [r for r, hit in (
         ("no_admissible_finalist", no_admissible),
         ("no_feasible_rival", no_rival and not no_admissible),
@@ -7239,6 +7867,10 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
         ("model_inadequate", model_inadequate),
         (adequacy_unknown or "", bool(adequacy_unknown)),
         ("shortlist_refilled", refilled),
+        (mh_reason or "", bool(mh_reason)),
+        ("campaign_delta_exhausted",
+         bool((pol["objective"].get("campaign_delta") or {}).get("exhausted"))),
+        ("campaign_delta_exceeded", _pareto_budget_exceeded),
     ) if hit]
     if not certified and not reasons:
         reasons = ["no_front_point"]
@@ -7359,12 +7991,55 @@ def _refill_candidates(work_dir, factors, warnings: list | None = None) -> list[
     return out
 
 
-def _baseline_seat_extra(pol: dict, summary: dict) -> bool:
-    """Will the next round seat the baseline OUTSIDE the shortlist cap (A3)?"""
+def _baseline_seat_extra(pol: dict, summary: dict, *, shortlist_size=None) -> bool:
+    """Will the next round seat the baseline OUTSIDE the shortlist cap (A3)?
+
+    ``_confirm_rows`` appends the baseline beyond ``shortlist_size`` only when
+    it is NOT already a finalist. When the round-r carry-over already contains
+    it (it won, or its bound still exceeds epsilon) AND the carry-over fits in
+    the cap, it occupies one of the counted seats, so counting an extra seat
+    would over-state the next round's cost by ``replicates`` runs and let
+    ``confirm_affordable`` decline a round the budget can pay for (#321,
+    WP-A review). Any other case -- an empty carry-over (the round-1 ladder
+    re-seats from the ranking, which may or may not contain it), or a carry-over
+    that, with the fitted argmax's seat, could be truncated at the cap -- keeps
+    the extra seat: the estimate must stay an UPPER bound on the next round's
+    spend.
+    """
     base = pol.get("known_valid_baseline")
     if not base or pareto_stage.objectives(pol):
         return False
+    if shortlist_size is None:
+        shortlist_size = ((pol.get("states") or {}).get("confirm") or {}).get(
+            "design", {}).get("shortlist_size", 3)
+    k = max(1, int(shortlist_size or 3))
+    carry = _carry_keys(summary)
+    bkey = next((f["key"] for f in summary.get("finalists") or []
+                 if _same_levels(dict(f.get("levels") or {}), dict(base))), None)
+    # `+ 1`: the fitted argmax is also seated ahead of the carried finalists
+    # and need not be one of them, so only a carry-over with room for it is
+    # known to seat the baseline inside the cap.
+    if bkey is not None and bkey in carry and len(carry) + 1 <= k:
+        return False
     return True
+
+
+def _carry_keys(summary: dict) -> set:
+    """The finalist keys round r+1 carries over (``_confirm_rows``'s rule):
+    the previous winner plus every ``ok`` finalist whose bound is not KNOWN to
+    be at or below epsilon (``None`` is unknown, not small)."""
+    eps = summary.get("epsilon")
+    bounds = summary.get("bounds") or {}
+    best = summary.get("best")
+    carry = {
+        f["key"] for f in (summary.get("finalists") or [])
+        if f.get("status") == "ok" and (
+            eps is None or bounds.get(f["key"]) is None or bounds[f["key"]] > eps
+        )
+    }
+    if best:
+        carry.add(best)
+    return carry
 
 
 def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict | None:
@@ -7404,7 +8079,8 @@ def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict
                        "difference on the selecting replicates (biased upward).")}
 
 
-def _certificate_scope(rec: dict, boundary: dict | None) -> dict:
+def _certificate_scope(rec: dict, boundary: dict | None,
+                       inertness: dict | None = None) -> dict:
     """``report.json["certificate_scope"]`` (WP-A A4, spec
     2026-10-17-certification-soundness.md section 4): the region the model
     half of the certificate ranged over, read from this epoch's latest
@@ -7430,11 +8106,30 @@ def _certificate_scope(rec: dict, boundary: dict | None) -> dict:
          + " held fixed; the other levels of those factors are NOT covered")
         if held else
         "epsilon-optimal over the declared ranges of every factor")
+    if inertness is not None and held:
+        # #321 item 8: what the inertness check showed. A factor shown inert
+        # changes the response AT THE WINNER by less than the margin at every
+        # alternative level -- a local statement, NOT a certificate over the
+        # other slices (that would need a model per slice).
+        out["inertness"] = {k: inertness.get(k) for k in (
+            "shown_inert", "not_shown_inert", "margin", "alpha_per_flip", "skipped")
+            if k in inertness}
+        if inertness.get("shown_inert"):
+            out["statement"] += (
+                "; at the recommended configuration, flipping "
+                + ", ".join(inertness["shown_inert"])
+                + f" to any other level changes the response by less than "
+                f"{inertness.get('margin')!r} (TOST, Bonferroni over flips at "
+                f"delta_terminal, a SEPARATE claim from the certificate with its "
+                f"own error budget delta_terminal, not part of the certificate's "
+                f"union bound) -- a local equivalence, not a certificate over "
+                f"those slices")
     return out
 
 
 def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
                   bound, eps, *, delta_t: float, delta_s: float, skip: bool,
+                  delta_c: float | None = None,
                   xhat_measured_infeasible: bool = False) -> tuple[dict | None, list[str]]:
     """``G = R_model_out + R_terminal`` and why it cannot certify (WP-A A1).
 
@@ -7456,11 +8151,13 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
            "residual_regret_terminal": bound.value,
            "x_hat": dict(xhat), "x_hat_key": None,
            "delta_screen": delta_s, "delta_terminal_per_look": delta_t,
+           **({"delta_constraint": delta_c} if delta_c is not None else {}),
            "rule": "G = R_model_outside + R_terminal, R_model_outside the model "
                    "bound over the candidates OUTSIDE the measured shortlist; "
                    "certified needs G <= epsilon and the fitted argmax measured "
                    "admissibly in this round. Pr(certified and gap > epsilon) "
-                   "<= delta_screen + delta_terminal under the stated "
+                   "<= delta_screen + delta_terminal (+ delta_constraint when "
+                   "constraint exclusion is registered) under the stated "
                    "assumptions."}
     if not rec or not isinstance(r_model, (int, float)):
         return out, ["model_bound_not_computable"]
@@ -7470,9 +8167,12 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
         r_out = float(r_model)
         out["residual_regret_model_outside"] = r_out
     reasons: list[str] = []
-    if rec.get("candidate_space"):
-        # Searched, not enumerated: R_model is a max over the EVALUATED
-        # candidates only, so it is silent about the rest of X_valid.
+    if rec.get("candidate_space") and "unevaluated" not in (rb.get("critical") or {}):
+        # Searched, not enumerated, by a record written before #321 H3: its
+        # R_model is a max over the EVALUATED candidates only, so it is
+        # silent about the rest of X_valid. A record with `critical.unevaluated`
+        # bounds the rest by branch and bound under a simultaneous constant
+        # that covers the whole grid, and is not vetoed.
         reasons.append("model_bound_not_exhaustive")
     key = next((f["key"] for f in fin
                 if xhat and _same_levels(dict(f["levels"]), dict(xhat))), None)
@@ -7508,43 +8208,25 @@ def _refill_round(pol, work_dir) -> bool:
 
 def _next_round_finalists(summary: dict, *, shortlist_size,
                           baseline_seat: bool = False) -> int:
-    """How many finalists a round r+1 would seat, by `_confirm_rows`'s own rule.
+    """An UPPER BOUND on how many finalists round r+1 seats.
 
-    Mirrors the ``rnd > 1`` carry-over branch there: the previous round's winner
-    plus every ``ok`` finalist whose per-challenger bound is not KNOWN to be at
-    or below epsilon (``None`` is unknown, not small — an uncomputed bound has
-    not retired its challenger). Kept as a separate function so the cost
-    estimate and the shortlist it estimates cannot drift apart silently: if
-    ``_confirm_rows``'s rule changes, this is the one other place to change.
-
-    AN EMPTY CARRY-OVER COSTS ``shortlist_size``, NOT ZERO AND NOT ONE. When
-    nothing survives — every finalist excluded on measured invalidity, or every
-    bound already at or below epsilon — ``_confirm_rows`` does not run a smaller
-    round; its ``if not finalists:`` branch falls through to the ROUND-1 LADDER
-    and re-seats up to ``shortlist_size`` seats from ``recommendation.json`` /
-    ``_top_measured``. Returning 1 there would under-estimate the round by up to
-    a factor of ``shortlist_size`` and let the affordability guard wave through
-    exactly the round it exists to decline — the same class of defect as
-    ``budget_remaining < 1`` being the only guard. The estimate must be an upper
+    ``_confirm_rows``'s ``rnd > 1`` branch seats the previous winner, the
+    fitted argmax (WP-A A1) and every ``ok`` finalist whose bound still exceeds
+    epsilon -- and then TOPS UP to ``shortlist_size`` from the model's ranking
+    whenever fewer remain (the top-up block), and an empty carry-over falls
+    through to the round-1 ladder, which also fills ``shortlist_size``. So
+    every round r > 1 seats up to ``shortlist_size`` whatever carried over.
+    The estimate used to be the carry-over count alone, which ignored the
+    top-up: measured on bowl / additive at noise 0.4 with confirm_max_rounds 4
+    and max_runs 30-50, 29 of 96 campaigns overspent ``max_runs`` (a round
+    estimated at 3 runs spent 9; #321 P2). The estimate must be an upper
     bound on what the next round actually spends, or it is not a guard.
+
+    The permanent baseline seat (WP-A A3) sits outside the cap when it is not
+    already one of the seated finalists (``_baseline_seat_extra``).
     """
     k = max(1, int(shortlist_size or 3))
-    eps = summary.get("epsilon")
-    bounds = summary.get("bounds") or {}
-    best = summary.get("best")
-    carry = {
-        f["key"] for f in (summary.get("finalists") or [])
-        if f.get("status") == "ok" and (
-            eps is None or bounds.get(f["key"]) is None or bounds[f["key"]] > eps
-        )
-    }
-    if best:
-        carry.add(best)
-    # `_confirm_rows` caps the shortlist at `k` regardless of how many the
-    # carry-over rule nominates, so the estimate caps there too -- plus the
-    # permanent baseline seat (WP-A A3), which sits outside the cap.
-    base = 1 if baseline_seat else 0
-    return (min(k, len(carry)) if carry else k) + base
+    return k + (1 if baseline_seat else 0)
 
 
 def _confirm_epsilon(spec: dict, work_dir, metric: str, *, direction: str,

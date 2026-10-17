@@ -823,6 +823,13 @@ def run_campaign(
             summary_path=str(gate_summary_path) if gate_summary_path else None,
         )
         if decision != "approve":
+            if _is_optimization:
+                # #321 item 7: a stop at a continue gate is CHARGED. The epoch's
+                # delta share was spent when its policy was pre-registered;
+                # stopping early does not return it.
+                from orchestrator.optimize.provenance import record_continue_gate_stop
+
+                record_continue_gate_stop(work_dir, iteration=i)
             engine = Engine(work_dir)
             engine.transition("DONE")
             print(f"\n  Campaign stopped after {i} iteration(s).")

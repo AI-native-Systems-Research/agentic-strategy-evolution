@@ -267,10 +267,16 @@ def fit_record(pol, *, scored, omodels, delta_s: float, stage_name: str,
                             if unfit else "no predicted front point matched a "
                                           "scored candidate")
                  + f"; the recommendation is objective {objs[0].metric!r}'s argmax"}
+    from orchestrator.optimize.certificate import fit_to_record
+
     record = {
         "objectives": [o.metric for o in objs],
         "preferred_basis": basis,
         "objective_models": {m: om.as_dict() for m, om in omodels.items()},
+        # #321 item 4: what confirm's front model half needs of each fitted
+        # objective model (the Fit is gone by then).
+        "objective_fits": {m: fit_to_record(om.fit) for m, om in omodels.items()
+                           if om.fit is not None},
         "predicted_front": entries,
         "front_size_predicted": n_nd,
     }
@@ -397,6 +403,22 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
     from orchestrator.optimize.stage_runner import _top_measured
 
     objs = objectives(pol)
+    # A REJECTED model does not ANCHOR the shortlist (#321, WP-B limit 10). The
+    # epoch's sticky ``model_adequate`` is False when lack of fit or the
+    # validation check rejected the response class (an objective model's
+    # included). Its predicted EXTREMES and predicted PREFERRED point are then
+    # the extremes of a surface the data refused, so they are not seated.
+    # MEASURED points take those seats -- each objective's measured best, then the measured
+    # nondominated set by maximin spread, up to ``max(K, k // 2)`` measured
+    # seats -- and the predicted front's SPREAD (round r > 1: its gap fills and
+    # predicted dominators too) still fills what is left: the
+    # single-objective ladder's rule (``stage_runner._confirm_rows``), for the
+    # same reason -- every finalist is re-measured before it can win, so a
+    # predicted nomination TESTS the model rather than trusting it, and it is
+    # the only source of configurations the campaign has not yet run.
+    # Unknown (None) and absent nominate as before; certification is
+    # withheld for both rejected and unknown models on its own.
+    rejected = rec.get("model_adequate") is False
     pf = _predicted_from_record(rec.get("predicted_front"))
     pts = measured_points(work_dir, objs)
     vals = [p.means() for p in pts] + [p.predicted for p in pf
@@ -477,17 +499,20 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
                          measured_values(top[0]["levels"]))
         nd = [p for p in pf if p.status == "nondominated"]
         for o in objs:
+            if rejected:
+                break
             s = pareto.sign(o.direction)
             ok = [p for p in nd if isinstance(p.predicted.get(o.metric), (int, float))]
             if ok:
                 ex = max(ok, key=lambda p: s * p.predicted[o.metric])
                 nominate(ex.levels, f"predicted extreme of {o.metric}", False, ex.predicted)
         basis = (rec.get("preferred_basis") or {}).get("basis")
-        nominate(rec.get("levels"),
-                 f"objective {objs[0].metric!r} argmax (no predicted front)"
-                 if basis == "primary_argmax_fallback" else
-                 f"preferred point of the predicted front ({preference(pol).method})",
-                 False, pred_values(rec.get("levels") or {}))
+        if not rejected:
+            nominate(rec.get("levels"),
+                     f"objective {objs[0].metric!r} argmax (no predicted front)"
+                     if basis == "primary_argmax_fallback" else
+                     f"preferred point of the predicted front ({preference(pol).method})",
+                     False, pred_values(rec.get("levels") or {}))
     # Round r > 1 spends its seats on what the campaign has NOT measured
     # freshly yet. Re-seating an already-confirmed point the front is sure of
     # buys nothing for the front, and on a noisy constraint boundary it is how
@@ -501,6 +526,24 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
     def fresh(levels) -> bool:
         return json.dumps(levels, sort_keys=True, default=str) not in confirmed
 
+    if rejected and not (rnd > 1 and prev_conf and prev_conf.get("pareto")):
+        k = max(1, int(((pol.get("states") or {}).get("confirm") or {}).get(
+            "design", {}).get("shortlist_size", 2 * len(objs) + 2)))
+        cap = max(len(objs), k // 2)
+        mv = [p.means() for p in pts]
+        ok = [i for i, v in enumerate(mv)
+              if all(isinstance(v.get(o.metric), (int, float)) for o in objs)]
+        nd = [ok[j] for j in pareto.nondominated_indices([frame.z(mv[i]) for i in ok])]
+        distinct = {json.dumps(lv, sort_keys=True, default=str) for lv, _w, _m in plan}
+        for j in pareto.spread_order([frame.z(mv[i]) for i in nd], seated_z):
+            key = json.dumps(pts[nd[j]].levels, sort_keys=True, default=str)
+            if len(distinct) >= cap:
+                break
+            if key in distinct:
+                continue
+            distinct.add(key)
+            nominate(pts[nd[j]].levels, "measured nondominated point (model "
+                     "inadequate: measured seats first)", True, mv[nd[j]])
     # Spread over the point-NONDOMINATED predictions first; only then over the
     # merely possibly-nondominated ones, so a seat is never spent on a point the
     # models predict is beaten while a predicted front point is still unseated.
@@ -548,6 +591,11 @@ def front_record(pol, work_dir, *, rec: dict, rnd: int,
     eps_unknown = sorted(m for m, e in eps.items() if e is None)
     frame = pareto.make_frame(objs, [p.means() for p in pts], eps)
     om = rec.get("objective_models") or {}
+    # NOT read from the epoch's model_adequate (#321 item 5, deliberately):
+    # a predicted rival can only REMOVE a point's confidence, never add it, so
+    # keeping a rejected model's predictions as rivals is the conservative
+    # direction for a status claim. Item 5 removes them where they would ADD a
+    # claim -- as nominated anchors of the shortlist (``shortlist_plan``).
     adequate = bool(om) and all((om.get(m) or {}).get("modelled") for m in metrics)
     predicted = _predicted_from_record(rec.get("predicted_front")) if adequate else []
     if predicted:

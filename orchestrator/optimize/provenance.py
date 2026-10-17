@@ -28,6 +28,8 @@ compares them against the files it re-reads before trusting anything else.
 """
 from __future__ import annotations
 
+import json
+
 import hashlib
 import functools
 import inspect
@@ -142,6 +144,7 @@ def nous_version_info() -> dict:
 def analysis_constants() -> dict:
     """The analysis switches and constants outside the policy hash, read live."""
     from orchestrator.optimize import (
+        certificate,
         constraint_models,
         decide,
         design,
@@ -169,6 +172,8 @@ def analysis_constants() -> dict:
         "decide.SEARCH_SEED": _get(decide, "SEARCH_SEED"),
         "decide.SEARCH_STARTS": _get(decide, "SEARCH_STARTS"),
         "decide.SEARCH_STARTS_WEIGHTED": _get(decide, "SEARCH_STARTS_WEIGHTED"),
+        "certificate.REGION_NODE_BUDGET": _get(certificate, "REGION_NODE_BUDGET"),
+        "certificate.REGION_WORK_BUDGET": _get(certificate, "REGION_WORK_BUDGET"),
         "design._RESTARTS": _get(design, "_RESTARTS"),
         "effects.fit_effects.alpha": _default(effects.fit_effects, "alpha"),
         "stage._LOF_ALPHA": _get(stage, "_LOF_ALPHA"),
@@ -321,7 +326,7 @@ def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None 
     }
 
 
-def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[float, float] | None:
+def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[float, float, float] | None:
     """``(delta_screen, delta_terminal)`` epoch ``epoch`` was compiled with.
 
     The current epoch's come from its policy. An earlier epoch's policy.json
@@ -331,7 +336,8 @@ def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[flo
     """
     if epoch == int(current_policy.get("epoch", 1)):
         o = current_policy["objective"]
-        return float(o["delta_screen"]), float(o["delta_terminal"])
+        return (float(o["delta_screen"]), float(o["delta_terminal"]),
+                float(o.get("delta_constraint") or 0.0))
     p = Path(work_dir) / f"campaign.epoch-{epoch}.yaml"
     if not p.exists():
         return None
@@ -342,10 +348,57 @@ def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[flo
 
         pol = compile_policy(yaml.safe_load(p.read_text()), epoch=epoch)
         o = pol["objective"]
-        return float(o["delta_screen"]), float(o["delta_terminal"])
+        return (float(o["delta_screen"]), float(o["delta_terminal"]),
+                float(o.get("delta_constraint") or 0.0))
     except Exception as exc:  # noqa: BLE001 -- recorded, not hidden
         logger.warning("could not recover epoch %d's deltas from %s: %s", epoch, p.name, exc)
         return None
+
+
+def record_continue_gate_stop(work_dir: Path, *, iteration: int) -> None:
+    """Append the stop to ``delta_ledger.jsonl`` with the epoch's share (#321
+    item 7). The share stays spent; the row only makes the stop visible in
+    ``error_budget``. A no-op without a compiled policy."""
+    from orchestrator.optimize.policy import delta_stated, read_policy
+
+    pol = read_policy(Path(work_dir))
+    if pol is None:
+        return
+    row = {"event": "stopped_at_continue_gate", "iteration": int(iteration),
+           "epoch": int(pol.get("epoch", 1)), "charged": delta_stated(pol)}
+    with (Path(work_dir) / "delta_ledger.jsonl").open("a") as fh:
+        fh.write(json.dumps(row, sort_keys=True) + "\n")
+
+
+def _declared_campaign_totals(work_dir: Path, current: int, cd: dict | None) -> dict:
+    """``{epoch: total}`` for every epoch that declared ``campaign_delta``,
+    read from the campaigns each epoch registered (declarations, not data)."""
+    out: dict[int, float] = {}
+    for e in range(1, current):
+        p = Path(work_dir) / f"campaign.epoch-{e}.yaml"
+        if not p.exists():
+            continue
+        try:
+            import yaml
+
+            c = yaml.safe_load(p.read_text()) or {}
+            spec = (((c.get("optimization") or {}).get("policy") or {})
+                    .get("campaign_delta"))
+            if spec and spec.get("total") is not None:
+                out[e] = float(spec["total"])
+        except Exception as exc:  # noqa: BLE001 -- recorded, not hidden
+            logger.warning("could not read epoch %d's campaign_delta from %s: %s",
+                           e, p.name, exc)
+    if cd and cd.get("total") is not None:
+        out[current] = float(cd["total"])
+    return out
+
+
+def campaign_delta_exceeded(work_dir: Path, pol: dict) -> bool:
+    """True when a charged campaign-wide budget is declared and the cumulative
+    spend exceeds it: the epoch then certifies nothing (P2 review M2)."""
+    eb = error_budget(work_dir, pol)
+    return eb.get("mode") == "charged" and not eb.get("within_total", True)
 
 
 def error_budget(work_dir: Path, pol: dict) -> dict:
@@ -357,11 +410,12 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
         if d is None:
             unknown.append(e)
             epochs.append({"epoch": e, "delta_screen": None, "delta_terminal": None,
-                           "spent": None})
+                           "delta_constraint": None, "spent": None})
             continue
-        spent = d[0] + d[1]
+        spent = d[0] + d[1] + d[2]
         total += spent
         epochs.append({"epoch": e, "delta_screen": d[0], "delta_terminal": d[1],
+                       "delta_constraint": d[2],
                        "spent": spent,
                        "compiled_after_data": e > 1,
                        # An earlier epoch's policy.json was overwritten by the
@@ -371,17 +425,51 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
                        "deltas_from": ("this epoch's policy.json" if e == current
                                        else f"campaign.epoch-{e}.yaml recompiled by "
                                             f"the current Nous")})
+    cd = (pol.get("objective") or {}).get("campaign_delta")
+    declared = _declared_campaign_totals(work_dir, current, cd)
+    charged = {}
+    if declared:
+        # P2 review M2: the mode, once declared in ANY epoch, stays charged,
+        # and binds at the SMALLEST total ever declared -- a later epoch
+        # cannot raise it or drop the block to escape it.
+        binding_total = min(declared.values())
+        # #321 item 7: the CHARGED mode. Each epoch's share is spent when the
+        # epoch is compiled (pre-registered), whatever happens after: an epoch
+        # that certified, ended on an exception, or was STOPPED at a continue
+        # gate (recorded in delta_ledger.jsonl) is charged the same share.
+        stops = []
+        led = Path(work_dir) / "delta_ledger.jsonl"
+        if led.exists():
+            for ln in led.read_text().splitlines():
+                try:
+                    row = json.loads(ln)
+                except ValueError:
+                    continue
+                if row.get("event") == "stopped_at_continue_gate":
+                    stops.append(row)
+        charged = {"mode": "charged", "binding": True,
+                   "campaign_total": binding_total,
+                   "declared_totals": {str(k): v for k, v in sorted(declared.items())},
+                   "schedule": (cd or {}).get("schedule", "geometric"),
+                   "within_total": total <= binding_total + 1e-12,
+                   "stops_at_continue_gate": stops,
+                   "exhausted": bool((cd or {}).get("exhausted"))}
     return {
         "epochs": epochs,
         "this_epoch": epochs[-1]["spent"] if epochs else None,
         "cumulative": total,
+        **charged,
         # A lower bound when an earlier epoch's deltas could not be recovered.
         "cumulative_is_lower_bound": bool(unknown),
         "unrecovered_epochs": unknown,
         "accounting": ("union (Bonferroni) bound over epochs: each epoch spends "
-                       "delta_screen + delta_terminal, and epochs after the first "
+                       "delta_screen + delta_terminal (+ delta_constraint when "
+                       "constraint-model exclusion is registered), and epochs after the first "
                        "were compiled after earlier epochs' data were seen, so the "
                        "family-wise probability that ANY epoch's decision is wrong "
                        "is at most the sum. Certification is still judged per "
-                       "epoch at that epoch's deltas; this figure is informational."),
+                       "epoch at that epoch's deltas; this figure is informational "
+                       "unless optimization.policy.campaign_delta is declared, "
+                       "when each epoch's deltas ARE its share of that total and "
+                       "the sum is binding (mode: charged)."),
     }
