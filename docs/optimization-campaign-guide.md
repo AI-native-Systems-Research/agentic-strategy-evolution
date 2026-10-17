@@ -2801,6 +2801,22 @@ per-epoch deltas. Read it with three qualifications:
 - `cumulative_is_lower_bound` is true when an earlier epoch's campaign could not
   be recovered.
 
+**A binding campaign-wide budget (#321, opt-in).** Declare
+`optimization.policy.campaign_delta: {total: D}` and epoch `e` certifies at
+the share `D / 2^e`, or at the `e`-th entry of `schedule: [d_1, d_2, ...]`
+(whose sum the validator holds to `D`). The share is split over
+`delta_screen : delta_terminal (: delta_constraint)` in your declared
+proportions. Each share is a function of the declaration and the epoch index
+only, so it is fixed before any data. Then `Pr(any epoch certifies wrongly) ≤
+Σ_e share_e ≤ D` by the union bound, however the epochs were chosen.
+`error_budget` gains `mode: charged`, `binding: true` and `within_total`. A
+share is spent when the epoch's policy is compiled. An epoch stopped at a
+continue gate is charged the same and listed under `stops_at_continue_gate`.
+An epoch past a finite schedule certifies nothing
+(`campaign_delta_exhausted`). The cost is power: epoch 1 certifies at `D/2`,
+epoch 2 at `D/4`. Measured on the two-epoch test (total 0.1): 0.05 + 0.025 =
+0.075, against 0.15 spent without the mode.
+
 `certified` is still judged at this epoch's own deltas. Within an epoch,
 the stages are covered by the two halves above (`delta_screen` for the model
 family, `delta_terminal` for the terminal one), and the confirm rounds by

@@ -1269,6 +1269,27 @@ def _rule14_policy_ranges(opt: dict) -> list[str]:
                 f"measured as ahead. Use 0.05 (the default) or another value in "
                 f"(0, 0.5]."
             )
+    cd = pol.get("campaign_delta")
+    if cd is not None:
+        # #321 item 7: the charged cross-epoch budget.
+        if not isinstance(cd, dict) or not isinstance(cd.get("total"), (int, float)) \
+                or isinstance(cd.get("total"), bool) or not 0.0 < float(cd["total"]) <= 0.5:
+            errors.append("optimization.policy.campaign_delta must be {total: D, "
+                          "schedule: geometric | [d_1, d_2, ...]} with D in (0, 0.5].")
+        else:
+            sched = cd.get("schedule", "geometric")
+            if sched != "geometric":
+                if (not isinstance(sched, list) or not sched or any(
+                        not isinstance(x, (int, float)) or isinstance(x, bool)
+                        or not x > 0 for x in sched)):
+                    errors.append("optimization.policy.campaign_delta.schedule must be "
+                                  "'geometric' or a non-empty list of positive shares.")
+                elif sum(float(x) for x in sched) > float(cd["total"]) + 1e-12:
+                    errors.append(
+                        f"optimization.policy.campaign_delta.schedule sums to "
+                        f"{sum(float(x) for x in sched):g}, above total "
+                        f"{float(cd['total']):g}: the union bound over epochs would "
+                        f"not hold.")
     eps = pol.get("epsilon")
     if eps is not None:
         from orchestrator.optimize.objectives import is_epsilon_map

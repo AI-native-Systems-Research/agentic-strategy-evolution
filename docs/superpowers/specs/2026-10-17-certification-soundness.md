@@ -196,6 +196,7 @@ a valid claim at no extra runs, so the extra block is deferred (§7).
 | constraint exclusion within an epoch | δ_constraint | Bonferroni over the modelled constraints, only at `x*` (§6) |
 | one epoch's certificate | δ_screen + δ_terminal (+ δ_constraint) | union of the families (§2, §6) |
 | epochs | Σ_e (δ_s,e + δ_t,e) | recorded by WP-C in `report.json` `error_budget` (`cumulative`, union bound over epochs). Each epoch's certificate is judged at its own deltas. |
+| epochs, charged mode (#321) | `campaign_delta.total` D | epoch e certifies at share_e (D/2^e or a declared schedule, Σ ≤ D), split in the declared proportions; a stop at a continue gate is charged; `cumulative` is binding. |
 
 **The constraint-exclusion term (#321 P2 item 3, fixed).** Constraint-model
 exclusion removes a candidate when, for some modelled constraint, its

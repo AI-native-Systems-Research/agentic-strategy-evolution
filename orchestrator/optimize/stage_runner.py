@@ -7075,8 +7075,13 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         delta_c=pol["objective"].get("delta_constraint"),
         xhat_measured_infeasible=bool(_rec_for_bias.get("levels")) and
         _measured_infeasible_contains(work_dir, dict(_rec_for_bias["levels"])))
+    # #321 item 7: a charged campaign-wide budget whose share for THIS epoch is
+    # exhausted certifies nothing (the epoch may still answer, uncertified).
+    budget_exhausted = bool(((pol["objective"].get("campaign_delta") or {})
+                             .get("exhausted")))
     certified = (
-        bound.value is not None and eps is not None and bound.value <= eps
+        not budget_exhausted
+        and bound.value is not None and eps is not None and bound.value <= eps
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
         and not fit_bias and not model_inadequate and not refilled
         and not adequacy_unknown
@@ -7209,6 +7214,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("fit_exclusions_level_correlated", fit_bias),
                 ("model_inadequate", model_inadequate),
                 (adequacy_reason, adequacy_unknown),
+                ("campaign_delta_exhausted", budget_exhausted),
             ) if hit
         ] + ([] if pareto_stage.objectives(pol) else model_reasons),
         # The certificate's two halves and how they combine (WP-A A1).
@@ -7588,7 +7594,8 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
     certified = bool(pref["chosen"]) and chosen_ok and within and not unmeasured \
         and not infeasible_veto and not fit_bias and not model_inadequate \
         and not refilled and not eps_unknown and not incomplete \
-        and not adequacy_unknown and mh_reason is None
+        and not adequacy_unknown and mh_reason is None \
+        and not ((pol["objective"].get("campaign_delta") or {}).get("exhausted"))
     reasons = [r for r, hit in (
         ("no_admissible_finalist", no_admissible),
         ("no_feasible_rival", no_rival and not no_admissible),
@@ -7603,6 +7610,8 @@ def _finish_confirm_pareto(pol, work_dir, summary: dict, *, rec: dict, status: d
         (adequacy_unknown or "", bool(adequacy_unknown)),
         ("shortlist_refilled", refilled),
         (mh_reason or "", bool(mh_reason)),
+        ("campaign_delta_exhausted",
+         bool((pol["objective"].get("campaign_delta") or {}).get("exhausted"))),
     ) if hit]
     if not certified and not reasons:
         reasons = ["no_front_point"]

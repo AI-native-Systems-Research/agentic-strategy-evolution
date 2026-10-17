@@ -339,3 +339,64 @@ def test_the_preview_counts_replicates_times_two():
     pv = build_preview(c, noise_sd=None, mean=None, run_secs=None)
     st = next(x for x in pv.stages if x.stage == "validate")
     assert st.runs == 8 and not st.conditional
+
+
+# ── item 7: the charged cross-epoch budget ──────────────────────────────────
+
+def test_campaign_delta_shares_never_exceed_the_total():
+    from orchestrator.optimize.policy import campaign_delta_share
+
+    geo = {"total": 0.1}
+    assert sum(campaign_delta_share(geo, e) for e in range(1, 60)) <= 0.1
+    assert campaign_delta_share(geo, 1) == 0.05
+    sch = {"total": 0.1, "schedule": [0.06, 0.03]}
+    assert campaign_delta_share(sch, 3) == 0.0
+
+
+def test_an_epoch_certifies_at_its_share(tmp_path):
+    """Epoch 1 under total 0.1 (geometric) certifies at 0.05, split 1:1 over
+    delta_screen : delta_terminal -- 0.025 each, not the declared 0.05 each."""
+    from orchestrator.optimize.synthetic import SURFACES
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path,
+                               campaign_overrides={"policy": {"campaign_delta": {"total": 0.1}}})
+    assert r.report["delta_screen"] == r.report["delta_terminal"] == 0.025
+    eb = r.report["error_budget"]
+    assert eb["mode"] == "charged" and eb["binding"] and eb["within_total"]
+    assert abs(eb["cumulative"] - 0.05) < 1e-12
+
+
+def test_a_schedule_past_its_end_certifies_nothing(tmp_path, monkeypatch):
+    """Epoch 2 with a one-entry schedule has no share: withheld, named."""
+    from orchestrator.optimize import policy as pm
+    from orchestrator.optimize.synthetic import SURFACES
+
+    real = pm.compile_policy
+    monkeypatch.setattr(pm, "compile_policy",
+                        lambda c, **kw: real(c, **{**kw, "epoch": 2}))
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path,
+                               campaign_overrides={"policy": {"campaign_delta": {
+                                   "total": 0.1, "schedule": [0.1]}}})
+    assert not r.report["certified"]
+    assert "campaign_delta_exhausted" in r.report["certification_withheld"]
+
+
+def test_a_stop_at_a_continue_gate_is_charged(tmp_path):
+    from orchestrator.optimize.policy import read_policy
+    from orchestrator.optimize.provenance import error_budget, record_continue_gate_stop
+    from orchestrator.optimize.synthetic import SURFACES
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path,
+                               campaign_overrides={"policy": {"campaign_delta": {"total": 0.1}}})
+    record_continue_gate_stop(r.work_dir, iteration=3)
+    eb = error_budget(r.work_dir, read_policy(r.work_dir))
+    assert eb["stops_at_continue_gate"][0]["charged"] == 0.05
+    assert abs(eb["cumulative"] - 0.05) < 1e-12      # spent once, at compile
+
+
+def test_campaign_delta_is_validated():
+    from orchestrator.validate import _rule14_policy_ranges
+
+    assert _rule14_policy_ranges({"policy": {"campaign_delta": {"total": 0.1,
+                                                                "schedule": [0.08, 0.05]}}})
+    assert not _rule14_policy_ranges({"policy": {"campaign_delta": {"total": 0.1}}})

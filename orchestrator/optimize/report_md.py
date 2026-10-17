@@ -119,6 +119,9 @@ WITHHELD_MEANING = {
                                                  "front point on every objective "
                                                  "(the objective models cannot "
                                                  "rule it out)",
+    "campaign_delta_exhausted": "the declared campaign-wide error budget "
+                                "(policy.campaign_delta) has no share left for "
+                                "this epoch, so it certifies nothing",
     "model_bound_not_exhaustive": "the candidate space was searched, not "
                                   "enumerated, so the model bound is silent "
                                   "about candidates the search never evaluated",

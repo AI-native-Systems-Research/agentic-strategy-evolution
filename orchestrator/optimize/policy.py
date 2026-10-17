@@ -300,6 +300,29 @@ def _constraint_exclusion_registered(opt: dict) -> bool:
     return False
 
 
+def campaign_delta_share(spec: dict | None, epoch: int) -> float | None:
+    """Epoch ``epoch``'s share of a declared campaign-wide budget (#321 item 7).
+
+    ``spec`` is ``optimization.policy.campaign_delta``: ``{total: D,
+    schedule: "geometric"}`` gives ``D / 2^e`` (so the sum over every epoch
+    is at most ``D``), and ``{total: D, schedule: [d_1, d_2, ...]}`` gives
+    ``d_e`` (the validator checks ``sum d_e <= D``) and ``0`` past the list
+    -- an exhausted budget, which certifies nothing. A pure function of the
+    declaration and the epoch index, so every share is fixed before any data:
+    Pr(any epoch certifies wrongly) <= sum_e share_e <= D by the union bound,
+    however the epochs were chosen (each later epoch is compiled after the
+    earlier data were seen, which is why only a union bound is claimed).
+    ``None`` when the mode is not declared."""
+    if not spec:
+        return None
+    total = float(spec["total"])
+    sched = spec.get("schedule", "geometric")
+    if sched == "geometric":
+        return total / (2 ** int(epoch))
+    lst = [float(x) for x in sched]
+    return lst[epoch - 1] if 1 <= epoch <= len(lst) else 0.0
+
+
 def delta_stated(policy: dict) -> float:
     """The epoch's stated error budget: ``delta_screen + delta_terminal``,
     plus ``delta_constraint`` when constraint exclusion is registered."""
@@ -634,6 +657,30 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             {"from": "validate", "default": "report"},
         ]
 
+    cd_spec = pol_cfg.get("campaign_delta")
+    share = campaign_delta_share(cd_spec, int(epoch))
+    _ds = float(pol_cfg.get("delta_screen", 0.05))
+    _dt = float(pol_cfg.get("delta_terminal", 0.05))
+    _dc = (float(pol_cfg.get("delta_constraint", _ds))
+           if _constraint_exclusion_registered(opt) else 0.0)
+    cd_block = None
+    if share is not None:
+        # The epoch certifies at its SHARE, split over its union terms in the
+        # declared proportions (delta_screen : delta_terminal [: delta_constraint]).
+        declared = _ds + _dt + _dc
+        exhausted = not share > 0.0
+        scale = (share / declared) if not exhausted else 1.0
+        cd_block = {"total": float(cd_spec["total"]),
+                    "schedule": cd_spec.get("schedule", "geometric"),
+                    "epoch_share": float(share), "exhausted": bool(exhausted),
+                    "declared_split": {"delta_screen": _ds, "delta_terminal": _dt,
+                                       **({"delta_constraint": _dc} if _dc else {})},
+                    "rule": "epoch e certifies at share_e of the campaign-wide "
+                            "budget, split in the declared proportions; "
+                            "sum_e share_e <= total (union bound over epochs)"}
+        if not exhausted:
+            _ds, _dt, _dc = _ds * scale, _dt * scale, _dc * scale
+
     policy = {
         "policy_version": 1,
         "epoch": int(epoch),
@@ -649,8 +696,8 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             "epsilon": (dict(mo["objectives"][0]["epsilon"]) if mo
                         else dict(pol_cfg.get("epsilon") or {"pct": 2.0})),
             **(mo or {}),
-            "delta_screen": float(pol_cfg.get("delta_screen", 0.05)),
-            "delta_terminal": float(pol_cfg.get("delta_terminal", 0.05)),
+            "delta_screen": _ds,
+            "delta_terminal": _dt,
             # The THIRD union term (#321 P2 item 3). Constraint-model exclusion
             # removes a candidate whose one-sided bound sits confidently on the
             # violating side; the true constrained optimum x* is wrongly
@@ -662,9 +709,10 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # known at compile time, never after the data -- and charged even
             # if the constraint later turns out unmodellable (conservative).
             # Defaults to delta_screen, the level exclusion always used.
-            **({"delta_constraint": float(pol_cfg.get(
-                "delta_constraint", pol_cfg.get("delta_screen", 0.05)))}
+            **({"delta_constraint": _dc}
                if _constraint_exclusion_registered(opt) else {}),
+            # #321 item 7: the charged cross-epoch mode, when declared.
+            **({"campaign_delta": cd_block} if cd_block is not None else {}),
         },
         "budget": {"max_runs": design.get("max_runs")},
         "known_valid_baseline": opt.get("known_valid_baseline"),

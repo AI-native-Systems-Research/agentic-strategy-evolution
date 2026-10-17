@@ -28,6 +28,8 @@ compares them against the files it re-reads before trusting anything else.
 """
 from __future__ import annotations
 
+import json
+
 import hashlib
 import functools
 import inspect
@@ -352,6 +354,21 @@ def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[flo
         return None
 
 
+def record_continue_gate_stop(work_dir: Path, *, iteration: int) -> None:
+    """Append the stop to ``delta_ledger.jsonl`` with the epoch's share (#321
+    item 7). The share stays spent; the row only makes the stop visible in
+    ``error_budget``. A no-op without a compiled policy."""
+    from orchestrator.optimize.policy import delta_stated, read_policy
+
+    pol = read_policy(Path(work_dir))
+    if pol is None:
+        return
+    row = {"event": "stopped_at_continue_gate", "iteration": int(iteration),
+           "epoch": int(pol.get("epoch", 1)), "charged": delta_stated(pol)}
+    with (Path(work_dir) / "delta_ledger.jsonl").open("a") as fh:
+        fh.write(json.dumps(row, sort_keys=True) + "\n")
+
+
 def error_budget(work_dir: Path, pol: dict) -> dict:
     """The cumulative (union-bound) error budget over every epoch so far."""
     current = int(pol.get("epoch", 1))
@@ -376,10 +393,34 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
                        "deltas_from": ("this epoch's policy.json" if e == current
                                        else f"campaign.epoch-{e}.yaml recompiled by "
                                             f"the current Nous")})
+    cd = (pol.get("objective") or {}).get("campaign_delta")
+    charged = {}
+    if cd:
+        # #321 item 7: the CHARGED mode. Each epoch's share is spent when the
+        # epoch is compiled (pre-registered), whatever happens after: an epoch
+        # that certified, ended on an exception, or was STOPPED at a continue
+        # gate (recorded in delta_ledger.jsonl) is charged the same share.
+        stops = []
+        led = Path(work_dir) / "delta_ledger.jsonl"
+        if led.exists():
+            for ln in led.read_text().splitlines():
+                try:
+                    row = json.loads(ln)
+                except ValueError:
+                    continue
+                if row.get("event") == "stopped_at_continue_gate":
+                    stops.append(row)
+        charged = {"mode": "charged", "binding": True,
+                   "campaign_total": float(cd["total"]),
+                   "schedule": cd.get("schedule", "geometric"),
+                   "within_total": total <= float(cd["total"]) + 1e-12,
+                   "stops_at_continue_gate": stops,
+                   "exhausted": bool(cd.get("exhausted"))}
     return {
         "epochs": epochs,
         "this_epoch": epochs[-1]["spent"] if epochs else None,
         "cumulative": total,
+        **charged,
         # A lower bound when an earlier epoch's deltas could not be recovered.
         "cumulative_is_lower_bound": bool(unknown),
         "unrecovered_epochs": unknown,
@@ -389,5 +430,8 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
                        "were compiled after earlier epochs' data were seen, so the "
                        "family-wise probability that ANY epoch's decision is wrong "
                        "is at most the sum. Certification is still judged per "
-                       "epoch at that epoch's deltas; this figure is informational."),
+                       "epoch at that epoch's deltas; this figure is informational "
+                       "unless optimization.policy.campaign_delta is declared, "
+                       "when each epoch's deltas ARE its share of that total and "
+                       "the sum is binding (mode: charged)."),
     }
