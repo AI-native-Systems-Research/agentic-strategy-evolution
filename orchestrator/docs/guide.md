@@ -2590,6 +2590,18 @@ Each withheld reason names the half that failed:
 - `model_recommendation_not_compared` / `model_recommendation_infeasible`:
   the fitted argmax was not measured admissibly in the final round, so the
   model bound cannot be linked to the winner.
+- `baseline_measured_inadmissible`: the declared `known_valid_baseline`,
+  seated as the reference finalist, measured inadmissible.
+
+**What a later confirm round costs.** Round r > 1 re-seats the previous
+winner, the fitted argmax and every finalist still above ε, then tops up to
+`shortlist_size` from the model's ranking. So `runs_needed_confirm` (the
+affordability guard's estimate) is always `shortlist_size × replicates`, plus
+`replicates` for the baseline seat unless the baseline is already carried
+inside the cap. It is an upper bound on the round, so a declined round is
+never one the budget could pay for twice over, and an accepted round never
+overspends `max_runs`. (Before #321 the estimate was the carry-over alone:
+24 of 96 probe campaigns with 4 registered rounds overspent `max_runs`.)
 
 Measured on the stage-0 noise sweep (2016 campaigns), this took false
 certificates from 17 to 0 (the spec has the table). It is NOT free: it costs
@@ -2733,9 +2745,11 @@ What a certificate does NOT cover (spec
    is not. Report the interval.
 7. **The fitted argmax is kept on every confirm round** (it links the model
    half to the winner), at a cost of up to `replicates` runs per round.
-8. **A baseline that measures inadmissible** vetoes the round like any
-   finalist (`finalist_measured_infeasible`). You declared it valid, so the
-   contradiction is evidence and is never silenced.
+8. **A baseline that measures inadmissible** vetoes the round under its own
+   reason, `baseline_measured_inadmissible` (`finalist_measured_infeasible`
+   then names only the other finalists). You declared it valid, so the
+   contradiction is evidence about the declaration or the constraint, and it
+   is never silenced.
 9. **Multi-objective certificates** do not use the global bound or the
    baseline seat. They use alpha-spending over looks and the front's own
    rules (INV-SEM18).

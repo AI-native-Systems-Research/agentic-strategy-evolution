@@ -104,6 +104,10 @@ WITHHELD_MEANING = {
     "model_bound_not_computable": "no model bound exists for this epoch (no "
                                   "fitting stage, or no pure error), so nothing "
                                   "bounds what screening left out",
+    "baseline_measured_inadmissible": "the declared known_valid_baseline was "
+                                      "measured inadmissible: the declaration "
+                                      "contradicts a measurement, so check the "
+                                      "baseline or the constraint",
     "model_bound_not_exhaustive": "the candidate space was searched, not "
                                   "enumerated, so the model bound is silent "
                                   "about candidates the search never evaluated",

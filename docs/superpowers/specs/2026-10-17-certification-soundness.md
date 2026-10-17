@@ -198,11 +198,14 @@ term in the strict sense, and it is not yet added to the stated budget (§7).
 - The refill look is charged in `confirm_looks` but a refill round never
   certifies (`shortlist_refilled`), so the +1 costs power without buying
   validity: deliberate conservatism.
-- `_baseline_seat_extra` adds a seat even when the baseline is already a
-  finalist, so `runs_needed_confirm` can over-count by one seat and
-  `confirm_affordable` can stop a round early.
-- A baseline measured inadmissible vetoes the round (deliberate; it has no
-  dedicated withheld reason yet).
+- FIXED (#321 P2): `_baseline_seat_extra` no longer counts a seat when the
+  baseline is carried inside the cap. Fixing it exposed the opposite defect:
+  `_next_round_finalists` costed round r+1 at its carry-over, but
+  `_confirm_rows` tops a round up to `shortlist_size`, so 24/96 probe
+  campaigns (bowl/additive, noise 0.4, 4 rounds, max_runs 30-50) overspent
+  `max_runs`. The estimate is now `shortlist_size` (+ the baseline seat).
+- FIXED (#321 P2): a baseline measured inadmissible still vetoes, under its
+  own reason `baseline_measured_inadmissible`.
 - `test_spending_holds_the_sequential_error_at_delta` checks certificate
   arithmetic only; product-path coverage is `test_every_confirm_look_is_charged`.
 - Paired (CRN) gain intervals are not exercised end to end: the synthetic
@@ -237,8 +240,9 @@ term in the strict sense, and it is not yet added to the stated budget (§7).
 8. **Bonferroni conservatism.** Large X with few pure-error df gives a wide
    `R_model,out`; expect `model_bound_above_epsilon`. The remedy is more
    centre points (more pure-error df), not a weaker rule.
-9. **A baseline measured inadmissible** vetoes the round like any finalist.
-   The baseline is declared valid, so the contradiction is evidence.
+9. **A baseline measured inadmissible** vetoes the round, named
+   `baseline_measured_inadmissible` (#321 P2). The baseline is declared
+   valid, so the contradiction is evidence.
 
 ## 8. Evidence
 

@@ -6838,6 +6838,9 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     winner_levels = next(
         (f["levels"] for f in fin if f["key"] == best), {},
     )
+    _kvb = pol.get("known_valid_baseline")
+    _base_key = next((f["key"] for f in fin if _kvb
+                      and _same_levels(dict(f["levels"]), dict(_kvb))), None)
     summary = {
         "stage": stage_name,
         "iteration": iteration,
@@ -6881,8 +6884,17 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                  bound.value is not None and eps is not None
                  and bound.value > eps),
                 ("finalist_measured_infeasible",
-                 any(s == "infeasible" for s in status.values())
+                 any(s == "infeasible" for k_, s in status.items()
+                     if k_ != _base_key)
                  and not infeasible_caveat),
+                # The DECLARED known_valid_baseline measured inadmissible
+                # (#321): the author's "this configuration works" contradicts
+                # a measurement, which says something about the declaration or
+                # the constraint, not about screening's ranking -- so it is
+                # named apart from an ordinary inadmissible finalist. It still
+                # vetoes: a contradiction is evidence and is never silenced.
+                ("baseline_measured_inadmissible",
+                 _base_key is not None and status.get(_base_key) == "infeasible"),
                 # A certificate needs at least one MEASURED-FEASIBLE rival: with
                 # every other finalist inadmissible, R_terminal = 0 bounds the
                 # winner against nothing (a real campaign: 2 of 3 finalists
@@ -7147,13 +7159,17 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         max(1, int(_cfg.get("shortlist_size", 3))) if "pareto" in summary
         else _next_round_finalists(
             summary, shortlist_size=_cfg.get("shortlist_size", 3),
-            baseline_seat=_baseline_seat_extra(pol, summary))
+            baseline_seat=_baseline_seat_extra(
+                pol, summary, shortlist_size=_cfg.get("shortlist_size", 3)))
     )
     if "finalists_vacated" in obs and obs["feasible_finalists"] < 2 \
             and obs["refill_available"]:
         # A refill round re-seats the survivors AND every vacated seat.
+        # The refill re-seats from the ranking, which may or may not hold the
+        # baseline, so its extra seat stays counted (an upper bound).
         carry = max(1, int(_cfg.get("shortlist_size", 3))) + (
-            1 if _baseline_seat_extra(pol, summary) else 0)
+            1 if pol.get("known_valid_baseline")
+            and not pareto_stage.objectives(pol) else 0)
     obs["runs_needed_confirm"] = carry * max(1, int(_cfg.get("replicates", 3)))
     obs["confirm_affordable"] = (
         obs["budget_remaining"] >= obs["runs_needed_confirm"]
@@ -7359,12 +7375,55 @@ def _refill_candidates(work_dir, factors, warnings: list | None = None) -> list[
     return out
 
 
-def _baseline_seat_extra(pol: dict, summary: dict) -> bool:
-    """Will the next round seat the baseline OUTSIDE the shortlist cap (A3)?"""
+def _baseline_seat_extra(pol: dict, summary: dict, *, shortlist_size=None) -> bool:
+    """Will the next round seat the baseline OUTSIDE the shortlist cap (A3)?
+
+    ``_confirm_rows`` appends the baseline beyond ``shortlist_size`` only when
+    it is NOT already a finalist. When the round-r carry-over already contains
+    it (it won, or its bound still exceeds epsilon) AND the carry-over fits in
+    the cap, it occupies one of the counted seats, so counting an extra seat
+    would over-state the next round's cost by ``replicates`` runs and let
+    ``confirm_affordable`` decline a round the budget can pay for (#321,
+    WP-A review). Any other case -- an empty carry-over (the round-1 ladder
+    re-seats from the ranking, which may or may not contain it), or a carry-over
+    that, with the fitted argmax's seat, could be truncated at the cap -- keeps
+    the extra seat: the estimate must stay an UPPER bound on the next round's
+    spend.
+    """
     base = pol.get("known_valid_baseline")
     if not base or pareto_stage.objectives(pol):
         return False
+    if shortlist_size is None:
+        shortlist_size = ((pol.get("states") or {}).get("confirm") or {}).get(
+            "design", {}).get("shortlist_size", 3)
+    k = max(1, int(shortlist_size or 3))
+    carry = _carry_keys(summary)
+    bkey = next((f["key"] for f in summary.get("finalists") or []
+                 if _same_levels(dict(f.get("levels") or {}), dict(base))), None)
+    # `+ 1`: the fitted argmax is also seated ahead of the carried finalists
+    # and need not be one of them, so only a carry-over with room for it is
+    # known to seat the baseline inside the cap.
+    if bkey is not None and bkey in carry and len(carry) + 1 <= k:
+        return False
     return True
+
+
+def _carry_keys(summary: dict) -> set:
+    """The finalist keys round r+1 carries over (``_confirm_rows``'s rule):
+    the previous winner plus every ``ok`` finalist whose bound is not KNOWN to
+    be at or below epsilon (``None`` is unknown, not small)."""
+    eps = summary.get("epsilon")
+    bounds = summary.get("bounds") or {}
+    best = summary.get("best")
+    carry = {
+        f["key"] for f in (summary.get("finalists") or [])
+        if f.get("status") == "ok" and (
+            eps is None or bounds.get(f["key"]) is None or bounds[f["key"]] > eps
+        )
+    }
+    if best:
+        carry.add(best)
+    return carry
 
 
 def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict | None:
@@ -7508,43 +7567,25 @@ def _refill_round(pol, work_dir) -> bool:
 
 def _next_round_finalists(summary: dict, *, shortlist_size,
                           baseline_seat: bool = False) -> int:
-    """How many finalists a round r+1 would seat, by `_confirm_rows`'s own rule.
+    """An UPPER BOUND on how many finalists round r+1 seats.
 
-    Mirrors the ``rnd > 1`` carry-over branch there: the previous round's winner
-    plus every ``ok`` finalist whose per-challenger bound is not KNOWN to be at
-    or below epsilon (``None`` is unknown, not small — an uncomputed bound has
-    not retired its challenger). Kept as a separate function so the cost
-    estimate and the shortlist it estimates cannot drift apart silently: if
-    ``_confirm_rows``'s rule changes, this is the one other place to change.
-
-    AN EMPTY CARRY-OVER COSTS ``shortlist_size``, NOT ZERO AND NOT ONE. When
-    nothing survives — every finalist excluded on measured invalidity, or every
-    bound already at or below epsilon — ``_confirm_rows`` does not run a smaller
-    round; its ``if not finalists:`` branch falls through to the ROUND-1 LADDER
-    and re-seats up to ``shortlist_size`` seats from ``recommendation.json`` /
-    ``_top_measured``. Returning 1 there would under-estimate the round by up to
-    a factor of ``shortlist_size`` and let the affordability guard wave through
-    exactly the round it exists to decline — the same class of defect as
-    ``budget_remaining < 1`` being the only guard. The estimate must be an upper
+    ``_confirm_rows``'s ``rnd > 1`` branch seats the previous winner, the
+    fitted argmax (WP-A A1) and every ``ok`` finalist whose bound still exceeds
+    epsilon -- and then TOPS UP to ``shortlist_size`` from the model's ranking
+    whenever fewer remain (the top-up block), and an empty carry-over falls
+    through to the round-1 ladder, which also fills ``shortlist_size``. So
+    every round r > 1 seats up to ``shortlist_size`` whatever carried over.
+    The estimate used to be the carry-over count alone, which ignored the
+    top-up: measured on bowl / additive at noise 0.4 with confirm_max_rounds 4
+    and max_runs 30-50, 29 of 96 campaigns overspent ``max_runs`` (a round
+    estimated at 3 runs spent 9; #321 P2). The estimate must be an upper
     bound on what the next round actually spends, or it is not a guard.
+
+    The permanent baseline seat (WP-A A3) sits outside the cap when it is not
+    already one of the seated finalists (``_baseline_seat_extra``).
     """
     k = max(1, int(shortlist_size or 3))
-    eps = summary.get("epsilon")
-    bounds = summary.get("bounds") or {}
-    best = summary.get("best")
-    carry = {
-        f["key"] for f in (summary.get("finalists") or [])
-        if f.get("status") == "ok" and (
-            eps is None or bounds.get(f["key"]) is None or bounds[f["key"]] > eps
-        )
-    }
-    if best:
-        carry.add(best)
-    # `_confirm_rows` caps the shortlist at `k` regardless of how many the
-    # carry-over rule nominates, so the estimate caps there too -- plus the
-    # permanent baseline seat (WP-A A3), which sits outside the cap.
-    base = 1 if baseline_seat else 0
-    return (min(k, len(carry)) if carry else k) + base
+    return k + (1 if baseline_seat else 0)
 
 
 def _confirm_epsilon(spec: dict, work_dir, metric: str, *, direction: str,
