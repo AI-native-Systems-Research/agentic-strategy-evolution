@@ -517,30 +517,106 @@ def _resolve_interpreter(tok: str, cwd: Path) -> tuple[str | None, str | None]:
     return exe, None
 
 
-def _interpreters(cmd: str, cwd: Path) -> tuple[list[tuple[str, list[str]]], list[str]]:
-    """``([(exe, flags)], undetermined_reasons)``. ``flags`` are the
-    interpreter's own options (e.g. ``-S``, ``-I``) so the probe runs the same
-    way the command will."""
+#: Wrappers that run the rest of the command line unchanged; unwrapped before
+#: the interpreter is determined. ``{name: number of option ARGUMENTS taken by
+#: the options listed}`` is handled per wrapper below.
+_WRAPPERS = frozenset({"timeout", "gtimeout", "nice", "time", "nohup", "env", "ionice",
+                       "taskset", "chrt", "stdbuf", "caffeinate"})
+#: Python options that take a separate argument.
+_PY_ARG_FLAGS = frozenset({"-W", "-X", "-Q"})
+
+
+def _unwrap(toks: list[str]) -> tuple[list[str], dict[str, str], str | None]:
+    """Strip known wrappers from the front. Returns ``(rest, env_assignments,
+    reason)``; ``reason`` is set when a wrapper's arguments cannot be parsed."""
+    env: dict[str, str] = {}
+    i = 0
+    while i < len(toks):
+        name = Path(toks[i]).name
+        if name not in _WRAPPERS:
+            break
+        i += 1
+        if name in ("timeout", "gtimeout"):
+            while i < len(toks) and toks[i].startswith("-"):
+                i += 2 if toks[i] in ("-s", "--signal", "-k", "--kill-after") else 1
+            i += 1                                   # the duration
+        elif name == "nice":
+            if i < len(toks) and toks[i] == "-n":
+                i += 2
+            elif i < len(toks) and toks[i].startswith("-"):
+                i += 1
+        elif name == "time":
+            while i < len(toks) and toks[i].startswith("-"):
+                i += 2 if toks[i] in ("-o", "-f") else 1
+        elif name == "env":
+            while i < len(toks):
+                t = toks[i]
+                if t in ("-i", "--ignore-environment"):
+                    return [], {}, "`env -i` replaces the environment; not probed"
+                if t in ("-u", "--unset"):
+                    i += 2
+                    continue
+                if t.startswith("-"):
+                    return [], {}, f"`env {t}` is not understood; not probed"
+                if "=" in t and not t.startswith("="):
+                    k, v = t.split("=", 1)
+                    env[k] = v
+                    i += 1
+                    continue
+                break
+        elif name in ("ionice", "taskset", "chrt", "stdbuf"):
+            while i < len(toks) and toks[i].startswith("-"):
+                i += 2 if len(toks[i]) == 2 else 1
+            if name in ("taskset", "chrt") and i < len(toks) and not toks[i].startswith("-"):
+                i += 1
+        elif name == "caffeinate":
+            while i < len(toks) and toks[i].startswith("-"):
+                i += 1
+    return toks[i:], env, None
+
+
+def _interpreters(cmd: str, cwd: Path) -> tuple[list[tuple[str, list[str], dict]], list[str]]:
+    """``([(exe, flags, env)], undetermined_reasons)``.
+
+    Known wrappers (``timeout``, ``nice``, ``time``, ``env A=B``, ...) are
+    unwrapped first; ``env`` assignments are passed to the probe. When what is
+    left does not start with a Python interpreter -- a launcher, a script such
+    as ``./bench.sh``, any other program -- the command is NOT probed and that
+    is recorded (round 5, item 3). ``flags`` are the interpreter's own options,
+    each with its argument (``-W ignore``, ``-X dev``)."""
     import shlex
 
     try:
         toks = shlex.split(cmd)
     except ValueError as exc:
         return [], [f"`{cmd[:60]}` cannot be parsed ({exc})"]
+    toks, env, why = _unwrap(toks)
+    if why:
+        return [], [why]
     if not toks:
-        return [], []
+        return [], [f"`{cmd[:60]}` has no program after its wrappers"]
     exe, why = _resolve_interpreter(toks[0], cwd)
     if why:
         return [], [why]
     if exe is None:
-        return [], []                    # not a Python command: nothing to probe
-    flags = []
-    for t in toks[1:]:
-        if t.startswith("-") and t not in ("-m", "-c") and len(t) <= 3:
-            flags.append(t)
-        else:
+        return [], [f"`{Path(toks[0]).name}` is not a Python interpreter Nous can probe "
+                    f"(a script or another program); what it imports is not known"]
+    flags: list[str] = []
+    i = 1
+    while i < len(toks):
+        t = toks[i]
+        if t in ("-m", "-c") or not t.startswith("-") or t == "-":
             break
-    return [(exe, flags)], []
+        if t in _PY_ARG_FLAGS and i + 1 < len(toks):
+            flags += [t, toks[i + 1]]
+            i += 2
+            continue
+        if t.startswith(("-W", "-X")) or (len(t) <= 3 and t[1:].isalpha()):
+            flags.append(t)
+            i += 1
+            continue
+        break
+    return [(exe, flags, env)], []
 
 
 def probe_imports(dest: Path, repo: Path, commands: list[str], *,
@@ -563,12 +639,12 @@ def probe_imports(dest: Path, repo: Path, commands: list[str], *,
         found, reasons = _interpreters(cmd, dest)
         for r in reasons:
             record["not_probed"].append({"command": cmd, "reason": r})
-        for exe, flags in found:
+        for exe, flags, cmd_env in found:
             try:
                 with fresh_pycache() as env:
                     proc = subprocess.run([exe, *flags, "-c", _PROBE], cwd=str(dest),
-                                          env=env, capture_output=True, text=True,
-                                          timeout=120)
+                                          env={**env, **cmd_env}, capture_output=True,
+                                          text=True, timeout=120)
             except (OSError, subprocess.SubprocessError) as exc:
                 raise CleanTreeError(f"the import probe for `{cmd[:60]}` could not run "
                                      f"({exc}); the clean tree cannot be shown to import "
@@ -587,7 +663,8 @@ def probe_imports(dest: Path, repo: Path, commands: list[str], *,
                     f"the import probe for `{cmd[:60]}` printed something unparseable "
                     f"({exc}); the clean tree cannot be shown to import only from itself"
                 ) from exc
-            record["probed"].append({"command": cmd, "interpreter": exe, "flags": flags})
+            record["probed"].append({"command": cmd, "interpreter": exe, "flags": flags,
+                                     "env": sorted(cmd_env)})
             bad = sorted({r for r in roots
                           if str(Path(r).resolve()) == repo_r
                           or str(Path(r).resolve()).startswith(repo_r + os.sep)})

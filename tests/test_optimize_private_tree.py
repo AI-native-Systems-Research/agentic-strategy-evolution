@@ -460,3 +460,53 @@ def test_a_deleted_key_is_never_replaced_by_a_new_one(setup):
     with pytest.raises(gr.GateRecordError, match="missing"):
         gr.seal(wd, [ct.MANIFEST])
     assert not gr.key_path(wd).exists()
+
+
+# ─── round 5, item 3: wrappers unwrapped, others recorded, flag arguments ────
+
+
+@pytest.mark.parametrize("wrap", ["timeout 600", "nice -n 5", "/usr/bin/time", "time -p",
+                                  "nohup", "env FOO=1"])
+def test_a_wrapped_interpreter_with_a_path_into_the_repo_is_refused(setup, wrap):
+    import sys
+
+    repo, wd = setup
+    cmd = f"{wrap} env PYTHONPATH={repo} {sys.executable} harness.py"
+    with pytest.raises(ct.CleanTreeError, match="would import from"):
+        ct.probe_imports(wd, repo, [cmd], work_dir=wd)
+
+
+def test_an_env_assignment_pointing_into_the_repo_is_refused(setup):
+    import sys
+
+    repo, wd = setup
+    with pytest.raises(ct.CleanTreeError, match="would import from"):
+        ct.probe_imports(wd, repo, [f"env PYTHONPATH={repo} {sys.executable} harness.py"],
+                         work_dir=wd)
+
+
+@pytest.mark.parametrize("cmd", ["./bench.sh", "bash bench.sh", "node bench.js",
+                                 "env -i python harness.py"])
+def test_a_non_python_or_unparseable_wrapper_is_recorded_as_not_probed(setup, cmd):
+    from orchestrator.optimize.provenance import waivers
+
+    repo, wd = setup
+    ct.probe_imports(wd, repo, [cmd], work_dir=wd)
+    rec = json.loads((wd / ct.PROBE_RECORD).read_text())
+    assert rec["not_probed"] and rec["not_probed"][0]["command"] == cmd, rec
+    (wd / "pre_build_tests.json").write_text("{}")
+    assert any(w["gate"] == "clean_tree_import_probe" for w in waivers(wd, {}))
+
+
+@pytest.mark.parametrize("flags", [["-W", "ignore"], ["-X", "dev"], ["-Wignore"], ["-I"],
+                                   ["-X", "utf8", "-W", "error"]])
+def test_interpreter_flags_with_arguments_are_kept_together(setup, flags):
+    """An honest `python -W ignore bench.py` must be probed as such, not split
+    into `python -W` + a script called `ignore`."""
+    import sys
+
+    repo, wd = setup
+    cmd = f"{sys.executable} {' '.join(flags)} harness.py"
+    ct.probe_imports(wd, repo, [cmd], work_dir=wd)
+    rec = json.loads((wd / ct.PROBE_RECORD).read_text())
+    assert rec["probed"][0]["flags"] == flags and not rec["not_probed"]
