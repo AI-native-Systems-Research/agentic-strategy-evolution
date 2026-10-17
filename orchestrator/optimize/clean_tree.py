@@ -487,37 +487,46 @@ LAUNCHERS = frozenset({"uv", "uvx", "conda", "mamba", "micromamba", "poetry", "p
 SHIM_DIRS = (".pyenv/shims", ".asdf/shims", ".rbenv/shims", "shims")
 
 
-def _resolve_interpreter(tok: str, cwd: Path, path: str | None = None
-                         ) -> tuple[str | None, str | None]:
+def exec_lookup(name: str, cwd: Path, env: dict) -> str | None:
+    """The file ``execvp(name)`` would run for a child whose environment is
+    ``env`` and whose working directory is ``cwd``: exactly the search
+    CPython's subprocess and ``env``/``timeout``/... perform. ``PATH`` comes
+    from ``env`` (``os.defpath`` when unset), and every relative or EMPTY entry
+    is anchored at ``cwd``, which is where the child resolves it, never Nous's
+    own cwd (round 7). A name containing ``/`` is not searched."""
+    if "/" in name:
+        p = Path(name) if os.path.isabs(name) else Path(cwd) / name
+        return str(p) if p.is_file() and os.access(p, os.X_OK) else None
+    for d in os.get_exec_path(env):
+        base = Path(d) if d and os.path.isabs(d) else Path(cwd) / d
+        cand = base / name
+        if cand.is_file() and os.access(cand, os.X_OK):
+            return str(cand)
+    return None
+
+
+def _resolve_interpreter(tok: str, cwd: Path, env: dict) -> tuple[str | None, str | None]:
     """``(executable, None)`` for a Python interpreter the command runs
     DIRECTLY, ``(None, reason)`` when what runs cannot be determined, and
-    ``(None, None)`` when the token is not a Python launcher at all.
-
-    ``path`` is the command's EFFECTIVE ``PATH`` -- the target environment's,
-    overridden by an ``env PATH=...`` wrapper -- never Nous's own: resolving a
-    bare ``python`` with Nous's PATH probed a different interpreter from the
-    one the command runs (round 6, item 1)."""
+    ``(None, None)`` when the token is not a Python launcher at all. ``env`` is
+    the child's EXACT environment (``child_env``)."""
     name = Path(tok).name
     if name in LAUNCHERS:
         return None, f"`{name}` launches another program; its interpreter is not known"
     is_py = name.startswith("python") or name in ("pytest", "py.test")
     if not is_py:
         return None, None
-    if os.path.isabs(tok):
-        exe = tok
-    elif "/" in tok:
-        exe = str(cwd / tok)
-    else:
-        exe = shutil.which(tok, path=path)
+    exe = exec_lookup(tok, cwd, env)
     if not exe:
-        return None, f"`{tok}` is not on PATH"
+        return None, (f"`{tok}` is not found on the command's PATH "
+                      f"({env.get('PATH', os.defpath + ' (default)')})")
     real = os.path.realpath(exe)
     if any(sd in exe for sd in SHIM_DIRS) or any(sd in real for sd in SHIM_DIRS):
         return None, f"`{tok}` is a version-manager shim ({exe}); what it runs depends on configuration"
     if name in ("pytest", "py.test"):
         try:
             first = Path(exe).read_text(errors="replace").splitlines()[0]
-        except (OSError, IndexError):
+        except (OSError, IndexError, UnicodeDecodeError):
             return None, f"cannot read the interpreter of {exe}"
         if not first.startswith("#!"):
             return None, f"{exe} has no interpreter line"
@@ -529,25 +538,33 @@ def _resolve_interpreter(tok: str, cwd: Path, path: str | None = None
 
 
 #: Wrappers that run the rest of the command line unchanged; unwrapped before
-#: the interpreter is determined. Per wrapper: the short options that take a
-#: SEPARATE argument (an attached form such as ``-sKILL`` needs none), the long
-#: options that take one (``--signal KILL``; ``--signal=KILL`` needs none), and
-#: how many positional arguments precede the wrapped command (``timeout 5``,
-#: ``taskset 0x1``, ``chrt 10``). The guide's list is generated from this
-#: table's keys (tests/test_optimize_guide_security_claims.py compares them).
-WRAPPER_SPECS: dict[str, tuple[frozenset, frozenset, int]] = {
-    "timeout": (frozenset({"-s", "-k"}), frozenset({"--signal", "--kill-after"}), 1),
-    "gtimeout": (frozenset({"-s", "-k"}), frozenset({"--signal", "--kill-after"}), 1),
-    "nice": (frozenset({"-n"}), frozenset({"--adjustment"}), 0),
-    "time": (frozenset({"-o", "-f"}), frozenset({"--output", "--format"}), 0),
-    "nohup": (frozenset(), frozenset(), 0),
-    "ionice": (frozenset({"-c", "-n", "-p", "-P", "-u"}),
-               frozenset({"--class", "--classdata", "--pid", "--pgid", "--uid"}), 0),
-    "taskset": (frozenset(), frozenset(), 1),
-    "chrt": (frozenset({"-T", "-P", "-D"}),
-             frozenset({"--sched-runtime", "--sched-period", "--sched-deadline"}), 1),
-    "stdbuf": (frozenset({"-i", "-o", "-e"}), frozenset({"--input", "--output", "--error"}), 0),
-    "caffeinate": (frozenset({"-t", "-w"}), frozenset(), 0),
+#: the interpreter is determined. Each is modelled EXACTLY, getopt-style:
+#:   (short flags taking no argument, short options taking one,
+#:    long flags taking none, long options taking one,
+#:    options that make the wrapper NOT run a command (refused: not probed),
+#:    positional arguments before the wrapped command)
+#: Anything outside the model -- an unknown or abbreviated option, a combined
+#: short flag the table does not describe -- is AMBIGUOUS and the command is
+#: recorded as not probed rather than guessed at (round 7). The guide's list is
+#: generated from this table's keys.
+WRAPPER_SPECS: dict[str, tuple] = {
+    "timeout": ("vfp", "sk", {"--foreground", "--preserve-status", "--verbose"},
+                {"--signal", "--kill-after"}, set(), 1),
+    "gtimeout": ("vfp", "sk", {"--foreground", "--preserve-status", "--verbose"},
+                 {"--signal", "--kill-after"}, set(), 1),
+    "nice": ("", "n", set(), {"--adjustment"}, set(), 0),
+    "time": ("ahlpvq", "of", {"--append", "--portability", "--verbose", "--quiet"},
+             {"--output", "--format"}, set(), 0),
+    "nohup": ("", "", set(), set(), set(), 0),
+    "ionice": ("t", "cn", {"--ignore"}, {"--class", "--classdata"},
+               {"-p", "-P", "-u", "--pid", "--pgid", "--uid"}, 0),
+    "taskset": ("ca", "", {"--cpu-list", "--all-tasks"}, set(), {"-p", "--pid"}, 1),
+    "chrt": ("bdfiorR", "TPD", {"--batch", "--deadline", "--fifo", "--idle", "--other",
+                                "--rr", "--reset-on-fork"},
+             {"--sched-runtime", "--sched-period", "--sched-deadline"},
+             {"-p", "--pid", "-m", "--max"}, 1),
+    "stdbuf": ("", "ioe", set(), {"--input", "--output", "--error"}, set(), 0),
+    "caffeinate": ("dimsu", "tw", set(), set(), set(), 0),
 }
 _WRAPPERS = frozenset(WRAPPER_SPECS) | {"env"}
 
@@ -556,127 +573,261 @@ def wrapper_list_markdown() -> str:
     """The guide's list of unwrapped wrappers, generated from WRAPPER_SPECS so
     the two cannot drift (tests/test_optimize_guide_security_claims.py)."""
     return ", ".join(f"`{w}`" for w in WRAPPER_SPECS) + ", `env A=B`"
-#: Python options that take a separate argument.
-_PY_ARG_FLAGS = frozenset({"-W", "-X", "-Q"})
-_PY_LONG_ARG_FLAGS = frozenset({"--check-hash-based-pycs"})
 
 
-def _skip_wrapper(name: str, toks: list[str], i: int) -> int | None:
-    """Index just past wrapper ``name``'s own options and positionals, or None
-    when they cannot be parsed."""
-    short_arg, long_arg, npos = WRAPPER_SPECS[name]
-    while i < len(toks) and toks[i].startswith("-") and toks[i] != "-":
+class _Ambiguous(Exception):
+    """The command line cannot be read exactly; record it as not probed."""
+
+
+def _looks_like_interpreter(v: str) -> bool:
+    n = Path(v).name
+    return n.startswith("python") or n in ("pytest", "py.test")
+
+
+def _skip_wrapper(name: str, toks: list[str], i: int) -> int:
+    """Index just past wrapper ``name``'s own options and positionals, parsed
+    exactly as getopt would; raises :class:`_Ambiguous` on anything the model
+    does not cover, or when an option's VALUE could itself be the interpreter
+    (``time -o python3 ...``: is python3 the output file or the program?)."""
+    s_flags, s_args, l_flags, l_args, refuse, npos = WRAPPER_SPECS[name]
+    values: list[str] = []
+    while i < len(toks):
         t = toks[i]
         if t == "--":
             i += 1
             break
-        if t.startswith("--"):
-            i += 2 if (t in long_arg and "=" not in t) else 1
-        elif t in short_arg:
-            i += 2
-        elif name == "nice" and t[1:].lstrip("-").isdigit():
-            i += 1                                  # nice -5
-        else:
-            i += 1                                  # a flag, or an attached argument
-    i += npos                                       # timeout 5, taskset 0x1, chrt 10
-    return i if i <= len(toks) else None
-
-
-def _unwrap(toks: list[str]) -> tuple[list[str], dict[str, str], str | None]:
-    """Strip known wrappers from the front. Returns ``(rest, env_assignments,
-    reason)``; ``reason`` is set when a wrapper's arguments cannot be parsed."""
-    env: dict[str, str] = {}
-    i = 0
-    while i < len(toks):
-        name = Path(toks[i]).name
-        if name not in _WRAPPERS:
+        if not t.startswith("-") or t == "-":
             break
-        i += 1
-        if name == "env":
+        if t.startswith("--"):
+            key = t.split("=", 1)[0]
+            if key in refuse:
+                raise _Ambiguous(f"`{name} {key}` does not run a command line")
+            if key in l_flags and "=" not in t:
+                i += 1
+            elif key in l_args:
+                if "=" in t:
+                    values.append(t.split("=", 1)[1])
+                    i += 1
+                else:
+                    if i + 1 >= len(toks):
+                        raise _Ambiguous(f"`{name} {t}` is missing its argument")
+                    values.append(toks[i + 1])
+                    i += 2
+            else:
+                raise _Ambiguous(f"`{name} {t}` is not an option Nous models")
+            continue
+        if name == "nice" and t[1:].lstrip("-").isdigit():
+            i += 1                                   # nice -5 / nice --5
+            continue
+        if "-" + t[1] in refuse:
+            raise _Ambiguous(f"`{name} -{t[1]}` does not run a command line")
+        j = 1
+        while j < len(t):
+            c = t[j]
+            if "-" + c in refuse:
+                raise _Ambiguous(f"`{name} -{c}` does not run a command line")
+            if c in s_flags:
+                j += 1
+                continue
+            if c in s_args:
+                if j + 1 < len(t):
+                    values.append(t[j + 1:])
+                    i += 1
+                else:
+                    if i + 1 >= len(toks):
+                        raise _Ambiguous(f"`{name} -{c}` is missing its argument")
+                    values.append(toks[i + 1])
+                    i += 2
+                break
+            raise _Ambiguous(f"`{name} {t}`: `-{c}` is not an option Nous models")
+        else:
+            i += 1
+    if any(_looks_like_interpreter(v) for v in values):
+        raise _Ambiguous(f"`{name}` is given the option value "
+                         f"`{[v for v in values if _looks_like_interpreter(v)][0]}`, "
+                         f"which could equally be the program; not guessing")
+    if i + npos > len(toks):
+        raise _Ambiguous(f"`{name}` is missing its positional argument")
+    pos = toks[i:i + npos]
+    if any(_looks_like_interpreter(v) for v in pos):
+        raise _Ambiguous(f"`{name}`'s positional argument `{pos[0]}` could be the program")
+    return i + npos
+
+
+def _unwrap(toks: list[str]) -> tuple[list[str], list[tuple], list[str], str | None]:
+    """Strip known wrappers from the front. Returns ``(rest, env_ops,
+    wrappers, reason)``: ``env_ops`` are ``("set", K, V)`` / ``("unset", K)`` in
+    order; ``reason`` is set when the line cannot be read exactly."""
+    ops: list[tuple] = []
+    seen: list[str] = []
+    i = 0
+    try:
+        while i < len(toks):
+            name = Path(toks[i]).name
+            if name not in _WRAPPERS:
+                break
+            seen.append(name)
+            i += 1
+            if name != "env":
+                i = _skip_wrapper(name, toks, i)
+                continue
+            opts_done = False
             while i < len(toks):
                 t = toks[i]
-                if t == "--":
+                if t == "--" and not opts_done:
+                    # Ends env's OPTIONS; NAME=VALUE assignments still follow.
+                    opts_done = True
                     i += 1
                     continue
-                if t in ("-i", "--ignore-environment") or t == "-":
-                    return [], {}, "`env -i` replaces the environment; not probed"
+                if opts_done:
+                    if "=" in t and not t.startswith("="):
+                        k, v = t.split("=", 1)
+                        ops.append(("set", k, v))
+                        i += 1
+                        continue
+                    break
+                if t in ("-i", "--ignore-environment", "-"):
+                    raise _Ambiguous("`env -i` replaces the whole environment")
                 if t in ("-u", "--unset"):
+                    if i + 1 >= len(toks):
+                        raise _Ambiguous("`env -u` is missing its argument")
+                    ops.append(("unset", toks[i + 1]))
                     i += 2
                     continue
-                if t.startswith(("-u", "--unset=")):
+                if t.startswith("--unset="):
+                    ops.append(("unset", t.split("=", 1)[1]))
+                    i += 1
+                    continue
+                if t.startswith("-u") and len(t) > 2:
+                    ops.append(("unset", t[2:]))
                     i += 1
                     continue
                 if t.startswith("-"):
-                    return [], {}, f"`env {t}` is not understood; not probed"
+                    raise _Ambiguous(f"`env {t}` is not an option Nous models")
                 if "=" in t and not t.startswith("="):
                     k, v = t.split("=", 1)
-                    env[k] = v
+                    ops.append(("set", k, v))
                     i += 1
                     continue
                 break
+    except _Ambiguous as exc:
+        return [], [], seen, f"{exc}; not probed"
+    return toks[i:], ops, seen, None
+
+
+def child_env(base: dict, ops: list[tuple]) -> dict:
+    """The child's EXACT environment: ``base`` (the target environment) with
+    the command's ``env`` assignments applied and its unsets removed, in order."""
+    out = dict(base)
+    for op in ops:
+        if op[0] == "set":
+            out[op[1]] = op[2]
+        else:
+            out.pop(op[1], None)
+    return out
+
+
+#: Python's own short options: those taking no argument, and those taking one.
+_PY_FLAGS = set("bBdEhiIOPqsSuvVxR")
+_PY_ARG = set("WX")
+_PY_LONG_ARG = {"--check-hash-based-pycs"}
+
+
+def _py_flags(toks: list[str]) -> list[str]:
+    """The interpreter's own options, parsed as CPython parses them (combined
+    flags such as ``-bW ignore`` included); raises :class:`_Ambiguous` on an
+    option it does not know."""
+    flags: list[str] = []
+    i = 0
+    while i < len(toks):
+        t = toks[i]
+        if not t.startswith("-") or t in ("-", "--"):
+            break
+        if t.startswith("--"):
+            key = t.split("=", 1)[0]
+            if key not in _PY_LONG_ARG:
+                raise _Ambiguous(f"interpreter option `{t}` is not one Nous models")
+            if "=" in t:
+                flags.append(t)
+                i += 1
+            else:
+                if i + 1 >= len(toks):
+                    raise _Ambiguous(f"interpreter option `{t}` is missing its argument")
+                flags += [t, toks[i + 1]]
+                i += 2
             continue
-        j = _skip_wrapper(name, toks, i)
-        if j is None:
-            return [], {}, f"`{name}`'s arguments cannot be parsed; not probed"
-        i = j
-    return toks[i:], env, None
+        j = 1
+        while j < len(t):
+            c = t[j]
+            if c in ("c", "m"):                     # the program starts here
+                if j > 1:
+                    flags.append(t[:j])
+                return flags
+            if c in _PY_FLAGS:
+                j += 1
+                continue
+            if c in _PY_ARG:
+                if j + 1 < len(t):
+                    flags.append(t)
+                    i += 1
+                else:
+                    if i + 1 >= len(toks):
+                        raise _Ambiguous(f"interpreter option `-{c}` is missing its argument")
+                    flags += [t, toks[i + 1]]
+                    i += 2
+                break
+            raise _Ambiguous(f"interpreter option `-{c}` (in `{t}`) is not one Nous models")
+        else:
+            flags.append(t)
+            i += 1
+    return flags
 
 
-def _interpreters(cmd: str, cwd: Path) -> tuple[list[tuple[str, list[str], dict]], list[str]]:
-    """``([(exe, flags, env)], undetermined_reasons)``.
+def _interpreters(cmd: str, cwd: Path, base_env: dict | None = None
+                  ) -> tuple[list[tuple[str, list[str], dict]], list[str]]:
+    """``([(exe, flags, assignments)], undetermined_reasons)``.
 
-    Known wrappers (``timeout``, ``nice``, ``time``, ``env A=B``, ...) are
-    unwrapped first; ``env`` assignments are passed to the probe, and a ``PATH``
-    assignment is what the interpreter is resolved with: the probe runs with
-    EXACTLY the command's environment (``PATH``, ``PYTHONPATH``,
-    ``PYTHONHOME``, ``VIRTUAL_ENV``... all as the command sets them). When what is
-    left does not start with a Python interpreter -- a launcher, a script such
-    as ``./bench.sh``, any other program -- the command is NOT probed and that
-    is recorded (round 5, item 3). ``flags`` are the interpreter's own options,
-    each with its argument (``-W ignore``, ``-X dev``)."""
+    EXEC-EXACT (round 7): the wrappers are parsed exactly (anything ambiguous is
+    recorded as not probed, never guessed); the child's environment is
+    ``base_env`` (the target environment) with the command's assignments and
+    unsets applied (``child_env``); the interpreter is the file ``execvp`` would
+    run with THAT environment from ``cwd`` (``exec_lookup``); and the probe runs
+    with the same environment and cwd. ``assignments`` maps every variable the
+    command sets to its value and every one it unsets to None."""
     import shlex
 
     try:
         toks = shlex.split(cmd)
     except ValueError as exc:
         return [], [f"`{cmd[:60]}` cannot be parsed ({exc})"]
-    toks, env, why = _unwrap(toks)
+    rest, ops, wrappers, why = _unwrap(toks)
     if why:
         return [], [why]
-    if not toks:
+    if not rest:
         return [], [f"`{cmd[:60]}` has no program after its wrappers"]
-    if "=" in toks[0] and not toks[0].startswith(("/", ".")):
-        return [], [f"`{toks[0]}` is a shell-style assignment, but commands are not run "
-                    f"in a shell; use `env {toks[0]} ...`. Not probed"]
-    from orchestrator.optimize.runner import target_env
+    if "=" in rest[0] and not rest[0].startswith(("/", ".")):
+        return [], [f"`{rest[0]}` is a shell-style assignment, but commands are not run "
+                    f"in a shell; use `env {rest[0]} ...`. Not probed"]
+    if base_env is None:
+        from orchestrator.optimize.runner import target_env
 
-    effective_path = env.get("PATH", target_env("/dev/null").get("PATH", os.defpath))
-    exe, why = _resolve_interpreter(toks[0], cwd, path=effective_path)
+        base_env = target_env("/dev/null")
+    env = child_env(base_env, ops)
+    exe, why = _resolve_interpreter(rest[0], cwd, env)
+    after = f" after `{' '.join(wrappers)}`" if wrappers else ""
     if why:
         return [], [why]
     if exe is None:
-        return [], [f"`{Path(toks[0]).name}` is not a Python interpreter Nous can probe "
-                    f"(a script or another program); what it imports is not known"]
-    flags: list[str] = []
-    i = 1
-    while i < len(toks):
-        t = toks[i]
-        if t in ("-m", "-c") or not t.startswith("-") or t == "-":
-            break
-        if (t in _PY_ARG_FLAGS or t in _PY_LONG_ARG_FLAGS) and i + 1 < len(toks):
-            flags += [t, toks[i + 1]]
-            i += 2
-            continue
-        if t.startswith("--") and t.split("=", 1)[0] in _PY_LONG_ARG_FLAGS:
-            flags.append(t)
-            i += 1
-            continue
-        if t.startswith(("-W", "-X")) or (len(t) <= 3 and t[1:].isalpha()):
-            flags.append(t)
-            i += 1
-            continue
-        break
-    return [(exe, flags, env)], []
+        return [], [f"the program{after} is `{rest[0]}`, which is not a Python interpreter; "
+                    f"what it imports is not probed"]
+    try:
+        flags = _py_flags(rest[1:])
+    except _Ambiguous as exc:
+        return [], [f"{exc}; not probed"]
+    assignments = {}
+    for op in ops:
+        assignments[op[1]] = op[2] if op[0] == "set" else None
+    return [(exe, flags, assignments)], []
 
 
 def probe_imports(dest: Path, repo: Path, commands: list[str], *,
@@ -702,9 +853,17 @@ def probe_imports(dest: Path, repo: Path, commands: list[str], *,
         for exe, flags, cmd_env in found:
             try:
                 with fresh_pycache() as env:
+                    # EXACTLY the child's environment and cwd: the target env,
+                    # the command's assignments applied, its unsets removed.
+                    penv = dict(env)
+                    for k, v in cmd_env.items():
+                        if v is None:
+                            penv.pop(k, None)
+                        else:
+                            penv[k] = v
                     proc = subprocess.run([exe, *flags, "-c", _PROBE], cwd=str(dest),
-                                          env={**env, **cmd_env}, capture_output=True,
-                                          text=True, timeout=120)
+                                          env=penv, capture_output=True, text=True,
+                                          timeout=120)
             except (OSError, subprocess.SubprocessError) as exc:
                 raise CleanTreeError(f"the import probe for `{cmd[:60]}` could not run "
                                      f"({exc}); the clean tree cannot be shown to import "
@@ -724,7 +883,10 @@ def probe_imports(dest: Path, repo: Path, commands: list[str], *,
                     f"({exc}); the clean tree cannot be shown to import only from itself"
                 ) from exc
             record["probed"].append({"command": cmd, "interpreter": exe, "flags": flags,
-                                     "env": sorted(cmd_env)})
+                                     "env": sorted(k for k, v in cmd_env.items()
+                                                   if v is not None),
+                                     "unset": sorted(k for k, v in cmd_env.items()
+                                                     if v is None)})
             bad = sorted({r for r in roots
                           if str(Path(r).resolve()) == repo_r
                           or str(Path(r).resolve()).startswith(repo_r + os.sep)})

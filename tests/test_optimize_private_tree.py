@@ -623,3 +623,73 @@ def test_what_cannot_be_unwrapped_is_not_probed(cmd, tmp_path):
 
     found, reasons = ct._interpreters(cmd.replace("PY", sys.executable), tmp_path)
     assert not found and reasons, (cmd, found)
+
+
+# ─── round 7: exec-exact interpreter resolution ──────────────────────────────
+
+
+def _clean_with_agent_venv(tmp_path):
+    import sys
+
+    agent = tmp_path / "agentrepo"
+    agent.mkdir()
+    dest = tmp_path / "clean"
+    dest.mkdir()
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(dest / ".venv")], check=True)
+    (next(dest.glob(".venv/lib/python*/site-packages")) / "_e.pth").write_text(str(agent) + "\n")
+    return agent, dest
+
+
+def test_a_relative_path_entry_is_resolved_at_the_commands_cwd(tmp_path, monkeypatch):
+    """a_relpath.py: `env PATH=.venv/bin:...` runs the clean tree's .venv; the
+    probe must resolve it there, not at Nous's cwd (a false pass before)."""
+    agent, dest = _clean_with_agent_venv(tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(ct.CleanTreeError, match="would import from"):
+        ct.probe_imports(dest, agent, ["env PATH=.venv/bin:/usr/bin:/bin python3 b.py"])
+
+
+def test_an_empty_path_entry_is_the_commands_cwd(tmp_path, monkeypatch):
+    agent, dest = _clean_with_agent_venv(tmp_path)
+    os.symlink(dest / ".venv" / "bin" / "python3", dest / "python3")
+    monkeypatch.chdir(tmp_path)
+    found, _ = ct._interpreters("env PATH=:/usr/bin python3 b.py", dest)
+    assert found and found[0][0] == str(dest / "python3")
+
+
+def test_env_u_path_resolves_with_the_default_path(tmp_path):
+    found, _ = ct._interpreters("env -u PATH python3 b.py", tmp_path,
+                                base_env={"PATH": "/opt/homebrew/bin:/usr/bin"})
+    assert found and found[0][0] == ct.exec_lookup("python3", tmp_path, {})
+    assert found[0][2] == {"PATH": None}
+
+
+def test_env_u_pythonpath_is_removed_from_the_probe_env(setup, monkeypatch):
+    import sys
+
+    repo, wd = setup
+    monkeypatch.setenv("PYTHONPATH", str(repo))
+    with pytest.raises(ct.CleanTreeError, match="would import from"):
+        ct.probe_imports(wd, repo, [f"{sys.executable} h.py"], work_dir=wd)
+    ct.probe_imports(wd, repo, [f"env -u PYTHONPATH {sys.executable} h.py"], work_dir=wd)
+    rec = json.loads((wd / ct.PROBE_RECORD).read_text())
+    assert rec["probed"][0]["unset"] == ["PYTHONPATH"]
+
+
+def test_a_wrapper_option_value_that_could_be_the_interpreter_is_not_guessed(tmp_path):
+    found, reasons = ct._interpreters("time -ao python3 python3 b.py", tmp_path)
+    assert not found and "could equally be the program" in reasons[0]
+
+
+def test_an_unmodelled_wrapper_option_is_not_guessed_and_the_reason_is_clear(tmp_path):
+    found, reasons = ct._interpreters("timeout --sig KILL 5 python3 b.py", tmp_path)
+    assert not found and "not an option Nous models" in reasons[0]
+    found, reasons = ct._interpreters("timeout 5 ./bench.sh", tmp_path)
+    assert "the program after `timeout` is `./bench.sh`" in reasons[0]
+
+
+def test_combined_interpreter_flags_stay_together(tmp_path):
+    import sys
+
+    found, reasons = ct._interpreters(f"{sys.executable} -bW ignore b.py", tmp_path)
+    assert not reasons and found[0][1] == ["-bW", "ignore"]
