@@ -131,6 +131,17 @@ def held_out_seed_cost(campaign: dict) -> int:
     return 2 * len(seeds)
 
 
+# A recorded decline (#321 review M3): the post-measurement checks
+# (clean tree, surviving processes) and a mid-block failure are facts about the
+# MEASUREMENT, so they are written into the rows file -- one line with
+# ``{"declined": ...}`` -- and replay / resume read them back instead of
+# re-judging an empty block as clean.
+def record_decline(work_dir: Path, pol: dict, reason: str, detail: str) -> None:
+    path = Path(work_dir) / HELD_OUT_SEEDS_FILE.format(epoch=int(pol.get("epoch", 1)))
+    with open(path, "a") as fh:
+        fh.write(json.dumps({"declined": reason, "detail": detail}, sort_keys=True) + "\n")
+
+
 def _decline(seeds, reason: str, detail: str) -> dict:
     return {"seeds": list(seeds), "declined": reason, "detail": detail,
             "feeds_certification": False}
@@ -177,10 +188,20 @@ def held_out_seed_block(work_dir: Path, *, pol: dict, campaign: dict, levels: di
     arms = {"winner": dict(levels), "baseline": dict(base)}
     recorded: list[dict] = []
     if path.exists():
-        recorded = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
-        if {json.dumps(r.get("levels"), sort_keys=True) for r in recorded} != {
+        lines = [json.loads(ln) for ln in path.read_text().splitlines() if ln.strip()]
+        recorded = [r for r in lines if "declined" not in r]
+        verdicts = [r for r in lines if "declined" in r]
+        if recorded and {json.dumps(r.get("levels"), sort_keys=True)
+                         for r in recorded} != {
                 json.dumps(v, sort_keys=True) for v in arms.values()}:
             recorded = []           # an earlier answer's rows: measure afresh
+        elif verdicts:
+            # (also a measurement that failed before writing any row)
+            # The block was measured and declined then; that stands on resume
+            # and on replay, so tainted rows are never accepted later.
+            v = verdicts[-1]
+            return {**_decline(seeds, v["declined"], v.get("detail", "")),
+                    "file": path.name}
     if not recorded:
         if replay:
             return _decline(seeds, "not_in_record",

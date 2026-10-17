@@ -187,3 +187,56 @@ def test_git_ref_anchor_and_opt_in_push(campaign, tmp_path, monkeypatch):
 
 def test_push_without_git_is_refused(campaign, monkeypatch):
     assert _cli(monkeypatch, str(campaign.work_dir), "--push", "origin") == 2
+
+
+# ── P5 review fixes (H1, H2, M2) ─────────────────────────────────────────────
+
+def test_reanchoring_a_forgery_after_data_is_refused_and_still_detected(
+        campaign, tmp_path, monkeypatch, capsys):
+    """H1: replace the work_dir with a consistent run of a revised registration,
+    then try to launder it with the product's own `nous anchor`. Pre-fix the
+    re-anchor was accepted and verify then matched the LATEST anchor."""
+    _replace_with_a_consistent_forgery(campaign, tmp_path)
+    assert _cli(monkeypatch, str(campaign.work_dir)) == 1
+    assert "after data" in capsys.readouterr().err
+    # Even if the history is appended to by hand, the pre-data anchor binds.
+    forged = anchor_mod.build_anchor(campaign.work_dir)
+    assert forged["epoch_transitions_at_anchor"] > 0
+    anchor_mod.record_local(campaign.work_dir, forged)
+    v = anchor_mod.verify(campaign.work_dir)
+    assert v["matches"] is False
+    assert any("re-anchored AFTER data" in m for m in v["mismatches"])
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_the_pushed_ref_is_what_verify_reads_and_a_ref_is_never_moved(
+        campaign, tmp_path, monkeypatch):
+    """H2: pre-fix, verify found git anchors only via anchors.json (in the
+    work_dir) and read the LOCAL ref, which a re-anchor silently moved."""
+    repo, remote = tmp_path / "anchors", tmp_path / "remote.git"
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    subprocess.run(["git", "init", "-q", "--bare", str(remote)], check=True)
+    assert _cli(monkeypatch, str(campaign.work_dir), "--git", str(repo),
+                "--push", str(remote)) == 0
+    # The forger: drops the locator and the state-home history, forges.
+    (campaign.work_dir / anchor_mod.LOCATOR).unlink()
+    shutil.rmtree(anchor_mod.anchor_dir(campaign.work_dir))
+    _forge_policy(campaign.work_dir)
+    # A different anchor can never be written to the existing local ref.
+    with pytest.raises(RuntimeError, match="never moved"):
+        anchor_mod.write_git(repo, anchor_mod.build_anchor(campaign.work_dir))
+    v = anchor_mod.verify(campaign.work_dir, git_repo=repo, remote=str(remote),
+                          run_id=campaign.work_dir.name)
+    assert v["matches"] is False
+    assert v["where"].startswith("remote ")
+    assert any("policy.json now hashes" in m for m in v["mismatches"])
+
+
+def test_reanalysis_headline_says_unanchored(tmp_path, monkeypatch):
+    """M2: an unanchored campaign must not read as plainly 'identical'."""
+    from orchestrator.optimize.reanalyze import format_result
+
+    monkeypatch.setattr(anchor_mod, "anchor_at_compile", lambda wd: None)
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=7, parent_dir=tmp_path)
+    res = reanalyze(r.work_dir)
+    assert "UNANCHORED" in format_result(res).splitlines()[0]

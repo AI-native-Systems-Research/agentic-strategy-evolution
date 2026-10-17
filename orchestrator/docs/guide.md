@@ -2813,7 +2813,17 @@ code that does not know about anchors, and a work dir copied elsewhere and
 altered. Against a same-user forger only two things hold: a ref pushed to a
 remote that refuses force-pushes and deletions, and a third-party timestamp of
 the `digest` taken before the first run. Push or timestamp at verify, before the
-screen starts, if that is the claim you need.
+screen starts, if that is the claim you need, and check it by naming the
+remote yourself: `nous anchor <work_dir> --verify --git <repo> --remote <remote>`
+fetches the ref from the remote and never reads the work dir's `anchors.json`
+(which a forger can edit) or the local ref.
+
+Two rules keep the product's own commands from laundering a revision. An anchor
+ref is created once and never moved: a second, different anchor for the same
+epoch is refused. And `nous anchor` refuses to register a different policy for
+an epoch that already has data; if one is appended by hand anyway, verification
+binds the epoch to its last anchor written BEFORE data and reports the later one
+as a mismatch. A revised design is a new epoch: resume recompiles one.
 
 `error_budget` gives the family-wise figure. Each epoch spends
 `delta_screen + delta_terminal`, and every epoch after the first was compiled

@@ -2617,7 +2617,12 @@ def _cmd_anchor(args):
     work_dir = Path(resolve_work_dir(args.target))
     if args.verify:
         extra = [_json.loads(Path(f).read_text()) for f in (args.file or [])]
-        v = _anchor.verify(work_dir, extra=extra, use_git=True)
+        if args.remote and not args.git:
+            print("anchor: --remote needs --git <repo>", file=sys.stderr)
+            sys.exit(2)
+        v = _anchor.verify(work_dir, extra=extra, use_git=True,
+                           git_repo=Path(args.git) if args.git else None,
+                           remote=args.remote)
         if args.json:
             print(_json.dumps(v, indent=2))
         elif not v["present"]:
@@ -2638,6 +2643,7 @@ def _cmd_anchor(args):
         run_id = (yaml.safe_load(Path(args.target).read_text()) or {}).get("run_id")
     try:
         a = _anchor.build_anchor(work_dir, run_id=run_id)
+        _anchor.refuse_reanchor_after_data(work_dir, a)
     except ValueError as exc:
         print(f"anchor: {exc}", file=sys.stderr)
         sys.exit(1)
@@ -3291,6 +3297,10 @@ def build_parser():
                           help="check the recorded anchors instead of writing one")
     p_anchor.add_argument("--file", action="append",
                           help="with --verify: also check this exported anchor file")
+    p_anchor.add_argument("--remote", metavar="REMOTE",
+                          help="with --verify --git REPO: read the anchor ref from REMOTE "
+                               "(fetched), not the local ref -- the check that holds "
+                               "against a same-user forger")
     p_anchor.add_argument("--json", action="store_true")
     p_anchor.set_defaults(func=_cmd_anchor)
 

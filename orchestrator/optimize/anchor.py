@@ -112,11 +112,54 @@ def build_anchor(work_dir: Path, *, run_id: str | None = None) -> dict:
         "policy_sha256": computed,
         "registration": _registration_files(wd, epoch),
         "inputs": input_hashes(wd),
+        # How much of this epoch had run when it was anchored. 0 = before any
+        # data, the only moment an anchor can bind a pre-registration.
+        "epoch_transitions_at_anchor": epoch_transitions_on_disk(wd, epoch),
     }
     return {**body, "digest": hashlib.sha256(_canonical(body).encode()).hexdigest(),
             "anchored_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             "anchored_at_note": "self-asserted clock; timestamp `digest` externally "
                                 "for a time a same-user process cannot set"}
+
+
+def epoch_transitions_on_disk(work_dir: Path, epoch: int) -> int:
+    """Transitions of ``epoch`` already in ``transitions.jsonl`` (data ran)."""
+    from orchestrator.optimize import policy as policy_mod
+
+    return sum(1 for t in policy_mod.read_transitions(Path(work_dir))
+               if t.get("epoch", 1) == epoch)
+
+
+class ReanchorAfterData(ValueError):
+    """A different policy would be anchored for an epoch that already has data."""
+
+
+def refuse_reanchor_after_data(work_dir: Path, anchor: dict) -> None:
+    """Raise when ``anchor`` registers a policy other than the one already
+    anchored for its epoch, after that epoch's first transition. Revising a
+    pre-registration after seeing data is exactly what the anchor exists to
+    expose, so the product's own command must never launder it."""
+    hist = _local_anchors(work_dir).get(anchor["epoch"], [])
+    bound = _binding(hist)
+    if (bound is not None and bound.get("policy_sha256") != anchor["policy_sha256"]
+            and anchor.get("epoch_transitions_at_anchor", 0) > 0):
+        raise ReanchorAfterData(
+            f"epoch {anchor['epoch']} was anchored with policy "
+            f"{str(bound.get('policy_sha256'))[:12]} and has "
+            f"{anchor['epoch_transitions_at_anchor']} transition(s) since; refusing "
+            f"to anchor policy {anchor['policy_sha256'][:12]} for it after data. "
+            f"A revised design is a new epoch (resume recompiles one).")
+
+
+def _binding(hist: list[dict]) -> dict | None:
+    """The anchor that binds an epoch: the LATEST written before any of its
+    data (a verify retried before the screen may legitimately re-register).
+    Histories from before ``epoch_transitions_at_anchor`` existed bind on the
+    latest entry, as they always did."""
+    if not hist:
+        return None
+    pre = [h for h in hist if h.get("epoch_transitions_at_anchor", 0) == 0]
+    return pre[-1] if pre else hist[0]
 
 
 def record_local(work_dir: Path, anchor: dict) -> Path:
@@ -138,7 +181,7 @@ def anchor_at_compile(work_dir: Path) -> Path | None:
     try:
         return record_local(work_dir, build_anchor(work_dir))
     except (OSError, ValueError) as exc:
-        logger.warning("pre-registration NOT anchored outside the work_dir: %s", exc)
+        logger.error("pre-registration NOT anchored outside the work_dir: %s", exc)
         try:
             (Path(work_dir) / FAILURE).write_text(json.dumps(
                 {"reason": f"{type(exc).__name__}: {exc}"}, sort_keys=True))
@@ -169,13 +212,25 @@ def ref_name(anchor: dict) -> str:
 def write_git(repo: Path, anchor: dict) -> str:
     """Commit the anchor as ``anchor.json`` in an orphan commit and point
     ``ref_name(anchor)`` at it. Returns the commit id."""
+    ref = ref_name(anchor)
+    try:
+        existing = read_git(repo, ref)
+    except (RuntimeError, ValueError):
+        existing = None
+    if existing is not None:
+        if existing.get("digest") == anchor["digest"]:
+            return _git(repo, "rev-parse", ref)
+        raise RuntimeError(
+            f"{ref} already holds a different anchor (digest "
+            f"{str(existing.get('digest'))[:12]}); an anchor ref is never moved")
     blob = _git(repo, "hash-object", "-w", "--stdin",
                 input_=json.dumps(anchor, indent=2, sort_keys=True) + "\n")
     tree = _git(repo, "mktree", input_=f"100644 blob {blob}\tanchor.json\n")
     commit = _git(repo, "commit-tree", tree, "-m",
                   f"nous anchor {anchor['run_id']} epoch {anchor['epoch']}\n\n"
                   f"policy_sha256 {anchor['policy_sha256']}\ndigest {anchor['digest']}\n")
-    _git(repo, "update-ref", ref_name(anchor), commit)
+    # Create-only: the empty old value makes update-ref fail if the ref exists.
+    _git(repo, "update-ref", ref, commit, "")
     return commit
 
 
@@ -186,6 +241,20 @@ def push_git(repo: Path, remote: str, anchor: dict) -> None:
 
 def read_git(repo: Path, ref: str) -> dict:
     return json.loads(_git(repo, "cat-file", "-p", f"{ref}:anchor.json"))
+
+
+def read_remote(repo: Path, remote: str, ref: str) -> dict:
+    """The anchor as the REMOTE holds it: fetched into a private namespace, so
+    neither the local ref nor anything in the work_dir is trusted."""
+    tmp = f"refs/nous/verify/{ref.removeprefix(REF_PREFIX + '/')}"
+    _git(repo, "fetch", "--no-tags", "--force", remote, f"{ref}:{tmp}")
+    try:
+        return read_git(repo, tmp)
+    finally:
+        try:
+            _git(repo, "update-ref", "-d", tmp)
+        except RuntimeError:
+            pass
 
 
 def add_locator(work_dir: Path, entry: dict) -> None:
@@ -261,27 +330,51 @@ def _check_one(work_dir: Path, a: dict, where: str) -> list[str]:
 
 
 def verify(work_dir: Path, *, extra: list[dict] | None = None,
-           use_git: bool = False) -> dict:
+           use_git: bool = False, git_repo: Path | None = None,
+           remote: str | None = None, run_id: str | None = None) -> dict:
     """``{"present", "matches", "mismatches", "where", "anchors", "reanchored"}``.
 
-    Checks the state-home history (the LATEST entry per epoch; an epoch
-    anchored with more than one policy hash -- recompiled at a retried verify,
-    before any benchmark run -- is listed in ``reanchored``, reported but not a
-    mismatch, since the LATEST anchor is what ran), every
-    anchor in ``extra`` (e.g. an exported ``--out`` file), and, with
-    ``use_git``, every git ref ``anchors.json`` lists. ``matches`` is None when
-    no anchor exists: the pre-registration is then self-attested only.
+    Checks the state-home history: per epoch, the BINDING anchor (the latest
+    written before any of that epoch's data, see ``_binding``). An epoch
+    re-registered before its data is listed in ``reanchored`` (not a
+    mismatch); a different policy anchored AFTER data is a mismatch. Also
+    every anchor in ``extra`` (e.g. an exported ``--out`` file); with
+    ``use_git``, every git ref ``anchors.json`` lists; and with ``git_repo``
+    (plus ``remote``) the ref for each anchored epoch named by the CALLER, so
+    a forger who edits ``anchors.json`` cannot drop it -- with ``remote`` it
+    is the remote's copy that is read. ``matches`` is None when no anchor
+    exists: the pre-registration is then self-attested only.
     """
     wd = Path(work_dir)
     checked: list[tuple[str, dict]] = []
     reanchored = []
-    for e, hist in sorted(_local_anchors(wd).items()):
-        checked.append(("state_home", hist[-1]))
+    problems: list[str] = []
+    local = _local_anchors(wd)
+    for e, hist in sorted(local.items()):
+        bound = _binding(hist)
+        checked.append(("state_home", bound))
         if len({h.get("policy_sha256") for h in hist}) > 1:
             reanchored.append(e)
+        for h in hist:
+            if (h.get("epoch_transitions_at_anchor", 0) > 0
+                    and h.get("policy_sha256") != bound.get("policy_sha256")):
+                problems.append(
+                    f"state_home: epoch {e} was re-anchored AFTER data with policy "
+                    f"{str(h.get('policy_sha256'))[:12]} (bound: "
+                    f"{str(bound.get('policy_sha256'))[:12]})")
     for a in extra or []:
         checked.append(("file", a))
-    problems: list[str] = []
+    if git_repo is not None:
+        rid = run_id or (next(iter(local.values()))[0].get("run_id") if local else wd.name)
+        for e in sorted(local) or [1]:
+            ref = ref_name({"run_id": rid, "epoch": e})
+            where = f"{'remote ' + remote if remote else 'git'}:{ref}"
+            try:
+                a = (read_remote(Path(git_repo), remote, ref) if remote
+                     else read_git(Path(git_repo), ref))
+                checked.append((where, a))
+            except (RuntimeError, OSError, ValueError) as exc:
+                problems.append(f"{where}: no readable anchor ({exc})")
     if use_git:
         loc = wd / LOCATOR
         for ent in (json.loads(loc.read_text()) if loc.exists() else []):

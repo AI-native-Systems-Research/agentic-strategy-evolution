@@ -2601,21 +2601,29 @@ def _held_out_seeds(campaign, work_dir, pol, levels, basis, metric, direction, c
             in_sample_gain=(conf or {}).get("gain_over_baseline"))
     except Exception as exc:  # noqa: BLE001 -- named, recorded, never fatal
         logger.error("held-out seeds: not measured: %s", exc)
+        detail = f"{type(exc).__name__}: {exc}"
+        if not _REANALYSIS.get():
+            try:
+                _ho.record_decline(Path(work_dir), pol, "measurement_error", detail)
+            except OSError:
+                pass
         return _ho._decline(
             ((pol.get("workload") or {}).get("held_out_seeds") or []),
-            "measurement_error", f"{type(exc).__name__}: {exc}")
+            "measurement_error", detail)
     if not block or block.get("declined") or _REANALYSIS.get():
         return block
     left = _reaper.take_survivors()
+    verdict = None
     try:
         _check_clean_tree_after(campaign, work_dir, "held-out-seed runs")
     except OptimizationGateFailed as exc:
-        return {**_ho._decline(block["seeds"], "clean_tree_modified", str(exc)),
-                "file": block.get("file")}
-    if left:
-        return {**_ho._decline(block["seeds"], "processes_left_running",
-                               f"{len(left)} target process(es) outlived the runs"),
-                "file": block.get("file")}
+        verdict = ("clean_tree_modified", str(exc))
+    if verdict is None and left:
+        verdict = ("processes_left_running",
+                   f"{len(left)} target process(es) outlived the runs")
+    if verdict is not None:
+        _ho.record_decline(Path(work_dir), pol, *verdict)
+        return {**_ho._decline(block["seeds"], *verdict), "file": block.get("file")}
     return block
 
 

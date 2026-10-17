@@ -166,3 +166,39 @@ def test_the_preview_shows_the_cost():
     st = {s.stage: s for s in pv.stages}["held-out seeds"]
     assert st.runs == 8 and not st.conditional
     assert "unseen workload seed" in "\n".join(format_preview(pv))
+
+
+def test_a_declined_block_replays_identically_and_resume_keeps_the_decline(
+        tmp_path, monkeypatch):
+    """P5 review M3: target processes outliving the held-out runs decline the
+    block. Pre-fix the decline lived only in report.json, so reanalysis (which
+    skips the post-checks) re-derived an ACCEPTED block, "not identical"; and
+    a resume reused the rows and re-ran the checks over nothing, accepting them."""
+    from orchestrator.optimize import held_out as ho
+    from orchestrator.optimize import reaper
+
+    real_take = reaper.take_survivors
+    fired = {"done": False}
+
+    def survivors_after_held_out_rows():
+        # Fires once, at the check right after the held-out rows are written.
+        if not fired["done"] and any((tmp_path / "r").rglob("held_out_seeds.epoch-*.jsonl")):
+            fired["done"] = True
+            real_take()
+            return [4242]
+        return real_take()
+
+    monkeypatch.setattr(reaper, "take_survivors", survivors_after_held_out_rows)
+    r = _run(tmp_path, monkeypatch)
+    hs = r.report["held_out_seeds"]
+    assert hs["declined"] == "processes_left_running"
+    res = reanalyze(r.work_dir)
+    assert res.identical, res.differences
+    # Resume: the rows are on disk; the recorded decline must stand.
+    pol = json.loads((r.work_dir / "policy.json").read_text())
+    again = ho.held_out_seed_block(
+        r.work_dir, pol=pol, campaign={}, levels=r.report["recommendation"]["levels"],
+        basis="certified",
+        metric="m", direction="minimize", runner=None, replay=False,
+        in_sample_gain=None)
+    assert again["declined"] == "processes_left_running"

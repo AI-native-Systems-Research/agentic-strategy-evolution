@@ -526,8 +526,11 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
 
 
 def format_result(r: Reanalysis) -> str:
+    unanchored = not (r.anchor or {}).get("present")
     lines = [("ANALYSIS RE-DERIVED: every re-derived artifact matches the recorded one "
-              "(the measurements themselves were not re-run)."
+              "(the measurements themselves were not re-run)"
+              + (" -- UNANCHORED: the pre-registration is self-attested only."
+                 if unanchored else ".")
               if r.identical else "ANALYSIS NOT RE-DERIVED IDENTICALLY: differences below."),
              f"  compared {len(r.compared)} derived artifact(s)"]
     if r.excluded:
