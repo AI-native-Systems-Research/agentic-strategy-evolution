@@ -587,6 +587,50 @@ def check_certificate_rests_on_adequate_model(certifying: dict,
     return out
 
 
+def check_adequacy_determination(recommendations: list[dict]) -> list[str]:
+    """INV-STAT19: how adequacy was determined is recorded, and it is sticky.
+
+    ``recommendations`` are one epoch's fitting-stage ``recommendation.json``
+    records in order. For each that carries ``model_adequacy`` (WP-B):
+    ``model_adequate`` equals ``model_adequacy.epoch.verdict``; a rejected
+    validation check makes this stage's verdict false; and no later stage
+    reports True while an EARLIER stage of the same or a higher model class
+    rejected, nor while an earlier screen/foldover rejection stands with no
+    completed validation check at refine. Records without the field (written
+    before it existed) are skipped.
+    """
+    out: list[str] = []
+    seen: list[tuple[str, int, object]] = []
+    for r in recommendations:
+        ma = r.get("model_adequacy")
+        st = str(r.get("stage"))
+        cls = 2 if st == "refine" else 1
+        if not isinstance(ma, dict):
+            continue
+        ep = (ma.get("epoch") or {}).get("verdict")
+        if r.get("model_adequate") != ep:
+            out.append(f"{st}: model_adequate {r.get('model_adequate')!r} != "
+                       f"model_adequacy.epoch.verdict {ep!r}")
+        this = (ma.get("this_stage") or {}).get("verdict")
+        if (ma.get("validation") or {}).get("rejected") is True and this is not False:
+            out.append(f"{st}: the validation check rejected but this stage's "
+                       f"verdict is {this!r}")
+        if this is False and r.get("model_adequate") is not False:
+            out.append(f"{st}: this stage rejected its model but model_adequate "
+                       f"is {r.get('model_adequate')!r}")
+        if r.get("model_adequate") is True:
+            for st0, c0, v0 in seen:
+                if v0 is False and c0 >= cls:
+                    out.append(f"{st}: reports adequate although earlier {st0} "
+                               f"(model class {c0} >= {cls}) rejected")
+                if (v0 is False and c0 < cls
+                        and (ma.get("validation") or {}).get("rejected") is None):
+                    out.append(f"{st}: overturns {st0}'s rejection without a "
+                               f"completed validation check")
+        seen.append((st, cls, this))
+    return out
+
+
 def check_bound_unknown_is_not_zero(bound: Any) -> list[str]:
     """INV-SEM02 / INV-STAT05: a bound with no variance estimate is None.
 
@@ -1712,9 +1756,9 @@ _ENTRIES: tuple[Invariant, ...] = (
                           "at the corners, lack-of-fit p~3.5e-7, routed screen -> confirm "
                           "and certified a point 26% below the optimum on every seed"),
     Invariant("INV-SEM17", "No global certificate rests on a model the data rejected: when "
-                           "the latest fitting stage reported model_adequate: false, "
-                           "certified is false and certification_withheld names "
-                           "model_inadequate.",
+                           "the latest fitting stage reported model_adequate: false (the "
+                           "epoch's sticky verdict, INV-STAT19), certified is false and "
+                           "certification_withheld names model_inadequate.",
               "SEM", "artifact", "stage_runner._finish_confirm (model_inadequate); spec 3.6 "
               "rung 3, 3.3", ALWAYS, check_certificate_rests_on_adequate_model,
               violated_by="SURFACES['geometric_knob']: screen and refine both rejected "
@@ -1925,6 +1969,25 @@ _ENTRIES: tuple[Invariant, ...] = (
               note="tests/test_optimize_candidate_search.py forces the search on oracle "
                    "campaigns and runs the checker over every recommendation.json; "
                    "tests/test_optimize_invariants.py gives it teeth."),
+
+    Invariant("INV-STAT19", "How model adequacy was determined is recorded and sticky: "
+                            "every fitting stage's recommendation.json carries "
+                            "model_adequacy (lack of fit with its df, PRESS, the design's "
+                            "D-efficiency and VIFs, at refine the held-out validation "
+                            "check); model_adequate is its epoch verdict; a rejected "
+                            "validation check makes the stage inadequate; and no stage "
+                            "reports adequate while an earlier stage of the same or a "
+                            "higher model class rejected, or overturns a lower-class "
+                            "rejection without a completed validation check.",
+              "STAT", "epoch", "stage_runner._adequacy_record; adequacy.epoch_verdict; "
+              "spec 2026-10-17-model-adequacy-design.md", TEST,
+              check_adequacy_determination,
+              violated_by="stage-0 audit Q3: on every step_cliff / ridge_cubic run the "
+                          "screen rejected (p~1e-5), refine's 3-level lack of fit passed "
+                          "at ~alpha, and the screen's rejection was forgotten -- 22/22 "
+                          "non-quadratic certificates in the WP-C benchmark were false",
+              note="tests/test_optimize_model_adequacy.py runs the checker over every "
+                   "oracle campaign it drives and gives it teeth on hand-built records."),
 
     # ── temporal ──────────────────────────────────────────────────────────
     Invariant("INV-TMP01", "policy.json + policy.sha256 are written BEFORE the first "
