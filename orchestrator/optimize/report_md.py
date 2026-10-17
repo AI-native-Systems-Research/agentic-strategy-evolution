@@ -919,6 +919,12 @@ def _provenance_lines(report: dict) -> list[str]:
         if anc.get("reanchored"):
             out.append(f"- **Re-registered before running:** epoch(s) {anc['reanchored']} "
                        "were anchored with more than one policy; the latest is checked")
+    echo = [m for m in prov.get("manipulation_evidence") or [] if m.get("evidence") == "echo"]
+    if echo:
+        out.append("- **Manipulation checks that are echo-only:** "
+                   + ", ".join(f"`{m['factor']}` (`{m.get('observable')}`)" for m in echo)
+                   + ". These read Nous's own record of the level it set, so they show "
+                     "the lever was sent, not that the target received it")
     for w in prov.get("waivers") or []:
         out.append(f"- **Gate waived:** `{w.get('gate')}` -- {w.get('reason')}"
                    + (f" ({w['note']})" if w.get("note") else ""))

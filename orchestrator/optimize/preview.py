@@ -134,6 +134,16 @@ def build_preview(
             f"{n} baseline run(s) before and after build",
         ))
 
+    from orchestrator.optimize.factors import manipulation_evidence as _man_ev
+
+    _echo = [f.id for f in factors if _man_ev(f.manipulation) == "echo"]
+    if _echo:
+        pv.warnings.append(
+            f"manipulation check(s) for {', '.join(_echo)} read only `applied.*` "
+            f"(Nous's record of what it set): they show the lever was SENT, not "
+            f"that the target received it. Point them at a target-emitted field "
+            f"and add `evidence: target` if the target reports its state.")
+
     screen = _build_design(factors, design_cfg, Stage.SCREEN.value)
     n_centre = sum(1 for p in screen.points if p.role == "center")
     pv.screen_corners = len(screen.corners)

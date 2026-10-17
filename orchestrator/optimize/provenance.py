@@ -345,6 +345,25 @@ def model_record(work_dir: Path) -> dict:
     }
 
 
+def manipulation_evidence(campaign: dict | None) -> list[dict]:
+    """Per factor: does its manipulation predicate read a TARGET-emitted field
+    or only Nous's echo of what it set (``applied.*``)? Echo-only means the
+    check shows the lever was SENT, never that it was RECEIVED (#321)."""
+    from orchestrator.optimize.factors import manipulation_evidence as _ev
+
+    opt = ((campaign or {}).get("optimization") or {}) if isinstance(campaign, dict) else {}
+    out = []
+    for f in opt.get("factors") or []:
+        if not isinstance(f, dict):
+            continue
+        man = f.get("manipulation") or {}
+        out.append({"factor": str(f.get("id")),
+                    "observable": man.get("observable") or man.get("metric"),
+                    "evidence": _ev(man),
+                    "required": man.get("evidence") or "any"})
+    return out
+
+
 def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None = None) -> dict:
     return {
         "nous": nous_version_info(),
@@ -354,6 +373,7 @@ def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None 
         "analysis_constants": analysis_constants(),
         "waivers": waivers(work_dir, campaign),
         "model": model_record(work_dir),
+        "manipulation_evidence": manipulation_evidence(campaign),
     }
 
 

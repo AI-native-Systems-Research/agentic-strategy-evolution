@@ -89,6 +89,13 @@
             "calls": {"type": "array", "items": {"type": "object", "required": ["phase", "requested", "resolved"]}}
           }
         },
+        "manipulation_evidence": {
+          "type": "array",
+          "description": "Per factor (#321): whether its manipulation predicate reads a target-emitted field (evidence: target) or only Nous's own rendered configuration (evidence: echo -- applied, applied_args, applied_env, applied_patches), which shows the lever was sent, not received. required: what the campaign demanded (manipulation.evidence, default any).",
+          "items": {"type": "object", "required": ["factor", "evidence"],
+                    "properties": {"factor": {"type": "string"}, "observable": {"type": ["string", "null"]},
+                                   "evidence": {"enum": ["echo", "target"]}, "required": {"enum": ["any", "target"]}}}
+        },
         "anchor": {
           "type": "object",
           "description": "Item 2 (#321): the external anchor of this epoch's pre-registration, when `nous anchor` recorded one, and whether it still matches the policy and inputs on disk.",

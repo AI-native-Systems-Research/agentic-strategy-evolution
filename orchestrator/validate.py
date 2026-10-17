@@ -792,6 +792,17 @@ def _rule6_no_trivial_predicates(opt: dict, factors: list[dict]) -> list[str]:
     for factor in factors:
         fid = factor.get("id", "<unknown>")
         man = factor.get("manipulation")
+        if isinstance(man, dict) and man.get("evidence") == "target":
+            from orchestrator.optimize.factors import ECHO_ROOTS, manipulation_evidence
+
+            if manipulation_evidence(man) == "echo":
+                errors.append(
+                    f"factor {fid!r}: manipulation.evidence is 'target' but the "
+                    f"predicate reads {man.get('observable') or man.get('metric')!r}, "
+                    f"Nous's own record of what it set ({sorted(ECHO_ROOTS)}), not a "
+                    f"field the target emitted: it can show the lever was sent, never "
+                    f"that it was received. Point it at a target-reported field, or "
+                    f"drop 'evidence: target' (the check is then flagged echo-only).")
         if isinstance(man, dict) and is_trivial(man):
             errors.append(
                 f"factor {fid!r}: manipulation predicate "

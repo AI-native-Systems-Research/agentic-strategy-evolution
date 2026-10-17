@@ -193,16 +193,14 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
 
     campaign = synthetic_campaign(surface, **(campaign_overrides or {}))
     campaign.update(campaign_top_level or {})
-    # The harness is a deterministic INSTRUMENT: two runs with the same seed
-    # must be the same experiment, so it pins the run-order salt (#321) from
-    # the run id and seed instead of drawing a random one. A caller that
-    # declares its own salt keeps it.
-    import hashlib as _hl
-
+    # The harness is a fixed INSTRUMENT: its seed-specific scenarios (and the
+    # benchmark digest) were measured under the iteration-index run order, so it
+    # opts out of run-order concealment (#321) unless the caller declares a
+    # salt, which is how the concealment tests exercise derivation 2.
     _opt = campaign["optimization"]
     _opt["policy"] = dict(_opt.get("policy") or {})
-    _opt["policy"].setdefault("run_order_salt", _hl.sha256(
-        f"{campaign['run_id']}-{seed}".encode()).hexdigest()[:32])
+    if "run_order_salt" not in _opt["policy"]:
+        _opt["policy"].setdefault("run_order_concealment", False)
     # The synthetic target honours the campaign's own `workload.seed_env` when
     # one is declared. Reading it from the CAMPAIGN rather than taking it as a
     # separate harness argument is what keeps the instrument honest: a mismatch

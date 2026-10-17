@@ -673,6 +673,16 @@ else has a default.
   "{level}"` substituting the level under test. The validator rejects
   trivially-true predicates (`> 0`, `!= null`, bare truthiness) — see
   anti-pattern §6.1.
+
+  **Echo-only checks are flagged.** A predicate over `applied.*`,
+  `applied_args`, `applied_env` or `applied_patches` reads Nous's own record of
+  the level it set, so it shows the lever was *sent*, never that the target
+  *received* it. Such a predicate is allowed, and is listed as echo-only in the
+  `--liveness` preview, in `report.json` `provenance.manipulation_evidence` and
+  in `report.md`. Add `evidence: target` to a factor's `manipulation` to require
+  a target-emitted field: validation then fails if the predicate reads only the
+  echo. A target field is judged by its root name, so a target that emits its
+  own top-level `applied` key is still counted as echo.
 - **`relations`** (required, `>= 1`, and at least one must be
   `kind: correctness`) — Family B: is the mechanism correct?
   `correctness`: a violation hard-fails the whole campaign (the apparatus
@@ -2387,7 +2397,9 @@ policy hash covers a random 32-hex salt Nous draws at compile, records in
 different orders, so a periodic effect on the machine (a nightly job, a thermal
 cycle) cannot line up with the same rows in every campaign. Every order is
 still recomputable from the record. To reproduce another campaign's orders
-exactly, copy its salt into `optimization.policy.run_order_salt`. A policy
+exactly, copy its salt into `optimization.policy.run_order_salt`;
+`optimization.policy.run_order_concealment: false` returns to the old rule (the
+synthetic harness uses it, so its seeded scenarios stay fixed). A policy
 compiled before this release has no `run_order` block; its seed is the
 iteration index (derivation 1), and `nous reanalyze` keeps reproducing it that
 way. Concealment is from other campaigns, not from the target: the seed is

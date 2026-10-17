@@ -90,7 +90,8 @@ def test_a_campaign_compiled_before_concealment_still_reanalyzes_by_the_old_rule
     from orchestrator.optimize import stage_runner
 
     monkeypatch.setattr(stage_runner, "_run_order_salt", lambda *a, **k: None)
-    r = run_synthetic_campaign(SURFACES["bowl"](), seed=5, parent_dir=tmp_path)
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=5, parent_dir=tmp_path,
+                               campaign_overrides=_salted("9" * 32))
     monkeypatch.undo()
     assert "run_order" not in json.loads((r.work_dir / "policy.json").read_text())
     assert not list(r.work_dir.glob("run_order.epoch-*.json"))
@@ -101,14 +102,16 @@ def test_a_campaign_compiled_before_concealment_still_reanalyzes_by_the_old_rule
 
 
 def test_a_concealed_campaign_reanalyzes_identically(tmp_path):
-    r = run_synthetic_campaign(SURFACES["bowl"](), seed=5, parent_dir=tmp_path)
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=5, parent_dir=tmp_path,
+                               campaign_overrides=_salted("9" * 32))
     assert json.loads((r.work_dir / "policy.json").read_text())["run_order"]["derivation"] == 2
     res = reanalyze(r.work_dir)
     assert res.identical, res.differences
 
 
 def test_an_edited_salt_record_is_a_reanalysis_difference(tmp_path):
-    r = run_synthetic_campaign(SURFACES["bowl"](), seed=5, parent_dir=tmp_path)
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=5, parent_dir=tmp_path,
+                               campaign_overrides=_salted("9" * 32))
     p = r.work_dir / "run_order.epoch-1.json"
     rec = json.loads(p.read_text())
     rec["salt"] = "1" * 32
@@ -116,6 +119,16 @@ def test_an_edited_salt_record_is_a_reanalysis_difference(tmp_path):
     res = reanalyze(r.work_dir)
     assert not res.identical
     assert any(d["file"] == "policy.json" for d in res.differences)
+
+
+def test_the_declared_opt_out_is_the_old_rule(tmp_path):
+    c = synthetic_campaign(SURFACES["bowl"]())
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=5, parent_dir=tmp_path,
+                               campaign_overrides={"policy": {"run_order_concealment": False}})
+    assert "run_order" not in json.loads((r.work_dir / "policy.json").read_text())
+    assert json.loads((r.work_dir / "runs/iter-2/design_matrix.json").read_text())[
+        "run_order_seed"] == 2
+    assert c  # the campaign compiled
 
 
 @pytest.mark.parametrize("it", [1, 2, 7])

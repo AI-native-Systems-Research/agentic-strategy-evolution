@@ -1765,7 +1765,10 @@ def _run_order_salt(campaign: dict, work_dir: Path, epoch: int) -> str | None:
     and READ BACK on every later compile of the same epoch (a resume, or
     ``nous reanalyze``'s scratch dir, which carries the file), so the policy
     hash is reproducible from the record. ``optimization.policy.run_order_salt``
-    pins it (to reproduce an earlier campaign's orders). Under reanalysis an
+    pins it (to reproduce an earlier campaign's orders);
+    ``optimization.policy.run_order_concealment: false`` opts out (derivation
+    1, the iteration index, recorded by the policy's absent ``run_order``
+    block). Under reanalysis an
     epoch with no recorded salt was compiled before concealment existed, and
     gets None: the old derivation (the iteration index).
     """
@@ -1781,7 +1784,12 @@ def _run_order_salt(campaign: dict, work_dir: Path, epoch: int) -> str | None:
                 f"epoch's run orders cannot be reproduced from it") from exc
     if _REANALYSIS.get():
         return None
-    declared = ((_opt_block(campaign) or {}).get("policy") or {}).get("run_order_salt")
+    _pcfg = (_opt_block(campaign) or {}).get("policy") or {}
+    if _pcfg.get("run_order_concealment") is False:
+        # Declared opt-out: derivation 1, the iteration index. The declaration
+        # is in the campaign, so campaign_hash in the policy covers it.
+        return None
+    declared = _pcfg.get("run_order_salt")
     salt = str(declared) if declared else secrets.token_hex(16)
     _write_json(p, {"epoch": int(epoch), "salt": salt,
                     "derivation": policy_mod.RUN_ORDER_DERIVATION,

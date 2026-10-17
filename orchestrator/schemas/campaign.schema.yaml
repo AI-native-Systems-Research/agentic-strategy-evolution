@@ -1124,7 +1124,28 @@ properties:
                       type: string
                       enum: [cli_flag, env_var, config_patch]
             manipulation:
-              "$ref": "#/$defs/comparison"
+              type: object
+              required: [op, value]
+              additionalProperties: false
+              properties:
+                observable: { type: string, minLength: 1 }
+                metric: { type: string, minLength: 1 }
+                op: { type: string, enum: ["==", "!=", ">", ">=", "<", "<="] }
+                value: {}
+                when: {}
+                when_not: {}
+                evidence:
+                  type: string
+                  enum: [target, any]
+                  description: >
+                    ``target`` REQUIRES the predicate to read a field the
+                    target emitted; a predicate over ``applied``,
+                    ``applied_args``, ``applied_env`` or ``applied_patches``
+                    (Nous's own record of what it set) is then a validation
+                    error. ``any`` (the default) accepts both, and an
+                    echo-only predicate is flagged in the preview,
+                    ``report.json`` ``provenance.manipulation_evidence`` and
+                    ``report.md``.
               description: >
                 Family A: did the lever actually engage? Checked on every
                 run of this factor.
@@ -1525,6 +1546,14 @@ properties:
               cannot take. Deliberately not inferred from
               ``design.screen.resolution``, which would put the same fact in
               two places and let them drift.
+          run_order_concealment:
+            type: boolean
+            description: >
+              Default true. ``false`` opts out of run-order concealment: the
+              run-order seed is the iteration index (derivation 1), identical
+              across campaigns, as before #321. Only for reproducing a campaign
+              compiled under that rule; the synthetic harness uses it so its
+              seeded scenarios stay fixed.
           run_order_salt:
             type: string
             pattern: "^[0-9a-f]{32}$"
