@@ -2779,7 +2779,16 @@ What a certificate does NOT cover (spec
    judged "every replicate passes", not as a mean or chance constraint.
 3. **Pure error stands in for every configuration.** The model bound's
    variance comes from the centre replicates only. If those under-state the
-   variance elsewhere, the model half is anti-conservative.
+   variance elsewhere, the model half is anti-conservative. The Scheffé
+   constant (#321) is smaller than Bonferroni's, so it has less slack to
+   absorb this. Measured: bowl on a central composite, noise sd growing from
+   1× at the centre to (1 + h)× at the corners, δ = 0.05, 300 fits. Pr(the
+   model bound misses the true gap) is 0.023 / 0.11 / 0.53 at h = 1 / 3 / 8
+   with min(Bonferroni, Scheffé), against 0.010 / 0.037 / 0.25 with
+   Bonferroni alone. Lack of fit rejects most of those fits (pass rate 256 /
+   172 / 39 of 300). Counting only fits where it passes (the only ones that
+   can certify), the misses are 0.007 / 0.023 / 0.040 of all fits, within δ.
+   A heteroscedasticity check (#321, Brown-Forsythe) is not implemented.
 4. **The simultaneous constants are conservative.** The terminal family is
    Bonferroni over the finalists. The model family takes the smaller of
    Bonferroni and Scheffé, and Scheffé covers every contrast in the model
