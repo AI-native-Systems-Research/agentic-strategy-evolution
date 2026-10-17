@@ -45,7 +45,8 @@ all of the following hold:
    every fitting stage of the epoch;
 4. none of the earlier vetoes fired: an inadmissible or unmeasured finalist,
    a level-correlated exclusion, a refill round, or unknown adequacy;
-5. the candidate space was enumerated, not searched.
+5. the candidate space was enumerated, or searched with the unevaluated grid
+   bounded (`residual_regret_model.critical.unevaluated`, #321 H3).
 
 Assumptions:
 - **M1.** The registered response class (first order + 2fi at screen,
@@ -65,8 +66,17 @@ Assumptions:
 Two events:
 - **E_s, the model family** (`certificate.model_regret_bound`, δ_screen).
   The one-sided bounds `U_m(z, x̂) ≥ f(z) − f(x̂)` hold simultaneously for
-  every challenger `z ∈ X` (Bonferroni over all `M = |X| − 1` challengers),
-  with probability ≥ 1 − δ_screen under M1 and M3. Because the family is
+  every challenger `z ∈ X`, with probability ≥ 1 − δ_screen under M1 and M3.
+  The constant is `min(t_{1−δ/M, ν}, sqrt(q F_{q,ν,1−δ}))` (#321 H3):
+  Bonferroni over the `M = |grid| − 1` declared challengers, or Scheffé
+  (1953) over the q-dimensional space of differences `x(z) − x(x̂)`. Scheffé
+  covers every `d'β` in that space at once, so the family covers grid points
+  that were never evaluated. The minimum is taken over constants that are
+  functions of `(δ, M, q, ν)` alone, fixed before the data, so the family's
+  level is the chosen constant's. A searched space bounds its unevaluated
+  points by interval branch and bound at that constant
+  (`certificate.region_bound`; exact on convergence, a valid upper bound
+  otherwise). Because the family is
   simultaneous, any data-chosen subset of it holds on the same event. That
   is the only reason a max over "the candidates outside `S`" is legitimate.
 - **E_t, the terminal family** (`certificate.terminal_regret_bound`, at the
@@ -258,8 +268,11 @@ pure error (M3).
    and the ε reference still comes from the best finalist's mean on the
    selecting data (stage-0 Q5).
 7. **Multi-objective** has no global (model-half) bound.
-8. **Bonferroni conservatism.** Large X with few pure-error df gives a wide
-   `R_model,out`; expect `model_bound_above_epsilon`. The remedy is more
+8. **Conservatism of the simultaneous constants.** Large X with few
+   pure-error df gives a wide `R_model,out`; expect
+   `model_bound_above_epsilon`. Since #321 the model constant is
+   min(Bonferroni, Scheffé), and a max-t over the grid would be tighter still,
+   but it needs multivariate-t integration (no numpy). The remedy is more
    centre points (more pure-error df), not a weaker rule.
 9. **A baseline measured inadmissible** vetoes the round, named
    `baseline_measured_inadmissible` (#321 P2). The baseline is declared

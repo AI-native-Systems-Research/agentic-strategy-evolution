@@ -135,13 +135,14 @@ says which step catches it. **[static]** = `nous validate campaign`,
   IV: the smallest power of two ≥ 2k, between 2k and 4k). With more than
   about 10 knobs, screen at `resolution: 4` first (32 runs for 16 knobs), keep
   the live ones, and refine them next epoch. The `--liveness` preview prints
-  each option's cost. **Certification does not scale the same way:** above the
-  candidate-search cap (about 5+ refinable numeric knobs) the model bound is
-  not exhaustive and certification is withheld (`model_bound_not_exhaustive`);
-  even at 4 knobs the Bonferroni t over many challengers usually exceeds epsilon
-  at 4 centre points. Many-knob campaigns find the optimum (measured: regret 0
-  on `sparse_knobs` 6-8) but report `terminal_best`, not `certified`. To certify,
-  pin dead knobs and refine the few live ones in a later epoch. [live]
+  each option's cost. **Certification does not scale the same way.** Above the
+  candidate-search cap (about 5+ refinable numeric knobs) the unsearched grid is
+  bounded by branch and bound under a Scheffé constant. That is valid, but at 4
+  centre points (3 pure-error df) the model bound usually exceeds epsilon.
+  Many-knob campaigns find the optimum (measured: regret 0 on `sparse_knobs`
+  5-8) but report `terminal_best` (`model_bound_above_epsilon`), not
+  `certified`. To certify, add centre points, or pin dead knobs and refine the
+  few live ones in a later epoch. [live]
 - **A factor that moves the objective by less than 2× the noise is a dead
   axis** — unless it moves a constraint metric, which `--liveness` also
   measures and labels "keep (it decides feasibility)". Widen a dead axis's

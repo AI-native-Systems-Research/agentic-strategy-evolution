@@ -2592,9 +2592,46 @@ Each withheld reason names the half that failed:
   shortlist may still beat the winner by more than ε.
 - `model_bound_not_computable`: no fitting stage, or no pure error, so
   nothing bounds what screening left out.
-- `model_bound_not_exhaustive`: the candidate space was searched, not
-  enumerated, so the model bound is silent about candidates the search never
-  evaluated.
+- `model_bound_not_exhaustive`: written only by records from before #321. A
+  searched space is now bounded over the candidates the search never
+  evaluated (below), so this reason no longer fires.
+
+**The model family's critical value (#321 H3).** The per-challenger bounds
+`est + c * se` share one constant `c`, the smaller of two simultaneous
+constants:
+- Bonferroni over the declared grid's `m` challengers: `t_{1-δ/m, df}`;
+- Scheffé (1953; Working-Hotelling in regression) over the `q` non-intercept
+  model terms: `sqrt(q F_{q, df, 1-δ})`. It covers every contrast in the
+  model space at once, so it does not depend on how many candidates there
+  are.
+
+Both are valid at `1 − δ_screen`. Taking the smaller is valid because the
+choice depends only on `(δ, m, q, df)`, which are fixed before any response is
+read; `m` is the declared grid, never the count left after data-driven
+exclusions. `recommendation.json` `residual_regret_model.critical` records
+which one was used and both values. Cost against Bonferroni: Scheffé wins on
+almost every grid this kind builds. At df 3, Bonferroni over 15 challengers
+gives 6.74 against Scheffé's 5.28 (q = 3); over 80 challengers 11.98 against
+6.71 (q = 5); over a 9^4 grid 52.5 against 11.0 (q = 14). Bonferroni wins
+only on tiny grids with many terms. Measured on the WP-B oracle (smooth
+surfaces, seeds 1-8): certificates 46 → 50 at ×1 and 22 → 27 at ×4, 0 false.
+Noise sweep (1008 campaigns): 199 → 245 certificates, 0 false.
+
+**A searched space is bounded too.** Above `CANDIDATE_CAP` the candidates are
+searched, so most grid points are never scored. Under the simultaneous
+constant every grid point is covered anyway, and `certificate.region_bound`
+bounds the max over the unevaluated ones by branch and bound over sub-boxes,
+using interval arithmetic (Moore 1966) on the model columns. It is exact when
+it converges, and a valid but looser bound when it stops at
+`REGION_NODE_BUDGET` (60,000 boxes). The result is folded into
+`residual_regret_model` and the profile's `rest`, and recorded under
+`critical.unevaluated` (value, converged, nodes). Measured with the cap forced
+to 1 (every fitting stage searched; WP-B oracle, 288 campaigns): 0 → 77
+certificates, 0 false. Cost: up to about 60 s of extra CPU per fitting stage at
+8 knobs (9^8 grid; it does not converge there), well under a second at 4
+knobs. Many-knob campaigns are no longer vetoed. They still usually withhold
+on width (`model_bound_above_epsilon`; `sparse_knobs` 5-8: R_model 0.76 against
+ε 0.50 at 3 pure-error df). The remedy is more centre points.
 - `model_recommendation_not_compared` / `model_recommendation_infeasible`:
   the fitted argmax was not measured admissibly in the final round, so the
   model bound cannot be linked to the winner.
@@ -2743,11 +2780,15 @@ What a certificate does NOT cover (spec
 3. **Pure error stands in for every configuration.** The model bound's
    variance comes from the centre replicates only. If those under-state the
    variance elsewhere, the model half is anti-conservative.
-4. **Bonferroni is conservative.** Both families divide δ by the number of
-   comparisons. On large candidate spaces with few pure-error df, this makes
-   `G ≤ ε` hard to reach. Expect `model_bound_above_epsilon` rather than
-   false certificates. Raise `design.screen.center_points` (more pure-error
-   df) or narrow the ranges.
+4. **The simultaneous constants are conservative.** The terminal family is
+   Bonferroni over the finalists. The model family takes the smaller of
+   Bonferroni and Scheffé, and Scheffé covers every contrast in the model
+   space, more than the grid needs. On large grids with few pure-error df,
+   expect `model_bound_above_epsilon` rather than false certificates. Raise
+   `design.screen.center_points` (more pure-error df) or narrow the ranges.
+   A max-t (Hothorn-Bretz-Westfall) quantile over the grid would be tighter,
+   but it needs multivariate-t integration, which this package does not ship
+   (no numpy).
 5. **The refill look is charged whether or not it is taken.** The per-look
    level must be fixed before the data decide how many looks there are.
 6. **The baseline's gain point estimate is selection-biased.** The interval
