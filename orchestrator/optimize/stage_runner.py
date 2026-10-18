@@ -4111,7 +4111,7 @@ def _run_stage_body(
 
     def _record_row(outcome) -> None:
         _row = _run_row(by_index[outcome.row_index], outcome)
-        if _row.get("failure_kind") == "timeout":
+        if _row.get("failure_kind") == "timeout" and not policy_mod.LEGACY_PRE_P3.get():
             # #321 P3 item 3 (A6): a timeout is RIGHT-CENSORED at the ceiling,
             # never a value. Recorded with the bound it implies; the row stays
             # excluded from every fit and mean (never imputed).

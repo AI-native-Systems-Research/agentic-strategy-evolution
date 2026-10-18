@@ -531,3 +531,13 @@ def test_every_replicate_stays_the_default_and_is_unchanged(tmp_path):
                                         "constraints": [{"metric": "stall_ms", "op": "<=",
                                                          "value": 10}]})
     assert "delta_feasibility" not in compile_policy(camp)["objective"]
+
+
+def test_a_chance_constraint_too_few_replicates_to_ever_show_warns():
+    from orchestrator.validate import _rule32_confirm_replicate_floor
+
+    opt = {"response": {"primary": {"metric": "m"},
+                        "constraints": [{"metric": "x", "op": "<=", "value": 1,
+                                         "semantics": "chance:0.05"}]}}
+    w = [e for e in _rule32_confirm_replicate_floor(opt) if "Clopper-Pearson" in e]
+    assert w and w[0].startswith("WARN")

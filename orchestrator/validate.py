@@ -1073,6 +1073,36 @@ def _rule32_confirm_replicate_floor(opt: dict) -> list[str]:
             f"exists at delta_terminal / (looks x challengers)). Confirm will "
             f"measure but withhold certification as replicates_below_floor. "
             f"Raise it to >= {floor}, or omit it (the default is the floor).")
+    # A `chance:<a>` constraint is shown only when the one-sided
+    # Clopper-Pearson bound at delta_feasibility / (S C L) can reach a even
+    # with ZERO violations: n >= log(level) / log(1 - a).
+    import math as _m
+    pol_cfg = opt.get("policy") or {}
+    _dt = pol_cfg.get("delta_feasibility", pol_cfg.get("delta_terminal", 0.05))
+    _cons = (opt.get("response") or {}).get("constraints") or []
+    _dist = [c for c in _cons if isinstance(c, dict)
+             and c.get("semantics", "every_replicate") != "every_replicate"]
+    _seats0 = int(confirm.get("shortlist_size", 3)) + (
+        1 if opt.get("known_valid_baseline") else 0)
+    from orchestrator.optimize.policy import _registered_looks
+    for c in _dist:
+        sem = str(c.get("semantics"))
+        if not sem.startswith("chance:"):
+            continue
+        try:
+            a = float(sem.split(":", 1)[1])
+            level = float(_dt) / (_seats0 * len(_dist) * _registered_looks(opt))
+            need = _m.ceil(_m.log(level) / _m.log(1.0 - a))
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        if reps < need:
+            out.append(
+                f"WARN: constraint {c.get('metric') or c.get('observable')!r} has "
+                f"semantics {sem}: the one-sided Clopper-Pearson bound at "
+                f"delta_feasibility / (finalists x constraints x looks) = {level:.3g} "
+                f"cannot reach {a} with fewer than {need} replicates even with no "
+                f"violation, so confirm with {reps} can never show it feasible. "
+                f"Raise design.confirm.replicates to >= {need}, or use semantics: mean.")
     mr = design.get("max_runs")
     seats = int(confirm.get("shortlist_size", 3)) + (
         1 if opt.get("known_valid_baseline") else 0)
