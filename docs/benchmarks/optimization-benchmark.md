@@ -12,6 +12,27 @@
 > `docs/optimization-expert-audit.md`. Regenerating this benchmark under the
 > final code is a tracked follow-up.
 
+> **Pre-declared analysis (written and committed before the regenerated
+> results existed; #321 H2 / #320 D4).**
+>
+> - **Primary metric.** For each surface family (shipped, non-quadratic,
+>   many-knob sparse), the mean difference in NORMALIZED true regret at the
+>   matched budget N, Nous minus GP-BO under `PRIMARY_RULE` (GP-BO's GP-mean
+>   pick). Normalized regret is `regret / (f_best - f_worst_admissible)`, so
+>   every surface counts on [0, 1]. The 95% interval is a percentile bootstrap
+>   over SEEDS (the seed is the resampling unit; each seed's value is the mean
+>   over the family's cells), 10,000 resamples, seeded, seed recorded in the
+>   JSON. Negative favours Nous.
+> - **Secondary.** Head-to-head counts (better / tie / worse, exact and within
+>   Nous's ε) under `PRIMARY_RULE`, with Wilson 95% intervals on the win and
+>   loss proportions; per-cell mean regret with the same bootstrap; anytime
+>   regret curves at six budget fractions of N; certificate counts with their
+>   false-certificate counts, per arm. A false certificate in any arm is a
+>   core-claim failure and is reported as such, not averaged away.
+> - **Nothing is tuned on these surfaces.** Ablation settings (allocate
+>   `seats: 2`, the BO proposer's defaults) are the guide's documented
+>   example and the module defaults, fixed before any run.
+
 Zero LLM tokens: every campaign is the in-process synthetic harness
 (`orchestrator.optimize.harness`). Reproduce with
 `python -m benchmarks.optimization.run` (the suite) and
