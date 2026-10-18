@@ -60,6 +60,18 @@ def _overrides(name: str, *, constrained: bool) -> dict | None:
                           "constraints": [_CONSTRAINED[name]]}
     if name in _NO_REFINE:
         ov["stages"] = ["verify", "screen", "confirm"]
+    else:
+        # #321 P4: validation points are now chosen among their images AS
+        # RUN (maximin over snapped points), which on this surface measures
+        # (12, 12, 3), a FEASIBLE configuration; on seed 5 the seat-off arm's
+        # refill round then takes {A: 16, B: 16, C: 8} as a measured
+        # admissible neighbour and finds the optimum (gap 0.0), so the defect
+        # no longer reproduces. Validation rows are measured leaders either way;
+        # to keep isolating what the SEAT does, they are off here.
+        ov["design"] = {"screen": {"resolution": 5, "center_points": 4},
+                        "refine": {"kind": "central_composite", "center_points": 4,
+                                   "validation_points": 0,
+                                   "validation_outer_points": 0}}
     return ov or None
 
 

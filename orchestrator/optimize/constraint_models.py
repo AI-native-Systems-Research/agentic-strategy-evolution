@@ -191,7 +191,7 @@ def fit_constraint_models(constraints, design, records, *, fitted_ids, blocks=No
 
 
 def _fit_one(metric, design, records, keep_ids, cols, held_levels, levels_by_pos,
-             blocks=None):
+             blocks=None, positions_out=None):
     """Fit ONE metric over the measured rows of ``design``.
 
     Returns ``(fit, reason, n_rows)``; ``fit is None`` with ``reason`` when the
@@ -219,6 +219,8 @@ def _fit_one(metric, design, records, keep_ids, cols, held_levels, levels_by_pos
                     0)
         pos.append(i)
         ys.append(y)
+    if positions_out is not None:
+        positions_out[:] = pos
     sub = dataclasses.replace(
         design, factor_ids=tuple(keep_ids),
         groups=(tuple(design.groups[j] for j in cols) if design.groups else ()),
@@ -470,6 +472,10 @@ class ObjectiveModel:
     fit: Fit | None
     reason: str
     n_rows: int = 0
+    #: #321 P4: the design positions this model was fitted on (a metric
+    #: missing on a row drops it), so a validation check builds V from the
+    #: rows ACTUALLY fitted.
+    positions: tuple = ()
 
     @property
     def has_se(self) -> bool:
@@ -503,20 +509,23 @@ def fit_objective_models(objectives, design, records, *, fitted_ids,
     out: dict = {}
     for o in objectives:
         metric, direction = o["metric"], o.get("direction", "maximize")
+        pos: list = []
         fit, why_not, n_rows = _fit_one(metric, design, records, keep_ids, cols,
-                                        held_levels, levels_by_pos, blocks)
+                                        held_levels, levels_by_pos, blocks,
+                                        positions_out=pos)
         if fit is None:
             out[metric] = ObjectiveModel(metric, direction, None, why_not, n_rows)
             continue
-        m = ObjectiveModel(metric, direction, fit, "modelled", n_rows)
+        m = ObjectiveModel(metric, direction, fit, "modelled", n_rows, tuple(pos))
         if not m.has_se:
             m = ObjectiveModel(metric, direction, fit,
                                "no pure-error estimate: predictions are ranking "
-                               "hints only (an unknown variance is not zero)", n_rows)
+                               "hints only (an unknown variance is not zero)", n_rows,
+                               tuple(pos))
         elif not m.modelled:
             m = ObjectiveModel(metric, direction, fit,
                                f"lack of fit rejects the model "
                                f"(p={fit.lack_of_fit_p:.3g}); predictions are "
-                               f"ranking hints only", n_rows)
+                               f"ranking hints only", n_rows, tuple(pos))
         out[metric] = m
     return out

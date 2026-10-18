@@ -1125,6 +1125,53 @@ def _rule32_confirm_replicate_floor(opt: dict) -> list[str]:
     return out
 
 
+def _rule33_reuse_screen_with_choice_factor(design: dict, factors: list[dict],
+                                           stages=None) -> list[str]:
+    """Rule 33 (#321 P4 item 4): ``design.refine.reuse_screen`` with a choice
+    factor is an ERROR, and partial reuse across choice slices is REJECTED.
+
+    Refine fits ONE slice of each choice factor (the held level). A screen row
+    measured at another level of that factor carries (a) the factor's main
+    effect and (b) every interaction of it with the refined numerics, and the
+    per-slice second-order model has no column for either. Reusing such rows
+    biases every coefficient they load on. A block indicator absorbs only a
+    CONSTANT shift between the slices, never the slice-by-numeric interactions
+    (Box & Draper 2007, §15.3: blocking is valid only when block effects are
+    additive). That is the REJECTION.
+
+    A narrower variant, reusing only screen rows measured AT the held level,
+    would be unbiased under the no-drift assumption (same configuration), and
+    is DECLINED rather than rejected: at most 1/L of the screen's corners lie
+    on the slice, and the screen's centre rows cycle the choice levels
+    (``matrix.centre_configurations``), so the slice gets only
+    ``center_points / g`` block-1 centres to estimate the block effect from.
+    The runtime refuses either way (``stage_runner._screen_reuse``); this rule
+    stops an author from declaring an option that cannot take effect.
+    """
+    if not isinstance(design, dict):
+        return []
+    refine = design.get("refine")
+    if not isinstance(refine, dict) or not refine.get("reuse_screen"):
+        return []
+    if isinstance(stages, list) and "refine" not in stages:
+        return []      # refine never runs: the option is inert, nothing to reject
+    choice = [f.get("id") for f in factors
+              if isinstance(f, dict) and f.get("type") == "choice"]
+    if not choice:
+        return []
+    return [
+        f"design.refine.reuse_screen is true but choice factor(s) {choice} are "
+        f"declared. Partial reuse across choice slices is rejected: screen rows "
+        f"at another level of a choice factor carry that factor's effect AND its "
+        f"interactions with the refined numerics, which the per-slice refine "
+        f"model cannot estimate, so reusing them biases the slice fit; a block "
+        f"term absorbs only a constant shift, not those interactions. Remove "
+        f"reuse_screen (every refine row is then measured), or, if the choice "
+        f"factor is not under study, remove it from factors and pin it in the "
+        f"workload instead."
+    ]
+
+
 def _rule30_mixed_resolution_three_foldover(opt: dict, design: dict,
                                             factors: list[dict]) -> list[str]:
     """Rule 30: no resolution-III screen with a multi-level categorical while
@@ -2202,6 +2249,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule30_mixed_resolution_three_foldover(opt, design, factors))
     errors.extend(_rule26_objectives(opt))
     errors.extend(_rule32_confirm_replicate_floor(opt))
+    errors.extend(_rule33_reuse_screen_with_choice_factor(design, factors, opt.get("stages")))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
     # locked_observables keys, and a WARN naming every unenforceable lock.

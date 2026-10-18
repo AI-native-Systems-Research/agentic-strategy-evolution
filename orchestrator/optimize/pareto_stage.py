@@ -327,15 +327,34 @@ def models_untested(omodels) -> list[str]:
     return out
 
 
-def survivors(omodels, factors) -> set[str]:
-    """Factors significant for ANY objective (spec step 2)."""
+def survivors(omodels, factors, selection_cfg: dict | None = None) -> set[str]:
+    """Factors significant for ANY objective (spec step 2).
+
+    With ``selection_cfg`` (#321 P4 item 1) the family is ONE Holm family over
+    every (factor, objective) main-effect test: m = factors x objectives, so
+    Pr(any truly inert (factor, objective) pair is called active) <= alpha.
+    ``None``: the per-term rule per objective (a policy compiled before P4).
+    """
     from orchestrator.optimize.stage import decide_after_screen
 
     out: set[str] = set()
-    for om in omodels.values():
-        if om.fit is not None:
-            out |= set(decide_after_screen(om.fit, factors).surviving)
+    fits = [om.fit for om in omodels.values() if om.fit is not None]
+    if selection_cfg:
+        fam = selection_family(omodels, factors, selection_cfg)
+        return set(fam["kept"]) | set(fam["unknown"])
+    for fit in fits:
+        out |= set(decide_after_screen(fit, factors).surviving)
     return out
+
+
+def selection_family(omodels, factors, selection_cfg: dict) -> dict:
+    """The multi-objective screening family record (#321 P4 item 1)."""
+    from orchestrator.optimize.effects import screening_family_over
+
+    return screening_family_over(
+        {m: om.fit for m, om in omodels.items()}, [f.id for f in factors],
+        alpha=float(selection_cfg["alpha"]),
+        method=str(selection_cfg.get("method", "holm")))
 
 
 def nan_on_complete(outcome, objs) -> bool:

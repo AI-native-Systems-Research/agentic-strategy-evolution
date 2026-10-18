@@ -77,10 +77,11 @@ class DesignPreview:
     #: is ``sd * sqrt(2 L / N)`` (two level means of ~N/L corners each), NOT
     #: the two-level MDE line's ``2 sd / sqrt(N)``.
     categorical_se: list[tuple[str, int, float]] = field(default_factory=list)
-    #: WP-B B3: ``(stage, D-efficiency, max centred VIF, p, n)`` of each
+    #: WP-B B3 / #321 P4: ``(stage, D-efficiency, max centred VIF, p, n,
+    #: G-efficiency, g_exact, I average SPV)`` of each
     #: fitting stage's PLANNED model matrix (the design as run is in
     #: recommendation.json ``model_adequacy.design_efficiency``).
-    efficiency: list[tuple[str, float, float | None, int, int]] = field(default_factory=list)
+    efficiency: list[tuple] = field(default_factory=list)
 
 
 def screen_mde(n_corners: int, df: int, sd: float) -> tuple[float, float | None]:
@@ -333,9 +334,13 @@ def build_preview(
             labels, _t, cols, _q, _a = _mm(d, d.factor_ids)
         except Exception:  # noqa: BLE001 -- a preview never fails on this
             return
-        e = _adq.design_efficiency(cols, labels)
+        e = _adq.design_efficiency(
+            cols, labels, terms=_t, factor_ids=d.factor_ids,
+            discrete=[f.id for f in factors if f.type == "choice"])
         if e is not None:
-            pv.efficiency.append((name, e["d_efficiency"], e["max_vif"], e["p"], e["n"]))
+            pv.efficiency.append((name, e["d_efficiency"], e["max_vif"], e["p"], e["n"],
+                                  e.get("g_efficiency"), e.get("g_exact"),
+                                  e.get("i_average_spv")))
 
     if not screen.groups:
         _eff("screen", screen)
@@ -574,10 +579,14 @@ def format_preview(pv: DesignPreview) -> list[str]:
             f"    {fid} ({L} levels): the MDE line above is for two-level "
             f"contrasts; comparing two of {fid}'s levels has SE about sd x "
             f"sqrt(2 x {L} / {pv.screen_corners}) = {mult:.3g} sd{sd}")
-    for name, d, vif, p, n in pv.efficiency:
+    for name, d, vif, p, n, g, g_exact, i_spv in pv.efficiency:
         v = f", max VIF {vif:.3g}" if vif is not None else ""
+        gi = ""
+        if g is not None:
+            gi = (f"; G-efficiency {g:.3f}{'' if g_exact else ' (upper bound)'}, "
+                  f"average scaled prediction variance {i_spv:.3g} (I; smaller is better)")
         out.append(f"    {name} design: D-efficiency {d:.3f} ({p} model terms over "
-                   f"{n} planned fitted runs{v}; 1.0 = orthogonal +-1 design)")
+                   f"{n} planned fitted runs{v}; 1.0 = orthogonal +-1 design){gi}")
     for w in pv.warnings:
         out.append(f"    WARNING: {w}")
     return out

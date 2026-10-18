@@ -2736,7 +2736,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         "certificate_scope": _certificate_scope(
             _epoch_rec, boundary_block,
             _latest_inertness(work_dir) if "inertness" in (pol.get("states") or {})
-            else None),
+            else None, selection=_screen_selection_record(work_dir)),
         **({"gain_over_baseline": dict(conf["gain_over_baseline"])}
            if conf and conf.get("gain_over_baseline") else {}),
         # #321 item 2: the post-selection validation block, when registered.
@@ -3660,7 +3660,8 @@ def _run_stage_body(
             (_read_recommendation(work_dir) or {}).get("alias_consequential") or ()
         ]
         on, fold_basis = _fold_on_basis(factors, design_cfg, pairs)
-        screen_design = _build_design(factors, design_cfg, Stage.SCREEN.value)
+        screen_design = _build_design(factors, design_cfg, Stage.SCREEN.value,
+                                      for_fold=True)
         design = _build_design(
             factors, design_cfg, stage_name, fold_on=on,
         )
@@ -3698,6 +3699,23 @@ def _run_stage_body(
         payload = matrix.matrix_payload(design, factors, run_order_seed=_ros)
         rows = matrix.expand(design, factors)
         _n_val = sum(1 for p in design.points if p.role == "validation")
+        if not _n_val and stage_name == Stage.REFINE.value:
+            # #321 P4: points were registered but EVERY candidate snapped onto
+            # a composite point (a coarse levels_only lattice): declined, named.
+            _rcfg0 = design_cfg.get("refine") or {}
+            _plan0 = _validation_plan(factors, design, _rcfg0, stage_name)
+            from orchestrator.optimize import adequacy as _adq0
+
+            if (_adq0.n_validation_points(_rcfg0, len(design.factor_ids))
+                    or _adq0.n_validation_outer_points(_rcfg0, len(design.factor_ids))):
+                payload["validation"] = {
+                    "rule": "seeded_greedy_maximin", "points": 0,
+                    "ring": _plan0["ring"], "row_indices": [],
+                    "points_declined": _plan0["declined"],
+                    "declined_reason": "every_candidate_snaps_onto_a_design_point",
+                    "held_out_of_fit": True,
+                    "check": "joint_predictive_F_chow_1960",
+                    "alpha": _adq0.VALIDATION_ALPHA}
         if _n_val:
             # WP-B B1: the validation rows are their OWN BLOCK, executed after
             # every composite row in a separately seeded order. The composite's
@@ -3711,15 +3729,28 @@ def _run_stage_body(
                 + [_n0 + j for j in matrix.randomized_run_order(
                     _n_val, _ros * 7919 + 1)])
             from orchestrator.optimize import adequacy as _adq
+            import dataclasses as _dcv
 
-            _rcfg = design_cfg.get("refine") or {}
+            _rcfg = design_cfg.get("refine" if stage_name == Stage.REFINE.value
+                                   else "screen") or {}
+            _base = _dcv.replace(design, points=tuple(
+                p for p in design.points if p.role != "validation"))
+            _plan = _validation_plan(factors, _base, _rcfg, stage_name)
             payload["validation"] = {
                 "rule": "seeded_greedy_maximin",
-                "candidates": "coded +-0.5 on every refinable axis",
+                "candidates": ("coded +-0.5 on every refinable axis, then "
+                               f"+-{_rcfg.get('validation_outer_offset', _adq.VALIDATION_OUTER_OFFSET)} "
+                               "(outer ring)" if stage_name == Stage.REFINE.value else
+                               "coded +-0.5 on every numeric factor with an interior, "
+                               "+-1 on the rest"),
                 "offset": _adq.VALIDATION_OFFSET,
                 "points": _n_val,
+                "ring": _plan["ring"],
                 "seed": int(_rcfg.get("validation_seed", 0)),
                 "row_indices": list(range(_n0, len(rows))),
+                "planned_coded": [list(c) for c in _plan["planned"]],
+                "as_run_coded": [list(c) for c in _plan["points"]],
+                "points_declined": _plan["declined"],
                 "held_out_of_fit": True,
                 "check": "joint_predictive_F_chow_1960",
                 "alpha": _adq.VALIDATION_ALPHA,
@@ -4408,8 +4439,8 @@ def _run_stage_body(
     val_ys: list = []
     fit_blocks = (list((payload.get("stage_reuse") or {}).get("block") or [])
                   or None)
-    if stage_name == Stage.REFINE.value and any(
-            p.role == "validation" for p in design.points):
+    if stage_name in (Stage.REFINE.value, Stage.SCREEN.value, Stage.FOLDOVER.value) \
+            and any(p.role == "validation" for p in design.points):
         _vi = [i for i, p in enumerate(design.points) if p.role == "validation"]
         _ki = [i for i, p in enumerate(design.points) if p.role != "validation"]
         _outs = list(outcomes)
@@ -4937,8 +4968,21 @@ def _run_stage_body(
         decision = decide_after_refine(
             fit, fitted_factors, stationary, behavioral_failures=behavioral,
         )
+        screen_selection = None
     else:
-        decision = decide_after_screen(fit, factors, behavioral_failures=behavioral)
+        # #321 P4 item 1: the survivor rule is ONE registered family (Holm at
+        # the registered alpha over the screened factors' main-effect tests).
+        # A policy compiled before P4 has no `selection`: the per-term rule.
+        _sel_cfg = ((pol.get("states") or {}).get("screen") or {}).get("selection")
+        screen_selection = None
+        if _sel_cfg:
+            from orchestrator.optimize.effects import screening_family
+
+            screen_selection = screening_family(
+                fit, [f.id for f in factors], alpha=float(_sel_cfg["alpha"]),
+                method=str(_sel_cfg["method"]))
+        decision = decide_after_screen(fit, factors, behavioral_failures=behavioral,
+                                       selection=screen_selection)
 
     # ── the recommendation: x-hat = argmax over X_valid (spec §3.3) ────────
     #
@@ -5153,7 +5197,12 @@ def _run_stage_body(
         mo_rejected = pareto_stage.models_rejected(_omodels)
         mo_lof = pareto_stage.models_rejected(_omodels, lack_of_fit_only=True)
         mo_untested = pareto_stage.models_untested(_omodels)
-        mo_survivors = pareto_stage.survivors(_omodels, factors)
+        _mo_sel = (((pol.get("states") or {}).get("screen") or {}).get("selection")
+                   if stage_name != Stage.REFINE.value else None)
+        mo_survivors = pareto_stage.survivors(_omodels, factors, _mo_sel)
+        if _mo_sel and screen_selection:
+            # The family that ROUTED (factors x objectives) is the one recorded.
+            screen_selection = pareto_stage.selection_family(_omodels, factors, _mo_sel)
         if _pref_cand is not None:
             rec = _pref_cand
         logger.info(
@@ -5306,7 +5355,43 @@ def _run_stage_body(
         work_dir, stage_name, fit, design_for_fit, ys_for_fit, factors,
         fitted_ids, interactions_dropped, omitted_terms, adequate,
         adequacy_basis, decision, val_rows, val_outcomes, val_ys,
-        response_spec, primary, _omodels, blocks=blocks_for_fit)
+        response_spec, primary, _omodels, blocks=blocks_for_fit,
+        adequacy_rule=(pol.get("objective") or {}).get("adequacy"),
+        untested_levels=untested, mo_untested_names=mo_untested,
+        val_meta={k: payload["validation"][k]
+                  for k in ("ring", "points_declined", "declined_reason")
+                  if k in (payload.get("validation") or {})})
+    by_fid = {f.id: f for f in factors}
+    if screen_selection is not None:
+        # #321 P4 review HIGH 1: ROUTING is not the survivor labels. A Type II
+        # routing error (an active refinable factor dropped, so refine is
+        # skipped) costs VALIDITY: the certificate then rests on the class-1
+        # model, whose only curvature check is the 1-df centre-vs-corner
+        # contrast -- zero power when the pure quadratics cancel (a saddle;
+        # measured 12/24 false certificates under Holm, 6/23 per-test, on
+        # f = 10 + xa^2 - xb^2 + 0.036 xb). A Type I routing error costs only
+        # refine runs. So the route is refine UNLESS a refinable factor is
+        # affirmatively shown inert -- and no screen-stage test can show a
+        # factor's CURVATURE inert (its pure quadratic is aliased with the
+        # intercept on a two-level design plus centres), so none is: refine
+        # runs whenever a refinable factor exists. The Holm family stays the
+        # REPORTED survivor labels (screen_selection), an FWER statement about
+        # which main effects are declared active.
+        _routed = [f.id for f in factors if is_refinable(f)]
+        screen_selection = dict(screen_selection)
+        screen_selection["routing"] = {
+            "rule": "refine_unless_shown_inert",
+            "refinable": _routed, "shown_inert": [],
+            "why": ("no screen-stage test can show a refinable factor's curvature "
+                    "inert (pure quadratics are aliased with the intercept), so "
+                    "every refinable factor routes to refine; the Holm labels "
+                    "above decide nothing")}
+        _route_count = len(_routed)
+    else:
+        _route_count = sum(
+            1 for fid in (set(decision.surviving) | mo_survivors
+                          if mo_record is not None else decision.surviving)
+            if fid in by_fid and is_refinable(by_fid[fid]))
     _write_json(iter_dir / "recommendation.json", {
         "stage": stage_name,
         "iteration": iteration,
@@ -5315,6 +5400,7 @@ def _run_stage_body(
         "predicted": rec.predicted,
         "fitted_ids": list(fitted_ids),
         "held_fixed": held_now,
+        **({"screen_selection": screen_selection} if screen_selection else {}),
         "top_candidates": [
             {"levels": c.levels, "coded": c.coded, "predicted": c.predicted}
             for c in top
@@ -5494,11 +5580,7 @@ def _run_stage_body(
     by_fid = {f.id: f for f in factors}
     obs = observations_from_decision(
         decision, fit,
-        refinable_survivors=sum(
-            1 for fid in (set(decision.surviving) | mo_survivors
-                          if mo_record is not None else decision.surviving)
-            if fid in by_fid and is_refinable(by_fid[fid])
-        ),
+        refinable_survivors=_route_count,
         stationary_in_hull=(
             None if stage_name != Stage.REFINE.value
             # Multi-objective: not computed (see the override below), so the
@@ -5578,6 +5660,13 @@ def _run_stage_body(
         obs["model_adequate"] = None
     if adequate is False:
         obs["model_adequate"] = False
+    if (pol.get("objective") or {}).get("adequacy"):
+        # #321 P4: under the registered adequacy family the verdict is the
+        # family's (a per-test lack-of-fit rejection Holm does not make leaves
+        # the model adequate); `lack_of_fit` stays the per-test CURVATURE
+        # routing fact -- spending refine runs on it is a design choice, not a
+        # claim the certificate rests on.
+        obs["model_adequate"] = adequate
     if mo_record is not None:
         # NOT the semantic "optimum outside the hull" exception. That guard
         # says the declared ranges cannot contain THE optimum; a front has no
@@ -5595,7 +5684,8 @@ def _run_stage_body(
         # An objective that could not be estimated at all is inadequate but is
         # not curvature evidence, so it moves only `model_adequate`.
         obs["lack_of_fit"] = bool(obs.get("lack_of_fit")) or bool(mo_lof)
-        obs["model_adequate"] = False
+        obs["model_adequate"] = (adequate if (pol.get("objective") or {}).get("adequacy")
+                                 else False)
     if stage_name == Stage.SCREEN.value and "foldover" in (pol.get("states") or {}):
         # What the block would cost: the fold design is the screen's corners plus
         # its centre replicates, so it is sized from the design rather than from
@@ -7092,8 +7182,100 @@ def _latest_confirmation(work_dir) -> dict | None:
     return None
 
 
+def _run_image(factors, design):
+    """``(image, design_images)``: ``image(coded)`` is the coded point AS RUN
+    (decode to a runnable level -- grid / levels_only snap, clamp to the
+    declared range -- then re-code, INV-STAT14), rounded so equal levels
+    compare equal; ``design_images`` are the images of ``design``'s points."""
+    from orchestrator.optimize.factors import code_actual, decode_coded
+
+    by_id = {f.id: f for f in factors}
+    ids = list(design.factor_ids)
+
+    def image(coded):
+        return tuple(round(code_actual(by_id[fid], decode_coded(by_id[fid], float(c))), 9)
+                     for fid, c in zip(ids, coded))
+    return image, {image(p.coded) for p in design.points}
+
+
+def _validation_plan(factors, design, cfg: dict, stage_name: str) -> dict:
+    """The registered validation points of a fitting stage, AS RUN.
+
+    Refine (WP-B B1, #321 P4 item 2): ``validation_points`` at coded +-0.5 on
+    every refinable axis, then ``validation_outer_points`` at
+    +-``validation_outer_offset`` (default 0.8), each ring by seeded greedy
+    maximin, the outer ring against every point already chosen.
+
+    Screen (#321 P4 item 2, WP-B limit 5; opt-in ``design.screen.
+    validation_points``): +-0.5 on every numeric factor with a runnable
+    interior, +-1 (a corner level) on the rest; none when nothing has an
+    interior or the screen is mixed-level (categorical contrasts; declined).
+
+    SNAPPING (WP-B limit 8). Each candidate is decoded to a runnable level
+    (grid / ``levels_only`` snap, clamp) and re-coded (INV-STAT14). A
+    candidate whose image is a design point -- it would test nothing, the fit
+    interpolates it -- or another chosen point's image is DECLINED and the
+    maximin takes the next-best; the maximin distances are between images.
+    Returns ``{points (images), planned (raw candidates), declined, ring}``.
+    """
+    from orchestrator.optimize import adequacy as _adq
+
+    k = len(design.factor_ids)
+    seed = int(cfg.get("validation_seed", 0))
+    by_id = {f.id: f for f in factors}
+    offsets = None
+    if stage_name == Stage.REFINE.value:
+        m = _adq.n_validation_points(cfg, k)
+        m_out = _adq.n_validation_outer_points(cfg, k)
+    else:
+        m, m_out = max(0, int(cfg.get("validation_points", 0))), 0
+        if design.groups or not m:
+            # Mixed-level screen (categorical contrasts, columns are
+            # pseudo-factors): declined.
+            return {"points": [], "planned": [], "declined": [],
+                    "ring": {"inner": 0, "outer": 0},
+                    **({"declined_reason": "mixed_level_screen"}
+                       if design.groups and m else {})}
+        offsets = [_adq.VALIDATION_OFFSET if by_id[fid].type == "numeric"
+                   and len(by_id[fid].levels) > 2 else 1.0 for fid in design.factor_ids]
+        if all(o == 1.0 for o in offsets):
+            m = 0
+    empty = {"points": [], "planned": [], "declined": [], "ring": {"inner": 0, "outer": 0}}
+    if not (m or m_out):
+        return empty
+    img, design_imgs = _run_image(factors, design)
+    declined: list = []
+    raw = _adq.validation_points(
+        k, m, seed, outer=m_out,
+        outer_offset=float(cfg.get("validation_outer_offset",
+                                   _adq.VALIDATION_OUTER_OFFSET)),
+        key=img, forbidden=design_imgs, offsets=offsets, declined=declined)
+    inner_only = _adq.validation_points(k, m, seed, key=img, forbidden=design_imgs,
+                                        offsets=offsets) if m else []
+    n_in = len(inner_only)
+    return {"points": [img(c) for c in raw], "planned": raw,
+            "declined": [{"planned": list(c), "as_run": list(img(c)),
+                          "reason": "snaps_onto_a_design_point"}
+                         for c in dict.fromkeys(declined)],
+            "ring": {"inner": n_in, "outer": len(raw) - n_in}}
+
+
+def _with_screen_validation(factors, screen, cfg: dict):
+    """The screen with its registered validation points appended (after the
+    corners and centres). See ``_validation_plan``. Never part of the
+    foldover: the fold block is derived from the screen WITHOUT them."""
+    from orchestrator.optimize.design import DesignPoint as _P
+    import dataclasses as _dc
+
+    plan = _validation_plan(factors, screen, cfg, Stage.SCREEN.value)
+    if not plan["points"]:
+        return screen
+    return _dc.replace(screen, points=screen.points + tuple(
+        _P(coded=c, role="validation", replicate=i) for i, c in enumerate(plan["points"])))
+
+
 def _build_design(factors, design_cfg: dict, stage_name: str, *,
-                  fold_on: str | None = None):
+                  fold_on: str | None = None, for_fold: bool = False):
     """Design for this stage: a screen matrix, or a response surface.
 
     Takes no ``work_dir``. It used to, solely so the confirm branch could read
@@ -7166,12 +7348,11 @@ def _build_design(factors, design_cfg: dict, stage_name: str, *,
         from orchestrator.optimize import adequacy as _adq
         from orchestrator.optimize.design import Design as _D, DesignPoint as _P
 
-        m = _adq.n_validation_points(cfg, len(refinable))
-        if m:
-            vp = _adq.validation_points(len(refinable), m,
-                                        int(cfg.get("validation_seed", 0)))
+        plan = _validation_plan(factors, ccd, cfg, Stage.REFINE.value)
+        if plan["points"]:
             ccd = _D(points=ccd.points + tuple(
-                _P(coded=c, role="validation", replicate=i) for i, c in enumerate(vp)),
+                _P(coded=c, role="validation", replicate=i)
+                for i, c in enumerate(plan["points"])),
                 factor_ids=ccd.factor_ids, kind=ccd.kind, resolution=ccd.resolution)
         return ccd
     if stage_name == Stage.CONFIRM.value:
@@ -7220,7 +7401,8 @@ def _build_design(factors, design_cfg: dict, stage_name: str, *,
         )
         screen = with_center_points(base, int(cfg.get("center_points", 4)))
     if stage_name != Stage.FOLDOVER.value:
-        return screen
+        return _with_screen_validation(factors, screen, cfg) \
+            if stage_name == Stage.SCREEN.value and not for_fold else screen
     # The fold block is derived from the SCREEN design, deterministically, from
     # the same config — so it is reproducible from `design_matrix.json` without
     # having to have kept the screen's Design object alive across the process
@@ -7567,6 +7749,27 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                         and _rec_for_bias["model_adequate"] is None)
     adequacy_reason = str(_rec_for_bias.get("model_adequate_basis")
                           or "model_adequacy_unknown")
+    # #321 P4 review HIGH 1: MODEL CLASS UNCHECKED. When the model half rests
+    # on a class-1 fit (screen / foldover: first order + 2fi, no curvature
+    # terms) while the campaign declares a REFINABLE factor, the response
+    # class M1 assumes was never checked where it matters: the only curvature
+    # check is the 1-df centre-vs-corner contrast, which estimates the SUM of
+    # the pure quadratics and has zero power when they cancel (a saddle).
+    # Measured: f = 10 + xa^2 - xb^2 + 0.036 xb certified falsely 12/24
+    # (gap 0.96 vs eps 0.20) when refine was skipped. The global claim is
+    # withheld; the terminal comparison and the within-shortlist bound are
+    # still reported. The hole needs TWO OR MORE refinable factors: the centre
+    # contrast estimates the sum of the pure quadratics, which can cancel only
+    # when there are at least two. With exactly one refinable factor the
+    # contrast IS that factor's quadratic, and lack of fit tests it with full
+    # power (a rejection withholds as model_inadequate); refine could not run
+    # anyway (validator rule 4 needs two). With none, there is no curvature
+    # to miss. Single-objective only: a multi-objective front certificate
+    # makes no global model claim (no model half; spec 2026-10-17 §7).
+    model_class_unchecked = bool(
+        _rec_for_bias and not pareto_stage.objectives(pol)
+        and str(_rec_for_bias.get("stage")) in (Stage.SCREEN.value, Stage.FOLDOVER.value)
+        and sum(1 for f in factors if is_refinable(f)) >= 2)
     # EVERY non-"ok" status counts, and the reason is a bug this line already
     # caused once. The statuses were split into "infeasible" (measured
     # inadmissible) and "unmeasured" (the instrument failed on an admissible
@@ -7652,7 +7855,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         and bound.value is not None and eps is not None and bound.value <= eps
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
         and not fit_bias and not model_inadequate and not refilled
-        and not adequacy_unknown
+        and not adequacy_unknown and not model_class_unchecked
         and not (noise_diag or {}).get("withheld")
         and (bool(pareto_stage.objectives(pol)) or not model_reasons)
     )
@@ -7783,6 +7986,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("fit_exclusions_level_correlated", fit_bias),
                 ("model_inadequate", model_inadequate),
                 (adequacy_reason, adequacy_unknown),
+                ("model_class_unchecked", model_class_unchecked),
                 ("campaign_delta_exhausted", budget_exhausted),
                 *((r, True) for r in ((noise_diag or {}).get("withheld") or [])),
                 ("campaign_delta_exceeded", budget_exceeded),
@@ -8535,7 +8739,8 @@ def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict
 
 
 def _certificate_scope(rec: dict, boundary: dict | None,
-                       inertness: dict | None = None) -> dict:
+                       inertness: dict | None = None,
+                       selection: dict | None = None) -> dict:
     """``report.json["certificate_scope"]`` (WP-A A4, spec
     2026-10-17-certification-soundness.md section 4): the region the model
     half of the certificate ranged over, read from this epoch's latest
@@ -8561,6 +8766,31 @@ def _certificate_scope(rec: dict, boundary: dict | None,
          + " held fixed; the other levels of those factors are NOT covered")
         if held else
         "epsilon-optimal over the declared ranges of every factor")
+    # #321 P4: what the screen's survivor LABELS did to this scope: nothing.
+    # A factor the Holm family did not reject is NOT held (refine's composite
+    # spans every refinable factor; the screen/foldover model keeps every
+    # coefficient) and does not change the route (refine runs whenever a
+    # refinable factor exists, #321 P4 review). So held_fixed is exactly the
+    # non-refinable factors refine holds, and the fitting stage is refine
+    # whenever a refinable factor exists.
+    sel = selection
+    if sel is not None:
+        dropped = list(sel.get("dropped") or [])
+        out["screening"] = {
+            "method": sel.get("method"), "alpha": sel.get("alpha"),
+            "family_size": sel.get("family_size"), "dropped": dropped,
+            "held_because_dropped": [],
+            "model_class": 2 if out["fitting_stage"] == Stage.REFINE.value else 1,
+        }
+        if dropped and region != "none":
+            out["statement"] += (
+                f"; the screen labelled {', '.join(dropped)} inactive "
+                f"({sel.get('method')}, family-wise alpha {sel.get('alpha')} over "
+                f"{sel.get('family_size')} tests), which held none of them and "
+                f"changed no route: "
+                + ("refine varied every refinable factor"
+                   if out["fitting_stage"] == Stage.REFINE.value else
+                   "the model half is the first-order + 2fi screen model"))
     if inertness is not None and held:
         # #321 item 8: what the inertness check showed. A factor shown inert
         # changes the response AT THE WINNER by less than the margin at every
@@ -8580,6 +8810,15 @@ def _certificate_scope(rec: dict, boundary: dict | None,
                 f"union bound) -- a local equivalence, not a certificate over "
                 f"those slices")
     return out
+
+
+def _screen_selection_record(work_dir) -> dict | None:
+    """The epoch's latest screening family (screen or foldover record)."""
+    sel = None
+    for r in _epoch_recommendations(work_dir):
+        if r.get("screen_selection"):
+            sel = r["screen_selection"]
+    return sel
 
 
 def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
@@ -8617,7 +8856,11 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
                    "<= delta_screen + delta_terminal (+ delta_constraint when "
                    "constraint exclusion is registered, + delta_feasibility "
                    "when a distributional constraint is) under the stated "
-                   "assumptions."}
+                   "assumptions. The screen's Holm survivor labels (#321 P4) "
+                   "are not a term: they decide no route and hold no factor. "
+                   "A model half resting on the first-order + 2fi screen model "
+                   "while two or more refinable factors exist is withheld "
+                   "(model_class_unchecked)."}
     if not rec or not isinstance(r_model, (int, float)):
         return out, ["model_bound_not_computable"]
     if r_out is None:
@@ -8944,16 +9187,27 @@ def _model_adequacy(decision, mo_rejected, fit, untested, design_for_fit,
         return False, None
     if fit.lof_exact == "rejected":
         return False, None
+    basis = _unknown_adequacy_basis(fit, untested, design_for_fit, mo_untested)
+    return (None, basis) if basis else (True, None)
+
+
+def _unknown_adequacy_basis(fit, untested, design_for_fit, mo_untested=()):
+    """Why adequacy is UNKNOWN, computed INDEPENDENTLY of whether lack of fit
+    rejected (#321 P4 review HIGH 2): ``lack_of_fit_not_computable`` (incl. a
+    secondary objective with no verdict), ``curvature_untested`` or
+    ``curvature_not_isolated``; ``None`` when nothing is unknown. Any later
+    step that sets aside a rejection must re-apply this, so an unknown never
+    becomes adequate."""
     if (fit.lack_of_fit_p is None and not fit.lof_exact_fit) or mo_untested:
-        return None, "lack_of_fit_not_computable"
+        return "lack_of_fit_not_computable"
     if untested:
-        return None, "curvature_untested"
+        return "curvature_untested"
     mixed = bool(design_for_fit.groups) and any(
         c != g for c, g in zip(design_for_fit.factor_ids, design_for_fit.groups))
     if (mixed and any(p.role == "center" for p in design_for_fit.points)
             and not fit.centre_isolated):
-        return None, "curvature_not_isolated"
-    return True, None
+        return "curvature_not_isolated"
+    return None
 
 
 def _screen_reuse(work_dir, pol, design, rows, payload, factors):
@@ -9082,6 +9336,21 @@ def _screen_reuse(work_dir, pol, design, rows, payload, factors):
     return design, new_rows, payload, record
 
 
+def _non_test_rejection(fit, omodels, primary) -> bool:
+    """A rejection that is not a lack-of-fit / validation TEST: an exact
+    lack-of-fit rejection against zero pure error, or an objective model that
+    could not be estimated. Vetoes; the adequacy family never overturns them."""
+    if getattr(fit, "lof_exact", None) == "rejected":
+        return True
+    for metric, m in (omodels or {}).items():
+        if metric == primary:
+            continue
+        f2 = getattr(m, "fit", None)
+        if f2 is None or getattr(f2, "lof_exact", None) == "rejected":
+            return True
+    return False
+
+
 def _stage_model_class(stage_name: str) -> int:
     """1: first-order + 2fi (screen, foldover); 2: second-order (refine)."""
     return 2 if stage_name == Stage.REFINE.value else 1
@@ -9090,7 +9359,9 @@ def _stage_model_class(stage_name: str) -> int:
 def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
                      factors, fitted_ids, interactions_dropped, omitted_terms,
                      adequate, basis, decision, val_rows, val_outcomes, val_ys,
-                     response_spec, primary, omodels, blocks=None):
+                     response_spec, primary, omodels, blocks=None,
+                     adequacy_rule=None, val_meta=None, untested_levels=None,
+                     mo_untested_names=()):
     """``(model_adequacy record, model_adequate, basis)`` for this stage.
 
     THE THIS-STAGE VERDICT. Lack of fit (``_model_adequacy``) as before, and at
@@ -9107,6 +9378,8 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
     one-dimensional misspecification the screen saw (stage-0 audit Q3) -- so
     the verdict is then UNKNOWN, ``screen_rejection_unresolved``.
     """
+    import dataclasses
+
     from orchestrator.optimize import adequacy as adq
     from orchestrator.optimize.factors import code_actual
 
@@ -9127,24 +9400,65 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
                          or fit.lof_exact == "rejected"),
         },
         "press": adq.press(cols + nuis, ys_for_fit),
-        "design_efficiency": adq.design_efficiency(cols, labels),
+        "design_efficiency": adq.design_efficiency(
+            cols, labels,
+            # G/I need the region; multi-level categorical contrasts make it
+            # not a cube, so they are declined there (named in the record).
+            terms=None if design_for_fit.groups else terms,
+            factor_ids=None if design_for_fit.groups else fit_factor_ids,
+            discrete=[f.id for f in factors
+                      if f.type == "choice" and f.id in set(fit_factor_ids)]),
     }
+    if design_for_fit.groups and rec["design_efficiency"] is not None:
+        rec["design_efficiency"]["g_i_declined"] = "categorical_contrasts_region_not_a_cube"
     if nuis and fit.block_effect is not None:
         b, se, t, pv, df = fit.block_effect
         rec["reuse"] = {"block_effect": {"estimate": b, "se": se, "t": t, "p": pv,
                                          "df": df},
                         "drift_detected": (pv is not None and pv < 0.05)}
     causes: list[str] = []
-    if rec["lack_of_fit"]["rejected"] or adequate is False:
-        causes.append("lack_of_fit")
+    # #321 P4 item 2: the adequacy decision is ONE Holm family (Holm 1979)
+    # over this stage's adequacy TESTS -- lack of fit and the validation check,
+    # for the primary and every objective model -- at the registered alpha, so
+    # a true model is declared inadequate with probability <= alpha (WP-B
+    # limit 3). A policy compiled before P4 has no `adequacy` rule and keeps
+    # the per-test rule. VETOES are not tests and reject outside the family:
+    # an exact lack-of-fit rejection against zero pure error, an objective
+    # model that could not be estimated, a lack of fit not computable.
+    fam_cfg = adequacy_rule
+    tests: list = []
+    vetoes: list = []
+    if fit.lof_exact == "rejected":
+        vetoes.append("lack_of_fit")
+    elif fit.lack_of_fit_p is not None:
+        tests.append(("lack_of_fit", fit.lack_of_fit_p))
+    for metric, m in (omodels or {}).items():
+        if metric == primary:
+            continue
+        f2 = getattr(m, "fit", None)
+        if f2 is None:
+            vetoes.append(f"not_estimable:{metric}")
+            continue
+        if getattr(f2, "lof_exact", None) == "rejected":
+            vetoes.append(f"lack_of_fit:{metric}")
+        elif f2.lack_of_fit_p is not None:
+            tests.append((f"lack_of_fit:{metric}", f2.lack_of_fit_p))
     validated = None
-    if stage_name == Stage.REFINE.value and val_rows:
+    val_check_done = None
+    stage_val = val_rows if stage_name in (
+        Stage.REFINE.value, Stage.SCREEN.value, Stage.FOLDOVER.value) else []
+    if stage_val:
         by_id = {f.id: f for f in factors}
         pts, objs = [], {}
+        snapped = []
         for r, o, y in zip(val_rows, val_outcomes, val_ys):
+            lv = dict(r.levels)
+            if all(fid in lv for fid in fitted_ids):
+                snapped.append({"row_index": r.row_index,
+                                "coded_as_run": {fid: round(code_actual(by_id[fid], lv[fid]), 6)
+                                                 for fid in fitted_ids}})
             if getattr(o, "status", None) not in _PRIMARY_FIT_STATUSES or y != y:
                 continue
-            lv = dict(r.levels)
             if any(fid not in lv for fid in fitted_ids):
                 continue
             coded = {fid: code_actual(by_id[fid], lv[fid]) for fid in fitted_ids}
@@ -9153,29 +9467,100 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
                 v = (getattr(o, "response", None) or {}).get(metric)
                 if isinstance(v, (int, float)) and v == v:
                     objs.setdefault(metric, []).append((coded, float(v)))
-        check = adq.prediction_check(fit, cols, terms, pts, nuisance=nuis)
+        mcols, mterms = adq.fit_matrix(fit, design_for_fit, fit_factor_ids) \
+            if not design_for_fit.groups else (cols, terms)
+        check = adq.prediction_check(fit, mcols, mterms, pts, nuisance=nuis)
         check["points_registered"] = len(val_rows)
-        rec["validation"] = check
-        validated = check.get("rejected")
+        if val_meta:
+            check.update(val_meta)
+        check["points_snapped"] = snapped
+        key = "validation" if stage_name == Stage.REFINE.value else "screen_validation"
+        rec[key] = check
+        val_check_done = check.get("rejected")
+        if check.get("p") is not None:
+            tests.append(("validation_prediction", check["p"]))
         for metric, mpts in objs.items():
-            mod = omodels.get(metric)
+            mod = (omodels or {}).get(metric)
             if mod is None or mod.fit is None or metric == primary:
                 continue
-            _l, mterms, mcols = adq.model_columns(
-                design_for_fit, fit_factor_ids,
-                include_interactions=not interactions_dropped,
-                omit_terms=omitted_terms)
-            if len(mcols) != len(list(mod.fit.effects) + list(mod.fit.quadratic)) + 1:
-                continue        # the objective model was reduced differently
-            oc = adq.prediction_check(mod.fit, mcols, mterms, mpts, nuisance=nuis)
+            # V from the rows THIS objective model was fitted on (WP-B
+            # limit 9): its own positions, not the primary's full design.
+            pos = list(getattr(mod, "positions", ()) or range(len(design_for_fit.points)))
+            sub = dataclasses.replace(design_for_fit, points=tuple(
+                design_for_fit.points[i] for i in pos if i < len(design_for_fit.points)))
+            if design_for_fit.groups:
+                continue        # mixed objective fits: not reachable at refine
+            ocols, oterms = adq.fit_matrix(mod.fit, sub, fit_factor_ids)
+            onuis = ([[float(blocks[i]) for i in pos]] if nuis and blocks else [])
+            oc = adq.prediction_check(mod.fit, ocols, oterms, mpts, nuisance=onuis)
             rec.setdefault("validation_objectives", {})[metric] = oc
-            if oc.get("rejected"):
-                validated = True
-                causes.append(f"validation_prediction:{metric}")
-        if check.get("rejected"):
-            causes.append("validation_prediction")
-        if validated:
+            if oc.get("p") is not None:
+                tests.append((f"validation_prediction:{metric}", oc["p"]))
+    if (stage_name == Stage.REFINE.value and not stage_val and val_meta
+            and val_meta.get("declined_reason")):
+        rec["validation"] = {
+            "alpha": adq.VALIDATION_ALPHA, "method": "joint_predictive_F_chow_1960",
+            "points_measured": 0, "points_registered": 0, "rejected": None,
+            "reason": "no_validation_point_runnable",
+            "points_declined": val_meta.get("points_declined") or []}
+    if fam_cfg:
+        fam = adq.adequacy_family(tests, alpha=float(fam_cfg["alpha"]),
+                                  method="holm")
+        fam["vetoes"] = vetoes
+        fam["decides"] = str(fam_cfg["method"]) == "holm"
+        rec["family"] = fam
+    if fam_cfg and str(fam_cfg["method"]) != "holm":
+        # #321 P4 review MEDIUM 1 (default): every adequacy test is a VETO at
+        # its own alpha -- conservative for validity, since lowering a veto's
+        # size lowers the M1 guard. The Holm family above is recorded as
+        # information only; the decision is per-test, so nothing it says can
+        # promote a rejected or unknown verdict.
+        fam_cfg = None
+    if fam_cfg:
+        rejected_names = list(fam["rejected"]) + vetoes
+        # Each check's `rejected` is the FAMILY's decision on it (so INV-STAT19
+        # reads one verdict); the per-test outcome is kept as rejected_at_alpha.
+        for _k in ("validation", "screen_validation"):
+            if rec.get(_k) and rec[_k].get("rejected") is not None:
+                rec[_k]["rejected_at_alpha"] = rec[_k]["rejected"]
+                rec[_k]["rejected"] = "validation_prediction" in fam["rejected"]
+        for _m, _oc in (rec.get("validation_objectives") or {}).items():
+            if _oc.get("rejected") is not None:
+                _oc["rejected_at_alpha"] = _oc["rejected"]
+                _oc["rejected"] = f"validation_prediction:{_m}" in fam["rejected"]
+    else:
+        _a = float(((adequacy_rule or {}).get("alpha")) or 0.05)
+        rejected_names = ([n for n, p in tests if p < _a] + vetoes)
+    lof_names = [n for n in rejected_names if n.startswith("lack_of_fit")]
+    val_names = [n for n in rejected_names if n.startswith("validation_prediction")]
+    # The cause names are those the pre-P4 record used: an objective model that
+    # could not be estimated is reported under "lack_of_fit" as before (the
+    # family record names it `not_estimable:<metric>`). Without the family
+    # (a pre-P4 policy) the old rule stands verbatim.
+    if lof_names or any(n.startswith("not_estimable") for n in rejected_names) or (
+            not fam_cfg and (rec["lack_of_fit"]["rejected"] or adequate is False)):
+        causes.append("lack_of_fit")
+    causes += [n for n in val_names if ":" in n]
+    if "validation_prediction" in val_names:
+        causes.append("validation_prediction")
+    if fam_cfg:
+        # The family decides lack of fit too: a per-test LoF rejection the
+        # family does not reject no longer makes this stage inadequate. ONLY
+        # that: a False that `_model_adequacy` reached for any other reason
+        # (an objective model that could not be estimated) is a veto and
+        # stands; an UNKNOWN (None) is never promoted.
+        if rejected_names:
             adequate, basis = False, None
+        elif adequate is False and not _non_test_rejection(fit, omodels, primary):
+            # The family set aside a per-test rejection. Re-apply the UNKNOWN
+            # bases (#321 P4 review HIGH 2): an untested level, a curvature
+            # leak or a missing verdict stays unknown, never adequate.
+            _ub = _unknown_adequacy_basis(fit, untested_levels, design_for_fit,
+                                          mo_untested_names)
+            adequate, basis = (None, _ub) if _ub else (True, None)
+    elif val_names:
+        adequate, basis = False, None
+    validated = val_check_done
     rec["this_stage"] = {"verdict": adequate, "basis": basis,
                          "rejected_by": causes}
     # The epoch's earlier fitting stages, from their records on disk.

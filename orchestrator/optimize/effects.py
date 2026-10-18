@@ -819,6 +819,128 @@ def prediction_variance(fit: Fit, xa: dict, xb: dict | None = None) -> float | N
     return float(fit.pure_error_var) * max(q, 0.0)
 
 
+#: Registered screening rule (#321 P4 item 1). ``holm``: Holm's (1979)
+#: step-down over the family of main-effect tests of the screened factors, at
+#: ``SCREEN_ALPHA`` family-wise. ``per_test``: every factor at the per-term
+#: level (the pre-P4 rule; kept for a policy compiled before it).
+SCREEN_ALPHA = 0.05
+SCREEN_MULTIPLICITY = "holm"
+
+
+def main_effect_p(fit: Fit, factor_id: str) -> float | None:
+    """Two-sided p of ``factor_id``'s main-effect test on pure error: the
+    categorical's L-1 df Wald F, or the single column's t on ``df_pe``
+    (``t = estimate / se``; the se is the exact one the CI uses). ``None``
+    without pure error, or when the factor has no main-effect term."""
+    t = factor_test(fit, factor_id)
+    if t is not None:
+        return t.p
+    df = int(fit.pure_error_df or 0)
+    for e in fit.effects:
+        if e.terms == (factor_id,):
+            if e.se is None or not e.se > 0 or df <= 0:
+                return None
+            return float(2.0 * student_t.sf(abs(e.estimate / e.se), df))
+    return None
+
+
+def screening_family(fit: Fit, factor_ids, *, alpha: float = SCREEN_ALPHA,
+                     method: str = SCREEN_MULTIPLICITY) -> dict:
+    """The screen's main-effect decisions as ONE family (#321 P4 item 1).
+
+    The family is every screened factor with a computable main-effect test
+    (m of them). ``holm``: sort the p-values ascending and reject ``p_(i) <=
+    alpha / (m - i + 1)`` until the first non-rejection (Holm 1979), which
+    holds the family-wise error -- Pr(ANY truly inert factor survives) -- at
+    ``alpha`` under ARBITRARY dependence (the tests share the pure-error
+    denominator, so they are dependent). Adjusted p is ``max_{j<=i} min(1,
+    (m-j+1) p_(j))``. ``per_test``: reject ``p < alpha`` each (no control).
+
+    FWER rather than FDR (Benjamini-Hochberg) because the decision the policy
+    branches on is ``refinable_survivors > 0`` -- "is ANY refinable factor
+    active" -- a family-wise question; BH controls the expected PROPORTION of
+    false survivors, which bounds nothing about "any", and its validity under
+    this dependence needs PRDS, which two-sided t tests with a common
+    denominator are not shown to satisfy (Benjamini & Yekutieli 2001).
+
+    A factor with no test (no pure error) is UNKNOWN: kept, never dropped,
+    outside the family. Returns ``{method, alpha, family_size, factors:
+    {id: {p, p_adjusted, rejected}}, kept, dropped, unknown}``.
+    """
+    return screening_family_over({None: fit}, factor_ids, alpha=alpha, method=method)
+
+
+def screening_family_over(fits: dict, factor_ids, *, alpha: float = SCREEN_ALPHA,
+                          method: str = SCREEN_MULTIPLICITY) -> dict:
+    """``screening_family`` over several response models at once (a
+    multi-objective screen): ONE family of every (factor, objective) test, so
+    m = tested factors x objectives and Holm's FWER covers all of them. A
+    factor survives when ANY of its tests is rejected. ``fits`` maps an
+    objective name (``None`` for the single primary) to its fit."""
+    tests = []          # (p, factor, objective)
+    unknown: set = set()
+    for obj, fit in fits.items():
+        if fit is None:
+            continue
+        for fid in factor_ids:
+            p = main_effect_p(fit, fid)
+            if p is not None:
+                tests.append((p, fid, obj))
+            elif _has_main(fit, fid):
+                unknown.add(fid)
+    m = len(tests)
+    if method == "holm":
+        rej_list = holm([t[0] for t in tests], alpha)
+    elif method == "per_test":
+        rej_list = [t[0] < alpha for t in tests]
+    else:
+        raise ValueError(f"unknown screening multiplicity method {method!r}")
+    order = sorted(range(m), key=lambda i: tests[i][0])
+    adj = [0.0] * m
+    running = 0.0
+    for r, i in enumerate(order):
+        running = max(running, min(1.0, (m - r) * tests[i][0]))
+        adj[i] = running if method == "holm" else tests[i][0]
+    per: dict = {}
+    for (p, fid, obj), a, rj in zip(tests, adj, rej_list):
+        row = {"p": p, "p_adjusted": a, "rejected": rj}
+        if len(fits) > 1 or obj is not None:
+            per.setdefault(fid, {"rejected": False, "by_objective": {}})
+            per[fid]["by_objective"][obj] = row
+            per[fid]["rejected"] = per[fid]["rejected"] or rj
+        else:
+            per[fid] = row
+    ids = list(factor_ids)
+    return {
+        "method": method, "alpha": alpha, "family_size": m,
+        # The DECLARED family (screened factors x objectives) beside the tests
+        # actually computed: a factor with no pure error is outside the family.
+        "m_declared": len(list(factor_ids)) * max(1, sum(1 for f in fits.values() if f is not None)),
+        "objectives": [o for o in fits if o is not None] or None,
+        "factors": {fid: per[fid] for fid in ids if fid in per},
+        "kept": [f for f in ids if f in per and per[f]["rejected"]],
+        "dropped": [f for f in ids if f in per and not per[f]["rejected"]],
+        "unknown": [f for f in ids if f not in per and f in unknown],
+    }
+
+
+def holm(ps, alpha: float) -> list[bool]:
+    """Holm's (1979) step-down rejections, in the input order."""
+    m = len(ps)
+    out = [False] * m
+    for i, j in enumerate(sorted(range(m), key=lambda k: ps[k])):
+        if ps[j] <= alpha / (m - i):
+            out[j] = True
+        else:
+            break
+    return out
+
+
+def _has_main(fit: Fit, fid: str) -> bool:
+    return factor_test(fit, fid) is not None or any(
+        e.terms == (fid,) for e in fit.effects)
+
+
 def dropped_factors(fit: Fit, factor_ids) -> list[str]:
     """Factors whose main effect is indistinguishable from zero.
 

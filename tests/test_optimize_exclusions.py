@@ -1197,14 +1197,20 @@ def test_a_level_correlated_fit_alone_withholds_global_certification(
     from orchestrator.optimize.stage_runner import run_stage
     from orchestrator.optimize.synthetic import make_synthetic_runner
 
-    surface = SURFACES["additive"]()
+    # #321 P4 review: additive's A and B are refinable, and a screen-only
+    # certificate with two refinable factors is withheld
+    # (model_class_unchecked). The model is first order here, so A and B are
+    # declared TWO-LEVEL (the same corners and centre): the bias gate is then
+    # the only one that can withhold.
+    import dataclasses as _dc
+    _s = SURFACES["additive"]()
+    surface = _dc.replace(_s, factors=tuple(
+        {**f, "levels": [f["levels"][0], f["levels"][-1]]} if f["id"] in ("A", "B") else f
+        for f in _s.factors))
     # One salt for both arms (#321): a random per-work_dir run-order salt would
-    # make the two arms two different experiments. The salt is chosen so the
-    # CONTROL arm certifies under the P3 terminal family: its skewness pretest
-    # (a veto at 0.25) withholds about a quarter of Gaussian rounds by design,
-    # and with salt "5" this round was one of them. The claim under test -- the
-    # bias bit alone flips certified -- needs a certifying control; the test
-    # asserts that precondition below rather than assuming it.
+    # make the two arms two different experiments. The control arm must
+    # certify under the P3 terminal family (its skewness pretest withholds about
+    # a quarter of Gaussian rounds by design); the precondition is asserted below.
     campaign = synthetic_campaign(surface, stages=["verify", "screen", "confirm"],
                                   policy={"run_order_salt": "2" * 32})
 
@@ -1376,7 +1382,16 @@ def test_a_rank_deficient_subset_drops_interactions_rather_than_aborting(
     from orchestrator.optimize.stage_runner import run_stage
     from orchestrator.iteration import setup_work_dir
 
-    surface = SURFACES["additive"]()
+    # #321 P4 review: additive's A and B are refinable, and a screen-only
+    # certificate with two refinable factors is withheld
+    # (model_class_unchecked). The model is first order here, so A and B are
+    # declared TWO-LEVEL (the same corners and centre): the bias gate is then
+    # the only one that can withhold.
+    import dataclasses as _dc
+    _s = SURFACES["additive"]()
+    surface = _dc.replace(_s, factors=tuple(
+        {**f, "levels": [f["levels"][0], f["levels"][-1]]} if f["id"] in ("A", "B") else f
+        for f in _s.factors))
     campaign = synthetic_campaign(surface, stages=["verify", "screen", "confirm"])
 
     def two_corners_fail(row):

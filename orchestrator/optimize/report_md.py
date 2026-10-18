@@ -79,6 +79,14 @@ WITHHELD_MEANING = {
     "curvature_not_isolated": "a mixed-level fit could not estimate its "
                               "coefficients from the corners alone, so curvature "
                               "may have leaked into them: adequacy unknown",
+    "model_class_unchecked": "the model half rests on the screen's first-order "
+                             "+ 2fi model although two or more refinable "
+                             "factors exist, "
+                             "and no stage checked curvature beyond the 1-df "
+                             "centre contrast (blind to cancelling quadratics, "
+                             "e.g. a saddle): refine never ran, so the global "
+                             "claim is unearned; the within-shortlist bound "
+                             "stands",
     "screen_rejection_unresolved": "an earlier stage rejected the model and "
                                    "refine completed no validation check that "
                                    "could overturn it: adequacy is unknown",
@@ -802,6 +810,9 @@ def render_report_markdown(work_dir: Path) -> str:
         *([f"| delta, feasibility (distributional constraints) | "
            f"{_fmt(report.get('delta_feasibility'))} |"]
           if report.get("delta_feasibility") is not None else []),
+        *([f"| alpha, screening ({_scr.get('method')} over {_scr.get('family_size')} "
+           f"tests; reported labels only, not a union term) | {_fmt(_scr.get('alpha'))} |"]
+          if (_scr := (report.get("certificate_scope") or {}).get("screening")) else []),
         "",
     ]
     if basis != "model" and par is None:
@@ -955,6 +966,11 @@ def _error_budget_lines(report: dict) -> list[str]:
         "judged at this epoch's deltas; the cumulative figure is the probability "
         "bound that ANY epoch's decision on this work_dir is wrong.",
         "",
+        *([f"Screening ({(eb['screening'] or {}).get('method')}, family-wise alpha "
+           f"{_fmt((eb['screening'] or {}).get('alpha'))}) is NOT a term of this sum: "
+           "its survivor labels decide no route (refine runs whenever a refinable "
+           "factor exists) and hold no factor.", ""]
+          if eb.get("screening") else []),
     ]
 
 

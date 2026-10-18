@@ -570,10 +570,32 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
                    "within_total": total <= binding_total + 1e-12,
                    "stops_at_continue_gate": stops,
                    "exhausted": bool((cd or {}).get("exhausted"))}
+    sel = ((pol.get("states") or {}).get("screen") or {}).get("selection")
+    screening = None
+    if sel:
+        screening = {
+            "method": sel.get("method"), "alpha": sel.get("alpha"),
+            "union_term": False,
+            "role": "reported_labels_only",
+            "statement": (
+                "The screen's main-effect survivor LABELS are one Holm family "
+                f"({sel.get('method')}, family-wise alpha {sel.get('alpha')}; "
+                "recommendation.json screen_selection records m): an FWER "
+                "statement about which main effects are declared active. They "
+                "decide NOTHING downstream (#321 P4 review): routing to refine is "
+                "'refine unless shown inert', and no screen-stage test can show a "
+                "refinable factor's curvature inert, so refine runs whenever a "
+                "refinable factor exists, and no factor is held because it was "
+                "dropped. Hence the labels spend no delta and are not a term of "
+                "the union bound. A certificate whose model half rests on the "
+                "first-order + 2fi screen model while two or more refinable factors exist "
+                "is withheld (model_class_unchecked): the 1-df centre contrast "
+                "is blind to cancelling quadratics, so M1 is unchecked there.")}
     return {
         "epochs": epochs,
         "this_epoch": epochs[-1]["spent"] if epochs else None,
         "cumulative": total,
+        **({"screening": screening} if screening else {}),
         **charged,
         # A lower bound when an earlier epoch's deltas could not be recovered.
         "cumulative_is_lower_bound": bool(unknown),

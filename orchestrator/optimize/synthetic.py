@@ -525,6 +525,24 @@ def two_peaks() -> Surface:
                    factors=(_numeric("A"), _numeric("B")), fn=fn)
 
 
+def masked_saddle(slope: float = 0.036, noise_sd: float = 0.02) -> Surface:
+    """#321 P4 review HIGH 1: f = 10 + x_A^2 - x_B^2 + slope * x_B (coded).
+
+    The pure quadratics CANCEL, so the screen's centre-vs-corner curvature
+    contrast (their sum) is ~0 and lack of fit cannot see the saddle; both main
+    effects are ~0 at the corners (B's is ``slope``, A's is 0). A screen that
+    drops both and skips refine certifies the first-order model's answer, which
+    sits at x_A = 0 -- the WORST place along A (gap 0.96 against eps ~0.20).
+    The optimum is (A at either edge, B = slope/2 ~ 0). Not in ``SURFACES``:
+    the every-surface loops keep their byte-identical runs."""
+    def fn(lv):
+        xa = (float(lv["A"]) - 9.0) / 7.0
+        xb = (float(lv["B"]) - 9.0) / 7.0
+        return 10.0 + xa * xa - xb * xb + slope * xb
+    return Surface(name="masked_saddle", noise_sd=noise_sd,
+                   factors=(_numeric("A"), _numeric("B")), fn=fn)
+
+
 NON_QUADRATIC: dict[str, Callable[[], Surface]] = {
     "step_cliff": step_cliff,
     "ridge_cubic": ridge_cubic,

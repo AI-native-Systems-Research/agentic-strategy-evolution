@@ -466,6 +466,45 @@ def delta_stated(policy: dict) -> float:
 LEGACY_PRE_P3 = __import__("contextvars").ContextVar("nous_legacy_pre_p3", default=False)
 
 
+#: #321 P4 item 2: refine's default outer-ring validation count (beyond +-0.5).
+_ADQ_OUTER_DEFAULT = 2
+
+
+def screen_selection(design: dict | None) -> dict:
+    """The registered screening-multiplicity rule (#321 P4 item 1).
+
+    ``design.screen.multiplicity``: ``holm`` (default) -- Holm's (1979)
+    step-down over the m screened factors' main-effect tests, family-wise
+    error <= ``alpha`` under any dependence; or ``per_test`` -- each at
+    ``alpha``, no control (the pre-P4 rule). ``alpha`` is
+    ``design.screen.selection_alpha`` (default 0.05). A multi-objective
+    campaign's family is factors x objectives (a factor survives if any of its
+    tests is rejected). Its role (#321 P4 review): the REPORTED survivor
+    labels only. Routing is ``refine unless shown inert`` -- refine runs
+    whenever a refinable factor exists -- because a Type II routing error costs
+    validity (the class-1 model's centre contrast is blind to cancelling
+    quadratics) while a Type I one costs only runs. No factor is held because
+    it was dropped. Not a term of the certificate's union bound (see
+    ``error_budget.screening``).
+    """
+    sc = (design or {}).get("screen") or {}
+    return {"method": str(sc.get("multiplicity", "holm")),
+            "alpha": float(sc.get("selection_alpha", 0.05)),
+            "family": "main effects of every screened factor (x objectives)",
+            "reference": "Holm 1979" if sc.get("multiplicity", "holm") == "holm"
+            else "none (per-test)"}
+
+
+def _selection_accounting(design: dict | None, on: str) -> str:
+    sel = screen_selection(design)
+    if sel["method"] == "holm":
+        return (f"screen selection: Holm step-down over the main-effect tests on the "
+                f"{on}, family-wise alpha={sel['alpha']} (reported labels; the route "
+                f"is refine whenever a refinable factor exists)")
+    return (f"screen selection at alpha={sel['alpha']} per main effect on the {on} "
+            f"(per_test: no multiplicity control)")
+
+
 def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1,
                    run_order_salt: str | None = None) -> dict:
     opt = campaign.get("optimization") or {}
@@ -519,6 +558,11 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                        "center_points": int((design.get("screen") or {}).get("center_points", 4))},
             "estimator": "ols_orthogonal_closed_form",
             "accounting": "per_term_t_on_pure_error",
+            # #321 P4 item 1: the survivor rule as ONE registered family.
+            "selection": screen_selection(design),
+            # #321 P4 item 2: off-lattice validation points at screen (opt-in).
+            "validation_points": max(0, int((design.get("screen") or {}).get(
+                "validation_points", 0))),
         },
         "report": {"spends": False, "terminal": True},
         "exception": {"spends": False, "terminal": True, "ends_epoch": True},
@@ -555,7 +599,12 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                        "validation_seed": int((design.get("refine") or {}).get(
                            "validation_seed", 0)),
                        "reuse_screen": bool((design.get("refine") or {}).get(
-                           "reuse_screen", False))},
+                           "reuse_screen", False)),
+                       # #321 P4 item 2: the outer ring beyond +-0.5.
+                       "validation_outer_points": max(0, int((design.get("refine") or {}).get(
+                           "validation_outer_points", _ADQ_OUTER_DEFAULT))),
+                       "validation_outer_offset": float((design.get("refine") or {}).get(
+                           "validation_outer_offset", 0.8))},
             "estimator": "ols_normal_equations",
             "accounting": ("per_term_t_on_pure_error; validation points held out, "
                            "joint predictive F at alpha 0.05 (a rejection makes "
@@ -622,7 +671,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         transitions.append(dict(fold_rule))
     if refine_on:
         transitions.append({"from": "screen", "when": {"refinable_survivors": {">": 0}}, "to": "refine",
-                            "accounting": "screen selection at alpha=0.05 per main effect (Task 8 adds regret)"})
+                            "accounting": _selection_accounting(design, "screen fit")})
         transitions.append(dict(_curvature_rule("screen")))
     transitions.append({"from": "screen", "default": ("confirm" if confirm_on else "report")})
     if fold_on:
@@ -639,7 +688,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             transitions.append({
                 "from": "foldover", "when": {"refinable_survivors": {">": 0}},
                 "to": "refine",
-                "accounting": "screen selection at alpha=0.05 per main effect on the combined fit",
+                "accounting": _selection_accounting(design, "combined fit"),
             })
             transitions.append(dict(_curvature_rule("foldover")))
         transitions.append(
@@ -892,6 +941,18 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # the data-chosen winner is covered. Registered from the
             # declaration only. Defaults to delta_terminal.
             **({"delta_feasibility": _df} if _feasibility_registered(opt) else {}),
+            # #321 P4 item 2 / review MEDIUM 1: the adequacy tests (lack of
+            # fit, the validation check; primary and each objective model).
+            # Each is a VETO on the model half, so the default is `per_test`:
+            # every test at alpha, conservative for validity (a smaller veto
+            # size lowers the M1 guard). The Holm family over them is
+            # recorded as information; `holm` makes it decide (the
+            # false-inadequacy rate then <= alpha, at a cost in the guard).
+            "adequacy": {"method": str(pol_cfg.get("adequacy_multiplicity", "per_test")),
+                         "alpha": float(pol_cfg.get("adequacy_alpha", 0.05)),
+                         "tests": "lack_of_fit and validation_prediction, primary "
+                                  "and every objective model, per fitting stage",
+                         "role": "veto: a rejection makes model_adequate false"},
             # #321 item 7: the charged cross-epoch mode, when declared.
             **({"campaign_delta": cd_block} if cd_block is not None else {}),
             # #321 P3 item 1: the Brown-Forsythe check of M3 (pure error is

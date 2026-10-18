@@ -55,7 +55,7 @@ are collected in §12.
   - Confirm looks: Bonferroni α-spending at δ_t / L, where L is the registered round cap, plus 1 when the refill branch is registered. L is fixed at compile time.
   - Single- and multi-objective confirm share the same divisor.
   - Epochs: a union-bound `error_budget` in `report.json`. It is **informational**. Each epoch certifies at its own deltas.
-  - Earlier stages' routing decisions (screen drops, foldover, curvature routing) spend no stated δ. They are covered only through assumption M1.
+  - Earlier stages' routing decisions (screen drops, foldover, curvature routing) spend no stated δ. They are covered only through assumption M1. Screen survivor labels are a Holm family at α = 0.05 (#321 P4), recorded beside the budget (`error_budget.screening`) and in report.md Bounds; they decide no route and hold no factor.
 
 **(b) Evidence.**
 - The rule:
@@ -257,12 +257,12 @@ Guide, "Model adequacy: documented limits", item 1:
 > **Power is local to ±0.5.**
 
 **(e) Limits** (WP-B §6, all in the guide):
-- power is local to ±0.5, so a narrow peak between points can pass;
+- power beyond ±0.5: an outer ring at ±0.8 (#321 P4; `corner_bumps` 0/4 -> 4/4 rejections); a feature narrower than the point spacing can still pass;
 - the check's denominator is centre pure error, which is M3 again;
-- an α cost of about 5% on true quadratics, with no multiplicity correction across lack of fit plus validation;
-- no validation points at screen or foldover;
-- snapping on `levels_only` knobs can cancel a validation point;
-- V is slightly too small when the objective model is fitted on a subset;
+- adequacy tests are per-test vetoes at α by default; the Holm family over them is recorded, and decides only under `adequacy_multiplicity: holm` (more certificates, weaker guard);
+- opt-in validation at screen (#321 P4); none at foldover, which still rests on the centre points;
+- snapping: a candidate that snaps onto a composite point is declined and named (#321 P4);
+- V is built from the rows actually fitted (#321 P4);
 - **the Pareto path ignores a validation rejection** (`modelled` and `shortlist_plan` do not read it).
 
 A non-quadratic surface still converges to a fixed wrong answer. It is now
@@ -326,9 +326,9 @@ does not read it.
 Quickstart: "**Any number of knobs works** (up to 100 at resolution V)".
 
 **(e) Limits.**
-1. **Screening multiplicity.** k per-term tests at α = 0.05 have no family-wise or false-discovery control. The resulting forks spend no δ (spec §6).
-2. **Efficiency is D only.** G- and I-efficiency are not reported.
-3. **`reuse_screen` is refused with any choice factor.**
+1. **Screening multiplicity (fixed in #321 P4 and its review).** The survivor LABELS are a Holm family at family-wise α = 0.05 (FWER 0.173 -> 0.031 under the global null at k = 6), and they decide nothing: refine runs whenever a refinable factor exists (a Type II routing error had cost validity, 12/24 false certificates on a masked saddle). A screen-only certificate with two or more refinable factors is withheld (`model_class_unchecked`).
+2. **Efficiency: D, G and I** (#321 P4). G is exact for first-order models and an upper bound with quadratics; I is exact by region moments; both are declined for multi-level categorical contrasts.
+3. **`reuse_screen` with any choice factor is a validation error** (rule 33, #321 P4): partial reuse across choice slices is rejected because a block term cannot absorb choice-by-numeric interactions.
 4. **The certificate covers a slice** when refine holds factors fixed (see Q8 and Q5).
 5. **HIGH (H3), "any knob count" holds for design and recommendation, not for certification.**
    - Above `decide.CANDIDATE_CAP` = 50,000 candidates, the space is searched and `_global_bound` always adds `model_bound_not_exhaustive`. That is 5 refinable numeric knobs at 9 points each (59,049 candidates).

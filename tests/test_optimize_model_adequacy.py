@@ -91,8 +91,11 @@ def test_saddle_withholds_on_the_model_bound(tmp_path):
     model bound over the unshortlisted candidates exceeded epsilon on every
     one of them. Now withheld, named, and never wrong. Since #321 H3 (the
     Scheffe constant, 5.3 against Bonferroni's 6.7-12 at df 3) the model half
-    is narrow enough to certify on one seed (6: {A: 16, B: 11}, which TIES
-    the optimum, gap 0.0); every other seed is withheld on the model half."""
+    is narrow enough to certify on some seeds (at most 3/8 since #321 P4:
+    under adequacy_multiplicity: holm, seeds 2 and 5 -- lack of fit p = 0.033
+    / 0.030, which the two-test family does not reject -- also certify; the
+    per-test default withholds them). Every certificate has gap 0.0; every
+    other seed is withheld on the model half."""
     certified = 0
     for seed in SEEDS:
         r = run_synthetic_campaign(SURFACES["saddle"](), seed=seed,
@@ -103,24 +106,26 @@ def test_saddle_withholds_on_the_model_bound(tmp_path):
             certified += 1
             continue
         assert "model_bound_above_epsilon" in w or "model_inadequate" in w, w
-    assert certified <= 2
+    assert certified <= 3
 
 
 def test_validation_rows_are_registered_held_out_and_reconciled(tmp_path):
     """Refine pre-registers 4 off-lattice points at coded +-0.5 (A, B in
-    {5.5 -> 6, 12.5 -> 12} on bowl's grid), runs them as their own block AFTER
-    the composite, and holds them out of the fit."""
+    {5.5 -> 6, 12.5 -> 12} on bowl's grid) and, since #321 P4, a 2-point
+    outer ring at +-0.8 (9 -+ 5.6 = 3.4, 14.6 -> 3, 15 on the grid), runs them as
+    their own block AFTER the composite, and holds them out of the fit."""
     r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
     d = _refine_dir(r.work_dir)
     dm = json.loads((d / "design_matrix.json").read_text())
     eff = json.loads((d / "effects.json").read_text())
     val = [row for row in dm["rows"] if row["role"] == "validation"]
-    assert len(val) == 4
-    assert {(v["levels"]["A"], v["levels"]["B"]) for v in val} == {
-        (6, 6), (6, 12), (12, 6), (12, 12)}
+    assert len(val) == 6 and dm["validation"]["ring"] == {"inner": 4, "outer": 2}
+    lv = [(v["levels"]["A"], v["levels"]["B"]) for v in val]
+    assert set(lv[:4]) == {(6, 6), (6, 12), (12, 6), (12, 12)}
+    assert all(a in (3, 15) and b in (3, 15) for a, b in lv[4:]), lv
     idx = sorted(v["row_index"] for v in val)
     assert dm["validation"]["row_indices"] == idx
-    assert dm["run_order"][-4:] and sorted(dm["run_order"][-4:]) == idx
+    assert dm["run_order"][-6:] and sorted(dm["run_order"][-6:]) == idx
     assert eff["held_out_rows"]["row_indices"] == idx
     assert eff["n_runs"] + len(idx) == len(dm["rows"])
 
@@ -180,7 +185,7 @@ def test_without_validation_refine_cannot_overturn_a_screen_rejection(tmp_path):
     epoch verdict is UNKNOWN, screen_rejection_unresolved, and nothing certifies."""
     ov = {"design": {"screen": {"resolution": 5, "center_points": 4},
                      "refine": {"kind": "central_composite", "center_points": 4,
-                                "validation_points": 0},
+                                "validation_points": 0, "validation_outer_points": 0},
                      "confirm": {"replicates": 3}}}
     r = run_synthetic_campaign(NON_QUADRATIC["step_cliff"](), seed=1,
                                parent_dir=tmp_path, campaign_overrides=ov)
@@ -238,8 +243,9 @@ def test_the_preview_counts_validation_runs_and_reports_efficiency():
     camp = synthetic_campaign(SURFACES["bowl"]())
     pv = build_preview(camp, noise_sd=0.05, mean=20.0, run_secs=[1.0])
     refine = next(s for s in pv.stages if s.stage == "refine")
-    assert refine.runs == 12 + 4
-    assert "4 off-lattice validation point(s)" in refine.note
+    # #321 P4: 4 at +-0.5 plus the 2-point outer ring at +-0.8.
+    assert refine.runs == 12 + 6
+    assert "6 off-lattice validation point(s)" in refine.note
     text = "\n".join(format_preview(pv))
     assert "screen design: D-efficiency" in text and "refine design: D-efficiency" in text
 
@@ -405,3 +411,116 @@ def test_reuse_does_not_double_count_measurements(tmp_path):
         vs = sums[json.dumps(t["levels"], sort_keys=True)]
         assert t["n"] == len(vs)
         assert t["m"] == pytest.approx(sum(vs) / len(vs))
+
+
+# ── #321 P4 item 4: partial reuse across choice slices is REJECTED ──────────
+
+def test_reuse_screen_with_a_choice_factor_is_a_validation_error():
+    """Declaring reuse_screen with a choice factor used to be refused silently
+    at runtime (an option that could never take effect). It is now a hard
+    validation error naming the reason; without a choice factor it is clean."""
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.validate import validate_optimization_campaign
+
+    bad = synthetic_campaign(SURFACES["bowl_centred"](), **_REUSE)
+    errs = [e for e in validate_optimization_campaign(bad)
+            if "reuse_screen" in e and not e.startswith("WARN")]
+    assert errs and "interactions" in errs[0] and "constant shift" in errs[0]
+    ok = synthetic_campaign(SURFACES["bowl"](), **_REUSE)
+    assert not [e for e in validate_optimization_campaign(ok) if "reuse_screen" in e]
+    # Exempt when refine is not a stage: the option can never act.
+    inert = synthetic_campaign(SURFACES["bowl_centred"](), **_REUSE,
+                               stages=["verify", "screen", "confirm"])
+    assert not [e for e in validate_optimization_campaign(inert)
+                if "reuse_screen" in e and not e.startswith("WARN")]
+
+
+def test_a_block_term_cannot_absorb_a_choice_by_numeric_interaction():
+    """Why the rejection holds, by arithmetic. Truth: y = 1 + 2A + 3C + 4AC,
+    with C = +1 the refine slice. Fitting the slice model (1, A) plus a block
+    indicator on slice rows (C = +1) together with reused off-slice rows
+    (C = -1) recovers the slice slope 2 + 4 = 6 only if the off-slice rows
+    differ by a constant. They differ by 3C + 4AC, so the slope is biased."""
+    from orchestrator.optimize.effects import _solve_normal_equations
+
+    a_lv = [-1.0, 0.0, 1.0]
+    rows = [(a, 1.0) for a in a_lv] * 2 + [(a, -1.0) for a in a_lv] * 2
+    y = [1 + 2 * a + 3 * c + 4 * a * c for a, c in rows]
+    cols = [[1.0] * len(rows), [a for a, _c in rows],
+            [1.0 if c < 0 else 0.0 for _a, c in rows]]   # block = off-slice
+    b = _solve_normal_equations(cols, y)
+    assert b[1] == pytest.approx(2.0)        # the pooled slope, not the slice's 6
+    slice_only = _solve_normal_equations(
+        [[1.0] * 6, [a for a, c in rows if c > 0]], [v for v, (_a, c) in zip(y, rows) if c > 0])
+    assert slice_only[1] == pytest.approx(6.0)
+
+
+# ── #321 P4 item 3: G- and I-efficiency beside D ────────────────────────────
+
+def _fc_ccd(k_centres=4):
+    from orchestrator.optimize.design import Design, DesignPoint
+
+    pts = ([((a, b), "corner") for a in (-1.0, 1.0) for b in (-1.0, 1.0)]
+           + [((-1.0, 0.0), "axial"), ((1.0, 0.0), "axial"),
+              ((0.0, -1.0), "axial"), ((0.0, 1.0), "axial")]
+           + [((0.0, 0.0), "center")] * k_centres)
+    return Design(points=tuple(DesignPoint(coded=c, role=r) for c, r in pts),
+                  factor_ids=("A", "B"), kind="ccd", resolution=None)
+
+
+def test_g_and_i_efficiency_match_textbook_values():
+    """2^2 factorial, first-order model: G = 1 (an orthogonal two-level design is
+    G-optimal for it; max SPV = p = 3 at the vertices) and the average
+    prediction variance over [-1,1]^2 is (1 + 1/3 + 1/3) / 4 = 5/12."""
+    from orchestrator.optimize import adequacy
+    from orchestrator.optimize.design import full_factorial
+    from orchestrator.optimize.effects import model_matrix
+
+    d = full_factorial(("A", "B"))
+    labels, terms, cols, _q, _a = model_matrix(d, ("A", "B"), include_interactions=False)
+    e = adequacy.design_efficiency(cols, labels, terms=terms, factor_ids=("A", "B"))
+    assert e["g_efficiency"] == pytest.approx(1.0) and e["g_exact"] is True
+    assert e["i_average_variance"] == pytest.approx(5 / 12, abs=1e-6)
+
+
+def test_g_and_i_agree_with_brute_force_on_a_face_centred_composite():
+    """k = 2 face-centred CCD, 4 centres, full quadratic. The exact-moment I and
+    the searched G against a dense 401^2 grid and a 200k-point Monte Carlo
+    average (computed here, independently of the implementation)."""
+    from orchestrator.optimize import adequacy
+    from orchestrator.optimize.effects import model_matrix
+
+    d = _fc_ccd()
+    labels, terms, cols, _q, _a = model_matrix(d, ("A", "B"))
+    e = adequacy.design_efficiency(cols, labels, terms=terms, factor_ids=("A", "B"))
+    inv = adequacy._invert(adequacy._xtx(cols))
+    n, p = len(cols[0]), len(cols)
+
+    def spv(x):
+        f = [1.0] + [__import__("math").prod(x[0 if t == "A" else 1] for t in ts)
+                     for ts in terms[1:]]
+        return n * sum(f[i] * inv[i][j] * f[j] for i in range(p) for j in range(p))
+
+    dense = max(spv((i / 200 - 1, j / 200 - 1)) for i in range(401) for j in range(401))
+    rng = random.Random(1)
+    mc = sum(spv((rng.uniform(-1, 1), rng.uniform(-1, 1))) for _ in range(50_000)) / 50_000
+    assert e["g_max_spv"] == pytest.approx(dense, rel=1e-6)          # 9.5
+    assert e["g_efficiency"] == pytest.approx(p / dense, rel=1e-6)    # 0.632
+    assert e["i_average_spv"] == pytest.approx(mc, rel=0.01)          # 3.633
+    assert e["g_exact"] is False and "upper bound" in e["g_note"]
+
+
+def test_g_and_i_are_recorded_for_the_design_as_run_and_previewed(tmp_path):
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.preview import build_preview, format_preview
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
+    recs = {x["stage"]: x for x in _recs(r.work_dir)}
+    s = recs["screen"]["model_adequacy"]["design_efficiency"]
+    q = recs["refine"]["model_adequacy"]["design_efficiency"]
+    assert s["g_exact"] is True and 0 < s["g_efficiency"] <= 1
+    assert q["g_efficiency"] == pytest.approx(6 / 9.5, rel=1e-4)
+    assert q["i_method"] == "exact_region_moments" and q["i_average_spv"] > 0
+    text = "\n".join(format_preview(build_preview(
+        synthetic_campaign(SURFACES["bowl"]()), noise_sd=0.05, mean=20.0, run_secs=[1.0])))
+    assert "G-efficiency" in text and "average scaled prediction variance" in text

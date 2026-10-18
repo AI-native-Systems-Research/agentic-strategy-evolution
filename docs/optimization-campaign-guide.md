@@ -741,6 +741,62 @@ not chosen freely.
   two-level choice factor, 3 centres leave `on` uncovered and 4 cover both. Pure error with 2 df is very noisy; a lack-of-fit verdict resting on
   it is weak either way, so prefer 4–6 centre points when the constraint
   models matter.
+- **`screen.multiplicity`** (default `holm`) and **`screen.selection_alpha`**
+  (default 0.05). The screen's main-effect **survivor labels** are one
+  family: Holm's (1979) step-down over the m screened factors' tests
+  (factors × objectives for a multi-objective campaign). It holds Pr(any
+  inert factor labelled active) ≤ α under any dependence; the tests are
+  dependent, because they share the pure-error denominator. FWER rather than
+  Benjamini–Hochberg FDR: the labels answer "which effects are active" as a
+  family, and BH's validity here would need PRDS, which two-sided t tests on
+  a shared denominator are not shown to satisfy (Benjamini & Yekutieli 2001).
+  `recommendation.json["screen_selection"]` records the method, α,
+  `family_size` (tests computed), `m_declared` (factors screened), each p and
+  Holm-adjusted p. `per_test` labels each test at α, with no control.
+  - **The labels decide nothing downstream (#321 P4 review).** Routing is
+    *refine unless shown inert* (`screen_selection.routing`): refine runs
+    whenever a refinable factor exists. The losses are asymmetric. A Type I
+    routing error costs refine runs. A Type II error (an active refinable
+    factor dropped, refine skipped) costs validity: the certificate would
+    rest on the first-order + 2fi model, whose only curvature check is the
+    1-df centre-vs-corner contrast. That contrast estimates the SUM of the
+    pure quadratics and is blind when they cancel (a saddle).
+    - Measured on f = 10 + x_A² − x_B² + 0.036 x_B (noise 0.02, 40 seeds),
+      before this fix: false certificates 6/23 per-test and 12/24 under
+      Holm, gap 0.96 against ε ≈ 0.20.
+    - No screen-stage test can show a refinable factor's curvature inert,
+      because its pure quadratic is aliased with the intercept, so none is.
+    - Nothing is held because it was dropped: refine's composite spans every
+      refinable factor. So the labels spend no δ and are not a term of the
+      union bound (`error_budget.screening`).
+  - **`model_class_unchecked`.** A certificate whose model half rests on the
+    screen or foldover model while **two or more** refinable factors exist is
+    withheld under this name. That happens when refine is not in `stages`,
+    or the route ended there for another reason. The terminal comparison and
+    the within-shortlist bound are still reported.
+    - Two or more, because the centre contrast is the sum of the pure
+      quadratics, and a sum can cancel only with at least two terms.
+    - With exactly one refinable factor, the contrast IS its quadratic:
+      lack of fit tests it with full power, and a rejection withholds as
+      `model_inadequate`. Refine could not run there anyway (validator rule
+      4).
+    - With none (all choice or two-level), there is no curvature to miss.
+  - **Measured.**
+    - Labels: global null, 6 factors, 2^(6-1) + 4 centres (36 runs,
+      pure-error df 3), 2000 screens: per-test FWER 0.173, Holm 0.031. One
+      active factor at β = 1 sd: power 0.953 per-test vs 0.501 Holm (k = 3:
+      0.496 vs 0.230).
+    - Routing, on the masked saddle (40 seeds per arm): before this fix
+      refine ran in 24/40 (per-test) and 17/40 (Holm) campaigns, with 6 and
+      12 false certificates. After: refine runs in 40/40 under both labels,
+      with 0 false and 21 certified (gap 0.000).
+    - `hidden_bump`: refine ran 40/40 already, and there are 0 false
+      certificates either way.
+    - WP-B oracle (288 campaigns, seeds 1-8 ×1/×4), 0 false certificates
+      before and after. Certificates went 67 → 50. Of the 17 lost, 4 are
+      `choice_x_numeric`, which now always refines (12 → 8 certified, mean
+      runs +0.7 per campaign over the oracle); the other 13 are the per-test
+      adequacy default (limit 3: 63 with `adequacy_multiplicity: holm`).
 - **`refine`** — `{kind: central_composite, center_points, validation_points,
   validation_seed, reuse_screen}`. Runs only
   when at least two `numeric` factors with more than 2 levels survive
@@ -756,15 +812,20 @@ not chosen freely.
     against its predictions (joint predictive F, Chow 1960, α = 0.05). A
     rejection makes `model_adequate` false, with
     `model_adequacy.this_stage.rejected_by: ["validation_prediction"]`.
-    The preview counts these runs. `0` turns the check off, and then a
-    refine cannot overturn an earlier lack-of-fit rejection:
-    `model_adequate: null`, `screen_rejection_unresolved`.
+    The preview counts these runs. Since #321 P4, an outer ring of
+    `validation_outer_points` (default 2) at ±`validation_outer_offset`
+    (default 0.8) is added, and a candidate that snaps onto a composite point
+    is declined (limits 1 and 8 below). `validation_points: 0` with
+    `validation_outer_points: 0` turns the check off, and then a refine
+    cannot overturn an earlier lack-of-fit rejection: `model_adequate: null`,
+    `screen_rejection_unresolved`.
   - **`reuse_screen`** (default false). Sequential assembly (Box & Draper
     2007, ch. 15). Refine cube corners that the screen already measured at
     identical levels (held factors included) are not re-run, and the screen's
     centre rows join as block-1 centres. The fit carries a block term, whose
-    t test is the between-stage drift check (`model_adequacy.reuse`). It is
-    refused when a choice factor is declared or when the screen ran under
+    t test is the between-stage drift check (`model_adequacy.reuse`). With
+    a choice factor declared it is a validation error (rule 33; see limit 12
+    below for why). It is refused at runtime when the screen ran under
     another policy. On `bowl` it saves 4 of 33 runs.
   - **Model adequacy is sticky.** `model_adequate` is the EPOCH verdict.
     A rejection is overturned ONLY by a later stage of a STRICTLY higher
@@ -775,8 +836,8 @@ not chosen freely.
     (`screen_rejection_unresolved`). Any other verdict is superseded by a
     later stage of at least its class. `recommendation.json["model_adequacy"]` records how the
     verdict was reached: lack of fit with its df, the validation check,
-    PRESS / R²_pred (Allen 1974), and the D-efficiency and centred VIFs of
-    the design as run.
+    PRESS / R²_pred (Allen 1974), and the D-, G- and I-criteria and centred
+    VIFs of the design as run (limit 6).
   - **An inadequate model is never the answer.** When the verdict is false,
     confirm seats measured leaders. With no confirm stage, the report's
     `model` rung is barred and the `measured` rung answers. `report.md`
@@ -803,9 +864,9 @@ each of them at a named place:
 
 | assumption | relied on at | what breaks when it fails | what catches it |
 |---|---|---|---|
-| **effect sparsity**: few factors matter | screen keeps factors whose main effect is significant at α = 0.05; the rest are held | an active factor dropped by chance is held at the screen's choice | refine's validation check (only along refined axes); a later epoch |
+| **effect sparsity**: few factors matter | the screen's survivor LABELS (Holm at family-wise α = 0.05); they decide no route | nothing downstream: refine runs whenever a refinable factor exists, and no factor is held because it was dropped | — (a Type II label costs nothing; a screen-only certificate with two or more refinable factors is withheld, `model_class_unchecked`) |
 | **hierarchy**: low-order terms dominate, so terms of order 3 and above are ~0 | the screen model (mains + 2fi); refine's quadratic | an unmodelled cubic or 3fi biases the argmax (`ridge_cubic`) | screen lack of fit; refine's off-lattice validation check |
-| **heredity** (strong): no curvature or interaction without the parent main effect | dropped factors are held fixed and never refined | curvature in a dropped factor goes unseen | screen centre points, through lack of fit, which routes to refine on every refinable factor |
+| **heredity** (strong): no curvature or interaction without the parent main effect | not relied on for routing (#321 P4 review): every refinable factor is refined whatever its main effect | — | refine's composite and validation check, on every refinable factor |
 | **low-order smoothness** over the declared ranges | refine fits and ranks with a quadratic | a cliff, threshold or second peak: the model is confidently wrong | the validation check (`step_cliff` 8/8, `ridge_cubic` 8/8 at ×1); the sticky verdict; then measured leaders, and report.md names remedies |
 
 Two more apply to held factors. Refine holds non-refinable factors at one
@@ -819,18 +880,18 @@ constant shift**; the block term estimates that shift and tests it.
 What the validation check and the sticky verdict do NOT do (spec
 2026-10-17-model-adequacy-design.md §6):
 
-1. **Power is local to ±0.5.** A narrow feature between validation points (`two_peaks`' peak) or a misfit below noise (`ridge_cubic` ×4) can still pass. Measured at 40 seeds: 3/40 and 1/40 false certificates at ×4.
+1. **Power beyond ±0.5 (#321 P4).** Refine also runs an outer ring, `validation_outer_points` (default 2) at ±`validation_outer_offset` (default 0.8), chosen by the same seeded maximin against the ±0.5 points and tested in the same joint F. On `corner_bumps` (narrow bumps at coded ±0.8) the ±0.5 check rejected 0/4 seeds and the ring 4/4. What remains: a feature narrower than the spacing between the 6 points, or a misfit below noise, can still pass (`two_peaks` ×4: refine rejects 7/8 with the ring against 5/8 without, under Holm).
 2. **The denominator is pure error from the centre replicates.** If they understate run-to-run variance, the check is anti-conservative on smooth surfaces.
-3. **The α cost on smooth surfaces.** A true quadratic is rejected about 5% of the time (2 of 144 certificates lost at seeds 1-8). The check sits beside lack of fit with no multiplicity correction across the two tests.
+3. **The adequacy tests are per-test vetoes; Holm is information (#321 P4, review MEDIUM 1).** Lack of fit and the validation check, for the primary and every objective model, each reject at `policy.adequacy_alpha` (default 0.05). That is the default `policy.adequacy_multiplicity: per_test`, and any single rejection makes the model inadequate. Each test is a veto on the model half. Making a veto harder to trigger lowers the M1 guard, so validity favours the per-test rule. The Holm (1979) family over the same tests is recorded in `model_adequacy.family` (p, adjusted p, `family_size`, `m_declared`, `decides: false`) as information only. Measured on a k = 2 composite with 6 validation points and a true quadratic: "reject if either" (the per-test rule) is 0.068-0.072, and the Holm family is 0.032-0.037 (3 × 4000 designs). The tests share pure error, so they are positively dependent. `adequacy_multiplicity: holm` makes the family decide. The trade-off: fewer false "inadequate" verdicts and more certificates on smooth surfaces (pre-P4 adequacy rule 55 of 144 smooth; Holm + ring 67), bought with a weaker guard against misspecification. The 288-campaign oracle after the #321 P4 review: 50 certificates per-test, 63 under `holm`, 0 false in both. Whichever rule decides, vetoes stay outside the family (an exact lack-of-fit rejection on zero pure error, an objective model that could not be estimated), and an unknown basis is never promoted to adequate: `curvature_untested`, `lack_of_fit_not_computable` and `curvature_not_isolated` are re-applied after any overturn.
 4. **Validation rows can be shortlist nominees under a rejected model** (as measured leaders). They are re-measured before they can win.
-5. **No validation points at screen or foldover.** Their curvature detection rests on the centre points (one df).
-6. **Efficiency reporting is D only.** D-efficiency is on the ±1 coded scale with an intercept, so it compares designs of one model; G- and I-efficiency are not reported.
+5. **Validation at screen (#321 P4, opt-in).** `design.screen.validation_points` (default 0) runs off-lattice points after the screen: ±0.5 on every numeric factor with a runnable interior, ±1 on the rest. They are held out of the first-order + 2fi fit, checked by the same joint F, and enter the screen's adequacy family (`model_adequacy.screen_validation`). Declined, with nothing appended, for a mixed-level screen (categorical contrasts) or a screen with no interior. They are never part of the foldover's combined fit; the foldover itself still rests on the centre points. Cost: 4 runs per campaign. Measured: `step_cliff` screen check rejects 4/4 seeds; on the 288-campaign oracle certificates fall from 67 to 65, with no false certificate.
+6. **Efficiency: D, G and I (#321 P4).** `model_adequacy.design_efficiency` records D-efficiency `|X'X/n|^(1/p)` and centred VIFs, plus G-efficiency `p / max SPV` and the I-criterion `i_average_spv` (the average scaled prediction variance `n f'(X'X)^-1 f` over the coded region; Atkinson, Donev & Tobias 2007, §10.6, §11.4), all from the same exact `(X'X)^-1`. I is exact (region moments, uniform on [-1, 1] per numeric axis, {-1, +1} per two-level choice factor). No I-efficiency RATIO is reported, because no closed-form I-optimal reference exists for a general model; compare `i_average_spv` between designs of one model (smaller is better). G is exact for first-order + 2fi models (max at a vertex, `g_exact: true`). With quadratic terms it is a max over a 5-level grid polished by coordinate ascent, so it is an upper bound (`g_exact: false`); past a fixed budget the evaluation set is a seeded sample (`g_seed`). Declined, named `g_i_declined`, for multi-level categorical contrasts, where the region is not a cube. Measured on the k = 2 face-centred CCD with 4 centres: D = 0.408, G = 0.632 (max SPV 9.5), I = 3.633. These are on the coded scale of the design as run. A rotatable CCD (axial α = (2^k)^(1/4) > 1) codes its axial points beyond ±1, outside the [-1, 1] region G and I are taken over, so its leverage there is not part of G. Nous's refine composite is face-centred: its axial points are clamped to ±1, so it stays inside the region.
 7. **Under `screen_rejection_unresolved`** (reachable only with `validation_points: 0`), the report's `model` rung still answers with the model's argmax. Certification is withheld.
-8. **Snapping can cancel a point's power.** On a `levels_only` or coarse-grid knob, ±0.5 can snap onto a lattice level, and that point then adds no power.
-9. **The objective-model check builds V from the full design columns**, while the model may have been fitted on a subset of rows (where that metric is missing). V is then slightly too small.
+8. **Snapping (#321 P4).** Points are chosen among their images as run. Each candidate is decoded to a runnable level (grid or `levels_only` snap, clamp) and re-coded. A candidate whose image is a composite point (the fit interpolates it, so it tests nothing) or another chosen point's image is declined, and the maximin takes the next-best. `design_matrix.validation` records `planned_coded`, `as_run_coded` and `points_declined`. When every candidate collapses (e.g. two `levels_only` knobs on {2, 8, 16}), nothing runs, `declined_reason: every_candidate_snaps_onto_a_design_point`, and the check is `no_validation_point_runnable`. A refine cannot then overturn a screen rejection (`screen_rejection_unresolved`).
+9. **V from the rows actually fitted (#321 P4).** `V = I + X_v (X'X)^-1 X_v'` uses the fit's own exact covariance (every second-order, blocked or mixed fit carries it; the leading block of the inverse over model and nuisance columns) or the fitted rows' matrix. An objective model fitted on a subset (a metric missing on some rows) uses its own rows (`ObjectiveModel.positions`). `v_from` records which.
 10. **The Pareto path and a rejected model (fixed in #321).** `shortlist_plan` reads the epoch's `model_adequate`: when it is false, round 1 seats no predicted extreme and no predicted preferred point; each objective's measured best and the measured nondominated points take those seats (up to `max(K, shortlist_size // 2)`), and the predicted front's spread fills the rest, as on the single-objective ladder. Predicted rivals stay in the front statuses: a rival can only remove confidence, so that is the conservative side. Certification is withheld (`model_inadequate`) as before. Cost: on `pareto_with_constraint` seed 3 the measured anchor makes a constraint-boundary point preferred, a later round strikes it off, and the hypervolume drops 0.967 -> 0.952 (1 of 16 seeds).
-11. **The mixed-fit V would omit the centre indicators.** Refine fits are never mixed, so this is not reachable today.
-12. **`reuse_screen` is refused with any choice factor declared** (the cyclic centre assignment does not match refine's held level). A refusal is logged at INFO; partial reuse across choice slices is not attempted.
+11. **The mixed-fit V and nuisance columns.** V now comes from the fit's covariance, whose leading block already accounts for the centre indicators and block term (fixed with limit 9).
+12. **`reuse_screen` with a choice factor is a validation error (rule 33), and partial reuse across choice slices is rejected.** Refine fits one slice of each choice factor. A screen row at another level of that factor carries the factor's effect and its interactions with the refined numerics, and the per-slice model has no column for either, so reusing the row biases the slice fit. A block term absorbs only a constant shift between slices, never those interactions (Box & Draper 2007, §15.3: blocking assumes additive block effects; `test_a_block_term_cannot_absorb_a_choice_by_numeric_interaction` shows a slice slope of 6 pooled to 2). Reusing only the rows AT the held level would be unbiased, but it is declined: at most 1/L of the screen's corners lie on the slice, and the screen's centres cycle the choice levels, so the slice has too few block-1 centres to estimate the block effect.
 
 #### How many knobs: any number, at resolution III, IV or V
 

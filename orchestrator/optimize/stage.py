@@ -183,10 +183,10 @@ def _behavioral_trigger_note(behavioral_failures: tuple[RelationVerdict, ...]) -
 
 def _rationale_screen(surviving: tuple[str, ...], dropped: tuple[str, ...],
                        unknown: tuple[str, ...], next_stage: Stage,
-                       triggers: tuple[Trigger, ...]) -> str:
+                       triggers: tuple[Trigger, ...], why: str | None = None) -> str:
     parts = []
     if dropped:
-        parts.append(f"dropped {', '.join(dropped)} (CI contains zero)")
+        parts.append(f"dropped {', '.join(dropped)} ({why or 'CI contains zero'})")
     if unknown:
         parts.append(f"kept {', '.join(unknown)} as unknown (no pure-error estimate)")
     if surviving:
@@ -211,7 +211,8 @@ def _lof_rejected(fit: Fit) -> bool:
 
 def decide_after_screen(fit: Fit, factors: list[Factor], *,
                          alpha: float = 0.05,
-                         behavioral_failures: tuple[RelationVerdict, ...] = ()) -> StageDecision:
+                         behavioral_failures: tuple[RelationVerdict, ...] = (),
+                         selection: dict | None = None) -> StageDecision:
     """Decide the next stage from a screening fit.
 
     Drops factors whose main-effect CI contains zero (``significant is
@@ -234,6 +235,13 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
     ``alpha`` is accepted for interface symmetry with ``fit_effects``, but
     this function does not refit: it only reads the ``significant`` flags
     ``fit_effects`` already computed at whatever alpha it was called with.
+
+    ``selection`` (#321 P4 item 1) is the registered FAMILY decision
+    (``effects.screening_family``: Holm over the screened factors' main-effect
+    tests). When given, a tested factor survives iff the family rejects its
+    null, and an untested one is unknown (kept), so the per-term flags above
+    are not read. ``None`` keeps the per-term rule (a policy compiled before
+    P4).
 
     ``behavioral_failures`` are ``RelationVerdict``s (from
     ``relations.classify_failures``) for ``behavioral``-kind relations that
@@ -259,7 +267,19 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
     unknown: list[str] = []
     from orchestrator.optimize.effects import factor_test
 
+    fam = (selection or {}).get("factors") if selection is not None else None
     for f in factors:
+        if fam is not None:
+            r = fam.get(f.id)
+            if r is None:
+                surviving.append(f.id)
+                if f.id in (selection.get("unknown") or ()):
+                    unknown.append(f.id)
+            elif r["rejected"]:
+                surviving.append(f.id)
+            else:
+                dropped.append(f.id)
+            continue
         # A multi-level categorical's main effect is L-1 df: its survivor
         # test is the F test on all of them (effects.FactorTest), not any one
         # contrast's t -- a level that differs from the others shows up in
@@ -317,7 +337,11 @@ def decide_after_screen(fit: Fit, factors: list[Factor], *,
         next_stage = Stage.CONFIRM
 
     rationale = _rationale_screen(tuple(surviving), tuple(dropped), tuple(unknown),
-                                   next_stage, tuple(triggers))
+                                   next_stage, tuple(triggers),
+                                   why=(f"not rejected by {selection['method']} at "
+                                        f"family-wise alpha={selection['alpha']} over "
+                                        f"{selection['family_size']} main-effect tests"
+                                        if selection is not None else None))
     behavioral_note = _behavioral_trigger_note(behavioral_failures)
     if behavioral_note:
         rationale = f"{rationale}; {behavioral_note}"
