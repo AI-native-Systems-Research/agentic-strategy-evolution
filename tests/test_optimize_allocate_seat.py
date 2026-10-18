@@ -370,27 +370,33 @@ def test_rewriting_every_predicted_number_leaves_every_bound_unchanged(tmp_path,
 
 
 def test_allocated_seats_never_displace_a_challenger_still_in_contention(tmp_path):
-    """P6b review H1. Every finalist of the round before the allocate round
-    whose bound stayed above epsilon is re-seated; allocator picks fill only
-    the slots left. With shortlist_size 3 and two seats declared, a carried
-    challenger must survive into the allocate round."""
+    """P6b review H1. Take saddle seed 1 to the allocate round, then make one
+    round-1 challenger's bound exceed epsilon (still in contention) and
+    rebuild the allocate round's shortlist: the challenger is re-seated, and
+    the allocator's picks fill only the slot left (shortlist_size 3)."""
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import _confirm_rows
+
     s = SURFACES["saddle"]()
-    for seed in (1, 3):
-        r = run_synthetic_campaign(s, seed=seed, parent_dir=tmp_path / str(seed),
-                                   campaign_overrides=_with_allocate(s, seats=2))
-        cs = _confirmations(r.work_dir)
-        if len(cs) < 2 or "allocation" not in cs[0]:
-            continue
-        c1, c2 = cs[0], cs[1]
-        keep = [f["levels"] for f in c1["finalists"] if f["status"] == "ok"
-                and f["key"] != c1["best"]
-                and (c1["bounds"].get(f["key"]) is None
-                     or c1["epsilon"] is None or c1["bounds"][f["key"]] > c1["epsilon"])]
-        seated = [f["levels"] for f in c2["finalists"]]
-        for lv in keep:
-            assert lv in seated, (seed, lv, seated)
-        n_alloc = sum(f["why"].startswith("allocate:") for f in c2["finalists"])
-        assert n_alloc <= 2
+    r = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path,
+                               campaign_overrides=_with_allocate(s, seats=2),
+                               max_iterations=4)        # stop before the allocate round runs
+    wd = r.work_dir
+    trans = _transitions(wd)
+    assert trans[-1]["rule"].get("accounting") == ALLOCATE_ACCOUNTING
+    p1 = sorted(wd.glob("runs/iter-*/confirmation.json"))[-1]
+    c1 = json.loads(p1.read_text())
+    key = next(k for k in c1["bounds"] if k != c1["best"])
+    c1["bounds"][key] = 10.0 * c1["epsilon"]            # in contention
+    p1.write_text(json.dumps(c1))
+    challenger = next(f["levels"] for f in c1["finalists"] if f["key"] == key)
+    pol = json.loads((wd / "policy.json").read_text())
+    factors = parse_factors(synthetic_campaign(s)["optimization"]["factors"])
+    _rows, payload = _confirm_rows(pol, wd, factors, "m", "maximize", 99)
+    seated = [f["levels"] for f in payload["finalists"]]
+    whys = [f["why"] for f in payload["finalists"]]
+    assert challenger in seated, whys
+    assert sum(w.startswith("allocate:") for w in whys) == 1, whys
 
 
 def test_the_allocator_constants_are_recorded_when_declared(tmp_path):
