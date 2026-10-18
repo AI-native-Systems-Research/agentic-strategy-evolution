@@ -291,3 +291,56 @@ best. State in the paper: the profile was developed on the benchmark's focus tas
 held-out tasks; the Claude baseline has identical model, CLI, effort, budget, sandbox and judge. One sentence:
 "Case studies use Nous's full profile; for the fixed-budget algorithmic benchmark we use a lightweight profile
 of the same loop, tuned for automated-judge optimization."
+
+## 12. v8 focus-set results, the 64k-output problem, and the effort work (2026-10-15 to 2026-10-16)
+
+**v8 at $50, first runs (all finished; best judged score reached by $50):** p0 81.47, p5 58.0, p26 29.61,
+p181 12.78, p58 0. Against v7 (68.24 / 43.0 / 7.09 / 49.55 / 59.71) and Claude (26.43 / 57.0 / 0 / 56.0 / 0):
+v8 beats both on p0, p5, p26; loses p181 and p58. Preds: `artifacts/preds/p*.nous_v8.c50.json`.
+
+**Repeats (to tell method from noise):**
+
+| run | commit | p181 | p26 | p58 |
+|---|---|---|---|---|
+| v8 r1 | 125df97 / 486d822 | 12.78 | 29.61 | 0 |
+| v8 r2 | 0d858f5 (repair reserve) | 47.67 | 10.14 (85ecf14) | 0 (stopped at $29) |
+| v8 r3 | 85ecf14 (reply-sized arm floor) | | | 0 (stopped at $26) |
+
+Single runs are noisy (p181 12.78 vs 47.67; p26 29.61 vs 10.14). Judge any change with at least 2 runs per task.
+
+**Root problem found: replies cut at the 64k output limit.** On p58 (every run, every agent) and p26, opus-4-6
+writes one reply of extended thinking that reaches Claude Code's 64,000 output-token limit (the model allows
+128k). The reply is cut (`stop_reason: max_tokens` in the transcript), the thinking is lost, the resume restarts
+the same reasoning, and the session never acts. Evidence: in p58 v8 runs every arm's 64k replies preceded no
+tool call, and the official judge saw only the stub; Claude's p58 baseline had 4 of 5 replies at 64k (9 of 13
+in the continue-on-crash run). v7 scored 59.71 on p58 because one of its three arms finished thinking at 47,440
+tokens, just under the limit, then wrote code; v7's undercounted caps also let sessions run past their budget.
+Tasks p0, p5, p181 never hit the limit (largest single reply $0.95-$2.12).
+
+**What controls thinking (probed 2026-10-16, opus-4-6, opus-5, opus-5-5, on vpc and vpc-int, same results):**
+`MAX_THINKING_TOKENS` is ignored by all three (adaptive thinking); `--effort` works (opus-4-6: low 335 output
+tokens and a wrong answer, medium 1.1k-17.7k; opus-5 and opus-5-5 respond less, and opus-5-5 thinks ~4x less
+than opus-4-6). All three report a 128k API output limit. Anthropic's guidance: effort is the primary control on
+adaptive-thinking models, and on `stop_reason: max_tokens` either raise max_tokens or lower effort
+(platform.claude.com/docs/en/build-with-claude/effort, .../thinking-steering-and-cost). Task budgets are not
+available in Claude Code; per-message effort is not available on opus-4-6.
+
+**Changes, in order (all pushed):**
+- 0d858f5 keep: the first arm's hard cap reserves its repair turn; a repair runs only if every waiting arm
+  keeps its floor (live p26/p0/p58: a $1.11 repair skipped the second family by $0.26).
+- 85ecf14 then 9cf6a43 reverted: arm floor = 2x the campaign's largest reply. It did not fix p58 (the model
+  still thought to 64k) and on p5 r2 one long, uncut $3.36 reply raised the floor to $6.72 and skipped the
+  family that won p5 r1. Sessions still log `max_reply_usd`.
+- 2c2094c keep (to be revised): effort ladder in `orchestrator/effort.py`. A reply cut at the output limit stops
+  the session (`stop_on_output_limit`), which resumes one level lower with a "write and submit the simplest
+  correct solution first" prompt, and later sessions start one level lower (floor medium). Metrics rows record
+  the effort. Its first-session rule ("medium until an official score > 0") is wrong for p0: a replay on the r1
+  logs runs 5 of p0's 7 sessions at medium, including the one that found 70.78.
+
+**Process change (after the p5 regression):** replay every change against the logs of all five tasks before
+any run, and report which sessions it changes. `/tmp/replay.py` did this for the ladder.
+
+**Next (decided, not built):** evaluator session at medium; every other session at the model default; drop
+one level only after a real cut-off. Replay result expected: p0, p5, p181 unchanged except the evaluator; p26,
+p58 change after their first cut-off. Then run p58, p26, p5 (2 runs each before judging), then the freeze and
+held-out plan in section 11.

@@ -127,3 +127,14 @@ Result: Nous wins p0, p58, p26; Claude wins p5; p181 within judge noise (Claude 
 - 15:03 p58 stopped at $20.71 (0): its designer hit the $8 cap mid-reasoning twice, wrote no bundle, iteration 1 abandoned (design_incomplete). Fixed: fallback one-arm design. p58 relaunched on 0e7ae60; other tasks keep running on 486d822 (the fallback only matters when a design fails).
 - 15:24 Found: arms' self-written result.json can understate their best official measure (p181 alt 49.55 official vs 12.46 written) so the wrong arm won. Fixed in 125df97 (result follows the judge). Restarted p181, p0, p26, p58 on it; p5 continues on 486d822 (its winner picks were correct).
 - 15:30 p5 v8: 58.00 at $49.69 (judge file m0042_152900_score58.00.cpp; clean: no exploit signatures, no tables, no file reads; 13.8 KB). Came from iteration 3 (explore after the exploit iteration plateaued at 55). Claude 57.00.
+
+## 2026-10-16 runs (repeats and effort work)
+
+- 08:19 p58 r2 (vpc k3) and p181 r2 (vpc k1) on 0d858f5. p181 r2 finished 47.67 at $50 (both families
+  screened). p58 r2: every session had a 64k reply, no submission; stopped at $29.44 for the floor fix.
+- 10:21 p58 r3 (vpc k1) on 85ecf14: arm got $9.74 but both replies were 64k thinking, no submission; stopped at
+  $26.31. 10:34 p26 r2 (vpc k3): 10.14 at $50 (first run 29.61); long replies again.
+- 12:20 probes: thinking budget ignored on opus-4-6/5/5-5 (vpc and vpc-int); effort works.
+- 14:56 p58 r4, p26 r3 (vpc), p5 r2 (vpc-int) on 2c2094c (effort ladder). Stopped at 15:20 ($11.42, $7.57,
+  $16.34; p5 best 39.0) after p5 r2 skipped its second family because of the reply-sized floor (reverted in
+  9cf6a43) and a replay showed the ladder's first-session rule would change p0. Their spend does not count.

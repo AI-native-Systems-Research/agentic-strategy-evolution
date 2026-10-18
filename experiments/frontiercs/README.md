@@ -112,6 +112,22 @@ judge load.
 **Claude $5 pilot (2026-10-14, `gen/pilot_c5.sh`):** p181, p26, p58 all scored 0 at $5. p26 and p58 never
 submitted a solution (each $5 went into one or two long reasoning turns). Taken as evidence these are hard.
 
+## Focus set at $50: Nous v8 vs v7 vs Claude Code (2026-10-15/16, opus-4-6)
+
+Best judged score by $50; v8 repeats in brackets. Preds `artifacts/preds/p*.nous_v8.c50*.json`. Details and the
+64k-output finding: `NOUS_IMPROVEMENT_LOG.md` section 12.
+
+| task | v8 | v7 | Claude |
+|---|---|---|---|
+| p0 polyomino packing | 81.47 | 68.24 | 26.43 |
+| p5 Hamiltonian path | 58.0 | 43.0 | 57.0 |
+| p26 OgreSort | 29.61 (10.14) | 7.09 | 0 |
+| p181 binary QAP | 12.78 (47.67) | 49.55 | 56.0 |
+| p58 inverse counting path | 0 (0, 0 stopped) | 59.71 | 0 |
+
+p58 (and part of p26) is decided by replies that think past Claude Code's 64k output limit and are lost; v7's
+single scoring p58 arm finished thinking just under it. The fix in progress is effort control (log section 12).
+
 ## Focus set at $50: Nous v7 vs Claude Code (2026-10-14, opus-4-6, final)
 
 Nous v7 (aiopslab 4bb8787, `gen/nous_v7_c50.sh`, `--design-profile v7`, default v7 budgets) vs the Claude Code
