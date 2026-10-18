@@ -19,16 +19,17 @@ ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = json.loads((ROOT / "orchestrator/schemas/planner_decision.schema.json").read_text())
 
 
-@pytest.fixture(scope="module")
-def converged(tmp_path_factory):
-    return run_synthetic_campaign(SURFACES["bowl"](), seed=3,
-                                  parent_dir=tmp_path_factory.mktemp("conv"))
+# Function-scoped: a written decision is sealed with a key under the
+# per-test NOUS_STATE_HOME (conftest), so a work_dir must not outlive its test.
+@pytest.fixture
+def converged(tmp_path):
+    return run_synthetic_campaign(SURFACES["bowl"](), seed=3, parent_dir=tmp_path / "conv")
 
 
-@pytest.fixture(scope="module")
-def boundary(tmp_path_factory):
+@pytest.fixture
+def boundary(tmp_path):
     return run_synthetic_campaign(SURFACES["bowl_out_of_hull"](), seed=3,
-                                  parent_dir=tmp_path_factory.mktemp("bnd"))
+                                  parent_dir=tmp_path / "bnd")
 
 
 def _decision(res, tmp_path=None, **kw):
@@ -437,3 +438,83 @@ def test_the_planner_scores_the_counterexample_by_the_joint_bound(monkeypatch):
     v = planner._value(ep, [(c, c) for c in X], None)
     assert v["value"] is not None and v["value"] < 0.03, v
     assert v["marginal_bound_not_used"] > 0.25        # what the old score would have used
+
+
+# ── accept refusals (review H2, M1, M2) ─────────────────────────────────────
+
+
+def _planned(tmp_path, **kw):
+    res = run_synthetic_campaign(SURFACES["bowl_out_of_hull"](), seed=3,
+                                 parent_dir=tmp_path / "c", **kw)
+    cf = tmp_path / "campaign.yaml"
+    cf.write_text((res.work_dir / "campaign.epoch-1.yaml").read_text())
+    planner.write_plan(planner.plan(res.work_dir))
+    return res.work_dir, cf
+
+
+def test_accept_refuses_a_campaign_edited_since_the_plan_and_leaves_it_unchanged(tmp_path):
+    """H2: an edit (here a comment plus a changed level) after planning is
+    the author's work; accept must not discard it."""
+    wd, cf = _planned(tmp_path)
+    edited = cf.read_text().replace("research_question:", "# my note\nresearch_question:")
+    edited = edited.replace("- 16\n", "- 15\n", 1)
+    cf.write_text(edited)
+    with pytest.raises(planner.PlanError, match="campaign_edited_since_plan"):
+        planner.accept(wd, cf)
+    assert cf.read_text() == edited
+    assert not (wd / "epoch_end.planned-1.json").exists()
+    rec = planner.accept(wd, cf, force_overwrite=True)
+    bak = tmp_path / "campaign.yaml.bak-epoch-1"
+    assert bak.read_text() == edited and rec["backup"] == str(bak)
+    assert rec["replaced_matches_registered"] is False
+
+
+def test_an_unedited_accept_also_backs_up_the_replaced_file(tmp_path):
+    wd, cf = _planned(tmp_path)
+    before = cf.read_text()
+    planner.accept(wd, cf)
+    assert (tmp_path / "campaign.yaml.bak-epoch-1").read_text() == before
+
+
+def test_accept_refuses_when_any_measured_row_changed_after_planning(tmp_path):
+    """M1: one byte appended to runs/iter-1/... (any recorded run file)."""
+    wd, cf = _planned(tmp_path)
+    runs = sorted(wd.glob("runs/iter-*/runs.jsonl"))[0]
+    runs.write_bytes(runs.read_bytes() + b" ")
+    with pytest.raises(planner.PlanError, match="stale_decision"):
+        planner.accept(wd, cf)
+
+
+@pytest.mark.parametrize("name", ["transitions.jsonl", "runs/iter-2/effects.json"])
+def test_accept_refuses_when_another_planner_input_changed(tmp_path, name):
+    wd, cf = _planned(tmp_path)
+    p = wd / name
+    p.write_bytes(p.read_bytes() + b"\n")
+    with pytest.raises(planner.PlanError, match="stale_decision"):
+        planner.accept(wd, cf)
+
+
+def test_accept_refuses_a_tampered_decision(tmp_path):
+    """M2: `chosen` rewritten in the file to an option the planner marked
+    error_budget_insufficient. The seal catches the edit; and a resealed
+    tampered decision is still refused by the re-applied choice rules."""
+    wd, cf = _planned(tmp_path, campaign_overrides={
+        "policy": {"campaign_delta": {"total": 0.05, "schedule": [0.05]}}})
+    dp = wd / "plan_next/epoch-1/planner_decision.json"
+    d = json.loads(dp.read_text())
+    bad = next(o for o in d["options"] if o.get("reason") == "error_budget_insufficient")
+    d["chosen"] = d["scored_choice"] = bad["id"]
+    dp.write_text(json.dumps(d))
+    with pytest.raises(planner.PlanError, match="decision_tampered"):
+        planner.accept(wd, cf)
+    planner._seal_decision(wd, dp)                       # an attacker with the key
+    with pytest.raises(planner.PlanError, match="decision_invalid|error_budget"):
+        planner.accept(wd, cf)
+    assert not (wd / "epoch_end.planned-1.json").exists()
+
+
+def test_accept_refuses_a_decision_without_its_seal(tmp_path):
+    wd, cf = _planned(tmp_path)
+    (wd / "plan_next/epoch-1/planner_decision.json.seal").unlink()
+    with pytest.raises(planner.PlanError, match="decision_unsealed"):
+        planner.accept(wd, cf)

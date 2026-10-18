@@ -2623,7 +2623,8 @@ def _cmd_plan_next(args):
             if args.choose:
                 d = planner.plan(work_dir)
                 planner.write_plan(d, choose=args.choose, reason=args.reason)
-            rec = planner.accept(work_dir, Path(args.target))
+            rec = planner.accept(work_dir, Path(args.target),
+                                 force_overwrite=args.force_overwrite)
             if rec["kind"] == "stop":
                 print(f"plan-next: accepted STOP for epoch {rec['epoch']}; no new epoch.")
             else:
@@ -3272,6 +3273,10 @@ def build_parser():
                         help="override the scored choice (recorded, with --reason, in "
                              "the next epoch's provenance)")
     p_plan.add_argument("--reason", metavar="TEXT", help="why the override (required with --choose)")
+    p_plan.add_argument("--force-overwrite", action="store_true",
+                        help="with --accept: overwrite a campaign file that differs from "
+                             "the campaign this epoch registered (it is backed up as "
+                             "<file>.bak-epoch-<e> first)")
     p_plan.add_argument("--json", action="store_true")
     p_plan.set_defaults(func=_cmd_plan_next)
 

@@ -1089,13 +1089,87 @@ def _assumptions(ep: dict) -> list[str]:
 
 
 def _input_hashes(ep: dict) -> dict:
-    from orchestrator.optimize.provenance import sha256_file
+    """sha256 of EVERY file the decision read (review M1): the analysis inputs
+    ``provenance.input_hashes`` covers (every iteration's runs, design matrix
+    and relations, every ``campaign.epoch-*.yaml``, accepted boundaries),
+    plus every fitting stage's effects and recommendation, the report, the
+    policy, ``transitions.jsonl`` and ``delta_ledger.jsonl``; and the Nous
+    source the decision was computed by (``nous:source_sha256``)."""
+    from orchestrator.optimize.provenance import input_hashes, nous_version_info, sha256_file
 
     wd = ep["work_dir"]
-    names = ["report.json", "policy.json", f"campaign.epoch-{ep['epoch']}.yaml",
-             f"runs/iter-{ep['fit_iter']}/recommendation.json",
-             f"runs/iter-{ep['fit_iter']}/effects.json"]
-    return {n: sha256_file(wd / n) for n in names if (wd / n).exists()}
+    out = dict(input_hashes(wd))
+    names = ["report.json", "policy.json", "policy.sha256", "transitions.jsonl",
+             "delta_ledger.jsonl"]
+    for d in sorted((wd / "runs").glob("iter-*")):
+        for n in ("effects.json", "recommendation.json", "confirmation.json"):
+            names.append(f"runs/{d.name}/{n}")
+    out.update({n: sha256_file(wd / n) for n in names if (wd / n).exists()})
+    out.update({n: "absent" for n in names[:5] if not (wd / n).exists()})
+    out["nous:source_sha256"] = str(nous_version_info().get("source_sha256") or "")
+    return out
+
+
+def _current_inputs(wd: Path, recorded: dict) -> list[str]:
+    """Names in ``recorded`` whose content changed, or new input files."""
+    from orchestrator.optimize.provenance import input_hashes, nous_version_info, sha256_file
+
+    stale = []
+    for n, h in recorded.items():
+        if n == "nous:source_sha256":
+            if str(nous_version_info().get("source_sha256") or "") != h:
+                stale.append(n)
+        elif h == "absent":
+            if (wd / n).exists():
+                stale.append(n)
+        elif not (wd / n).exists() or sha256_file(wd / n) != h:
+            stale.append(n)
+    stale += [n for n in input_hashes(wd) if n not in recorded]
+    return stale
+
+
+# ── the decision seal (review M2) ────────────────────────────────────────────
+
+SEAL_SUFFIX = ".seal"
+
+
+def _seal_key(wd: Path) -> bytes:
+    """The work_dir's key under the Nous state home (``gate_records.key_path``),
+    never in the work_dir. Created only if no build seal exists yet, as
+    ``gate_records.ensure_key`` does, so a missing key can never be re-minted
+    to forge a seal over an edited decision."""
+    from orchestrator.optimize import gate_records as gr
+
+    return gr._key(wd, create=not (wd / gr.SEAL_FILE).exists()
+                   and not any((wd / PLAN_DIR).glob("epoch-*/*" + SEAL_SUFFIX)))
+
+
+def _mac(key: bytes, data: bytes) -> str:
+    import hmac
+
+    return hmac.new(key, b"planner_decision\0" + data, hashlib.sha256).hexdigest()
+
+
+def _seal_decision(wd: Path, path: Path) -> None:
+    (path.parent / (path.name + SEAL_SUFFIX)).write_text(
+        _mac(_seal_key(wd), path.read_bytes()) + "\n")
+
+
+def _check_seal(wd: Path, path: Path) -> None:
+    import hmac
+
+    from orchestrator.optimize import gate_records as gr
+
+    sp = path.parent / (path.name + SEAL_SUFFIX)
+    if not sp.exists():
+        raise PlanError(f"decision_unsealed: {sp.name} is absent; re-run `nous plan-next`")
+    try:
+        key = gr._key(wd)
+    except gr.GateRecordError as exc:
+        raise PlanError(f"decision_unsealed: {exc}") from exc
+    if not hmac.compare_digest(sp.read_text().strip(), _mac(key, path.read_bytes())):
+        raise PlanError("decision_tampered: planner_decision.json does not match its seal "
+                        "(edited after `nous plan-next` wrote it)")
 
 
 # ── writing, choosing, accepting ─────────────────────────────────────────────
@@ -1137,7 +1211,16 @@ def write_plan(result: dict, *, choose: str | None = None, reason: str | None = 
     jsonschema.validate(d, json.loads(SCHEMA_PATH.read_text()))
     p = out / DECISION_FILE
     p.write_text(json.dumps(d, indent=2, sort_keys=True, default=str) + "\n")
+    _seal_decision(Path(ep["work_dir"]), p)
     return p
+
+
+NOT_OVERRIDABLE = ("error_budget_insufficient", "run_budget_insufficient", "proposal_invalid",
+                   "preview_failed", "duplicate_of", "no_change", "region_failed")
+
+
+def _overridable(opt: dict) -> bool:
+    return not str(opt.get("reason") or "").startswith(NOT_OVERRIDABLE)
 
 
 def apply_override(d: dict, choose: str, reason: str | None) -> None:
@@ -1149,9 +1232,7 @@ def apply_override(d: dict, choose: str, reason: str | None) -> None:
     if opt is None:
         raise PlanError(f"unknown_option: {choose!r} (options: "
                         f"{[o['id'] for o in d['options']]})")
-    if opt.get("reason") in ("error_budget_insufficient", "run_budget_insufficient",
-                             "proposal_invalid") or (opt.get("reason") or "").startswith(
-                                 ("preview_failed", "duplicate_of", "no_change")):
+    if not _overridable(opt):
         raise PlanError(f"option_not_overridable: {choose} is {opt.get('reason')}; the "
                         f"remaining budget or the validator forbids it")
     d["override"] = {"chosen": choose, "reason": reason.strip(),
@@ -1160,12 +1241,44 @@ def apply_override(d: dict, choose: str, reason: str | None) -> None:
     d["chosen"] = choose
 
 
-def accept(work_dir: Path, campaign_path: Path) -> dict:
+def _recheck_choice(d: dict) -> None:
+    """Accept re-applies the choice rules to the decision it is about to act
+    on (review M2): ``chosen`` is the scored choice, or an override with a
+    reason of an option that may be overridden."""
+    opt = next((o for o in d.get("options") or [] if o.get("id") == d.get("chosen")), None)
+    if opt is None:
+        raise PlanError(f"decision_invalid: chosen {d.get('chosen')!r} is not an option")
+    if d["chosen"] != d.get("scored_choice"):
+        ov = d.get("override") or {}
+        if ov.get("chosen") != d["chosen"] or not str(ov.get("reason") or "").strip():
+            raise PlanError("decision_invalid: chosen differs from the scored choice "
+                            "without a recorded override and reason")
+        if not _overridable(opt):
+            raise PlanError(f"option_not_overridable: {d['chosen']} is {opt.get('reason')}")
+    elif d["chosen"] != "stop" and not opt.get("feasible"):
+        raise PlanError(f"decision_invalid: {d['chosen']} is not feasible ({opt.get('reason')})")
+
+
+def accept(work_dir: Path, campaign_path: Path, *, force_overwrite: bool = False) -> dict:
     """Apply the written decision: write the proposed campaign over
     ``campaign_path`` and the planned epoch-boundary record, which makes the
-    next ``nous resume`` compile epoch ``e + 1``. Refuses on a stale decision
-    (its inputs changed since it was written). A ``stop`` decision writes the
-    boundary record only as ``stop`` (no new epoch)."""
+    next ``nous resume`` compile epoch ``e + 1``. A ``stop`` decision writes
+    ``accepted_stop.json`` only (no new epoch). Every refusal is named:
+
+    * ``decision_unsealed`` / ``decision_tampered``: the decision's HMAC seal
+      (key under the Nous state home) is missing or does not match (M2);
+    * ``decision_invalid`` / ``option_not_overridable``: the choice rules,
+      re-applied here (M2);
+    * ``stale_decision``: any input the planner read changed (M1);
+    * ``error_budget_insufficient`` / ``run_budget_insufficient``: the next
+      epoch no longer fits, re-checked against the budgets as they stand (M1);
+    * ``campaign_edited_since_plan``: ``campaign_path`` is not the campaign
+      this epoch registered (H2). ``force_overwrite`` overrides that one
+      check only.
+
+    The replaced file is saved first as ``<name>.bak-epoch-<e>`` (H2)."""
+    import shutil
+
     from orchestrator.optimize.policy import read_policy
     from orchestrator.optimize.provenance import sha256_file
 
@@ -1179,11 +1292,12 @@ def accept(work_dir: Path, campaign_path: Path) -> dict:
         raise PlanError(f"no_decision: run `nous plan-next` first ({dp} is absent)")
     if boundary_path(wd, e).exists():
         raise PlanError(f"already_planned: {boundary_path(wd, e).name} exists")
+    _check_seal(wd, dp)
     d = json.loads(dp.read_text())
-    stale = [n for n, h in (d.get("inputs") or {}).items()
-             if not (wd / n).exists() or sha256_file(wd / n) != h]
+    _recheck_choice(d)
+    stale = _current_inputs(wd, d.get("inputs") or {})
     if stale:
-        raise PlanError(f"stale_decision: inputs changed since planning: {stale}")
+        raise PlanError(f"stale_decision: inputs changed since planning: {stale[:8]}")
     rec = {"epoch": e, "kind": "planned_continuation" if d["chosen"] != "stop" else "stop",
            "decision": str(dp.relative_to(wd)), "decision_sha256": sha256_file(dp),
            "chosen": d["chosen"], "scored_choice": d["scored_choice"],
@@ -1201,11 +1315,35 @@ def accept(work_dir: Path, campaign_path: Path) -> dict:
     errs = validate_campaign(c)
     if errs:
         raise PlanError(f"proposal_invalid: {errs[:3]}")
+    # The budgets as they stand NOW, not as the decision recorded them.
+    ep = load_epoch(wd)
+    bstate = budget_state(ep)
+    nb = _next_epoch_budget(c, ep, bstate)
+    if not nb["fits"]:
+        raise PlanError(f"error_budget_insufficient: {nb}")
+    cost, why = _cost(c)
+    if cost is None:
+        raise PlanError(f"proposal_invalid: {why}")
+    if bstate.get("runs_remaining") is not None and cost > bstate["runs_remaining"]:
+        raise PlanError(f"run_budget_insufficient: {cost} > {bstate['runs_remaining']}")
     rec["proposed_campaign_hash"] = d["proposed_campaign"]["campaign_hash"]
     cp = Path(campaign_path)
+    registered = (wd / f"campaign.epoch-{e}.yaml").read_bytes()
     if cp.exists():
-        prev = yaml.safe_load(cp.read_text()) or {}
-        rec["replaced_campaign_hash"] = campaign_hash(prev)
+        same = cp.read_bytes() == registered or (
+            campaign_hash(yaml.safe_load(cp.read_text()) or {})
+            == campaign_hash(yaml.safe_load(registered) or {})
+            and yaml.safe_load(cp.read_text()) == yaml.safe_load(registered))
+        if not same and not force_overwrite:
+            raise PlanError(f"campaign_edited_since_plan: {cp} is not the campaign epoch "
+                            f"{e} registered (campaign.epoch-{e}.yaml); accepting would "
+                            f"discard those edits. Re-plan from the edited campaign, or "
+                            f"pass --force-overwrite (the file is backed up either way).")
+        rec["replaced_campaign_sha256"] = sha256_file(cp)
+        rec["replaced_matches_registered"] = bool(same)
+        bak = cp.with_name(f"{cp.name}.bak-epoch-{e}")
+        shutil.copy2(cp, bak)
+        rec["backup"] = str(bak)
     cp.write_text(text)
     boundary_path(wd, e).write_text(json.dumps(rec, indent=2, sort_keys=True) + "\n")
     return rec
