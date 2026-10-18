@@ -3124,14 +3124,29 @@ nous validate campaign campaign.yaml --smoke
 nous resume campaign.yaml                            # compiles epoch e+1 from it
 ```
 
-`--accept` refuses a stale decision, meaning one whose input hashes changed
-or whose proposal file was edited. It then writes `epoch_end.planned-<e>.json`.
+`--accept` refuses, each time with a named reason:
+- `decision_unsealed` / `decision_tampered`: the decision file's HMAC seal is
+  missing or does not match. The key lives under the Nous state home, not in
+  the work_dir.
+- `decision_invalid` / `option_not_overridable`: the choice rules are
+  re-applied to `chosen`.
+- `stale_decision`: any input the planner read has changed. That covers
+  every runs, design and relations file, every fit and recommendation,
+  `transitions.jsonl`, `delta_ledger.jsonl`, every `campaign.epoch-*.yaml`,
+  and the Nous source.
+- `error_budget_insufficient` / `run_budget_insufficient`: the budgets are
+  re-checked as they stand now.
+- `campaign_edited_since_plan`: the campaign file differs from the campaign
+  the epoch registered. Only `--force-overwrite` passes this one.
+
+The replaced file is always saved first as `<file>.bak-epoch-<e>`. Accept
+then writes `epoch_end.planned-<e>.json`.
 That record is what makes the next `nous resume` recompile into epoch `e+1`,
 and it is not a semantic exception. The next epoch's `report.json`
 `provenance.planner` names the chosen option, the scored choice and any
 override with its reason, and `compiled_matches_accepted` says whether the
 compiled campaign is the accepted one. `nous reanalyze` carries the record
-as an input.
+as an input, so a reanalysis right after an accept is still identical.
 
 **Within an epoch,** `orchestrator/optimize/allocate.py` holds the same
 scoring as pure functions. It builds the recombination pool, which is the

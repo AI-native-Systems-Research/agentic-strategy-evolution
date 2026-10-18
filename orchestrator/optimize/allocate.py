@@ -105,6 +105,8 @@ POOL_CAP = 4096
 #: ``pareto.HV_MC_SEED``: the same inputs give the same ranking.
 MC_SAMPLES = 512
 MC_SEED = 20261017
+#: Bound on candidates x MC_SAMPLES for the K = 3 Monte Carlo EHVI.
+MC_WORK_CAP = 1_000_000
 
 DECLINE_REASONS = {
     "model_inadequate": "the epoch's model adequacy verdict is False: the "
@@ -122,6 +124,7 @@ DECLINE_REASONS = {
     "empty_pool": "no candidate survived (every pool point was measured, "
                   "unpredictable, or the inputs named none)",
     "pool_too_large": f"the recombination product exceeds POOL_CAP={POOL_CAP}",
+    "mc_work_too_large": "three objectives: candidates x MC_SAMPLES exceeds MC_WORK_CAP",
     "too_many_objectives": "more than 3 objectives: exact EHVI is not implemented "
                            "and the hypervolume itself would be a nested Monte Carlo",
 }
@@ -146,8 +149,17 @@ def _decline(reason: str, detail: str = "", **kw) -> Allocation:
     return Allocation(declined=reason, detail=detail or DECLINE_REASONS[reason], **kw)
 
 
+def _norm(v):
+    """``8`` and ``8.0`` are one level (a YAML int vs a decoded float); a
+    bool is not a number here; strings stay as they are."""
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return repr(v)
+    f = float(v)
+    return repr(int(f)) if f.is_integer() else repr(f)
+
+
 def _key(levels: dict) -> tuple:
-    return tuple(sorted((k, repr(v)) for k, v in levels.items()))
+    return tuple(sorted((k, _norm(v)) for k, v in levels.items()))
 
 
 # ── the pool ─────────────────────────────────────────────────────────────────
@@ -500,6 +512,13 @@ def score(pool: list[dict], *, fits: dict, objectives: list[dict], factors,
     if K == 2:
         meth = "exact_2d_strip_decomposition"
     else:
+        # M5: a K = 3 Monte Carlo costs one exact 3-D hypervolume per draw per
+        # candidate; bounded before any is computed.
+        if len(cands) * MC_SAMPLES > MC_WORK_CAP:
+            return _decline("mc_work_too_large",
+                            f"{len(cands)} candidates x MC_SAMPLES={MC_SAMPLES} > "
+                            f"MC_WORK_CAP={MC_WORK_CAP:,}", unscored=unscored,
+                            pool_size=len(pool))
         meth = f"monte_carlo(n={MC_SAMPLES},seed={MC_SEED},common_random_numbers)"
         rng = random.Random(MC_SEED)
         draws = []

@@ -998,9 +998,13 @@ def plan(work_dir: Path) -> dict:
         chosen, basis = "stop", "threshold_undefined"
     elif not [o for o in options if o.get("feasible") and o["id"] != "stop"]:
         chosen, basis = "stop", "no_feasible_move"
+    elif not live:
+        # Feasible moves exist, but every region's bound declined (a named
+        # reason on each option's `utility`): nothing was scored.
+        chosen, basis = "stop", "no_scored_feasible_move"
     else:
-        best = max(live, key=lambda o: (o["score"], o["id"])) if live else None
-        if best is not None and best["score"] > thr:
+        best = max(live, key=lambda o: (o["score"], o["id"]))
+        if best["score"] > thr:
             chosen, basis = best["id"], "max_value_per_run_above_threshold"
         else:
             chosen, basis = "stop", "no_move_beats_threshold"

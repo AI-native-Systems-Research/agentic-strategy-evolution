@@ -88,11 +88,16 @@ def _inside(spec: dict, v) -> bool:
 
 def rows_to_trials(rows, space: dict, objectives) -> tuple[list, int]:
     """``(trials, skipped)``. Each trial is ``(params, values)``, in row order.
-    A row is skipped when its levels fall outside the space or an objective
-    value is missing or non-finite. The skipped count is recorded, never
-    hidden."""
+    A row is skipped when it is not ``complete``, its levels fall outside the
+    space, or an objective value is missing or non-finite. The skipped count
+    is recorded, never hidden."""
     trials, skipped = [], 0
     for r in rows:
+        # Only a COMPLETE row is a measurement of its configuration: a
+        # failed, infeasible or rejected row's response is not the objective.
+        if r.get("status", "complete") != "complete":
+            skipped += 1
+            continue
         lv = r.get("levels") or {}
         resp = r.get("response") or {}
         params = {k: lv.get(k) for k in space}
@@ -189,7 +194,9 @@ def propose(rows, *, factors, objectives, config: dict, n: int,
     trials, skipped = rows_to_trials(rows, space, objectives)
     fn = sampler or _optuna_sampler
     raw = fn(trials, space, objectives, cfg, n)
-    measured = {tuple(sorted((k, repr(v)) for k, v in t[0].items())) for t in trials}
+    from orchestrator.optimize.allocate import _key
+
+    measured = {_key(t[0]) for t in trials}
     prov = {"sampler": ("TPESampler" if sampler is None else
                         getattr(sampler, "__name__", type(sampler).__name__)),
             "seed": int(cfg["seed"]), "n_startup": int(cfg["n_startup"]),
@@ -201,7 +208,7 @@ def propose(rows, *, factors, objectives, config: dict, n: int,
     out, seen = [], set()
     for p in raw:
         lv = {k: _snap(space[k], p[k]) for k in space if k in p}
-        key = tuple(sorted((k, repr(v)) for k, v in lv.items()))
+        key = _key(lv)
         if key in seen or key in measured:
             continue
         seen.add(key)

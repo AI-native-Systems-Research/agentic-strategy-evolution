@@ -68,7 +68,9 @@ def test_plan_next_widens_the_edge_on_a_boundary_optimum_campaign(boundary):
     a = next(f for f in prop["optimization"]["factors"] if f["id"] == "A")
     assert min(a["levels"]) >= 9 and max(a["levels"]) > 16
     diff = Path(d["proposed_campaign"]["diff"]).read_text()
-    assert diff.startswith("--- campaign.epoch-1.yaml") and "+    - 23" in diff or "+" in diff
+    assert diff.startswith("--- campaign.epoch-1.yaml")
+    added = [ln for ln in diff.splitlines() if ln.startswith("+") and not ln.startswith("+++")]
+    assert any(ln.strip().lstrip("+").strip() == f"- {max(a['levels'])}" for ln in added), diff
     assert planner.validate_campaign(prop) == []
     assert not (boundary.work_dir / "campaign.yaml").exists()
 
@@ -81,8 +83,7 @@ def test_the_planner_declines_to_score_when_the_model_is_inadequate(tmp_path):
 
     res = run_synthetic_campaign(ridge_cubic(), seed=1, parent_dir=tmp_path)
     rec = [json.loads(p.read_text()) for p in sorted(res.work_dir.glob("runs/iter-*/recommendation.json"))]
-    if rec[-1].get("model_adequate") is True:
-        pytest.skip("this seed's model was not rejected")
+    assert rec[-1].get("model_adequate") is False   # seed 1 is pinned: ridge_cubic is rejected
     d, _ = _decision(res)
     assert d["chosen"] == "stop" and d["decision_basis"] == "no_scorable_move"
     assert d["model"]["declined"] in ("model_inadequate", "model_adequacy_unknown")
@@ -331,8 +332,7 @@ def test_an_inadequate_model_offers_the_bo_block_as_a_model_free_alternative(tmp
     res = run_synthetic_campaign(ridge_cubic(), seed=1, parent_dir=tmp_path,
                                  campaign_overrides={"planner": {"bo": {"seed": 5}}})
     d, out = _decision(res)
-    if d["model"]["model_adequate"] is True:
-        pytest.skip("this seed's model was not rejected")
+    assert d["model"]["model_adequate"] is False    # seed 1 pinned: the model is rejected
     bo = next(o for o in d["options"] if o["id"] == "bo_block")
     assert bo["feasible"] and bo["score"] is None
     assert "bo_block" in d["model_free_alternatives"]
@@ -544,3 +544,11 @@ def test_a_failed_active_region_is_a_recorded_infeasible_narrow(boundary, monkey
     assert n["feasible"] is False and n["reason"].startswith("region_failed: RuntimeError")
     with pytest.raises(planner.PlanError, match="option_not_overridable"):
         planner.apply_override(d, "narrow", "anyway")
+
+
+def test_feasible_but_unscorable_moves_stop_with_their_own_basis(boundary, monkeypatch):
+    monkeypatch.setattr(planner, "_value",
+                        lambda *a, **k: {"value": None, "reason": "joint_work_too_large"})
+    d, _ = _decision(boundary)
+    assert any(o["feasible"] for o in d["options"] if o["id"] != "stop")
+    assert d["chosen"] == "stop" and d["decision_basis"] == "no_scored_feasible_move"

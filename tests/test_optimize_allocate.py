@@ -292,3 +292,24 @@ def test_a_measured_configuration_the_model_cannot_code_is_recorded():
                          model_adequate=True)
     assert out.declined is None
     assert len(out.method["measured_not_predictable"]) == 1
+
+
+def test_level_keys_treat_8_and_8_point_0_as_one_configuration():
+    assert allocate._key({"A": 8}) == allocate._key({"A": 8.0})
+    assert allocate._key({"A": True}) != allocate._key({"A": 1})
+    pool, _ = allocate.recombination_pool([{"A": 2, "B": 8}, {"A": 16, "B": 2}],
+                                          {"A": 2, "B": 8}, measured=[{"A": 2.0, "B": 8.0},
+                                                                      {"A": 16.0, "B": 2.0}])
+    assert sorted(tuple(sorted(p["levels"].items())) for p in pool) == [
+        (("A", 2), ("B", 2)), (("A", 16), ("B", 8))]
+
+
+def test_a_three_objective_pool_past_the_monte_carlo_bound_declines(monkeypatch):
+    monkeypatch.setattr(allocate, "MC_WORK_CAP", 100)
+    fits = {m: _fit(lambda a, b, c: 10 + a, seed=i) for i, m in enumerate(("f1", "f2", "f3"))}
+    out = allocate.score([{"levels": _lv(1, 1, 1)}], fits=fits,
+                         objectives=[{"metric": m, "direction": "maximize"} for m in fits],
+                         factors=FACTORS, fitted_ids=IDS, held_fixed={},
+                         measured=[{"levels": _lv(-1, -1, -1), "mean": {}}],
+                         model_adequate=True)
+    assert out.declined == "mc_work_too_large"

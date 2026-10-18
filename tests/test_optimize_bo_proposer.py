@@ -171,3 +171,29 @@ def test_an_off_step_measured_level_is_snapped_not_refused():
     props, prov = bo_proposer.propose(rows, factors=f, objectives=OBJ, n=2,
                                       config={"seed": 1, "n_startup": 2})
     assert prov["n_trials_from_rows"] == 4 and props
+
+
+def test_only_complete_rows_become_trials():
+    rows = _rows()[:5]
+    rows[0] = {**rows[0], "status": "infeasible"}
+    rows[1] = {**rows[1], "status": "failed"}
+    seen = {}
+
+    def fake(trials, space, objectives, config, n):
+        seen["n"] = len(trials)
+        return []
+
+    _p, prov = bo_proposer.propose(rows, factors=FACTORS, objectives=OBJ, config={},
+                                   n=1, sampler=fake)
+    assert seen["n"] == 3 and prov["rows_skipped"] == 2
+
+
+def test_a_proposal_equal_to_a_measured_row_up_to_int_float_is_dropped():
+    def fake(trials, space, objectives, config, n):
+        return [{"A": 2.0, "B": 1, "C": "off"}]        # measured as A=2 (int)
+
+    props, _ = bo_proposer.propose(_rows(), factors=parse_factors(
+        [_numeric("A", levels=(2.0, 4.0, 8.0, 16.0), grid=0.5),
+         _numeric("B", levels=(1, 2, 4, 8)), _choice("C")]),
+        objectives=OBJ, config={}, n=1, sampler=fake)
+    assert props == []
