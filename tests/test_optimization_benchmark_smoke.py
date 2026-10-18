@@ -461,9 +461,14 @@ def test_every_method_samples_the_domain_the_truth_is_taken_over():
         lat = {f["id"]: set(S.lattice_axis(f)) for f in s.factors}
         for f, vals in S.axes(s):
             assert set(vals) == lat[f["id"]]
-    # A two-level numeric is never interpolated; a gridded one is every integer.
+    # A two-level numeric is its pair plus the centre its centre points run at
+    # (Nous can recommend that measured centre); a gridded one is every integer.
     two = S.get("drift").factors[0]
-    assert S.lattice_axis(two) == [2, 16]
+    assert S.lattice_axis(two) == [2, 9, 16]
+    cpu = [f for f in S.get("fails_at_one_level").factors if f["id"] == "CPU"][0]
+    assert S.lattice_axis(cpu) == [8, 24, 40]
+    bs = [f for f in S.get("infeasible_corner_interior").factors if f["id"] == "BS"][0]
+    assert S.lattice_axis(bs) == [8, 20, 32] and isinstance(S.lattice_axis(bs)[1], int)
     assert S.lattice_axis(S.get("bowl").factors[0]) == list(range(2, 17))
 
 
@@ -481,6 +486,18 @@ def _write_runs(d, rows_by_iter):
         p = d / "runs" / f"iter-{it}"
         p.mkdir(parents=True)
         (p / "runs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_every_recommendation_nous_made_is_in_the_shared_domain():
+    """Nous recommends only points the baselines can also sample and the truth
+    covers (every row of the committed suite and audit JSON)."""
+    for f in ("optimization-benchmark.json", "optimization-benchmark-audit-repro.json"):
+        d = json.loads((ROOT / "docs" / "benchmarks" / f).read_text())
+        for r in d["nous"]:
+            s = S.get(r["surface"])
+            lat = {fa["id"]: set(S.lattice_axis(fa)) for fa in s.factors}
+            for k, v in (r.get("rec") or {}).items():
+                assert v in lat[k], (f, r["surface"], k, v)
 
 
 def test_one_measured_row_counter_excludes_stage_and_iteration_copies(tmp_path):

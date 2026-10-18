@@ -134,8 +134,11 @@ def lattice_axis(f: dict) -> list:
     every baseline samples:
 
     * ``choice`` and ``levels_only`` numerics: the declared levels;
-    * a two-level numeric: its declared pair (Nous never interpolates one;
-      ``decide._axis``);
+    * a two-level numeric: its declared pair plus its CENTRE, the value its
+      centre points run at (snapped to ``grid``; an integer when the levels are
+      integers, ``factors._integral_as_int``). ``decide._axis`` never
+      interpolates such a factor, but confirm can recommend the measured centre
+      (measured: ``fails_at_one_level`` recommends CPU = 24 of [8, 40]);
     * a refinable numeric with ``grid: g``: every multiple of ``g`` in
       [min, max], plus the declared levels -- ``decode_coded`` snaps a fitted
       or design value to that lattice, so any of them can be recommended;
@@ -148,9 +151,18 @@ def lattice_axis(f: dict) -> list:
     recommendation of (15, 3) was scored against 14.754.
     """
     lv = list(f["levels"])
-    if f["type"] != "numeric" or f.get("levels_only") or len(lv) <= 2:
+    if f["type"] != "numeric" or f.get("levels_only"):
         return sorted(lv, key=lambda v: (str(type(v)), v))
     lo, hi = min(lv), max(lv)
+    if len(lv) <= 2:
+        from orchestrator.optimize.factors import snap_to_grid
+
+        mid = (float(lo) + float(hi)) / 2.0
+        if f.get("grid") is not None:
+            mid = snap_to_grid(mid, float(f["grid"]))
+        if all(isinstance(v, int) for v in lv) and float(mid).is_integer():
+            mid = int(mid)
+        return sorted(set(lv) | {mid}, key=float)
     if f.get("grid") is None:
         return sorted({lo + (hi - lo) * i / (DENSE_POINTS - 1) for i in range(DENSE_POINTS)}
                       | set(lv))
