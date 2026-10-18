@@ -52,6 +52,10 @@ SEAT_DECLINE_REASONS = {
     "no_seatable_candidate": "the allocator ranked candidates, but every one was "
                              "already measured, measured inadmissible or names a "
                              "barred level",
+    "no_free_seat": "the next round's carry-over (the winner or preferred point, "
+                    "the fitted argmax, every rival still in contention, gap fills) "
+                    "already fills shortlist_size, so an allocate round would seat "
+                    "no allocator pick; it is not spent",
     "no_expected_value": "every seatable candidate scores zero (knowledge gradient "
                          "/ EHVI per run): the model expects no gain from measuring "
                          "it, so the round is not spent",
@@ -141,6 +145,52 @@ def registered_seats(pol: dict, work_dir, conf: dict | None) -> list[dict]:
             f"{str(want)[:12] if want else 'no digest'}). The registered seats "
             f"were edited after registration; refusing to measure them.")
     return seats
+
+
+#: The multi-objective nominations ``pareto_stage.shortlist_plan`` makes
+#: BEFORE the allocator's seats (P6b review M2).
+_MO_AHEAD = ("previous round's preferred point", "gap fill between front points",
+             "front point still possibly dominated")
+
+
+def carry_over(pol: dict, conf: dict, rec: dict | None, work_dir=None) -> int:
+    """An UPPER BOUND on the seats the next round fills BEFORE any allocator
+    pick (P6b review M1). Single objective: the winner, the fitted argmax
+    (when the model is not rejected) and every admissible finalist whose
+    bound is unknown or above epsilon -- exactly ``_confirm_rows``'s r > 1
+    carry. Multi-objective: the preferred point, the gap fills and every front
+    point still ``possibly_dominated`` -- the nominations
+    ``pareto_stage.shortlist_plan`` itself makes before the seats, computed
+    by calling it on the same data."""
+    from orchestrator.optimize.stage_runner import _same_levels
+
+    seen: list[dict] = []
+
+    def add(lv):
+        if lv and not any(_same_levels(dict(lv), x) for x in seen):
+            seen.append(dict(lv))
+    par = conf.get("pareto")
+    if par:
+        # EXACT: the next round's own nomination rule over the same data on
+        # disk, without the seats; counted up to where the seats would go.
+        from orchestrator.optimize import pareto_stage
+
+        bare = {k: v for k, v in conf.items() if k != "allocation"}
+        for lv, why, _m in pareto_stage.shortlist_plan(
+                pol, work_dir, rec or {}, int(conf.get("round") or 1) + 1, bare):
+            if why.startswith(_MO_AHEAD):
+                add(lv)
+        return len(seen)
+    by_key = {f["key"]: f for f in conf.get("finalists") or []}
+    add((by_key.get(conf.get("best") or "") or {}).get("levels"))
+    if (rec or {}).get("model_adequate", True) is not False:
+        add((rec or {}).get("levels"))
+    eps, bounds = conf.get("epsilon"), conf.get("bounds") or {}
+    for f in conf.get("finalists") or []:
+        b = bounds.get(f["key"])
+        if f.get("status") == "ok" and (eps is None or b is None or b > eps):
+            add(f.get("levels"))
+    return len(seen)
 
 
 def _read(p: Path) -> dict | None:
@@ -236,6 +286,16 @@ def plan(pol: dict, work_dir, factors, conf: dict, rec: dict | None) -> dict:
     # same): an inadequate model never ranks anything.
     if rec.get("model_adequate") is False:
         return decline("model_inadequate")
+    # Review M1: seats only where the next round has room after its carry-over;
+    # the seats registered are capped at that room, so every registered seat
+    # is a seat the next round actually measures.
+    shortlist = max(1, int(((pol["states"]["confirm"] or {}).get("design") or {}).get(
+        "shortlist_size", 3)))
+    free = shortlist - carry_over(pol, conf, rec, work_dir)
+    out["free_seats"] = max(0, free)
+    if free <= 0:
+        return decline("no_free_seat")
+    k = min(k, free)
     if objs:
         from orchestrator.optimize.certificate import fit_from_record
 

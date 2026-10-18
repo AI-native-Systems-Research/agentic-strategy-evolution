@@ -453,15 +453,6 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
         chosen = (par.get("preference") or {}).get("chosen")
         nominate(chosen, "previous round's preferred point", True,
                  measured_values(chosen or {}))
-        # WP-D D1 (opt-in `design.confirm.allocate`): the seats the allocator
-        # registered in the previous round's confirmation.json (EHVI per run
-        # over the recombination pool, on an ADEQUATE model only; a decline
-        # seats nothing). Selected on predictions, measured freshly here. The
-        # caller passes the record only into the allocate and gap-fill rounds.
-        from orchestrator.optimize import allocate_seat as _alloc_seat
-
-        for s_ in _alloc_seat.registered_seats(pol, work_dir, prev_conf):
-            nominate(s_.get("levels"), s_.get("why") or "allocate", False, None)
         front = par.get("front") or []
         if par.get("front_gap_large") and _FRONT_GAP_FILL:
             margin = _resolution_margin(pol, par, objs, eps)
@@ -495,6 +486,18 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
         for f in front:
             if f.get("status") == "possibly_dominated":
                 nominate(f["levels"], "front point still possibly dominated", True, f["mean"])
+        # WP-D D1 (opt-in `design.confirm.allocate`): the seats the allocator
+        # registered in the previous round (EHVI per run over the recombination
+        # pool, ADEQUATE model only; a decline seats nothing), verified against
+        # the digest the transition recorded. AFTER the gap fills and every
+        # front point still in contention (P6b review M2): a model-chosen seat
+        # never displaces a measured rival or a registered gap fill. Selected
+        # on predictions, measured freshly here. The caller passes the record
+        # only into the allocate and gap-fill rounds.
+        from orchestrator.optimize import allocate_seat as _alloc_seat
+
+        for s_ in _alloc_seat.registered_seats(pol, work_dir, prev_conf):
+            nominate(s_.get("levels"), s_.get("why") or "allocate", False, None)
         for f in front:
             for d in f.get("dominated_by") or []:
                 if d.get("kind") == "predicted":

@@ -197,16 +197,21 @@ def test_the_charged_campaign_delta_mode_still_certifies_at_the_defaults(tmp_pat
 
 # ── oracle 1: recombination finds what no measured point had ────────────────
 
+DISCRETE_SEEDS = (1, 3, 5, 6)
+
+
 @pytest.fixture(scope="module")
 def discrete_front(tmp_path_factory):
-    """``pareto_three_discrete`` (levels-only knobs, 64 configurations) at a
-    tight shortlist, with and without allocate, seeds 1-3."""
+    """``pareto_three_discrete`` (levels-only knobs, 64 configurations) at
+    shortlist 5, two rounds, with and without allocate. Seeds 1, 3, 5, 6 (the
+    seeds whose gap-fill round leaves a free seat; seed 2 declines
+    ``no_free_seat``, seeds 4 and 8 ``model_inadequate``)."""
     s = ALLOCATE_SURFACES["pareto_three_discrete"]()
     out = {}
-    for seed in (1, 2, 3):
+    for seed in DISCRETE_SEEDS:
         for on in (False, True):
             d = copy.deepcopy(synthetic_campaign(s)["optimization"]["design"])
-            d["confirm"]["shortlist_size"] = 4
+            d["confirm"]["shortlist_size"] = 5
             if on:
                 d["confirm"]["allocate"] = {"seats": 2}
             out[(seed, on)] = evaluate_pareto_campaign(
@@ -216,7 +221,7 @@ def discrete_front(tmp_path_factory):
 
 
 def test_recombination_seats_a_configuration_no_measured_point_had(discrete_front):
-    for seed in (1, 2, 3):
+    for seed in DISCRETE_SEEDS:
         r = discrete_front[(seed, True)]
         confs = _confirmations(r["work_dir"])
         alloc = confs[0]["allocation"]
@@ -239,9 +244,11 @@ def test_recombination_seats_a_configuration_no_measured_point_had(discrete_fron
 
 
 def test_the_front_improves_and_stays_sound_with_allocate(discrete_front):
-    """Measured: hv_ratio 0.887 / 0.964 / 0.908 without, 0.967 / 0.972 /
-    0.972 with allocate (seeds 1-3); every run certifies, none falsely."""
-    for seed in (1, 2, 3):
+    """Measured (seeds 1, 3, 5, 6): hv_ratio 0.943 / 0.908 / 0.924 / 0.972
+    without, 0.977 / 0.967 / 0.969 / 0.991 with allocate; every run
+    certifies, none falsely. Allocator seats come after the gap fills and the
+    in-contention front points (review M2), so this is net of displacement."""
+    for seed in DISCRETE_SEEDS:
         base, on = discrete_front[(seed, False)], discrete_front[(seed, True)]
         assert on["hv_ratio"] > base["hv_ratio"], (seed, base["hv_ratio"], on["hv_ratio"])
         assert not on["false_certified"] and not base["false_certified"]
@@ -453,7 +460,7 @@ def test_edited_registered_seats_are_refused_multi_objective(tmp_path):
 
     s = ALLOCATE_SURFACES["pareto_three_discrete"]()
     d = copy.deepcopy(synthetic_campaign(s)["optimization"]["design"])
-    d["confirm"]["shortlist_size"] = 4
+    d["confirm"]["shortlist_size"] = 5
     d["confirm"]["allocate"] = {"seats": 2}
     r = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path, max_iterations=4,
                                campaign_overrides={"design": d,
@@ -483,3 +490,60 @@ def test_an_allocate_campaign_reanalyzes_identically(tmp_path):
                for t in _transitions(r.work_dir))
     res = reanalyze(r.work_dir)
     assert res.identical, (res.differences, res.input_changes)
+
+
+def test_an_allocate_round_with_no_free_seat_is_not_spent(tmp_path):
+    """Review M1 (probe zero_seat.py). When the next round's carry-over (the
+    winner, the fitted argmax, every challenger still in contention) fills
+    shortlist_size, the branch declines ``no_free_seat`` and does not fire;
+    report.md says why."""
+    from orchestrator.optimize.factors import parse_factors
+
+    s = SURFACES["saddle"]()
+    wd = _to_allocate_round(s, tmp_path / "a")
+    pol = json.loads((wd / "policy.json").read_text())
+    c1 = _confirmations(wd)[-1]
+    rec = json.loads(sorted(wd.glob("runs/iter-*/recommendation.json"))[-1].read_text())
+    for k in c1["bounds"]:
+        if k != c1["best"]:
+            c1["bounds"][k] = 10.0 * c1["epsilon"]            # every rival in contention
+    out = allocate_seat.plan(pol, wd, parse_factors(
+        synthetic_campaign(s)["optimization"]["factors"]), c1, rec)
+    assert out["declined"] == "no_free_seat" and out["seats"] == [] and out["free_seats"] == 0
+    assert "no_free_seat" in NAMED
+    # End to end: shortlist_size 1 -- the carried winner fills it, so the
+    # branch never fires (seats 1 <= shortlist 1 passes validation).
+    s2 = SURFACES["saddle"]()
+    r = run_synthetic_campaign(s2, seed=1, parent_dir=tmp_path / "b",
+                               campaign_overrides=_with_allocate(s2, seats=1,
+                                                                 shortlist_size=1))
+    from orchestrator.optimize.report_md import render_report_markdown
+
+    allocs = [c["allocation"] for c in _confirmations(r.work_dir) if "allocation" in c]
+    assert allocs
+    for a in allocs:
+        assert a["declined"] or len(a["seats"]) <= a["free_seats"]
+    assert allocs[-1]["declined"] == "no_free_seat", allocs[-1]
+    assert not any(t["rule"].get("accounting") == ALLOCATE_ACCOUNTING
+                   for t in _transitions(r.work_dir))
+    md = render_report_markdown(r.work_dir)
+    assert "declined `no_free_seat`" in md and "carry-over" in md
+
+
+def test_every_registered_seat_is_measured_in_the_allocate_round(tmp_path):
+    """Review M1 (probe seat_probe.py): wherever the rule fired, every seat it
+    registered was seated (none silently squeezed out)."""
+    fired = 0
+    for name, seed in (("saddle", 1), ("saddle", 3)):
+        s = SURFACES[name]()
+        r = run_synthetic_campaign(s, seed=seed, parent_dir=tmp_path / f"{name}{seed}",
+                                   campaign_overrides=_with_allocate(s))
+        if not any(t["rule"].get("accounting") == ALLOCATE_ACCOUNTING
+                   for t in _transitions(r.work_dir)):
+            continue
+        fired += 1
+        cs = _confirmations(r.work_dir)
+        reg = cs[-2]["allocation"]["seats"]
+        seated = [f for f in cs[-1]["finalists"] if f["why"].startswith("allocate:")]
+        assert len(seated) == len(reg) >= 1
+    assert fired
