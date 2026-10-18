@@ -111,6 +111,25 @@ probability bound that ANY epoch's decision on this work_dir is wrong."
    - The spec's M1-M4 and the guide's assumption list do not mention it. Empirically there are 0 false certificates because Bonferroni is very conservative here, but the stated guarantee is not what the arithmetic delivers.
    - **Fix:** always compute the exact `(X'X)^-1` (`effects._exact_inference` already exists, and is used for mixed and blocked fits). Or state the factor as an assumption.
 
+**(e') Resolution (P7, #321 H2 / #320 D4, after this audit was written).**
+Every table was regenerated under Nous digest `44d94bc5ee2a41b2`, at nousko
+4ccc6b3 plus the benchmark changes. The banner is gone. The update adds:
+- anytime curves at six budget fractions;
+- seeded bootstrap intervals (over seeds) and Wilson intervals, with the
+  primary metric pre-declared in `dc489e0` before any row existed;
+- a multi-objective arm (HV regret against the true front; RS, LHS, ParEGO);
+- D4 ablations: allocate on/off, BO proposer on/off, and run-order
+  randomization on/off for the drift attribution.
+
+Results: 0 false certificates in every arm of every section (suite 50/336,
+audit 60/360, ablation arms 49/272, MO 108/216). The drift regret advantage is
+NOT due to randomized run order (regret 0 with it off). Randomization buys
+certificates there (10 → 4 of 16 without it). The power cost against the
+previous run is stated in the benchmark doc:
+- suite certificates 162 (26 false) → 50 (0 false);
+- smooth family 89 → 44;
+- many-knob 47 → 0.
+
 **(f) Verdict: PARTIAL.** Stage-0 was GAP. The probability statement now
 exists, is assembled correctly from two simultaneous families, is
 α-spent, and is empirically conservative. Remaining: H1, M1/M3 are
