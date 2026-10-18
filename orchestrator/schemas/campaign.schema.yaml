@@ -1367,6 +1367,28 @@ properties:
                   reproduces single-point confirmation, which measures only
                   how REPEATABLE one configuration is and leaves "is it the
                   best?" as a claim about the fitted model.
+              allocate:
+                type: object
+                additionalProperties: false
+                required: [seats]
+                description: >
+                  The opt-in ALLOCATE round (WP-D D1). When the round at the
+                  cap does not certify and the fitted models are adequate,
+                  one registered extra confirm round seats up to ``seats``
+                  configurations chosen by expected improvement per run
+                  (knowledge gradient single-objective, EHVI multi-objective)
+                  over the recombination pool: the values the measured
+                  finalists / front points disagree on, the predicted front
+                  or ranked candidates, and optional BO proposals. Selection
+                  is on predictions; every claim rests on the seats' fresh
+                  replicates. The extra look is charged to every confirm
+                  Bonferroni divisor and the replicate floor whether or not
+                  it is taken. Example: ``{seats: 2}``.
+                properties:
+                  seats:
+                    type: integer
+                    minimum: 1
+                    description: "Configurations the allocate round may seat (within shortlist_size)."
           validate:
             type: object
             required: [replicates]

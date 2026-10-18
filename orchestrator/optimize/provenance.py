@@ -198,7 +198,15 @@ def analysis_constants() -> dict:
         "noise.SIGN_FLIP_MC_SEED": _get(noise, "SIGN_FLIP_MC_SEED"),
         "noise.SIGN_FLIP_MC_DRAWS": _get(noise, "SIGN_FLIP_MC_DRAWS"),
         "noise.SIGN_FLIP_EXACT_MAX_N": _get(noise, "SIGN_FLIP_EXACT_MAX_N"),
+        # WP-D D1: the allocator's constants (selection only; no bound reads them).
+        **_allocate_constants(),
     }
+
+
+def _allocate_constants() -> dict:
+    from orchestrator.optimize import allocate_seat
+
+    return allocate_seat.constants()
 
 
 #: The per-iteration inputs every fitted artifact is derived from: the rows,
