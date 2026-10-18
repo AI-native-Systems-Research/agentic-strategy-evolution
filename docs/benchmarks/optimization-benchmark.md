@@ -1,8 +1,11 @@
 # Matched-budget benchmark: Nous vs random search, Latin hypercube, GP-BO
 
 Every number below was regenerated under the current code: Nous source digest
-`44d94bc5ee2a41b2` and benchmark digest `2a042c84120bb891`, at checkout
-`bd97bf6` (nousko 4ccc6b3 plus the benchmark changes). That code includes
+`44d94bc5ee2a41b2` and benchmark digest `ac16583f62b3b384`, at checkout
+`3abcb38` (nousko 4ccc6b3 plus the benchmark changes). The full run was done
+twice: once at `bd97bf6`, and again after the last benchmark-code change. The
+second run reproduced every row exactly, apart from timing and one added field
+(`withheld`). That code includes
 WP-A, WP-B, P2, P3, P4 and P6b. Each generated block names the digests its
 rows were produced under, and every number in the prose traces to a row in
 one of the four JSON files beside this one.
@@ -80,8 +83,8 @@ under `nous-e2e/bin/heavy`):
 
 | section | Nous campaigns | baseline runs | wall time | peak RSS (largest process) |
 |---|---|---|---|---|
-| suite | 336 | 1344 | 20.6 min | 0.89 GB |
-| audit repro | 360 | 1440 | 49 s | 0.14 GB |
+| suite | 336 | 1344 | 21.1 min | 0.93 GB |
+| audit repro | 360 | 1440 | 48 s | 0.14 GB |
 | ablations | 272 (+128 default arm, reused from the suite) | – | 25 s | 0.15 GB |
 | multi-objective | 216 | 648 | 64 s | 0.14 GB |
 
@@ -376,7 +379,10 @@ breakdown below is a POST-HOC reading, not part of the declared analysis:
   89 previous certificates, and none of the 89 had been false. On the
   many-knob family it withheld all 47, none of which had been false. That is
   the price of the soundness fix: 26 + 53 false certificates removed, against
-  45 + 47 sound ones lost in those two families. The reasons are tabulated per
+  45 + 47 sound ones lost in those two families. On the many-knob family the
+  dominant reason is `model_bound_above_epsilon`, recorded in 42 of 48
+  campaigns: the Scheffé-band model bound (P2) over a 9^k searched space is
+  wider than ε at these designs. That is the H3 caveat, now measured. The reasons are tabulated per
   family under the suite results (`Why uncertified campaigns were withheld`).
 - **CPU.** On `sparse_knobs_12` Nous's median analysis CPU rose from 2.8 s to
   37.5 s per campaign. GP-BO takes 79.6 s, so Nous is still about half. On
@@ -451,7 +457,7 @@ default; tables are under the results.
 ## Results: suite (seeds 1-8, noise ×1/×4)
 
 <!-- BEGIN GENERATED suite -->
-_Tables aggregated by `python -m benchmarks.optimization.run --workers 3 --cache-dir <cache-dir>` at checkout bd97bf6977f25aac4f1fa1df85167f0747e76aff (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8], noise multipliers [1.0, 4.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) 44d94bc5ee2a41b2; benchmark code digest(s) 2a042c84120bb891._
+_Tables aggregated by `python -m benchmarks.optimization.run --workers 3 --cache-dir <cache-dir>` at checkout 3abcb381e2dfeb1146d969cd80d2dd4778570570 (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8], noise multipliers [1.0, 4.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) 44d94bc5ee2a41b2; benchmark code digest(s) ac16583f62b3b384._
 
 ### PRIMARY (pre-declared): mean normalised regret difference, Nous minus baseline, per family
 
@@ -627,48 +633,76 @@ Nous: the best-so-far always-admissible measured configuration after its first n
 
 | surface | noise | Nous | RS | LHS | GP-BO | GP-BO-crude |
 |---|---|---|---|---|---|---|
-| additive | ×1 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
-| additive | ×4 | 0.21 | 0.01 | 0.01 | 0.10 | 0.01 |
-| interaction_only | ×1 | 0.15 | 0.01 | 0.01 | 0.45 | 0.12 |
+| additive | ×1 | 0.22 | 0.01 | 0.01 | 0.11 | 0.01 |
+| additive | ×4 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
+| interaction_only | ×1 | 0.15 | 0.01 | 0.01 | 0.44 | 0.12 |
 | interaction_only | ×4 | 0.15 | 0.01 | 0.01 | 0.45 | 0.12 |
 | bowl | ×1 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
-| bowl | ×4 | 0.20 | 0.01 | 0.01 | 0.08 | 0.01 |
-| bowl_centred | ×1 | 0.21 | 0.01 | 0.01 | 0.12 | 0.01 |
-| bowl_centred | ×4 | 0.21 | 0.01 | 0.01 | 0.11 | 0.01 |
+| bowl | ×4 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
+| bowl_centred | ×1 | 0.20 | 0.01 | 0.01 | 0.12 | 0.01 |
+| bowl_centred | ×4 | 0.21 | 0.01 | 0.01 | 0.12 | 0.01 |
 | saddle | ×1 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
-| saddle | ×4 | 0.20 | 0.01 | 0.01 | 0.08 | 0.01 |
-| choice_x_numeric | ×1 | 0.20 | 0.01 | 0.01 | 0.06 | 0.00 |
-| choice_x_numeric | ×4 | 0.20 | 0.01 | 0.01 | 0.06 | 0.01 |
+| saddle | ×4 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
+| choice_x_numeric | ×1 | 0.19 | 0.01 | 0.01 | 0.06 | 0.00 |
+| choice_x_numeric | ×4 | 0.19 | 0.01 | 0.01 | 0.06 | 0.00 |
 | drift | ×1 | 0.14 | 0.01 | 0.01 | 0.04 | 0.00 |
 | drift | ×4 | 0.14 | 0.01 | 0.01 | 0.04 | 0.00 |
-| sla | ×1 | 0.26 | 0.02 | 0.02 | 0.30 | 0.01 |
-| sla | ×4 | 0.26 | 0.02 | 0.02 | 0.30 | 0.01 |
-| infeasible_corner_interior | ×1 | 0.21 | 0.01 | 0.01 | 0.13 | 0.01 |
+| sla | ×1 | 0.26 | 0.02 | 0.02 | 0.28 | 0.01 |
+| sla | ×4 | 0.26 | 0.02 | 0.02 | 0.28 | 0.01 |
+| infeasible_corner_interior | ×1 | 0.21 | 0.01 | 0.01 | 0.14 | 0.01 |
 | infeasible_corner_interior | ×4 | 0.21 | 0.01 | 0.01 | 0.13 | 0.01 |
 | nan_at_corner | ×1 | 0.06 | 0.00 | 0.00 | 0.01 | 0.00 |
 | nan_at_corner | ×4 | 0.06 | 0.00 | 0.00 | 0.01 | 0.00 |
-| fails_at_one_level | ×1 | 0.14 | 0.01 | 0.01 | 0.04 | 0.00 |
+| fails_at_one_level | ×1 | 0.15 | 0.01 | 0.01 | 0.04 | 0.00 |
 | fails_at_one_level | ×4 | 0.14 | 0.01 | 0.01 | 0.04 | 0.00 |
-| stochastic_constraint_boundary | ×1 | 0.28 | 0.02 | 0.02 | 0.29 | 0.01 |
-| stochastic_constraint_boundary | ×4 | 0.28 | 0.02 | 0.02 | 0.29 | 0.01 |
+| stochastic_constraint_boundary | ×1 | 0.28 | 0.02 | 0.02 | 0.27 | 0.01 |
+| stochastic_constraint_boundary | ×4 | 0.28 | 0.02 | 0.02 | 0.27 | 0.01 |
 | geometric_knob | ×1 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
-| geometric_knob | ×4 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
-| geometric_knob_log | ×1 | 0.20 | 0.01 | 0.01 | 0.08 | 0.01 |
+| geometric_knob | ×4 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
+| geometric_knob_log | ×1 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
 | geometric_knob_log | ×4 | 0.20 | 0.01 | 0.01 | 0.08 | 0.01 |
-| deterministic_constraint_axis | ×1 | 0.27 | 0.01 | 0.01 | 0.36 | 0.03 |
-| deterministic_constraint_axis | ×4 | 0.27 | 0.01 | 0.02 | 0.35 | 0.03 |
+| deterministic_constraint_axis | ×1 | 0.27 | 0.01 | 0.01 | 0.34 | 0.03 |
+| deterministic_constraint_axis | ×4 | 0.27 | 0.01 | 0.02 | 0.34 | 0.03 |
 | step_cliff | ×1 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
 | step_cliff | ×4 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
-| ridge_cubic | ×1 | 0.21 | 0.01 | 0.01 | 0.11 | 0.01 |
+| ridge_cubic | ×1 | 0.21 | 0.01 | 0.01 | 0.12 | 0.01 |
 | ridge_cubic | ×4 | 0.21 | 0.01 | 0.01 | 0.11 | 0.01 |
 | two_peaks | ×1 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
 | two_peaks | ×4 | 0.20 | 0.01 | 0.01 | 0.08 | 0.01 |
-| sparse_knobs_6 | ×1 | 1.31 | 0.06 | 0.06 | 2.51 | 1.96 |
-| sparse_knobs_6 | ×4 | 1.58 | 0.05 | 0.05 | 2.47 | 1.95 |
-| sparse_knobs_8 | ×1 | 10.39 | 0.15 | 0.15 | 5.60 | 5.80 |
-| sparse_knobs_8 | ×4 | 12.98 | 0.14 | 0.14 | 5.60 | 5.49 |
-| sparse_knobs_12 | ×1 | 37.51 | 3.24 | 2.97 | 78.99 | 80.48 |
-| sparse_knobs_12 | ×4 | 38.01 | 3.00 | 3.26 | 79.62 | 80.03 |
+| sparse_knobs_6 | ×1 | 1.32 | 0.06 | 0.06 | 2.47 | 1.96 |
+| sparse_knobs_6 | ×4 | 1.57 | 0.05 | 0.05 | 2.41 | 1.96 |
+| sparse_knobs_8 | ×1 | 10.37 | 0.15 | 0.15 | 5.57 | 5.75 |
+| sparse_knobs_8 | ×4 | 12.96 | 0.14 | 0.13 | 5.55 | 5.45 |
+| sparse_knobs_12 | ×1 | 37.45 | 3.24 | 3.04 | 79.21 | 80.75 |
+| sparse_knobs_12 | ×4 | 38.00 | 2.96 | 3.27 | 86.78 | 79.97 |
+
+### Why uncertified campaigns were withheld (reasons per campaign; one campaign can carry several)
+
+| family | reason | campaigns |
+|---|---|---|
+| shipped | `noise_skewed` | 62 |
+| shipped | `model_inadequate` | 48 |
+| shipped | `model_recommendation_infeasible` | 44 |
+| shipped | `model_bound_above_epsilon` | 36 |
+| shipped | `shortlist_refilled` | 32 |
+| shipped | `finalist_measured_infeasible` | 32 |
+| shipped | `no_terminal_discrimination` | 16 |
+| shipped | `bound_not_computable` | 16 |
+| shipped | `finalist_unmeasured` | 16 |
+| shipped | `fit_exclusions_level_correlated` | 16 |
+| shipped | `model_recommendation_not_compared` | 14 |
+| shipped | `no_feasible_rival` | 13 |
+| shipped | `bound_above_epsilon` | 9 |
+| shipped | `heteroscedastic_pure_error` | 4 |
+| shipped | `no_admissible_finalist` | 3 |
+| non-quadratic | `model_inadequate` | 44 |
+| non-quadratic | `noise_skewed` | 14 |
+| non-quadratic | `model_bound_above_epsilon` | 4 |
+| non-quadratic | `bound_above_epsilon` | 1 |
+| many-knob sparse | `model_bound_above_epsilon` | 42 |
+| many-knob sparse | `noise_skewed` | 12 |
+| many-knob sparse | `model_inadequate` | 6 |
+| many-knob sparse | `heteroscedastic_pure_error` | 2 |
 
 _GP-BO had to re-pick an only-failed configuration 0 time(s) (every candidate had failed)._
 <!-- END GENERATED suite -->
@@ -677,7 +711,7 @@ _GP-BO had to re-pick an only-failed configuration 0 time(s) (every candidate ha
 ## Results: audit reproduction (the audit's 9 surfaces, seeds 1-20, noise ×1/×8)
 
 <!-- BEGIN GENERATED audit-repro -->
-_Tables aggregated by `python -m benchmarks.optimization.run --audit-repro --workers 3 --cache-dir <cache-dir>` at checkout bd97bf6977f25aac4f1fa1df85167f0747e76aff (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], noise multipliers [1.0, 8.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) 44d94bc5ee2a41b2; benchmark code digest(s) 2a042c84120bb891._
+_Tables aggregated by `python -m benchmarks.optimization.run --audit-repro --workers 3 --cache-dir <cache-dir>` at checkout 3abcb381e2dfeb1146d969cd80d2dd4778570570 (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], noise multipliers [1.0, 8.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) 44d94bc5ee2a41b2; benchmark code digest(s) ac16583f62b3b384._
 
 ### PRIMARY (pre-declared): mean normalised regret difference, Nous minus baseline, per family
 
@@ -797,23 +831,36 @@ Nous: the best-so-far always-admissible measured configuration after its first n
 | surface | noise | Nous | RS | LHS | GP-BO | GP-BO-crude |
 |---|---|---|---|---|---|---|
 | additive | ×1 | 0.21 | 0.01 | 0.01 | 0.11 | 0.01 |
-| additive | ×8 | 0.21 | 0.01 | 0.01 | 0.11 | 0.01 |
-| bowl | ×1 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
-| bowl | ×8 | 0.21 | 0.01 | 0.01 | 0.08 | 0.01 |
-| bowl_centred | ×1 | 0.21 | 0.02 | 0.01 | 0.12 | 0.01 |
-| bowl_centred | ×8 | 0.22 | 0.01 | 0.01 | 0.11 | 0.01 |
-| saddle | ×1 | 0.21 | 0.01 | 0.01 | 0.10 | 0.01 |
+| additive | ×8 | 0.21 | 0.01 | 0.01 | 0.10 | 0.01 |
+| bowl | ×1 | 0.21 | 0.01 | 0.01 | 0.09 | 0.01 |
+| bowl | ×8 | 0.20 | 0.01 | 0.01 | 0.08 | 0.01 |
+| bowl_centred | ×1 | 0.21 | 0.01 | 0.01 | 0.12 | 0.01 |
+| bowl_centred | ×8 | 0.21 | 0.01 | 0.01 | 0.11 | 0.01 |
+| saddle | ×1 | 0.21 | 0.01 | 0.01 | 0.09 | 0.01 |
 | saddle | ×8 | 0.21 | 0.01 | 0.01 | 0.08 | 0.01 |
 | choice_x_numeric | ×1 | 0.20 | 0.01 | 0.01 | 0.06 | 0.00 |
 | choice_x_numeric | ×8 | 0.20 | 0.01 | 0.01 | 0.06 | 0.00 |
-| geometric_knob | ×1 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
+| geometric_knob | ×1 | 0.21 | 0.01 | 0.01 | 0.10 | 0.01 |
 | geometric_knob | ×8 | 0.21 | 0.01 | 0.01 | 0.09 | 0.01 |
-| step_cliff | ×1 | 0.22 | 0.01 | 0.01 | 0.09 | 0.01 |
-| step_cliff | ×8 | 0.21 | 0.01 | 0.01 | 0.08 | 0.01 |
-| ridge_cubic | ×1 | 0.22 | 0.01 | 0.02 | 0.12 | 0.01 |
+| step_cliff | ×1 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
+| step_cliff | ×8 | 0.20 | 0.01 | 0.01 | 0.08 | 0.01 |
+| ridge_cubic | ×1 | 0.21 | 0.01 | 0.02 | 0.12 | 0.01 |
 | ridge_cubic | ×8 | 0.21 | 0.01 | 0.01 | 0.11 | 0.01 |
-| two_peaks | ×1 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
-| two_peaks | ×8 | 0.21 | 0.01 | 0.01 | 0.08 | 0.01 |
+| two_peaks | ×1 | 0.21 | 0.01 | 0.01 | 0.09 | 0.01 |
+| two_peaks | ×8 | 0.20 | 0.01 | 0.01 | 0.08 | 0.01 |
+
+### Why uncertified campaigns were withheld (reasons per campaign; one campaign can carry several)
+
+| family | reason | campaigns |
+|---|---|---|
+| shipped | `model_inadequate` | 86 |
+| shipped | `model_bound_above_epsilon` | 65 |
+| shipped | `noise_skewed` | 64 |
+| shipped | `bound_above_epsilon` | 45 |
+| non-quadratic | `model_inadequate` | 85 |
+| non-quadratic | `model_bound_above_epsilon` | 35 |
+| non-quadratic | `noise_skewed` | 32 |
+| non-quadratic | `bound_above_epsilon` | 18 |
 
 _GP-BO had to re-pick an only-failed configuration 0 time(s) (every candidate had failed)._
 <!-- END GENERATED audit-repro -->
@@ -822,13 +869,15 @@ _GP-BO had to re-pick an only-failed configuration 0 time(s) (every candidate ha
 ## Results: ablations (D4; seeds 1-8, noise ×1/×4)
 
 <!-- BEGIN GENERATED ablations -->
-_Generated by `python -m benchmarks.optimization.run --ablations --workers 3 --cache-dir <cache-dir>` at checkout bd97bf6977f25aac4f1fa1df85167f0747e76aff; seeds [1, 2, 3, 4, 5, 6, 7, 8], noise [1.0, 4.0]; Nous digest(s) 44d94bc5ee2a41b2, benchmark digest 2a042c84120bb891._
+_Generated by `python -m benchmarks.optimization.run --ablations --workers 3 --cache-dir <cache-dir>` at checkout 3abcb381e2dfeb1146d969cd80d2dd4778570570; seeds [1, 2, 3, 4, 5, 6, 7, 8], noise [1.0, 4.0]; Nous digest(s) 44d94bc5ee2a41b2, benchmark digest ac16583f62b3b384._
 
 ### Ablations: each arm against the default on the same seeds
 
 Δ = mean paired normalised regret, arm minus default, bootstrap 95% over seeds; negative favours the arm. N = mean runs. cert/false per arm.
 
 **nous+alloc** — design.confirm.allocate: {seats: 2} (WP-D D1), confirm replicates at the raised floor.
+
+Over its 112 campaigns: mean runs 45.1 (default) → 52.3 (arm); certified 20 → 12; false certificates 0 → 0. Pooled Δ by family: shipped -0.0012 [-0.0032, 0.0000]; non-quadratic 0.0001 [0.0000, 0.0004].
 
 | surface | noise | n | regret default → arm | Δ [95%] | N default → arm | cert/false default | cert/false arm | allocate fired |
 |---|---|---|---|---|---|---|---|---|
@@ -849,6 +898,8 @@ _Generated by `python -m benchmarks.optimization.run --ablations --workers 3 --c
 
 **nous+alloc+bo** — as nous+alloc, plus planner.bo (the optional TPE proposer, module defaults); BO proposals reach only the allocate pool.
 
+Over its 112 campaigns: mean runs 45.1 (default) → 52.5 (arm); certified 20 → 13; false certificates 0 → 0. Pooled Δ by family: shipped -0.0012 [-0.0032, 0.0000]; non-quadratic 0.0001 [0.0000, 0.0004].
+
 | surface | noise | n | regret default → arm | Δ [95%] | N default → arm | cert/false default | cert/false arm | allocate fired |
 |---|---|---|---|---|---|---|---|---|
 | additive | ×1 | 8 | 0.000 → 0.000 | 0.0000 [0.0000, 0.0000] | 48.0 → 51.0 | 3/0 | 4/0 | 0 |
@@ -868,6 +919,8 @@ _Generated by `python -m benchmarks.optimization.run --ablations --workers 3 --c
 
 **nous-order** — run-order randomization OFF: every design and confirm block executes in design order (the drift ablation).
 
+Over its 48 campaigns: mean runs 39.3 (default) → 39.3 (arm); certified 21 → 24; false certificates 0 → 0. Pooled Δ by family: shipped 0.0001 [-0.0018, 0.0018].
+
 | surface | noise | n | regret default → arm | Δ [95%] | N default → arm | cert/false default | cert/false arm | allocate fired |
 |---|---|---|---|---|---|---|---|---|
 | drift | ×1 | 8 | 0.000 → 0.000 | 0.0000 [0.0000, 0.0000] | 26.0 → 26.0 | 5/0 | 0/0 | 0 |
@@ -885,7 +938,7 @@ _Generated by `python -m benchmarks.optimization.run --ablations --workers 3 --c
 ## Results: multi-objective (seeds 1-8)
 
 <!-- BEGIN GENERATED mo -->
-_Generated by `python -m benchmarks.optimization.run --mo --workers 3 --cache-dir <cache-dir>` at checkout bd97bf6977f25aac4f1fa1df85167f0747e76aff; seeds [1, 2, 3, 4, 5, 6, 7, 8]; Nous digest(s) 44d94bc5ee2a41b2, benchmark digest(s) 2a042c84120bb891._
+_Generated by `python -m benchmarks.optimization.run --mo --workers 3 --cache-dir <cache-dir>` at checkout 3abcb381e2dfeb1146d969cd80d2dd4778570570; seeds [1, 2, 3, 4, 5, 6, 7, 8]; Nous digest(s) 44d94bc5ee2a41b2, benchmark digest(s) ac16583f62b3b384._
 
 ### Hypervolume regret at the matched budget (mean [bootstrap 95%]; lower is better)
 
@@ -933,6 +986,19 @@ Baselines at the default arm's N.
 | RS | 0.384 [0.374, 0.393] | 0.261 [0.244, 0.279] | 0.166 [0.151, 0.181] | 0.125 [0.116, 0.133] | 0.101 [0.096, 0.106] | 0.084 [0.079, 0.088] |
 | LHS | 0.348 [0.334, 0.363] | 0.238 [0.228, 0.251] | 0.155 [0.145, 0.165] | 0.115 [0.109, 0.121] | 0.091 [0.087, 0.094] | 0.076 [0.071, 0.080] |
 | ParEGO | 0.327 [0.317, 0.338] | 0.129 [0.120, 0.140] | 0.065 [0.061, 0.069] | 0.042 [0.038, 0.045] | 0.029 [0.027, 0.031] | 0.024 [0.021, 0.026] |
+
+### Pooled over surfaces (per seed, then bootstrap 95% over seeds)
+
+| quantity | mean [95%] |
+|---|---|
+| HV regret, nous (mean runs 68.4) | 0.0613 [0.0591, 0.0634] |
+| HV regret, nous+alloc (mean runs 72.2) | 0.0550 [0.0531, 0.0569] |
+| HV regret, nous+alloc+bo (mean runs 72.3) | 0.0574 [0.0547, 0.0599] |
+| nous+alloc minus nous (paired; negative favours the arm) | -0.0063 [-0.0100, -0.0029] |
+| nous+alloc+bo minus nous (paired; negative favours the arm) | -0.0039 [-0.0080, 0.0002] |
+| nous minus RS at nous's N (paired; negative favours Nous) | -0.0223 [-0.0274, -0.0171] |
+| nous minus LHS at nous's N (paired; negative favours Nous) | -0.0145 [-0.0197, -0.0088] |
+| nous minus ParEGO at nous's N (paired; negative favours Nous) | 0.0378 [0.0353, 0.0402] |
 
 **Certification soundness (front certificates):** nous: 36 certified of 72, **0 false**; nous+alloc: 37 certified of 72, **0 false**; nous+alloc+bo: 35 certified of 72, **0 false**.
 <!-- END GENERATED mo -->
