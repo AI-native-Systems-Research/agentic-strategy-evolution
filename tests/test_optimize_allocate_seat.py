@@ -75,14 +75,16 @@ def _levels_measured_before(work_dir, iteration: int) -> set[str]:
 
 # ── oracle 4: nothing changes unless the branch is declared ─────────────────
 
-#: Policy hashes compiled by the code BEFORE P6b (nousko 022d09b). Any change
-#: to an undeclared campaign's policy -- a new key, a new transition, a moved
-#: divisor -- changes these, so the test fails on a non-additive change.
+#: Policy hashes compiled by the code immediately BEFORE P6b merged (nousko
+#: 2c2e294, i.e. with P4 merged; re-pinned at the P6b merge -- P4 changed every
+#: policy legitimately). Any change to an undeclared campaign's policy -- a new
+#: key, a new transition, a moved divisor -- changes these, so the test fails
+#: on a non-additive change. Verified equal on 2c2e294 and on the merge.
 PRE_P6B_HASHES = {
-    "bowl": "2a01e97976490de645fde7912e5a2dc525614fc15fe1be81c5ec6ff05025e3e5",
-    "sla_constrained": "00e6e6f9fa4e19764bc87cc535f2eabb39ddc96efd5d8537a6fedd1f58af591d",
-    "pareto_convex": "67cb865a472dbb186c32c948920e2b6b1c75579ec1975e1db3f54b48f8d5eb61",
-    "pareto_with_constraint": "60c66d5fc8de9f96fa1337409b7c87e03725edec721b30462b631259a5a68cfe",
+    "bowl": "29ce74bbc27957ccb85e4378bef0ee8c5bd7152edc4295a8c3eba58773503f78",
+    "sla_constrained": "bad9a20d0c9bea24dc83130f5414d6923d5a960885001c88cc3df733656946fc",
+    "pareto_convex": "c1f405ab4aed730ca35c4c786f9b6ba12516e026a3421df974939da4eaba05b1",
+    "pareto_with_constraint": "ef3a3cfa066f8e8823206ef9418cdd5958c9c80b907ed23b3eb30b723aba7645",
 }
 
 
