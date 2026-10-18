@@ -131,6 +131,10 @@ class Surface:
     #: pinned -- still exact, because nothing it judges depends on the inert
     #: ones -- instead of 9^k points (a 16-knob truth would never finish).
     active: tuple = ()
+    #: HETEROSCEDASTIC surfaces only (#321 P3): the primary's noise sd at a
+    #: configuration, replacing the constant ``noise_sd``. ``None`` on every
+    #: other surface, whose draws are therefore unchanged.
+    noise_sd_at: Callable[[dict], float] | None = None
 
 
 def _numeric(fid: str, levels=(2, 4, 8, 16), grid=1) -> dict:
@@ -830,7 +834,9 @@ def _observe(surface: Surface, levels: dict, *, rng: random.Random,
     if surface.exception_at and all(lv.get(k) == v for k, v in surface.exception_at.items()):
         m = float("nan")
     else:
-        m = (surface.fn(lv) + rng.gauss(0.0, surface.noise_sd)
+        sd = (surface.noise_sd if surface.noise_sd_at is None
+              else float(surface.noise_sd_at(lv)))
+        m = (surface.fn(lv) + rng.gauss(0.0, sd)
              + surface.drift_per_run * run_counter)
     obs = {"cfg": {k.lower(): v for k, v in lv.items()}, "m": m}
     for o in surface.objectives:
@@ -842,7 +848,9 @@ def _observe(surface: Surface, levels: dict, *, rng: random.Random,
 
 
 def make_synthetic_runner(surface: Surface, *, seed: int,
-                          seed_env: str | None = None, **_extra) -> Callable:
+                          seed_env: str | None = None,
+                          workload_sd: float | None = None,
+                          ignore_seed: bool = False, **_extra) -> Callable:
     """An in-process ``ConfigRunner``: seeded noise, monotone run counter.
 
     The counter is the surface's notion of wall-clock: ``drift`` adds
@@ -872,6 +880,27 @@ def make_synthetic_runner(surface: Surface, *, seed: int,
     """
     rng = random.Random(seed)
     counter = {"n": 0}
+
+    if workload_sd is not None:
+        # #321 P3: a WORKLOAD-plus-measurement target. The seed fixes a shared
+        # workload term W(seed) ~ N(0, workload_sd) -- common to every
+        # configuration run at that seed, which is what CRN cancels -- and each
+        # run adds its own independent measurement noise (the surface's sd), so
+        # paired differences have NONZERO spread (the plain seeded target gives
+        # zero). ``ignore_seed`` models a target that never reads seed_env:
+        # every run draws a fresh workload term.
+        def run_w(row) -> dict:
+            row_seed = ((getattr(row, "apply", None) or {}).get("env") or {}).get(
+                seed_env) if seed_env else None
+            wrng = (random.Random(f"{seed}:workload:{int(row_seed)}")
+                    if row_seed is not None and not ignore_seed else rng)
+            w = wrng.gauss(0.0, float(workload_sd))
+            obs = _observe(surface, row.levels, rng=rng, run_counter=counter["n"])
+            counter["n"] += 1
+            if isinstance(obs.get("m"), float) and obs["m"] == obs["m"]:
+                obs["m"] += w
+            return obs
+        return run_w
 
     def run(row) -> dict:
         row_seed = ((getattr(row, "apply", None) or {}).get("env") or {}).get(

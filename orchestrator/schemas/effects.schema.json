@@ -7,6 +7,7 @@
   "required": ["stage", "intercept", "n_runs", "pure_error_var", "pure_error_df", "lack_of_fit_f", "lack_of_fit_p", "aliases", "effects", "quadratic", "dropped_factors"],
   "additionalProperties": false,
   "properties": {
+    "outliers": {"type": "object", "description": "#321 P3 item 3 (A6): externally studentized residuals of the fitted rows (Belsley, Kuh & Welsch 1980), flagged when |t_i| exceeds the Bonferroni threshold t_{1-alpha/(2n), n-p-1} (Pr(any false flag) <= alpha under the model). FLAG ONLY (deleted: false): every reported number keeps the flagged rows. sensitivity is a refit without them: its recommendation and whether the decision changes (decision_changes).", "properties": {"method": {"type": "string"}, "alpha": {"type": "number"}, "df": {"type": ["integer", "null"]}, "threshold": {"type": ["number", "null"]}, "reason": {"type": ["string", "null"]}, "studentized": {"type": "array", "items": {"type": ["number", "null"]}}, "flagged_rows": {"type": "array", "items": {"type": "integer"}}, "deleted": {"const": false}, "policy": {"type": "string"}, "sensitivity": {"type": ["object", "null"]}}},
     "stage": {
       "type": "string",
       "enum": ["verify", "screen", "refine", "confirm"],

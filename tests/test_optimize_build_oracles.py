@@ -294,7 +294,8 @@ def test_baseline_equivalence_hard_fails_when_build_changed_the_control(tmp_path
         run_stage(c, wd, iteration=2, stage="verify",
                   config_runner=post_runner, test_results=post)
     be = json.loads((wd / "baseline_equivalence.json").read_text())
-    assert be["ok"] is False and len(be["pre"]) == len(be["post"]) == 3
+    assert be["ok"] is False and len(be["pre"]) == len(be["post"]) == 6
+    assert be["tost"]["equivalent"] is False
 
 
 def test_an_unchanged_baseline_passes_verify(tmp_path, monkeypatch):
@@ -320,7 +321,8 @@ def test_an_unchanged_baseline_passes_verify(tmp_path, monkeypatch):
               test_results={t: True for t in ids})
     be = json.loads((wd / "baseline_equivalence.json").read_text())
     assert be["ok"] is True
-    assert len(be["pre"]) == len(be["post"]) == 3
+    assert len(be["pre"]) == len(be["post"]) == 6       # #321 P3 default
+    assert be["tost"]["equivalent"] is True and be["tost"]["p"] < 0.05
     assert be["levels"] == {"A": 2, "B": 2, "C": "off"}
     assert (Path(wd) / "policy.json").exists()
 
@@ -1286,7 +1288,7 @@ def test_shared_draws_do_not_hide_a_mechanism_that_moved_the_control(tmp_path, m
               config_runner=_workload_dominated_runner([]),
               test_results={t: False for t in ids},
               sdk_runner=_fake_build({"mech.py": "X = 2\n"}))
-    with pytest.raises(OptimizationAborted, match="changed the baseline"):
+    with pytest.raises(OptimizationAborted, match="not SHOWN to leave the control"):
         run_stage(c, wd, iteration=2, stage="verify",
                   config_runner=_workload_dominated_runner([], offset=80.0),
                   test_results={t: True for t in ids})
@@ -1394,8 +1396,11 @@ def test_a_prebuild_measurement_without_recorded_seeds_degrades_to_unpaired(
     c["optimization"]["workload"] = {"seed_env": "NOUS_WORKLOAD_SEED"}
     with caplog.at_level(logging.WARNING,
                          logger="orchestrator.optimize.stage_runner"):
+        # The runner honours the newly declared seed, so verify's CRN probe
+        # (#321 P3) passes and the test isolates the pre-build pairing gap.
         run_stage(c, wd, iteration=2, stage="verify",
-                  config_runner=make_synthetic_runner(s, seed=1),
+                  config_runner=make_synthetic_runner(s, seed=1,
+                                                      seed_env="NOUS_WORKLOAD_SEED"),
                   test_results={t: True for t in ids})
     be = json.loads((wd / "baseline_equivalence.json").read_text())
     assert be["paired"] is False, "a pairing that never happened must not be claimed"

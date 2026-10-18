@@ -1717,7 +1717,7 @@ optimization:
     mechanism_paths: ["src/batching.py", "tests/prop_batch.py"]
     # the three below apply only when `build` is in `stages`:
     allow_preexisting_tests: false   # oracle 2(b)
-    baseline_replicates: 3           # oracle 2(c)
+    baseline_replicates: 6           # oracle 2(c); the default since #321 P3
     baseline_tolerance_pct: 4.0      # oracle 2(c)
 ```
 
@@ -2987,42 +2987,119 @@ the stages are covered by the two halves above (`delta_screen` for the model
 family, `delta_terminal` for the terminal one), and the confirm rounds by
 `alpha_spending`. This record covers the epochs.
 
+#### Noise and data-quality checks (#321 P3)
+
+Every check below is a VETO: it can withhold a certificate and never grants
+one, so none spends δ (except `delta_feasibility`, which is a real union
+term). Each withholds under its own name, and each is registered in
+`policy.json` before any data.
+
+| check | where | withheld as | method |
+|---|---|---|---|
+| pure error vs the finalists' spread (M3) | confirm, `global_bound.heteroscedasticity` | `heteroscedastic_pure_error`, `heteroscedasticity_not_testable` | one-sided Brown-Forsythe contrast, alpha 0.05 |
+| replicate floor | confirm, `noise_diagnostics` | `replicates_below_floor` | smallest n with 2^-n <= δ_t / (looks × challengers) |
+| skewness | confirm, `noise_diagnostics` | `noise_skewed` | studentized third moment, Monte-Carlo null, 0.25 |
+| robust terminal bound | confirm, `terminal_bound` | `robust_bound_not_computable` | max(t, sign-flip under CRN / bootstrap-t) |
+| outlying rows | screen / refine, `effects.json` `outliers` | (a flag; none) | externally studentized, Bonferroni |
+| outlying replicates | confirm, `confirmation.json` `outliers` | (a flag; none) | deleted-residual t within each finalist, Bonferroni |
+| timeouts | every stage, `runs.jsonl` `censored` | `finalist_unmeasured` at confirm | right-censored at `run_timeout_sec`, never imputed |
+| CRN seed | verify, `crn_probe.json` | verify fails | one-way random-effects ANOVA on 4 seeds × 2 runs |
+| control across the build (oracle 2(c)) | verify, `baseline_equivalence.json` `tost` | verify fails | ratio-of-means TOST at the tolerance, paired under CRN |
+
+**The cost is visible.** Single-objective confirm now defaults to the replicate
+floor: **3 × 6 runs per round at the defaults, where it used to be 3 × 3**
+(7 with a declared constraint, which registers the refill look). The preview
+shows it. A `design.max_runs` that cannot cover one round fails validation;
+declaring fewer replicates than the floor warns, and confirm then withholds
+`replicates_below_floor`. On the P2 noise sweep (7 surfaces × 6 noise models
+× 3 multipliers × 8 seeds = 1008 campaigns), certificates fell from 245 to
+149, with 0 false certificates both before and after. Mean runs per campaign
+rose from 32.2 to 42.9. Most of the lost certificates are `noise_skewed` on
+surfaces with little noise (the pretest withholds about 26% of Gaussian
+rounds by design). `build_checks.baseline_replicates` defaults to 6: the
+TOST must SHOW the control unchanged, and at n = 3 its power is only
+0.61-0.75 for a margin of 3 sd. Verify's seed probe costs 8 runs when
+`workload.seed_env` is declared (`workload.probe: false` waives it in
+writing).
+
+**Constraint semantics.** `response.constraints[].semantics` is
+`every_replicate` (the default: one violating replicate strikes the
+configuration off), `mean` (the configuration's mean must satisfy the
+comparison, shown by the worse of a one-sided t and a bootstrap-t bound) or
+`chance:<alpha>` (the
+probability that one run violates it must be at most alpha, shown by a
+one-sided Clopper-Pearson bound). Either of the last two registers
+`policy.delta_feasibility` (default `delta_terminal`), spent over finalists ×
+constraints × looks. It is added to the stated budget and to
+`error_budget`. A `chance` constraint needs at least `log(level) / log(1 -
+alpha)` replicates even with no violation, so set `design.confirm.replicates`
+accordingly; `distributional_feasibility.finalists.*.constraints[].min_replicates`
+says how many.
+
+How exact each is: `chance` is exact (binomial). `mean` cannot be exact at
+small n for every distribution (Bahadur & Savage 1956), and is recorded
+`level_basis: approximate`. Measured, true mean ON the threshold, n = 6, a
+nominal per-test level of 0.0167: a plain t judges a lognormal metric
+"shown feasible" 3.5x (sigma 0.5) and 9x (sigma 1) too often; the shipped
+max(t, bootstrap-t) cuts that to about 2x and 4x. For a skewed constraint
+metric (stall time, a tail latency), either use `chance:<alpha>` or declare
+the metric's range, `support: [lo, hi]`, which gives an exact Hoeffding
+(1963) bound at the cost of width.
+
 #### Certification: documented limits
 
 What a certificate does NOT cover (spec
 2026-10-17-certification-soundness.md §7):
 
-1. **Small-n noise (A5, deferred).** The terminal bound is a Bonferroni
-   one-sided Welch (or paired) t at n = 3. With heteroscedastic, skewed
-   noise it can be anti-conservative: in a Monte Carlo of the bound alone,
-   0.17 against a nominal 0.05. No per-finalist noise diagnostic (variance
-   ratio, skewness) is recorded. No robust small-n bound (bootstrap-t,
-   permutation on CRN differences) or replicate floor is applied. If your
-   metric is a tail latency, raise `design.confirm.replicates`.
-2. **Outliers and censoring (A6, deferred).** No outlier flag (studentized
-   residuals) is written. A timed-out run is an unmeasured row (a finalist
-   that times out is `finalist_unmeasured`, which withholds), not a
-   right-censored observation with the bound it implies. Constraints are
-   judged "every replicate passes", not as a mean or chance constraint.
+1. **Small-n noise (A5, #321 P3).** The terminal bound is now, per
+   challenger, the larger of the t bound and a robust one: the exact
+   sign-flip bound (Hartigan 1969) on paired differences under CRN, the
+   bootstrap-t (Hall 1988) otherwise. Two vetoes sit beside it. Confirm
+   withholds `replicates_below_floor` below the registered replicate floor
+   (the smallest n at which the sign-flip bound exists at the per-look,
+   per-challenger level: 6 at the defaults, 7 with a declared constraint).
+   It withholds `noise_skewed` when a studentized-third-moment pretest
+   rejects at 0.25, the level fixed a priori for preliminary tests (Bancroft
+   1964). Measured on the terminal half alone (3 finalists, the loud one the
+   true best, sd ratio up to 10, 4000 trials per cell, fresh seeds): t alone
+   gives 0.09-0.15 false certificates under skewed noise, and the shipped
+   rule is <= 0.05 in every cell at n = 3, 6, 8 and 12. The worst cell is
+   0.048 +- 0.003 (paired, n = 8, lognormal, ratio 10). See the spec §7 for
+   the table. The skewness pretest's cost: on Gaussian noise it withholds
+   about 26% of otherwise-certifiable rounds.
+2. **Outliers and censoring (A6, #321 P3).** Outlying rows are FLAGGED, never
+   deleted: externally studentized residuals, Bonferroni over the fitted rows,
+   in `effects.json` and `recommendation.json` `outliers`. A sensitivity
+   refit without them records whether the decision changes. The flag
+   declines (`lack_of_fit_rejected`) when the fitted model is rejected,
+   because large residuals are then the misfit. A timed-out row is recorded as
+   right-censored at `run_timeout_sec` (`runs.jsonl` `censored`), never
+   imputed. A finalist with one still withholds `finalist_unmeasured`. A
+   censored row's bound is stated, but it is not used in any estimate (no
+   Tobit or Kaplan-Meier model). That is NOT unbiased: censoring is
+   informative. In a minimisation campaign the dropped rows are the slow
+   ones, so a timeout-prone configuration looks faster than it is in screen
+   and refine. Confirm still withholds such a finalist, so this is no false
+   certificate, but treat a fit with censored rows as optimistic about them.
 3. **Pure error stands in for every configuration.** The model bound's
    variance comes from the centre replicates only. If those under-state the
-   variance elsewhere, the model half is anti-conservative. The Scheffé
-   constant (#321) is smaller than Bonferroni's, so it has less slack to
-   absorb this. Measured: bowl on a central composite, noise sd growing from
-   1× at the centre to (1 + h)× at the corners, δ = 0.05, 300 fits. Pr(the
-   model bound misses the true gap) is 0.023 / 0.11 / 0.53 at h = 1 / 3 / 8
-   with min(Bonferroni, Scheffé), against 0.010 / 0.037 / 0.25 with
-   Bonferroni alone. Lack of fit rejects most of those fits (pass rate 256 /
-   172 / 39 of 300). Counting only fits where it passes (the only ones that
-   can certify), the joint rate Pr(lack of fit passes AND the bound misses)
-   is 0.007 / 0.023 / 0.040 -- but that joint rate is not what an author who
-   has SEEN lack of fit pass faces. Conditional on passing, the miss rate is
-   0.14 at h = 8 with 3 centre points, and 0.24 at h = 10 with 4 (independent
-   review, 300 to 600 fits). A miss is not yet a false certificate, which also
-   needs the bound to fall below ε while the true gap is above it, and none
-   was observed; but under strong heteroscedasticity the model half's δ is
-   not delivered. A heteroscedasticity check on pure error (Brown-Forsythe) is
-   the remedy; see the noise-diagnostics section for whether it is enabled.
+   variance elsewhere, the model half is anti-conservative. Since #321 P3 a
+   one-sided Brown-Forsythe contrast (finalists spread more than the
+   pure-error cells; structural zeros removed) withholds
+   `heteroscedastic_pure_error` at alpha 0.05. Measured: bowl and saddle on a
+   central composite, noise sd from 1× at the centre to (1 + h)× at the
+   corners, δ = 0.05, 1000 fits, 3 finalists of 6 replicates. Pr(the model
+   bound misses the true gap) is 0.029 / 0.137 / 0.533 at h = 1 / 3 / 8
+   (bowl). The joint rate Pr(lack of fit AND Brown-Forsythe pass AND miss)
+   falls from 0.011 / 0.025 / 0.046 to 0.011 / 0.022 / 0.033. The
+   CONDITIONAL miss rate, given both checks pass, is 0.013 / 0.041 / 0.317
+   (+- 0.046) at h = 1 / 3 / 8 and 0.296 at h = 10 (saddle 0.149 / 0.281). It
+   is NOT within δ at h >= 8. The check has power 0.71 at a 9× sd ratio, and
+   the fits that survive both checks at h = 8 are the ones where it missed.
+   End to end (100 campaigns per cell, the full rule) no false certificate
+   was observed at any h. The remedy for a target you expect to be
+   heteroscedastic is more centre points or a variance-stabilising
+   transform of the metric.
    The post-selection validation gain interval and the inertness TOST verdicts
    are each separate claims at `delta_terminal`, outside the certificate's
    union bound.
@@ -3433,8 +3510,8 @@ each says which.
 The corpus campaign that hand-rolled a 5x6x3x5x3 = **1350-cell grid** by
 enumerating every combination of five threshold knobs by hand. Restated as
 a factorial design: resolution V over 5 factors is 16 runs; with 4 center
-points at screen, 4 at refine, and 3 replicates at confirm, the whole
-campaign is **~40 runs against 1350** — and it gains interaction estimates
+points at screen, 4 at refine, and 6 replicates at confirm (the default
+since #321 P3), the whole campaign is **~60 runs against 1350** — and it gains interaction estimates
 the original grid never computed at all.
 
 ```yaml
@@ -3575,7 +3652,7 @@ optimization:
   design:
     screen:  {resolution: 5, center_points: 4}
     refine:  {kind: central_composite, center_points: 4}
-    confirm: {replicates: 3}
+    confirm: {replicates: 6}
     # F4 has five levels: all are screened (method of replacement, 7 contrast df),
     # so the resolution-V screen is 64 corners + 4 centres.
     max_runs: 120

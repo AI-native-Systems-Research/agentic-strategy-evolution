@@ -157,9 +157,15 @@ def test_nothing_vacated_means_nothing_changes(seed, tmp_path, monkeypatch):
     fixed before the data decide how many looks there are). Every value that
     level feeds (bounds, the certificate, the routing observations) is
     therefore compared separately below."""
+    # #321 P3: the registered refill look raises the A5 replicate floor (one
+    # more look halves the per-look level), so the DEFAULT replicate count
+    # differs between the arms; pin it to compare like with like.
+    ov = dict(CORNER, design={"screen": {"resolution": 5, "center_points": 4},
+                              "refine": {"kind": "central_composite", "center_points": 4},
+                              "confirm": {"replicates": 7}})
     runs = {}
     for refill in (False, True):
-        res = _run("infeasible_corner_interior", seed, CORNER, tmp_path,
+        res = _run("infeasible_corner_interior", seed, ov, tmp_path,
                    refill=refill, monkeypatch=monkeypatch)
         wd, out = Path(res.work_dir), {}
         for p in sorted(wd.rglob("*")):
@@ -177,7 +183,8 @@ def test_nothing_vacated_means_nothing_changes(seed, tmp_path, monkeypatch):
                  "certification_withheld", "observations", "rule", "to",
                  "recommendation", "basis", "error_budget", "provenance",
                  "statement", "metadata", "discrepancy_analysis", "arms",
-                 "winner_estimate", "gain_over_baseline")
+                 "winner_estimate", "gain_over_baseline", "noise_diagnostics",
+                 "terminal_robustness")
 
     def _drop(o):
         if isinstance(o, dict):

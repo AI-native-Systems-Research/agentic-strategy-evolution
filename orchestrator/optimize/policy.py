@@ -310,6 +310,15 @@ def _constraint_exclusion_registered(opt: dict) -> bool:
     return False
 
 
+def _feasibility_registered(opt: dict) -> bool:
+    """Is a distributional constraint (``semantics: mean | chance:<a>``)
+    declared? Then confirm decides feasibility statistically and the
+    ``delta_feasibility`` union term is registered (#321 P3 item 3)."""
+    return any(isinstance(c, dict) and c.get("semantics", "every_replicate")
+               != "every_replicate"
+               for c in (opt.get("response") or {}).get("constraints") or ())
+
+
 def campaign_delta_share(spec: dict | None, epoch: int) -> float | None:
     """Epoch ``epoch``'s share of a declared campaign-wide budget (#321 item 7).
 
@@ -333,12 +342,128 @@ def campaign_delta_share(spec: dict | None, epoch: int) -> float | None:
     return lst[epoch - 1] if 1 <= epoch <= len(lst) else 0.0
 
 
+#: The registered M3 check (#321 P3 item 1). See ``noise.brown_forsythe``.
+_HETERO_RULE = {
+    "alpha": 0.05,
+    "method": "brown_forsythe_one_sided_contrast_finalists_vs_pure_error",
+    "groups": "the fitting stage's pure-error cells against every admissible "
+              "confirm finalist with >= 2 replicates",
+    "role": "veto: a rejection (p < alpha) or an untestable spread withholds "
+            "the model half (heteroscedastic_pure_error / "
+            "heteroscedasticity_not_testable); it never certifies, so it "
+            "spends no part of delta",
+}
+
+
+#: A5 skewness pretest level (a veto; spends no delta). Fixed a priori at the
+#: level recommended for PRELIMINARY tests of an assumption, where a type II
+#: error (missing the violation) is the costly one: 0.25 (Bancroft 1964,
+#: Biometrics 20, 427-442; Kennedy & Bancroft 1971, Technometrics 13, 899-913).
+#: Not tuned on the reported Monte-Carlo cells (spec §7 records the tuning-free
+#: evaluation on a fresh seed set). Its cost: under normal noise it vetoes
+#: ~25% of otherwise-certifiable confirm rounds.
+TERMINAL_SKEW_ALPHA = 0.25
+
+
+def _registered_looks(opt: dict) -> int:
+    """``confirm_looks`` from the declaration, before the transitions exist:
+    the round cap, plus the refill look when that branch will be compiled
+    (``_REFILL_VACATED`` and any declared constraint)."""
+    pol_cfg = opt.get("policy") or {}
+    rounds = int(pol_cfg.get("confirm_max_rounds", 1) or 1)
+    refill = bool(_REFILL_VACATED and (opt.get("response") or {}).get("constraints"))
+    return max(1, rounds) + (1 if refill else 0)
+
+
+def effective_delta_terminal(opt: dict, epoch: int = 1) -> float:
+    """``delta_terminal`` as confirm will actually spend it: the declared value,
+    scaled by the charged cross-epoch share when ``campaign_delta`` is declared
+    (P3 review H2: a floor computed from the unscaled value was too small, so
+    the charged mode could never certify). A function of the declaration and
+    the epoch index only."""
+    pol_cfg = opt.get("policy") or {}
+    dt = float(pol_cfg.get("delta_terminal", 0.05))
+    share = campaign_delta_share(pol_cfg.get("campaign_delta"), int(epoch))
+    if share is None or not share > 0.0:
+        return dt
+    ds = float(pol_cfg.get("delta_screen", 0.05))
+    dc = (float(pol_cfg.get("delta_constraint", ds))
+          if _constraint_exclusion_registered(opt) else 0.0)
+    df = (float(pol_cfg.get("delta_feasibility", dt))
+          if _feasibility_registered(opt) else 0.0)   # same default as compile
+    return dt * share / (ds + dt + dc + df)
+
+
+def replicate_floor(opt: dict, epoch: int = 1) -> int:
+    """The A5 replicate floor (#321 P3 item 2) for a single-objective campaign:
+    the smallest n with ``2^-n <= delta_t / (L (S - 1))`` -- the exact
+    sign-flip bound's existence condition at the per-look, per-challenger
+    level, at the delta_terminal the epoch will spend. A function of the
+    declaration and the epoch index only."""
+    from orchestrator.optimize.noise import sign_flip_floor
+
+    confirm_cfg = (opt.get("design") or {}).get("confirm") or {}
+    dt = effective_delta_terminal(opt, epoch)
+    seats = int(confirm_cfg.get("shortlist_size", 3)) + (
+        1 if opt.get("known_valid_baseline") else 0)
+    alpha = dt / _registered_looks(opt) / max(1, seats - 1)
+    return sign_flip_floor(alpha)
+
+
+def default_confirm_replicates(opt: dict, epoch: int = 1) -> int:
+    """The single-objective default for ``design.confirm.replicates``: the A5
+    floor (#321 P3). Was 3, at which no bound holds its level under skewed,
+    heteroscedastic noise (spec §7)."""
+    return replicate_floor(opt, epoch)
+
+
+def terminal_robustness_rule(pol_cfg: dict, campaign: dict, *, looks: int,
+                             epoch: int = 1) -> dict:
+    """The registered A5 rule (#321 P3 item 2), a function of the declaration.
+
+    ``floor`` is the smallest replicate count at which the robust bound exists
+    at the per-look, per-challenger level ``delta_t / (L (S - 1))``: the exact
+    sign-flip bound needs ``2^-n <= alpha``. It is computed here from the
+    declared ``delta_terminal``, the registered looks and shortlist size --
+    never from data. Unpaired campaigns use the same floor (the bootstrap-t is
+    not exact, and measured below this n it is not within level either).
+    """
+    from orchestrator.optimize.noise import sign_flip_floor
+
+    opt = campaign.get("optimization") or {}
+    design = opt.get("design") or {}
+    confirm_cfg = design.get("confirm") or {}
+    dt = effective_delta_terminal(opt, epoch)
+    assert looks == _registered_looks(opt), (looks, _registered_looks(opt))
+    # The floor is computed at the delta_terminal confirm SPENDS: under the
+    # charged cross-epoch mode that is the scaled share (P3 review H2).
+    seats = int(confirm_cfg.get("shortlist_size", 3)) + (
+        1 if opt.get("known_valid_baseline") else 0)
+    alpha = dt / max(1, looks) / max(1, seats - 1)
+    return {"floor": sign_flip_floor(alpha), "skew_alpha": TERMINAL_SKEW_ALPHA,
+            "level_for_floor": alpha,
+            "method": "per challenger max(paired t, exact sign-flip (Hartigan "
+                      "1969)) under CRN, max(Welch, bootstrap-t (Hall 1988)) "
+                      "otherwise, Bonferroni over challengers and looks; "
+                      "withheld below the replicate floor or when the "
+                      "studentized-third-moment pretest rejects at skew_alpha"}
+
+
 def delta_stated(policy: dict) -> float:
     """The epoch's stated error budget: ``delta_screen + delta_terminal``,
-    plus ``delta_constraint`` when constraint exclusion is registered."""
+    plus ``delta_constraint`` when constraint exclusion is registered, plus
+    ``delta_feasibility`` when a distributional constraint is (#321 P3)."""
     o = policy["objective"]
     return (float(o["delta_screen"]) + float(o["delta_terminal"])
-            + float(o.get("delta_constraint") or 0.0))
+            + float(o.get("delta_constraint") or 0.0)
+            + float(o.get("delta_feasibility") or 0.0))
+
+
+#: Reanalysis of a policy compiled before #321 P3 (no ``terminal_robustness``
+#: key) sets this, so the recompiled policy -- and every artifact read from it
+#: -- is the one that epoch registered: no noise checks, confirm replicates
+#: defaulting to 3. Never set on a live campaign.
+LEGACY_PRE_P3 = __import__("contextvars").ContextVar("nous_legacy_pre_p3", default=False)
 
 
 def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1,
@@ -450,7 +575,13 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             "design": {"kind": "shortlist_replicate",
                        "shortlist_size": int(confirm_cfg.get("shortlist_size",
                                                              default_shortlist)),
-                       "replicates": max(1, int(confirm_cfg.get("replicates", 3))),
+                       # #321 P3 (A5): single-objective defaults to the
+                       # registered replicate floor (6 at the defaults), the
+                       # smallest n at which the robust terminal bound exists.
+                       "replicates": max(1, int(confirm_cfg.get(
+                           "replicates",
+                           3 if (mo or LEGACY_PRE_P3.get())
+                           else default_confirm_replicates(opt, int(epoch))))),
                        "max_rounds": int(pol_cfg.get("confirm_max_rounds",
                                                      default_rounds))},
             "estimator": "sample_means",
@@ -674,23 +805,26 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
     _dt = float(pol_cfg.get("delta_terminal", 0.05))
     _dc = (float(pol_cfg.get("delta_constraint", _ds))
            if _constraint_exclusion_registered(opt) else 0.0)
+    _df = (float(pol_cfg.get("delta_feasibility", _dt))
+           if _feasibility_registered(opt) else 0.0)
     cd_block = None
     if share is not None:
         # The epoch certifies at its SHARE, split over its union terms in the
         # declared proportions (delta_screen : delta_terminal [: delta_constraint]).
-        declared = _ds + _dt + _dc
+        declared = _ds + _dt + _dc + _df
         exhausted = not share > 0.0
         scale = (share / declared) if not exhausted else 1.0
         cd_block = {"total": float(cd_spec["total"]),
                     "schedule": cd_spec.get("schedule", "geometric"),
                     "epoch_share": float(share), "exhausted": bool(exhausted),
                     "declared_split": {"delta_screen": _ds, "delta_terminal": _dt,
-                                       **({"delta_constraint": _dc} if _dc else {})},
+                                       **({"delta_constraint": _dc} if _dc else {}),
+                                       **({"delta_feasibility": _df} if _df else {})},
                     "rule": "epoch e certifies at share_e of the campaign-wide "
                             "budget, split in the declared proportions; "
                             "sum_e share_e <= total (union bound over epochs)"}
         if not exhausted:
-            _ds, _dt, _dc = _ds * scale, _dt * scale, _dc * scale
+            _ds, _dt, _dc, _df = _ds * scale, _dt * scale, _dc * scale, _df * scale
 
     # ── #321 item 8: held-factor inertness checks (opt-in) ─────────────────
     inert_cfg = design.get("inertness") or {}
@@ -751,8 +885,28 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # Defaults to delta_screen, the level exclusion always used.
             **({"delta_constraint": _dc}
                if _constraint_exclusion_registered(opt) else {}),
+            # #321 P3 item 3: the FOURTH union term. A distributional constraint
+            # (semantics mean | chance:<a>) is decided at confirm: each finalist
+            # must be SHOWN feasible, per constraint, at delta_feasibility /
+            # (S C L) -- Bonferroni over finalists, constraints and looks, so
+            # the data-chosen winner is covered. Registered from the
+            # declaration only. Defaults to delta_terminal.
+            **({"delta_feasibility": _df} if _feasibility_registered(opt) else {}),
             # #321 item 7: the charged cross-epoch mode, when declared.
             **({"campaign_delta": cd_block} if cd_block is not None else {}),
+            # #321 P3 item 1: the Brown-Forsythe check of M3 (pure error is
+            # the error variance at every configuration). Registered, so its
+            # level is fixed before any data; a VETO on the model half, so it
+            # spends no delta. A policy compiled before P3 lacks the key and
+            # confirm then skips the check (old epochs reproduce).
+            **({"heteroscedasticity": dict(_HETERO_RULE)}
+               if confirm_on and mo is None and not LEGACY_PRE_P3.get() else {}),
+            # #321 P3 item 2 (A5): the robust terminal family, its replicate
+            # floor and the skewness pretest, all fixed at compile time.
+            **({"terminal_robustness": terminal_robustness_rule(
+                pol_cfg, campaign, epoch=int(epoch), looks=confirm_looks(
+                    {"states": states, "transitions": transitions}))}
+               if confirm_on and mo is None and not LEGACY_PRE_P3.get() else {}),
         },
         "budget": {"max_runs": design.get("max_runs")},
         "known_valid_baseline": opt.get("known_valid_baseline"),

@@ -828,3 +828,128 @@ def front_model_half(fits: dict, objectives, eps: dict, chosen: dict, *,
                        for m in metrics})
     return out
 
+
+
+# ── A5 (#321 P3 item 2): the robust terminal family ─────────────────────────
+
+
+def robust_terminal_bound(samples: dict[str, list[float]], best: str, *,
+                          delta: float, direction: str, paired: bool,
+                          rule: dict) -> tuple["RegretBound", dict]:
+    """The terminal family made robust to small-n non-normality, with its
+    diagnostics: ``(bound, record)``.
+
+    Each challenger's upper bound is ``max(U_t, U_robust)`` at the same
+    per-challenger level ``delta / M`` (Bonferroni over the ``M`` challengers,
+    as ``terminal_regret_bound``), so the family's level is at least that of
+    either member's when its assumptions hold, and taking the larger of two
+    valid bounds is valid. ``U_robust`` is
+
+    * PAIRED (CRN): Hartigan's (1969) exact sign-flip bound on the paired
+      differences (``noise.sign_flip_upper``): valid for independent
+      differences SYMMETRIC about their centre, no normality;
+    * UNPAIRED: the bootstrap-t (Hall 1988; ``noise.bootstrap_t_upper``),
+      second-order accurate under skew; not exact at small n.
+
+    The certificate is withheld, named, when
+
+    * any admissible finalist has fewer than ``rule.floor`` replicates
+      (``replicates_below_floor``): below it the sign-flip bound does not
+      exist at the per-challenger level, and the Monte Carlo in the spec
+      (§7) shows no small-n bound holds its level under skewed,
+      heteroscedastic noise;
+    * the skewness pretest rejects at ``rule.skew_alpha``
+      (``noise_skewed``): pooled over the finalists' independent replicate
+      groups (unpaired), or pooled over the challengers' paired-difference
+      vectors (paired; they share the best's replicates, so that null is
+      approximate). A veto: it removes
+      certificates only, spends no delta, and is the guard against the
+      asymmetric paired differences the sign-flip bound assumes away;
+    * a robust bound cannot be computed (``robust_bound_not_computable``).
+
+    The record holds per-finalist n, variance and skewness, the variance
+    ratio (largest over smallest finalist variance), the pretest and the
+    reasons. Every constant is in the policy or provenance; nothing is
+    chosen from the data.
+    """
+    from orchestrator.optimize import noise as noise_mod
+
+    others = [k for k in samples if k != best]
+    sign = 1.0 if direction != "minimize" else -1.0
+    m = max(1, len(others))
+    a = delta / m
+    floor = int(rule.get("floor", 1))
+    skew_alpha = float(rule.get("skew_alpha", 0.0))
+    var = {k: (variance(v) if len(v) >= 2 else None) for k, v in samples.items()}
+    pos = [v for v in var.values() if v is not None and v > 0.0]
+    rec: dict = {
+        "floor": floor, "skew_alpha": skew_alpha, "per_challenger_level": a,
+        "finalists": {k: {"n": len(v), "variance": var[k],
+                          "skewness": noise_mod.sample_skewness(v)}
+                      for k, v in sorted(samples.items())},
+        "variance_ratio": (max(pos) / min(pos)) if len(pos) >= 2 else None,
+        "withheld": [],
+    }
+    t_bounds, not_est, use_paired = _terminal_family(
+        samples, best, delta=delta, direction=direction, paired=paired)
+    rec["paired"] = bool(use_paired)
+    n_min = min(len(v) for v in samples.values())
+    rec["n_min"] = n_min
+    if n_min < floor:
+        rec["withheld"].append("replicates_below_floor")
+    # The skewness pretest.
+    if use_paired:
+        diffs = [[sign * (c - b) for b, c in zip(samples[best], samples[k])]
+                 for k in others]
+        # Pooled over the challengers' paired-difference vectors. They share
+        # the best's replicates, so they are not independent and the null is
+        # approximate; the pretest is a VETO, so a miscalibrated null costs
+        # power, never validity. Measured more sensitive than Bonferroni over
+        # per-challenger tests (spec §7).
+        t = noise_mod.skewness_test(diffs)
+        p = t["p"]
+        rec["skewness_test"] = {"method": t["method"] + "_paired_differences_pooled",
+                                "p": p, "stat": t["stat"], "sizes": t["sizes"],
+                                "null": "approximate: the difference vectors "
+                                        "share the best finalist's replicates"}
+    else:
+        t = noise_mod.skewness_test(list(samples.values()))
+        p = t["p"]
+        rec["skewness_test"] = {"method": t["method"], "p": p, "stat": t["stat"],
+                                "sizes": t["sizes"]}
+    if p is not None and p < skew_alpha:
+        rec["withheld"].append("noise_skewed")
+    if not others:
+        return RegretBound(0.0, None, delta, "trivial", "single finalist"), rec
+    if not_est:
+        rec["withheld"].append("robust_bound_not_computable")
+        return RegretBound(None, None, delta, "none",
+                           "zero-spread contrast: no variance estimate"), rec
+    rob: dict = {}
+    for i, k in enumerate(others):
+        if use_paired:
+            # challenger minus best, in the campaign's direction
+            d = [sign * (c - b) for b, c in zip(samples[best], samples[k])]
+            u = noise_mod.sign_flip_upper(d, a)
+        else:
+            u = noise_mod.bootstrap_t_upper(
+                [sign * v for v in samples[k]], [sign * v for v in samples[best]], a)
+        rob[i] = u
+    if any(u is None for u in rob.values()):
+        if "replicates_below_floor" not in rec["withheld"]:
+            rec["withheld"].append("robust_bound_not_computable")
+        return RegretBound(None, None, delta, "none",
+                           "robust bound not computable (below the replicate "
+                           "floor, or zero spread)"), rec
+    both = {i: max(t_bounds[i], rob[i]) for i in t_bounds}
+    rec["per_challenger"] = {others[i]: {"t": t_bounds[i], "robust": rob[i]}
+                             for i in t_bounds}
+    arg = max(both, key=lambda i: both[i])
+    method = ("bonferroni_max_t_paired_sign_flip" if use_paired
+              else "bonferroni_max_welch_bootstrap_t")
+    return RegretBound(
+        max(0.0, both[arg]), others[arg], delta, method,
+        f"M={len(others)} challengers, each at delta/M={a:.4g}: max of the "
+        f"{'paired t' if use_paired else 'Welch t'} and the "
+        f"{'exact sign-flip (Hartigan 1969)' if use_paired else 'bootstrap-t (Hall 1988)'}"
+        f" bound (n={ {k: len(v) for k, v in samples.items()} })"), rec

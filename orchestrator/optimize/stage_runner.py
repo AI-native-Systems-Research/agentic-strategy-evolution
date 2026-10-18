@@ -1167,9 +1167,19 @@ def _read_mechanism_hash(work_dir: Path) -> str:
 #: noisy target — which teaches authors to disable the check.
 DEFAULT_BASELINE_TOLERANCE_PCT = 5.0
 
-#: Replicates of the control measured before and after the build. Three is the
-#: smallest count whose mean is not one outlier away from either verdict.
-DEFAULT_BASELINE_REPLICATES = 3
+#: Replicates of the control measured before and after the build. Six since
+#: #321 P3: oracle 2(c) is a TOST, which must SHOW equivalence; at a margin of
+#: 3 sd its power is 0.75 (Welch) / 0.61 (paired) at n = 3 and 0.998 / 0.994
+#: at n = 6 (nous-e2e/audit/p3/mc_tost_power.py, 20,000 trials per cell).
+DEFAULT_BASELINE_REPLICATES = 6
+
+#: #321 P3 item 5: oracle 2(c)'s registered equivalence rule (written into the
+#: build-time record, so it is fixed and sealed before the mechanism exists).
+BASELINE_EQUIVALENCE_RULE = {
+    "test": "tost_ratio_of_means", "alpha": 0.05,
+    "margin": "tolerance_pct of the TRUE pre-build mean",
+    "reference": "Schuirmann 1987; Hauschke, Kieser & Hothorn 1999; Berger 1982",
+}
 
 
 def _build_checks(campaign: dict) -> dict:
@@ -1526,11 +1536,25 @@ def _check_baseline_equivalence(
         workload=_wl if paired else None,
     )
     pre_mean, post_mean = _mean(pre), _mean(post)
-    ok = _baseline_equivalent(pre_mean, post_mean, tol)
+    eq_rule = rec.get("equivalence")
+    tost_rec = None
+    if eq_rule:
+        # #321 P3 item 5: TOST of the ratio of means at the declared margin
+        # (Hauschke, Kieser & Hothorn 1999), paired under CRN.
+        from orchestrator.optimize import noise as noise_mod
+
+        tost_rec = noise_mod.tost_ratio(
+            pre, post, margin_frac=tol / 100.0,
+            alpha=float(eq_rule.get("alpha", noise_mod.BASELINE_TOST_ALPHA)),
+            paired=paired)
+        ok = tost_rec["equivalent"] is True
+    else:
+        ok = _baseline_equivalent(pre_mean, post_mean, tol)
     record = {
         "levels": levels, "pre": pre, "post": post,
         "pre_mean": pre_mean, "post_mean": post_mean,
         "tolerance_pct": tol, "ok": ok, "paired": paired,
+        **({"equivalence": dict(eq_rule), "tost": tost_rec} if eq_rule else {}),
     }
     if paired:
         record["workload_seeds"] = seeds
@@ -1545,6 +1569,27 @@ def _check_baseline_equivalence(
             else "unpaired",
         )
         return
+    if tost_rec is not None and tost_rec["equivalent"] is None:
+        raise OptimizationGateFailed(
+            f"oracle 2(c) could not DECIDE whether the build changed the control "
+            f"{levels} ({tost_rec['reason']}): the equivalence test needs at least "
+            f"two replicates with spread on each side. An undecided control is not "
+            f"an inert one. Raise optimization.build_checks.baseline_replicates. "
+            f"See baseline_equivalence.json.")
+    if tost_rec is not None:
+        raise OptimizationGateFailed(
+            f"oracle 2(c): the build was not SHOWN to leave the control {levels} "
+            f"unchanged: TOST of post/pre mean ratio within +-{tol:.3g}% at alpha "
+            f"{tost_rec['alpha']} gave p = {tost_rec.get('p')!r} (ratio estimate "
+            f"{tost_rec.get('ratio_estimate')!r}; {pre_mean:.6g} -> {post_mean:.6g}, "
+            f"{len(pre)} replicate(s) each side, "
+            f"{'paired on workload common random numbers' if paired else 'unpaired'}). "
+            f"Either the mechanism moved the control, or there are too few "
+            f"replicates to show it did not: raise build_checks.baseline_replicates "
+            f"(power 0.61-0.75 at n = 3, 0.99 at n = 6 for a margin of 3 sd), declare "
+            f"optimization.workload.seed_env so the comparison is paired, or widen "
+            f"the margin (response.noise_estimate_pct / build_checks."
+            f"baseline_tolerance_pct). See baseline_equivalence.json.")
     raise OptimizationGateFailed(
         f"build changed the baseline: control configuration {levels} moved from "
         f"{pre_mean:.6g} to {post_mean:.6g} on {metric or '<unset metric>'} "
@@ -1562,6 +1607,91 @@ def _check_baseline_equivalence(
            "cancels out of it")
         + ". See baseline_equivalence.json for both replicate vectors.",
     )
+
+
+def _check_crn_probe(campaign: dict, work_dir: Path, factors,
+                     config_runner: Callable | None) -> None:
+    """#321 P3 item 4: verify that ``workload.seed_env`` actually reaches the
+    target before ``confirm`` records ``paired: true`` on its strength.
+
+    One configuration (the ``known_valid_baseline``, else every factor at its
+    first declared level) is run at ``workload.probe_seeds`` distinct seeds
+    (default ``noise.CRN_PROBE_SEEDS``), twice each, and judged by
+    ``noise.crn_probe_verdict``: same seed twice must agree, different seeds
+    must differ (one-way random-effects ANOVA at ``noise.CRN_PROBE_ALPHA``).
+    A ``decorative`` verdict FAILS verify: the paired bound would still be
+    valid, but every certificate would record a method whose premise did not
+    hold. ``not_testable`` (no runner, a probe run that failed) fails too,
+    unless ``workload.probe: false`` waives it in writing, which is recorded.
+    Writes ``crn_probe.json``. Costs ``2 x probe_seeds`` runs (the preview
+    counts them). No-op without ``workload.seed_env``.
+    """
+    from orchestrator.optimize import noise as noise_mod
+    from orchestrator.optimize.matrix import ConfigRow, render_apply
+
+    wl = (_opt_block(campaign) or {}).get("workload") or {}
+    env = wl.get("seed_env")
+    if not env:
+        return
+    path = Path(work_dir) / "crn_probe.json"
+    if wl.get("probe") is False:
+        _write_json(path, {"armed": False, "waived": "workload.probe: false",
+                           "verdict": "not_testable"})
+        logger.warning("verify: the CRN seed probe is WAIVED (workload.probe: "
+                       "false); nothing checks that %s reaches the target", env)
+        return
+    m = int(wl.get("probe_seeds") or noise_mod.CRN_PROBE_SEEDS)
+    base = dict(_kvb) if (_kvb := (_opt_block(campaign) or {}).get(
+        "known_valid_baseline")) else {f.id: f.levels[0] for f in factors}
+    seeds = ([int(s) for s in (wl.get("seeds") or [])][:m] if wl.get("seeds")
+             else [(noise_mod.CRN_PROBE_SEED_BASE * 7919 + i) % (2 ** 31)
+                   for i in range(m)])
+    metric = _primary_of((_opt_block(campaign) or {}).get("response")).get("metric") or ""
+    pairs, values, problem = [], [], None
+    if config_runner is None:
+        problem = "no config_runner at verify"
+    else:
+        for i, sd in enumerate(seeds):
+            pair = []
+            for rep in range(2):
+                apply = render_apply(factors, base)
+                apply = {**apply, "env": {**(apply.get("env") or {}), env: sd}}
+                row = ConfigRow(row_index=-1000 - 2 * i - rep, levels=dict(base),
+                                role="crn_probe", replicate=rep, apply=apply)
+                try:
+                    v = float((config_runner(row) or {}).get(metric, float("nan")))
+                except Exception as exc:     # a probe run that cannot measure
+                    v, problem = float("nan"), f"probe run failed: {exc}"
+                pair.append(v)
+            values.append({"seed": sd, "runs": pair})
+            if all(math.isfinite(v) for v in pair):
+                pairs.append(tuple(pair))
+            elif problem is None:
+                problem = "a probe run produced no finite primary metric"
+    verdict = noise_mod.crn_probe_verdict(pairs) if not problem else {
+        "verdict": "not_testable", "reason": problem}
+    rec = {"seed_env": env, "levels": base, "metric": metric, "runs": values,
+           **verdict, "rule": "same seed twice must agree, different seeds must "
+                              "differ: one-way random-effects ANOVA, seed random"}
+    _write_json(path, rec)
+    if verdict["verdict"] == "real":
+        logger.info("verify: CRN probe -- %s reaches the target (%s)", env,
+                    verdict.get("basis") or f"F={verdict.get('f'):.3g}, p={verdict.get('p'):.3g}")
+        return
+    why = ("the seed was not SHOWN to matter: different seeds gave measurements "
+           "no more different than the same seed run twice, at this probe's size "
+           "(power about 0.6 at a seed effect twice the run noise, 0.94 at five "
+           "times; failing to reject is not proof of no effect)"
+           if verdict["verdict"] == "decorative" else
+           f"the probe could not be completed ({verdict.get('reason') or 'fewer than 2 seeds'})")
+    raise OptimizationGateFailed(
+        f"verify: optimization.workload.seed_env={env!r} would make paired: true "
+        f"DECORATIVE -- {why} (crn_probe.json). The paired bound would still be "
+        f"valid, but every confirm round would record a common-random-numbers "
+        f"method whose premise did not hold. Wire {env} into the target's "
+        f"workload generator; or raise workload.probe_seeds for a weak seed "
+        f"effect; or remove the workload block (Welch is then used); or waive the "
+        f"probe in writing with workload.probe: false.")
 
 
 def _baseline_unarmed(campaign: dict, path: Path, rec: dict, why: str) -> None:
@@ -2561,6 +2691,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         "delta_terminal": pol["objective"]["delta_terminal"],
         **({"delta_constraint": pol["objective"]["delta_constraint"]}
            if "delta_constraint" in pol["objective"] else {}),
+        **({"delta_feasibility": pol["objective"]["delta_feasibility"]}
+           if "delta_feasibility" in pol["objective"] else {}),
         "certified": bool(conf and conf.get("certified")),
         # WHY `certified` is false, carried up from confirmation.json so the
         # report never states an unexplained boolean next to bounds that look
@@ -3169,6 +3301,11 @@ def _run_stage_body(
                     "pre": _pre,
                     "pre_mean": _mean(_pre),
                     "tolerance_pct": _baseline_tolerance_pct(campaign),
+                    # #321 P3 item 5: the rule verify applies, registered (and
+                    # sealed) BEFORE the build. A record without it predates
+                    # P3 and keeps the relative-mean rule, so old campaigns
+                    # reproduce.
+                    "equivalence": dict(BASELINE_EQUIVALENCE_RULE),
                 }
                 if _pre_seeds is not None:
                     _rec["workload_seeds"] = _pre_seeds
@@ -3431,6 +3568,7 @@ def _run_stage_body(
                                                records=_gate)
             _check_baseline_equivalence(campaign, work_dir, factors, config_runner,
                                         records=_gate)
+            _check_crn_probe(campaign, work_dir, factors, config_runner)
             _review_build(gate, work_dir, built=_gate is not None)
             if _gate is not None:
                 from orchestrator.optimize import gate_records as _gr
@@ -4084,8 +4222,18 @@ def _run_stage_body(
     # the same "rows already written stay" property contract drift relies on.
     # It fires on the first offending row rather than after the sweep, because
     # every further row would spend budget on an experiment nobody registered.
+    _timeout_sec = resolve_run_timeout(opt)
+
     def _record_row(outcome) -> None:
-        artifacts.append_run(iter_dir, _run_row(by_index[outcome.row_index], outcome))
+        _row = _run_row(by_index[outcome.row_index], outcome)
+        if _row.get("failure_kind") == "timeout" and not policy_mod.LEGACY_PRE_P3.get():
+            # #321 P3 item 3 (A6): a timeout is RIGHT-CENSORED at the ceiling,
+            # never a value. Recorded with the bound it implies; the row stays
+            # excluded from every fit and mean (never imputed).
+            from orchestrator.optimize import noise as _noise
+            _row["censored"] = _noise.censored_bound(
+                _primary_of(response_spec).get("direction", "maximize"), _timeout_sec)
+        artifacts.append_run(iter_dir, _row)
         locked_mod.check_row(campaign, outcome.response,
                              row_index=outcome.row_index, stage=stage_name)
 
@@ -4963,6 +5111,24 @@ def _run_stage_body(
             f"them.",
         )
     rec = top[0]
+    # ── #321 P3 item 3 (A6): outlying rows, FLAGGED and never deleted ─────
+    # Externally studentized residuals of THIS fit, Bonferroni over the
+    # fitted rows (noise.studentized_outliers). A flagged row stays in every
+    # number the campaign reports; a SENSITIVITY refit without the flagged
+    # rows is recorded beside it, with whether the recommendation changes.
+    outlier_record = None
+    if pol["objective"].get("terminal_robustness") and not design_for_fit.groups \
+            and not blocks_for_fit:
+        outlier_record = _outlier_record(
+            design_for_fit, ys_for_fit, fit, fitted_ids, factors, direction,
+            held_now, excluded, cmods, delta_c, interactions_dropped,
+            omitted_terms, _fit_pos, rec)
+        # effects.json (written above with the coefficients) carries it too:
+        # the flags qualify the coefficients.
+        _eff_path = iter_dir / "effects.json"
+        _eff = json.loads(_eff_path.read_text())
+        _eff["outliers"] = outlier_record
+        _write_json(_eff_path, _eff)
     # ── MULTI-OBJECTIVE: fit every objective, predict the front ────────────
     #
     # Spec 2026-10-15-pareto-front-design.md steps 1-3. Every objective is
@@ -5198,6 +5364,13 @@ def _run_stage_body(
         # WP-A A1: the largest per-challenger model bounds and the max over the
         # rest, so confirm can bound what screening left OUTSIDE its shortlist.
         **({"residual_regret_model_profile": rb.profile} if rb.profile else {}),
+        # #321 P3 item 1: the replicate cells the model bound's pure error
+        # was pooled from, so confirm can test M3 (Brown-Forsythe) against
+        # the finalists' replicates without the Fit.
+        **({"pure_error_cells": [list(g) for g in fit.pure_error_cells]}
+           if fit.pure_error_cells
+           and pol["objective"].get("heteroscedasticity") else {}),
+        **({"outliers": outlier_record} if outlier_record is not None else {}),
         "epsilon": epsilon,
         "alias_consequential": [list(p) for p in alias_pairs_consequential],
         # 2fi NOT fitted because their corner column lies in the span of kept
@@ -7147,6 +7320,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     mo_samples = ({f["key"]: {o.metric: [] for o in pareto_stage.objectives(pol)}
                    for f in fin} if pareto_stage.objectives(pol) else None)
     status: dict[str, str] = {f["key"]: "ok" for f in fin}
+    _censored: dict[str, int] = {}
     for o, y in zip(outcomes, ys):
         row = by_idx.get(o.row_index)
         if row is None:
@@ -7162,6 +7336,9 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                  and not isinstance((o.response or {}).get(_ob.metric), bool)
                  and math.isfinite((o.response or {}).get(_ob.metric)))
             for _ob in pareto_stage.objectives(pol))
+        if getattr(o, "failure_kind", "") == "timeout":
+            _censored.setdefault(key, 0)
+            _censored[key] += 1
         if o.status != "complete" or y != y or _mo_lacking:
             # WHY the finalist dropped out, not merely THAT it did. Collapsing
             # every non-complete status into one bucket reported a finalist that
@@ -7193,6 +7370,15 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 if isinstance(_v, (int, float)) and not isinstance(_v, bool) \
                         and math.isfinite(_v):
                     mo_samples[key][_ob.metric].append(float(_v))
+    # #321 P3 item 3 (A6): DISTRIBUTIONAL constraints (`semantics: mean |
+    # chance:<a>`). The runner never judged them per row; each still-admissible
+    # finalist must now be SHOWN feasible from its replicates, per such
+    # constraint, at delta_feasibility / (S C L): Bonferroni over finalists,
+    # constraints and looks, so the data-chosen winner is covered and the
+    # term is in the stated union bound (policy.delta_stated). Not shown ->
+    # `infeasible` (the existing veto path; the configuration is struck off).
+    dist_feas = _distributional_feasibility(pol, campaign, fin, by_idx, outcomes,
+                                            status, looks)
     # Any non-"ok" status is out of the running, whatever its reason: the
     # terminal comparison needs fresh usable samples and neither an inadmissible
     # nor an unmeasured finalist has them. The reason survives for the REPORT.
@@ -7208,6 +7394,17 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         bound = certificate.terminal_regret_bound(
             ok, best, delta=delta_t, direction=direction, paired=paired,
         )
+    # A5 (#321 P3 item 2): small-n diagnostics and the robust terminal family.
+    # Registered in the policy (absent in pre-P3 policies, which keep the
+    # t family alone). The robust family is max(t, sign-flip | bootstrap-t)
+    # per challenger at the same per-look Bonferroni level, so it is never
+    # narrower; the diagnostics can only withhold.
+    _robust_rule = pol["objective"].get("terminal_robustness")
+    noise_diag = None
+    if _robust_rule and best is not None and bound.value is not None:
+        bound, noise_diag = certificate.robust_terminal_bound(
+            ok, best, delta=delta_t, direction=direction, paired=paired,
+            rule=_robust_rule)
 
     # AN UNMEASURED FINALIST MAKES THE TERMINAL BOUND UNKNOWN, NOT SMALLER.
     #
@@ -7440,8 +7637,10 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         skip=model_inadequate or adequacy_unknown,
         delta_s=float(pol["objective"]["delta_screen"]),
         delta_c=pol["objective"].get("delta_constraint"),
+        delta_f=pol["objective"].get("delta_feasibility"),
         xhat_measured_infeasible=bool(_rec_for_bias.get("levels")) and
-        _measured_infeasible_contains(work_dir, dict(_rec_for_bias["levels"])))
+        _measured_infeasible_contains(work_dir, dict(_rec_for_bias["levels"])),
+        hetero_rule=pol["objective"].get("heteroscedasticity"))
     # #321 item 7: a charged campaign-wide budget whose share for THIS epoch is
     # exhausted certifies nothing (the epoch may still answer, uncertified).
     budget_exhausted = bool(((pol["objective"].get("campaign_delta") or {})
@@ -7454,6 +7653,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
         and not fit_bias and not model_inadequate and not refilled
         and not adequacy_unknown
+        and not (noise_diag or {}).get("withheld")
         and (bool(pareto_stage.objectives(pol)) or not model_reasons)
     )
     # NO ADMISSIBLE FINALIST is its own reason, not `bound_not_computable`. Every
@@ -7584,6 +7784,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("model_inadequate", model_inadequate),
                 (adequacy_reason, adequacy_unknown),
                 ("campaign_delta_exhausted", budget_exhausted),
+                *((r, True) for r in ((noise_diag or {}).get("withheld") or [])),
                 ("campaign_delta_exceeded", budget_exceeded),
             ) if hit
         ] + ([] if pareto_stage.objectives(pol) else model_reasons),
@@ -7598,6 +7799,10 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             "rule": "Bonferroni over the registered confirm looks: "
                     "delta_terminal / (confirm_max_rounds + 1 if the refill "
                     "branch is registered)"},
+        **({"noise_diagnostics": noise_diag} if noise_diag is not None else {}),
+        **({"distributional_feasibility": dist_feas} if dist_feas else {}),
+        **({"outliers": _confirm_outliers(ok, best, sign)}
+           if _robust_rule and best is not None else {}),
         **({"terminal_bound_measured_only": measured_only.as_dict()}
            if measured_only is not None else {}),
         **({"certification_caveats": ["finalist_measured_infeasible"]}
@@ -7615,6 +7820,13 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "excluded_unmeasured": [
             f["levels"] for f in fin if status[f["key"]] == "unmeasured"
         ],
+        # #321 P3 item 3 (A6): replicates that TIMED OUT, right-censored at
+        # run_timeout_sec and never imputed. A censored finalist is
+        # `unmeasured` above, so the round withholds (finalist_unmeasured).
+        **({"censored_replicates": {
+            k: {"count": n_c, **noise_mod_censored(direction, resolve_run_timeout(
+                (campaign.get("optimization") or {})))}
+            for k, n_c in sorted(_censored.items())}} if _censored else {}),
         # Legacy fields, kept because readers of the single-point record exist
         # (the harness's recommendation fallback, the guide's worked output, and
         # `_close_iteration`'s recommendation_levels). `confirmed_at_levels` is
@@ -7868,6 +8080,65 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         engine, campaign, work_dir, iter_dir, iteration, stage_name, pol, obs,
         recommendation_levels=dict(winner_levels) or None,
     )
+
+
+def _outlier_record(design_for_fit, ys, fit, fitted_ids, factors, direction,
+                    held_now, excluded, cmods, delta_c, interactions_dropped,
+                    omitted_terms, fit_pos, rec) -> dict:
+    """``effects.json["outliers"]`` (#321 P3 item 3): the flags, and the
+    sensitivity refit without the flagged rows."""
+    import dataclasses as _dc
+
+    from orchestrator.optimize import adequacy as adq
+    from orchestrator.optimize import noise as noise_mod
+
+    _l, _t, cols = adq.model_columns(
+        design_for_fit, tuple(fitted_ids),
+        include_interactions=not interactions_dropped, omit_terms=omitted_terms)
+    if (fit.lack_of_fit_p is not None and fit.lack_of_fit_p < 0.05) or \
+            fit.lof_exact == "rejected":
+        # The outlier test assumes the fitted model; when lack of fit rejects
+        # it, the large residuals are the misfit (curvature, a missing term),
+        # not outlying rows. Declined, named -- never a flag on misfit.
+        return {"method": "externally_studentized_bonferroni",
+                "alpha": noise_mod.OUTLIER_ALPHA, "df": None, "threshold": None,
+                "reason": "lack_of_fit_rejected", "studentized": [],
+                "flagged_rows": [], "deleted": False,
+                "policy": "not computed: the model the test assumes was rejected",
+                "sensitivity": None}
+    flags = noise_mod.studentized_outliers(cols, list(ys))
+    out = {k: flags[k] for k in ("method", "alpha", "df", "threshold", "reason")}
+    out["studentized"] = flags["rows"]
+    out["flagged_rows"] = [int(fit_pos[i]) for i in flags["flagged"]]
+    out["deleted"] = False
+    out["policy"] = ("flag only: every reported number keeps the flagged rows; "
+                     "the sensitivity refit below drops them")
+    if not flags["flagged"]:
+        out["sensitivity"] = None
+        return out
+    keep = [i for i in range(len(ys)) if i not in set(flags["flagged"])]
+    sens: dict = {"rows_dropped": out["flagged_rows"]}
+    try:
+        d2 = _dc.replace(design_for_fit,
+                         points=tuple(design_for_fit.points[i] for i in keep))
+        fit2 = fit_effects(d2, [ys[i] for i in keep], factor_ids=tuple(fitted_ids),
+                           include_interactions=not interactions_dropped,
+                           omit_terms=omitted_terms)
+        rec2 = decide.ranked(fit2, factors, direction=direction,
+                             fitted_ids=fitted_ids, held_fixed=held_now,
+                             exclude_levels=excluded, top=1,
+                             constraint_models=cmods, constraint_delta=delta_c)
+        lv2 = dict(rec2[0].levels) if rec2 else None
+        sens.update(recommendation=lv2,
+                    decision_changes=bool(lv2 is not None
+                                          and not _same_levels(lv2, dict(rec.levels))),
+                    lack_of_fit_p=fit2.lack_of_fit_p,
+                    pure_error_var=fit2.pure_error_var)
+    except (ValueError, ZeroDivisionError, OptimizationAborted) as exc:
+        sens.update(recommendation=None, decision_changes=None,
+                    reason=f"refit_not_computable: {exc}")
+    out["sensitivity"] = sens
+    return out
 
 
 def _front_model_half(pol, work_dir, rec: dict, par: dict, factors) -> dict | None:
@@ -8157,6 +8428,75 @@ def _carry_keys(summary: dict) -> set:
     return carry
 
 
+def _distributional_feasibility(pol, campaign, fin, by_idx, outcomes, status,
+                                looks) -> dict | None:
+    """Decide ``mean`` / ``chance`` constraints per finalist (#321 P3 item 3);
+    mutates ``status`` (``ok`` -> ``infeasible`` when not shown feasible)."""
+    from orchestrator.optimize import noise as noise_mod
+    from orchestrator.optimize.predicates import _resolve as _res
+
+    d_f = pol["objective"].get("delta_feasibility")
+    cons = [c for c in ((_opt_block(campaign) or {}).get("response") or {})
+            .get("constraints") or []
+            if isinstance(c, dict) and c.get("semantics", "every_replicate")
+            != "every_replicate"]
+    if not cons or d_f is None:
+        return None
+    level = float(d_f) / (max(1, len(fin)) * len(cons) * max(1, looks))
+    out = {"delta_feasibility": float(d_f), "per_test_level": level,
+           "rule": "each finalist shown feasible per distributional constraint "
+                   "at delta_feasibility / (finalists x constraints x looks)",
+           "finalists": {}}
+    vals: dict = {f["key"]: {i: [] for i in range(len(cons))} for f in fin}
+    for o in outcomes:
+        row = by_idx.get(o.row_index)
+        if row is None:
+            continue
+        key = f"f{(row.apply or {}).get('finalist', 0)}"
+        if key not in vals or o.status not in ("complete", "infeasible"):
+            continue
+        for i, c in enumerate(cons):
+            v = _res(str(c.get("metric") or c.get("observable")), o.response or {})
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                vals[key][i].append(float(v))
+    for f in fin:
+        k = f["key"]
+        verdicts = [dict(noise_mod.feasibility_shown(c, vals[k][i], level=level),
+                         metric=c.get("metric") or c.get("observable"))
+                    for i, c in enumerate(cons)]
+        shown = all(v["shown"] is True for v in verdicts)
+        out["finalists"][k] = {"shown_feasible": shown, "constraints": verdicts}
+        if not shown and status.get(k) == "ok":
+            status[k] = "infeasible"
+    return out
+
+
+def _confirm_outliers(ok: dict, best, sign: float) -> dict:
+    """``confirmation.json["outliers"]`` (#321 P3 item 3): flagged replicates,
+    never removed, and whether dropping them would change the winner."""
+    from statistics import mean as _mean_
+
+    from orchestrator.optimize import noise as noise_mod
+
+    rec = noise_mod.replicate_outliers(ok)
+    rec["deleted"] = False
+    if rec["flagged"]:
+        trimmed = {k: [v for i, v in enumerate(xs) if i not in set(rec["flagged"].get(k, []))]
+                   for k, xs in ok.items()}
+        alt = max(trimmed, key=lambda k: sign * _mean_(trimmed[k])) if trimmed else None
+        rec["sensitivity"] = {"winner_without_flagged": alt,
+                              "decision_changes": alt != best}
+    else:
+        rec["sensitivity"] = None
+    return rec
+
+
+def noise_mod_censored(direction: str, at_sec) -> dict:
+    from orchestrator.optimize import noise as _noise
+
+    return _noise.censored_bound(direction, at_sec)
+
+
 def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict | None:
     """``confirmation.json["gain_over_baseline"]`` (WP-A A3).
 
@@ -8245,7 +8585,9 @@ def _certificate_scope(rec: dict, boundary: dict | None,
 def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
                   bound, eps, *, delta_t: float, delta_s: float, skip: bool,
                   delta_c: float | None = None,
-                  xhat_measured_infeasible: bool = False) -> tuple[dict | None, list[str]]:
+                  delta_f: float | None = None,
+                  xhat_measured_infeasible: bool = False,
+                  hetero_rule: dict | None = None) -> tuple[dict | None, list[str]]:
     """``G = R_model_out + R_terminal`` and why it cannot certify (WP-A A1).
 
     See the A1 block in ``_finish_confirm`` and spec
@@ -8267,12 +8609,14 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
            "x_hat": dict(xhat), "x_hat_key": None,
            "delta_screen": delta_s, "delta_terminal_per_look": delta_t,
            **({"delta_constraint": delta_c} if delta_c is not None else {}),
+           **({"delta_feasibility": delta_f} if delta_f is not None else {}),
            "rule": "G = R_model_outside + R_terminal, R_model_outside the model "
                    "bound over the candidates OUTSIDE the measured shortlist; "
                    "certified needs G <= epsilon and the fitted argmax measured "
                    "admissibly in this round. Pr(certified and gap > epsilon) "
                    "<= delta_screen + delta_terminal (+ delta_constraint when "
-                   "constraint exclusion is registered) under the stated "
+                   "constraint exclusion is registered, + delta_feasibility "
+                   "when a distributional constraint is) under the stated "
                    "assumptions."}
     if not rec or not isinstance(r_model, (int, float)):
         return out, ["model_bound_not_computable"]
@@ -8303,7 +8647,60 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
     out["value"] = float(r_out) + float(bound.value)
     if eps is not None and out["value"] > eps:
         reasons.append("model_bound_above_epsilon")
+    if hetero_rule:
+        out["heteroscedasticity"], why = _heteroscedasticity_check(
+            rec, ok, hetero_rule)
+        if why:
+            reasons.append(why)
     return out, reasons
+
+
+def _heteroscedasticity_check(rec: dict, ok: dict, rule: dict) -> tuple[dict, str | None]:
+    """The M3 check (#321 P3 item 1): ``(record, withheld reason or None)``.
+
+    M3 says the fitting stage's pure error -- the centre replicates' variance
+    -- is the error variance at EVERY configuration, and the model bound uses
+    it for every challenger. Measured in P2: with sd growing from 1x at the
+    centre to (1 + h)x at the corners, the model bound misses the true gap at
+    0.023 / 0.11 / 0.53 for h = 1 / 3 / 8. The finalists are the only other
+    replicated configurations the epoch has, and they sit where the model
+    predicts the optimum, so their spread is the evidence that tests M3 where
+    it matters.
+
+    Brown-Forsythe's deviation scale (median-centred, structural zeros
+    removed), decided by the planned ONE-SIDED contrast "finalists spread more
+    than the pure-error cells" (``noise.brown_forsythe_contrast``) at the
+    REGISTERED level (``rule.alpha``, compiled before any data); the omnibus F
+    over every group is recorded beside it. A rejection withholds the
+    model half (``heteroscedastic_pure_error``). Fewer than two testable
+    groups, or a degenerate spread, withholds too
+    (``heteroscedasticity_not_testable``): the bound rests on M3, and an
+    untested assumption is not a satisfied one.
+
+    A VETO: it can only remove certificates, so ``Pr(certified and wrong)``
+    stays within the stated delta and no delta is spent. Its power is the
+    point and is measured, not proved (spec §7). Under CRN the finalists'
+    replicates share workload draws; the test then compares the raw spread
+    at each finalist, which is what the model bound's variance stands for.
+    """
+    from orchestrator.optimize import noise as noise_mod
+
+    cells = [list(map(float, g)) for g in (rec.get("pure_error_cells") or [])
+             if len(g) >= 2]
+    fin = {k: list(map(float, v)) for k, v in sorted(ok.items()) if len(v) >= 2}
+    test = noise_mod.brown_forsythe_contrast(cells, list(fin.values()))
+    omni = noise_mod.brown_forsythe(cells + list(fin.values()))
+    alpha = float(rule.get("alpha", 0.05))
+    record = {"alpha": alpha, "method": test["method"], "p": test["p"],
+              "t": test["t"], "df": test["df"],
+              "omnibus": {"method": omni["method"], "p": omni["p"], "w": omni["w"],
+                          "df": omni["df"]},
+              "pure_error_cells": len(cells), "finalists": sorted(fin),
+              "rejected": None if test["p"] is None else bool(test["p"] < alpha)}
+    if test["reason"] is not None:
+        record["reason"] = test["reason"]
+        return record, "heteroscedasticity_not_testable"
+    return record, ("heteroscedastic_pure_error" if record["rejected"] else None)
 
 
 def _refills_spent(pol, work_dir) -> int:
@@ -9230,6 +9627,30 @@ def _measured_infeasible(work_dir) -> list[dict]:
         for row in artifacts.read_runs(d):
             if row.get("status") in ("infeasible", "rejected") and row.get("levels"):
                 out.append(dict(row["levels"]))
+        out.extend(_distributionally_struck(d))
+    return out
+
+
+def _distributionally_struck(iter_dir: Path) -> list[dict]:
+    """Finalists a confirm round struck off because a distributional
+    constraint (``semantics: mean | chance``) was not SHOWN feasible (P3 review
+    M1). That verdict is a fact about the configuration from its replicates,
+    recorded only in confirmation.json -- no single row is infeasible -- so
+    the row scan above misses it and the report could hand one back."""
+    p = Path(iter_dir) / "confirmation.json"
+    if not p.exists():
+        return []
+    try:
+        conf = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return []
+    df = conf.get("distributional_feasibility") or {}
+    verdicts = df.get("finalists") or {}
+    out = []
+    for f in conf.get("finalists") or []:
+        v = verdicts.get(f.get("key"))
+        if v is not None and v.get("shown_feasible") is False and f.get("levels"):
+            out.append(dict(f["levels"]))
     return out
 
 

@@ -1049,6 +1049,82 @@ def _rule29_categorical_expansion(design: dict, factors: list[dict]) -> list[str
     return out
 
 
+def _rule32_confirm_replicate_floor(opt: dict) -> list[str]:
+    """Rule 32 (#321 P3, A5): confirm replicates against the registered floor.
+
+    The floor (``policy.replicate_floor``) is the smallest replicate count at
+    which the robust terminal bound exists at the per-look, per-challenger
+    level. Single-objective confirm withholds ``replicates_below_floor`` below
+    it, so a declared count under the floor gets a WARN naming that. Separately,
+    a ``design.max_runs`` too small for ONE confirm round at the replicate count
+    the campaign will actually use is an ERROR: the campaign could never reach
+    a certificate, and it must not silently run fewer replicates.
+    """
+    if (opt.get("response") or {}).get("objectives"):
+        return []
+    stages = opt.get("stages")
+    if isinstance(stages, list) and "confirm" not in stages:
+        return []
+    from orchestrator.optimize.policy import replicate_floor
+
+    try:
+        floor = replicate_floor(opt)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return []      # an invalid delta is rule 14's to report
+    design = opt.get("design") or {}
+    confirm = design.get("confirm") or {}
+    declared = confirm.get("replicates")
+    reps = declared if isinstance(declared, int) and not isinstance(declared, bool) \
+        and declared > 0 else floor
+    out: list[str] = []
+    if reps < floor:
+        out.append(
+            f"WARN: design.confirm.replicates={reps} is below the replicate floor "
+            f"{floor} (the smallest n at which the exact sign-flip terminal bound "
+            f"exists at delta_terminal / (looks x challengers)). Confirm will "
+            f"measure but withhold certification as replicates_below_floor. "
+            f"Raise it to >= {floor}, or omit it (the default is the floor).")
+    # A `chance:<a>` constraint is shown only when the one-sided
+    # Clopper-Pearson bound at delta_feasibility / (S C L) can reach a even
+    # with ZERO violations: n >= log(level) / log(1 - a).
+    import math as _m
+    pol_cfg = opt.get("policy") or {}
+    _dt = pol_cfg.get("delta_feasibility", pol_cfg.get("delta_terminal", 0.05))
+    _cons = (opt.get("response") or {}).get("constraints") or []
+    _dist = [c for c in _cons if isinstance(c, dict)
+             and c.get("semantics", "every_replicate") != "every_replicate"]
+    _seats0 = int(confirm.get("shortlist_size", 3)) + (
+        1 if opt.get("known_valid_baseline") else 0)
+    from orchestrator.optimize.policy import _registered_looks
+    for c in _dist:
+        sem = str(c.get("semantics"))
+        if not sem.startswith("chance:"):
+            continue
+        try:
+            a = float(sem.split(":", 1)[1])
+            level = float(_dt) / (_seats0 * len(_dist) * _registered_looks(opt))
+            need = _m.ceil(_m.log(level) / _m.log(1.0 - a))
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+        if reps < need:
+            out.append(
+                f"WARN: constraint {c.get('metric') or c.get('observable')!r} has "
+                f"semantics {sem}: the one-sided Clopper-Pearson bound at "
+                f"delta_feasibility / (finalists x constraints x looks) = {level:.3g} "
+                f"cannot reach {a} with fewer than {need} replicates even with no "
+                f"violation, so confirm with {reps} can never show it feasible. "
+                f"Raise design.confirm.replicates to >= {need}, or use semantics: mean.")
+    mr = design.get("max_runs")
+    seats = int(confirm.get("shortlist_size", 3)) + (
+        1 if opt.get("known_valid_baseline") else 0)
+    if isinstance(mr, int) and not isinstance(mr, bool) and mr > 0 and mr < seats * reps:
+        out.append(
+            f"design.max_runs ({mr}) cannot cover one confirm round: {seats} seat(s) x "
+            f"{reps} replicate(s) = {seats * reps} runs, before any screen run. "
+            f"Raise max_runs, or reduce design.confirm.shortlist_size.")
+    return out
+
+
 def _rule30_mixed_resolution_three_foldover(opt: dict, design: dict,
                                             factors: list[dict]) -> list[str]:
     """Rule 30: no resolution-III screen with a multi-level categorical while
@@ -2125,6 +2201,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule29_categorical_expansion(design, factors))
     errors.extend(_rule30_mixed_resolution_three_foldover(opt, design, factors))
     errors.extend(_rule26_objectives(opt))
+    errors.extend(_rule32_confirm_replicate_floor(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
     # locked_observables keys, and a WARN naming every unenforceable lock.

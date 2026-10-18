@@ -130,6 +130,15 @@ def synthetic_campaign(surface: Surface, **overrides) -> dict:
                    "confirm": {"replicates": 3}},
     }
     opt.update(overrides)
+    if not surface.objectives and "confirm" not in (overrides.get("design") or {}):
+        # #321 P3: the confirm replicate count a real author would declare is
+        # the A5 floor of THIS campaign (6 at the defaults, 7 once a declared
+        # constraint registers the refill look).
+        from orchestrator.optimize.policy import replicate_floor
+
+        opt["design"] = {**(opt.get("design") or {}),
+                         "confirm": {**((opt.get("design") or {}).get("confirm") or {}),
+                                     "replicates": replicate_floor(opt)}}
     return {
         "kind": "optimization",
         "run_id": f"synthetic-{surface.name}",
@@ -173,7 +182,8 @@ def _latest_iter_dirs(work_dir: Path) -> list[Path]:
 def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
                            campaign_overrides: dict | None = None,
                            campaign_top_level: dict | None = None,
-                           max_iterations: int = 8) -> SyntheticResult:
+                           max_iterations: int = 8,
+                           runner_options: dict | None = None) -> SyntheticResult:
     """Run every stage of a synthetic campaign and report the answer.
 
     ``parent_dir`` becomes ``NOUS_CAMPAIGN_PARENT`` for the duration of the
@@ -210,6 +220,7 @@ def run_synthetic_campaign(surface: Surface, *, seed: int, parent_dir: Path,
     runner = make_synthetic_runner(
         surface, seed=seed,
         seed_env=(campaign["optimization"].get("workload") or {}).get("seed_env"),
+        **(runner_options or {}),
     )
     path: list[str] = []
 

@@ -109,7 +109,10 @@ def test_constraint_models_never_seat_more_infeasible_finalists_or_answer_worse(
         assert (on.recommendation, on.basis, n_on) == (off.recommendation, off.basis, n_off)
 
 
-@pytest.mark.parametrize("seed", [1, 2, 3, 4, 5, 6])
+# Seed 4 left the list with #321 P3: its 7 confirm replicates are skewed enough
+# for the A5 pretest to withhold `noise_skewed` (a veto, measured cost ~25% on
+# Gaussian noise); seed 7 replaces it.
+@pytest.mark.parametrize("seed", [1, 2, 3, 5, 6, 7])
 def test_the_observed_defect_is_reproduced_without_models_and_gone_with_them(
     seed, tmp_path, monkeypatch,
 ):

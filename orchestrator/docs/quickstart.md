@@ -186,6 +186,14 @@ says which step catches it. **[static]** = `nous validate campaign`,
   `df = center_points − 1`. If `epsilon < MDE` it warns that certification
   will rest on confirm's paired replicates. In that case add confirm
   replicates, declare `workload.seed_env`, or add centre points. [live]
+- **Budget confirm at the replicate floor.** Single-objective confirm now
+  defaults to 6 replicates per finalist (7 with a declared constraint): the
+  smallest count at which the robust terminal bound exists. That is 3 × 6
+  runs per round, where it used to be 3 × 3. A `max_runs` that cannot cover
+  one round fails `nous validate`; fewer declared replicates withhold
+  `replicates_below_floor`. On a skewed metric (a tail latency) expect
+  `noise_skewed` until you raise replicates or transform the metric.
+  [static]
 - **Give the certificate enough noise df.** A certificate needs BOTH the
   terminal and the model regret bound within epsilon, and the model bound
   scales with `t(df)` over the pure-error df (`center_points − 1`). With 3-4

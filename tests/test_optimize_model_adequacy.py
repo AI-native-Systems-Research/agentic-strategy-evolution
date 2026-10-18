@@ -80,7 +80,10 @@ def test_smooth_surfaces_keep_their_power(name, tmp_path):
                                    parent_dir=tmp_path / str(seed))
         certified += bool(r.report.get("certified"))
         assert not _false_cert(r)
-    assert certified >= 6
+    # Was >= 6 of 8. #321 P3's A5 skewness pretest (a veto at the a-priori
+    # 0.25 of a preliminary test, Bancroft 1964) withholds ~25% of rounds on
+    # Gaussian noise by construction -- its measured cost (spec §7).
+    assert certified >= 4
 
 
 def test_saddle_withholds_on_the_model_bound(tmp_path):
@@ -246,7 +249,9 @@ def test_the_preview_counts_validation_runs_and_reports_efficiency():
 _REUSE = {"design": {"screen": {"resolution": 5, "center_points": 4},
                      "refine": {"kind": "central_composite", "center_points": 4,
                                 "reuse_screen": True},
-                     "confirm": {"replicates": 3}}}
+                     # #321 P3: the confirm default is the A5 floor; the arms
+                     # compared below must share it.
+                     "confirm": {"replicates": 6}}}
 
 
 def _fresh_runs(work_dir) -> int:
