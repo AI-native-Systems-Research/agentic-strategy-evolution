@@ -257,12 +257,12 @@ Guide, "Model adequacy: documented limits", item 1:
 > **Power is local to ±0.5.**
 
 **(e) Limits** (WP-B §6, all in the guide):
-- power is local to ±0.5, so a narrow peak between points can pass;
+- power beyond ±0.5: an outer ring at ±0.8 (#321 P4; `corner_bumps` 0/4 -> 4/4 rejections); a feature narrower than the point spacing can still pass;
 - the check's denominator is centre pure error, which is M3 again;
-- an α cost of about 5% on true quadratics, with no multiplicity correction across lack of fit plus validation;
-- no validation points at screen or foldover;
-- snapping on `levels_only` knobs can cancel a validation point;
-- V is slightly too small when the objective model is fitted on a subset;
+- Holm across lack of fit + validation at family-wise α (#321 P4): smooth-surface certificates 55 -> 67 of 144, non-quadratic false certificates 0/64 on both sides;
+- opt-in validation at screen (#321 P4); none at foldover, which still rests on the centre points;
+- snapping: a candidate that snaps onto a composite point is declined and named (#321 P4);
+- V is built from the rows actually fitted (#321 P4);
 - **the Pareto path ignores a validation rejection** (`modelled` and `shortlist_plan` do not read it).
 
 A non-quadratic surface still converges to a fixed wrong answer. It is now

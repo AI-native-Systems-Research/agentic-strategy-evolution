@@ -3586,6 +3586,23 @@ def _run_stage_body(
         payload = matrix.matrix_payload(design, factors, run_order_seed=iteration)
         rows = matrix.expand(design, factors)
         _n_val = sum(1 for p in design.points if p.role == "validation")
+        if not _n_val and stage_name == Stage.REFINE.value:
+            # #321 P4: points were registered but EVERY candidate snapped onto
+            # a composite point (a coarse levels_only lattice): declined, named.
+            _rcfg0 = design_cfg.get("refine") or {}
+            _plan0 = _validation_plan(factors, design, _rcfg0, stage_name)
+            from orchestrator.optimize import adequacy as _adq0
+
+            if (_adq0.n_validation_points(_rcfg0, len(design.factor_ids))
+                    or _adq0.n_validation_outer_points(_rcfg0, len(design.factor_ids))):
+                payload["validation"] = {
+                    "rule": "seeded_greedy_maximin", "points": 0,
+                    "ring": _plan0["ring"], "row_indices": [],
+                    "points_declined": _plan0["declined"],
+                    "declined_reason": "every_candidate_snaps_onto_a_design_point",
+                    "held_out_of_fit": True,
+                    "check": "joint_predictive_F_chow_1960",
+                    "alpha": _adq0.VALIDATION_ALPHA}
         if _n_val:
             # WP-B B1: the validation rows are their OWN BLOCK, executed after
             # every composite row in a separately seeded order. The composite's
@@ -5227,7 +5244,8 @@ def _run_stage_body(
         adequacy_basis, decision, val_rows, val_outcomes, val_ys,
         response_spec, primary, _omodels, blocks=blocks_for_fit,
         adequacy_rule=(pol.get("objective") or {}).get("adequacy"),
-        val_meta={k: payload["validation"][k] for k in ("ring", "points_declined")
+        val_meta={k: payload["validation"][k]
+                  for k in ("ring", "points_declined", "declined_reason")
                   if k in (payload.get("validation") or {})})
     _write_json(iter_dir / "recommendation.json", {
         "stage": stage_name,
@@ -9291,6 +9309,13 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
             rec.setdefault("validation_objectives", {})[metric] = oc
             if oc.get("p") is not None:
                 tests.append((f"validation_prediction:{metric}", oc["p"]))
+    if (stage_name == Stage.REFINE.value and not stage_val and val_meta
+            and val_meta.get("declined_reason")):
+        rec["validation"] = {
+            "alpha": adq.VALIDATION_ALPHA, "method": "joint_predictive_F_chow_1960",
+            "points_measured": 0, "points_registered": 0, "rejected": None,
+            "reason": "no_validation_point_runnable",
+            "points_declined": val_meta.get("points_declined") or []}
     if fam_cfg:
         fam = adq.adequacy_family(tests, alpha=float(fam_cfg["alpha"]),
                                   method=str(fam_cfg["method"]))
