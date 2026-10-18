@@ -1345,19 +1345,27 @@ def test_a_partial_fits_uncertainty_is_compared_against_the_full_fit_exactly(
         )
         assert e.ci_high - e.ci_low > 0
 
-    # And on a design with one corner dropped the SE rises by exactly the
-    # factor the column sum of squares changes by -- an ABSOLUTE claim, not a
-    # ratio between two possibly-both-wrong numbers.
+    # And on a design with one corner dropped the SE is the EXACT
+    # sigma sqrt((X'X)^-1_jj) of the rows that remain -- an ABSOLUTE claim, not a
+    # ratio between two possibly-both-wrong numbers. (This used to pin
+    # sqrt(pe / (n_corners - 1)), the per-column formula, which is NOT the SE
+    # once a corner is lost: the columns stop being orthogonal. The P8 expert
+    # audit measured the model family at 0.085 against 0.05 on that arithmetic;
+    # see test_optimize_exact_second_order.py.)
     import dataclasses
+    import numpy as np
     keep = [i for i in range(len(full.points)) if i != 0]
-    part = fit_effects(
-        dataclasses.replace(full, points=tuple(full.points[i] for i in keep)),
-        [ys[i] for i in keep], factor_ids=_IDS,
-    )
-    for e in part.effects:
+    part_design = dataclasses.replace(full, points=tuple(full.points[i] for i in keep))
+    part = fit_effects(part_design, [ys[i] for i in keep], factor_ids=_IDS)
+    X = np.array([[1.0] + [math.prod(p.coded[_IDS.index(t)] for t in ts)
+                           for ts in part.term_terms[1:]] for p in part_design.points])
+    C = np.linalg.inv(X.T @ X)
+    for j, e in zip(range(1, X.shape[1]), part.effects):
         if len(e.terms) != 1:
             continue
-        assert e.se == pytest.approx(math.sqrt(pe / (n_corners - 1)), rel=1e-12), e
+        exact = math.sqrt(pe * C[j, j])
+        assert e.se == pytest.approx(exact, rel=1e-9), e
+        assert e.se > math.sqrt(pe / (n_corners - 1)), e   # wider than per-column
 
 
 def test_a_rank_deficient_subset_drops_interactions_rather_than_aborting(
