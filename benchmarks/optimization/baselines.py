@@ -121,6 +121,18 @@ def gp_mean_recommendation(log: Log, coder: Coder, seed: int = 0) -> dict | None
     return feas[int(np.argmax(mu))]
 
 
+def crude_mean_recommendation(log: Log, coder: Coder) -> dict | None:
+    """GP-BO-crude's pick on ``log``: the measured point (any feasibility, as
+    the audit's probe) with the best crude-posterior mean."""
+    pts = [r[0] for r in log.rows if r[1] is not None]
+    if not pts:
+        return None
+    X = np.array([coder(lv) for lv in pts])
+    y = np.array([r[1] for r in log.rows if r[1] is not None])
+    mu, _ = G.crude_posterior(X, y, X)
+    return pts[int(np.argmax(mu))]
+
+
 def _random_point(ax, rng):
     return {f["id"]: rng.choice(vals) for f, vals in ax}
 
@@ -137,8 +149,17 @@ def _lhs(ax, n, rng):
 
 
 def _finish(log, coder, seed):
+    # ``log`` rides along so the benchmark can read the method's anytime curve
+    # (its recommendation on every prefix of its own measurements).
     return {"best_observed": best_observed(log),
-            "gp_mean": gp_mean_recommendation(log, coder, seed)}
+            "gp_mean": gp_mean_recommendation(log, coder, seed), "log": log}
+
+
+def prefix(log: Log, n: int) -> Log:
+    """The method's log after its first ``n`` measurements."""
+    out = Log()
+    out.rows = log.rows[:n]
+    return out
 
 
 def random_search(surface, name, budget, rng):
@@ -296,7 +317,7 @@ def gp_bo_crude(surface, name, budget, rng):
     mu, _ = G.crude_posterior(Gx[[i for i, _ in ok]], np.array([v for _, v in ok]),
                               Gx[[i for i, _ in ok]])
     rec = grid[ok[int(np.argmax(mu))][0]]
-    return {"best_observed": best_observed(log), "gp_mean": rec}, tgt.n
+    return {"best_observed": best_observed(log), "gp_mean": rec, "log": log}, tgt.n
 
 
 METHODS = {

@@ -203,3 +203,25 @@ def true_regret(surface: Surface, rec: dict | None, tr: dict) -> tuple[float, st
         return tr["best"] - tr["worst"], "infeasible"
     # Not clamped: a recommendation off the truth grid can beat its optimum.
     return tr["best"] - surface.fn(rec), "ok"
+
+
+# ── multi-objective surfaces (the MO arm) ───────────────────────────────────
+def mo_surfaces() -> dict[str, Callable[[], Surface]]:
+    """``PARETO_SURFACES`` plus ``ALLOCATE_SURFACES["pareto_three_discrete"]``
+    when the checkout has it (WP-D P6b). Absent on code before P6b: the
+    surface is then listed as unavailable, never silently dropped."""
+    from orchestrator.optimize import synthetic as _syn
+
+    out = dict(_syn.PARETO_SURFACES)
+    alloc = getattr(_syn, "ALLOCATE_SURFACES", {}) or {}
+    if "pareto_three_discrete" in alloc:
+        out["pareto_three_discrete"] = alloc["pareto_three_discrete"]
+    return out
+
+
+MO_WANTED = [*__import__("orchestrator.optimize.synthetic", fromlist=["x"]).PARETO_SURFACES,
+             "pareto_three_discrete"]
+
+
+def get_mo(name: str) -> Surface:
+    return mo_surfaces()[name]()
