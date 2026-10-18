@@ -277,7 +277,10 @@ def test_single_objective_seats_a_new_configuration_and_judges_it_freshly(tmp_pa
         k = json.dumps(x["levels"], sort_keys=True)
         assert k not in before and fin[k]["n"] == 7 and fin[k]["why"].startswith("allocate:")
     assert c2["alpha_spending"]["looks"] == 2       # the look the branch registered
-    assert not (r.report.get("certified") and r.true_gap > r.report["epsilon"])
+    # Not vacuous (review M3): this run ends UNcertified, so state that, and
+    # the answer is still within epsilon of the truth.
+    assert r.report["certified"] is False
+    assert r.true_gap <= r.report["epsilon"]
 
 
 def test_a_model_that_expects_no_gain_spends_no_round(tmp_path):
@@ -619,3 +622,26 @@ def test_an_allocator_crash_is_a_named_decline_not_a_lost_round(tmp_path, monkey
     assert r.report.get("recommendation")
     assert not any(t["rule"].get("accounting") == ALLOCATE_ACCOUNTING
                    for t in _transitions(r.work_dir))
+
+
+@pytest.mark.parametrize("seed", [3, 4])
+def test_the_allocate_round_itself_certifies_soundly(seed, tmp_path):
+    """Review M3: a case where the ALLOCATE ROUND is the round that certifies.
+    saddle at half the noise: round 1 does not certify, the allocate rule
+    fires, and the allocate round (with its model-chosen seats measured
+    freshly) certifies -- within epsilon of the true optimum."""
+    import dataclasses
+
+    s = dataclasses.replace(SURFACES["saddle"](), noise_sd=0.025)
+    r = run_synthetic_campaign(s, seed=seed, parent_dir=tmp_path,
+                               campaign_overrides=_with_allocate(s))
+    trans = _transitions(r.work_dir)
+    i = next(k for k, t in enumerate(trans)
+             if t["rule"].get("accounting") == ALLOCATE_ACCOUNTING)
+    after = trans[i + 1]
+    assert after["from"] == "confirm" and after["observations"]["certified"] is True
+    cs = _confirmations(r.work_dir)
+    assert cs[0]["certified"] is False and cs[-1]["certified"] is True
+    assert any(f["why"].startswith("allocate:") for f in cs[-1]["finalists"])
+    assert r.report["certified"] is True                       # non-vacuous
+    assert not (r.report["certified"] and r.true_gap > r.report["epsilon"] + 1e-9)
