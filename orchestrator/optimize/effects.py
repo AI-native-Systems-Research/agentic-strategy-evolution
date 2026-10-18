@@ -35,8 +35,11 @@ vs. 0.288675 from the per-column formula). So every SECOND-ORDER fit (and
 every mixed or blocked fit) takes its SEs and covariance from the exact
 ``(X'X)^-1`` (``_exact_inference``): the certificate's model regret bound is
 gated on contrasts that involve the quadratics, and the per-column shortcut
-would understate it. First-order fits keep the per-column formula, which is
-exact for their orthogonal columns.
+would understate it. So does every first-order fit whose columns are NOT
+orthogonal -- a two-level design that lost rows (failed, rejected, censored or
+infeasible-excluded corners) or whose centres are coded off the origin (P8
+expert audit). Only a fit with a diagonal ``X'X`` keeps the per-column formula,
+which is exact there.
 """
 from __future__ import annotations
 
@@ -602,6 +605,23 @@ def fit_effects(design: Design, responses, *, factor_ids,
         built, quads, extra = _exact_inference(
             design, labels, terms, cols, coefs, built, quads, quad_start,
             alias_classes, pe_var, pe_df, tcrit, have_se, alpha)
+    elif not mixed and not _columns_orthogonal(cols):
+        # A FIRST-ORDER fit whose columns are NOT orthogonal (found by the P8
+        # expert audit; the P2 review's L6). The per-column SE
+        # sigma / sqrt(sum x^2) is exact only for a column orthogonal to every
+        # other one, which holds on the full balanced two-level design and
+        # breaks as soon as it loses rows -- a failed, rejected, censored or
+        # infeasible-excluded corner -- or when centre rows are coded off the
+        # origin at the levels that ran. The model regret bound's contrasts
+        # then use an understated SE: measured on a 2^3 screen with 4 centres
+        # and two opposite corners lost, the model family's worst-case
+        # Pr(E_s fails) was 0.085 against a nominal 0.05 (exact: 0.031). So
+        # every non-orthogonal fit takes the exact (X'X)^-1. A full orthogonal
+        # design keeps the per-column arithmetic, which is exact there and
+        # keeps its recorded values byte-identical.
+        built, quads, extra = _exact_inference(
+            design, labels, terms, cols, coefs, built, quads, quad_start,
+            alias_classes, pe_var, pe_df, tcrit, have_se, alpha)
     if mixed:
         built, quads, extra = _exact_inference(
             design, labels, terms, cols, coefs, built, quads, quad_start,
@@ -685,6 +705,20 @@ def fit_effects(design: Design, responses, *, factor_ids,
         pure_error_cells=extra_cells,
         **extra,
     )
+
+
+def _columns_orthogonal(cols) -> bool:
+    """Is ``X'X`` diagonal (intercept included)? Then the per-column SE
+    ``sigma / sqrt(sum x^2)`` equals the exact ``sigma sqrt((X'X)^-1_jj)``
+    and every contrast's variance is ``sum se_j^2 d_j^2``. Tolerance relative
+    to the column norms, so float coding noise does not count."""
+    sq = [sum(v * v for v in c) for c in cols]
+    for i in range(len(cols)):
+        for j in range(i + 1, len(cols)):
+            dot = sum(a * b for a, b in zip(cols[i], cols[j]))
+            if abs(dot) > 1e-9 * math.sqrt(max(sq[i] * sq[j], 1e-300)):
+                return False
+    return True
 
 
 def _invert(a: list[list[float]]) -> list[list[float]]:
@@ -805,9 +839,9 @@ def prediction_variance(fit: Fit, xa: dict, xb: dict | None = None) -> float | N
     ``(X'X)^-1`` covariance (``xb=None``: the variance of the estimated MEAN
     response at ``xa``, intercept included -- a CONFIDENCE, not a prediction,
     interval quantity: no new-observation variance is added), or ``None`` when
-    the fit carries no covariance (every two-level fit, whose consumers keep
-    their per-term arithmetic, exact only for columns orthogonal to all
-    others)."""
+    the fit carries no covariance (a fit with a diagonal ``X'X``, whose
+    consumers keep their per-term arithmetic, exact there; every
+    non-orthogonal fit carries it)."""
     if fit.covariance is None or not fit.pure_error_var:
         return None
     def row(x):

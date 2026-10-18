@@ -888,7 +888,7 @@ What the validation check and the sticky verdict do NOT do (spec
 6. **Efficiency: D, G and I (#321 P4).** `model_adequacy.design_efficiency` records D-efficiency `|X'X/n|^(1/p)` and centred VIFs, plus G-efficiency `p / max SPV` and the I-criterion `i_average_spv` (the average scaled prediction variance `n f'(X'X)^-1 f` over the coded region; Atkinson, Donev & Tobias 2007, §10.6, §11.4), all from the same exact `(X'X)^-1`. I is exact (region moments, uniform on [-1, 1] per numeric axis, {-1, +1} per two-level choice factor). No I-efficiency RATIO is reported, because no closed-form I-optimal reference exists for a general model; compare `i_average_spv` between designs of one model (smaller is better). G is exact for first-order + 2fi models (max at a vertex, `g_exact: true`). With quadratic terms it is a max over a 5-level grid polished by coordinate ascent, so it is an upper bound (`g_exact: false`); past a fixed budget the evaluation set is a seeded sample (`g_seed`). Declined, named `g_i_declined`, for multi-level categorical contrasts, where the region is not a cube. Measured on the k = 2 face-centred CCD with 4 centres: D = 0.408, G = 0.632 (max SPV 9.5), I = 3.633. These are on the coded scale of the design as run. A rotatable CCD (axial α = (2^k)^(1/4) > 1) codes its axial points beyond ±1, outside the [-1, 1] region G and I are taken over, so its leverage there is not part of G. Nous's refine composite is face-centred: its axial points are clamped to ±1, so it stays inside the region.
 7. **Under `screen_rejection_unresolved`** (reachable only with `validation_points: 0`), the report's `model` rung still answers with the model's argmax. Certification is withheld.
 8. **Snapping (#321 P4).** Points are chosen among their images as run. Each candidate is decoded to a runnable level (grid or `levels_only` snap, clamp) and re-coded. A candidate whose image is a composite point (the fit interpolates it, so it tests nothing) or another chosen point's image is declined, and the maximin takes the next-best. `design_matrix.validation` records `planned_coded`, `as_run_coded` and `points_declined`. When every candidate collapses (e.g. two `levels_only` knobs on {2, 8, 16}), nothing runs, `declined_reason: every_candidate_snaps_onto_a_design_point`, and the check is `no_validation_point_runnable`. A refine cannot then overturn a screen rejection (`screen_rejection_unresolved`).
-9. **V from the rows actually fitted (#321 P4).** `V = I + X_v (X'X)^-1 X_v'` uses the fit's own exact covariance (every second-order, blocked or mixed fit carries it; the leading block of the inverse over model and nuisance columns) or the fitted rows' matrix. An objective model fitted on a subset (a metric missing on some rows) uses its own rows (`ObjectiveModel.positions`). `v_from` records which.
+9. **V from the rows actually fitted (#321 P4).** `V = I + X_v (X'X)^-1 X_v'` uses the fit's own exact covariance (every second-order, blocked, mixed or otherwise non-orthogonal fit carries it, a two-level fit that lost rows included; the leading block of the inverse over model and nuisance columns) or the fitted rows' matrix. An objective model fitted on a subset (a metric missing on some rows) uses its own rows (`ObjectiveModel.positions`). `v_from` records which.
 10. **The Pareto path and a rejected model (fixed in #321).** `shortlist_plan` reads the epoch's `model_adequate`: when it is false, round 1 seats no predicted extreme and no predicted preferred point; each objective's measured best and the measured nondominated points take those seats (up to `max(K, shortlist_size // 2)`), and the predicted front's spread fills the rest, as on the single-objective ladder. Predicted rivals stay in the front statuses: a rival can only remove confidence, so that is the conservative side. Certification is withheld (`model_inadequate`) as before. Cost: on `pareto_with_constraint` seed 3 the measured anchor makes a constraint-boundary point preferred, a later round strikes it off, and the hypervolume drops 0.967 -> 0.952 (1 of 16 seeds).
 11. **The mixed-fit V and nuisance columns.** V now comes from the fit's covariance, whose leading block already accounts for the centre indicators and block term (fixed with limit 9).
 12. **`reuse_screen` with a choice factor is a validation error (rule 33), and partial reuse across choice slices is rejected.** Refine fits one slice of each choice factor. A screen row at another level of that factor carries the factor's effect and its interactions with the refined numerics, and the per-slice model has no column for either, so reusing the row biases the slice fit. A block term absorbs only a constant shift between slices, never those interactions (Box & Draper 2007, §15.3: blocking assumes additive block effects; `test_a_block_term_cannot_absorb_a_choice_by_numeric_interaction` shows a slice slope of 6 pooled to 2). Reusing only the rows AT the held level would be unbiased, but it is declined: at most 1/L of the screen's corners lie on the slice, and the screen's centres cycle the choice levels, so the slice has too few block-1 centres to estimate the block effect.
@@ -2667,11 +2667,14 @@ not a rung at all.
 - `residual_regret_model` — the **model bound**, a simultaneous one-sided
   upper bound on how much better any challenger could still be *under the
   registered response class*, at `delta_screen`. Method
-  `bonferroni_one_sided_t`. It carries the response-model assumption.
+  `bonferroni_one_sided_t` or `scheffe_one_sided`, whichever constant is
+  smaller (below). It carries the response-model assumption.
 - `residual_regret_terminal` — the **terminal bound**, computed from the
   fresh finalist measurements only, at `delta_terminal`. Method
-  `bonferroni_one_sided_t_paired` under common random numbers, else
-  `bonferroni_one_sided_welch_t`. It does not depend on the fitted model at
+  `bonferroni_max_t_paired_sign_flip` under common random numbers, else
+  `bonferroni_max_welch_bootstrap_t` (the robust family, limit 1 below; a
+  policy compiled before #321 P3 records `bonferroni_one_sided_t_paired` /
+  `bonferroni_one_sided_welch_t`). It does not depend on the fitted model at
   all.
 
 **A certificate needs an adequate model behind the shortlist (INV-SEM17).**
@@ -2685,9 +2688,12 @@ measured leaders and a rejected ranking, so nothing supports that premise:
 the campaign reports `terminal_best` with `certification_withheld:
 ["model_inadequate"]` and still reports the within-shortlist bound. The cost
 is honest and bounded: on a surface the response class does describe, the
-checks falsely reject at about their alpha, and those campaigns lose a
-certificate they would have earned (measured after WP-B: the validation check
-rejects a smooth surface 1-3 times in 40; see the model-adequacy spec). If
+checks falsely reject at about their alpha EACH, and those campaigns lose a
+certificate they would have earned. Under the default per-test veto, lack of
+fit or the validation check rejects a true quadratic on a k = 2 composite in
+0.068-0.072 of designs (3 x 4000), and the verdict is sticky over every fitting
+stage, so an epoch's false-rejection rate is higher still (model adequacy limit
+3). If
 your factor is geometric, `scale: log` is usually what makes the model
 adequate.
 
@@ -2707,7 +2713,8 @@ With a declared constraint that has a violating side (`<`, `<=`, `>`, `>=`,
 no `when`), constraint models may drop candidates they predict confidently
 infeasible. Wrongly dropping the true constrained optimum is a third,
 separate risk, so the statement becomes `1 − delta_screen − delta_terminal −
-delta_constraint`. `optimization.policy.delta_constraint` sets it (default:
+delta_constraint` (and `− delta_feasibility` when a `mean` or `chance`
+constraint is declared; see "Constraint semantics" below). `optimization.policy.delta_constraint` sets it (default:
 `delta_screen`, Bonferroni over the modelled constraints); `report.json`
 records it as `delta_constraint`, and `error_budget` sums it.
 
@@ -2779,8 +2786,8 @@ to 1 (every fitting stage searched; WP-B oracle, 288 campaigns): 0 → 77
 certificates, 0 false. Cost: well under a second at 4 knobs, about 5 s at 6 knobs
 (converges), and up to about 10 s per fitting stage at 8-16 knobs, where it
 does not converge and the bound is the valid looser one. Many-knob campaigns are no longer vetoed. They still usually withhold
-on width (`model_bound_above_epsilon`; `sparse_knobs` 5-8: R_model 0.76 against
-ε 0.50 at 3 pure-error df). The remedy is more centre points.
+on width (`model_bound_above_epsilon` in 32 of 36 `sparse_knobs` 5/6/8
+campaigns at 3 pure-error df, true regret at most 0.08). The remedy is more centre points.
 - `model_recommendation_not_compared` / `model_recommendation_infeasible`:
   the fitted argmax was not measured admissibly in the final round, so the
   model bound cannot be linked to the winner.
@@ -3012,15 +3019,17 @@ as a mismatch. A revised design is a new epoch: resume recompiles one.
 
 `error_budget` gives the family-wise figure. Each epoch spends
 `delta_screen + delta_terminal` (+ `delta_constraint` when constraint-model
-exclusion is registered), and every epoch after the first was compiled
+exclusion is registered, + `delta_feasibility` when a `mean` or `chance`
+constraint is), and every epoch after the first was compiled
 after the earlier epochs' data were seen. `cumulative` is therefore the union
 bound over every epoch on the work dir, and `report.md` prints it beside the
 per-epoch deltas. Read it with three qualifications:
 
 - It is valid only under each epoch's own response-model assumptions. It does
-  not cover misspecification. Before model adequacy (WP-B) the benchmark's
-  non-quadratic family showed 22 of 22 false certificates at a nominal 0.10;
-  WP-B's validation check withholds those (0 of 48 after), but the bound is
+  not cover misspecification. History, not current behaviour: before
+  model adequacy (WP-B) the benchmark's non-quadratic family showed 22 of 22
+  false certificates at a nominal 0.10. The current checks withhold every one
+  of them (0 certificates of 48 in the regenerated benchmark), but the bound is
   still a statement CONDITIONAL on the response class the checks did not reject.
 - An earlier epoch's deltas are recovered by recompiling its registered campaign
   with the current Nous (`deltas_from` says which).
@@ -3113,9 +3122,12 @@ What a certificate does NOT cover (spec
 2026-10-17-certification-soundness.md §7):
 
 1. **Small-n noise (A5, #321 P3).** The terminal bound is now, per
-   challenger, the larger of the t bound and a robust one: the exact
-   sign-flip bound (Hartigan 1969) on paired differences under CRN, the
-   bootstrap-t (Hall 1988) otherwise. Two vetoes sit beside it. Confirm
+   challenger, the larger of the t bound and a robust one: the sign-flip
+   bound (Hartigan 1969) on paired differences under CRN, exact when the
+   differences are symmetric about their centre (the skewness pretest below is
+   the guard on that assumption, and it is approximate under CRN), and the
+   bootstrap-t (Hall 1988) otherwise, which is second-order accurate, not
+   exact. Two vetoes sit beside it. Confirm
    withholds `replicates_below_floor` below the registered replicate floor
    (the smallest n at which the sign-flip bound exists at the per-look,
    per-challenger level: 6 at the defaults, 7 with a declared constraint).
