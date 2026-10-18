@@ -213,8 +213,10 @@ def _allocate_constants(work_dir: Path) -> dict:
 
 
 #: The per-iteration inputs every fitted artifact is derived from: the rows,
-#: the registered design, and the test verdicts verify reconciled.
-INPUT_FILES = ("runs.jsonl", "design_matrix.json", "relations.json")
+#: the registered design, and the test verdicts verify reconciled; and, only
+#: when the opt-in allocate branch wrote one, the seats round r registered for
+#: round r+1 (``allocation.json``, WP-D D1 / P6b review H1).
+INPUT_FILES = ("runs.jsonl", "design_matrix.json", "relations.json", "allocation.json")
 
 
 def input_hashes(work_dir: Path) -> dict[str, str]:

@@ -106,6 +106,43 @@ def is_allocate_round(pol: dict, work_dir) -> bool:
     return bool(trans) and _rule_accounting(trans[-1]) == policy_mod.ALLOCATE_ACCOUNTING
 
 
+def seats_digest(seats) -> str:
+    """sha256 of the registered seats (canonical JSON). Round r records it in
+    its transition's observations (``allocate_seats_sha256``) and writes the
+    record to ``runs/iter-r/allocation.json`` (a hashed provenance input), so
+    an edit to the seats after registration is detected before they run."""
+    import hashlib
+
+    return hashlib.sha256(json.dumps(seats or [], sort_keys=True, default=str)
+                          .encode()).hexdigest()
+
+
+def registered_seats(pol: dict, work_dir, conf: dict | None) -> list[dict]:
+    """The seats ``conf`` (the previous round's confirmation.json) registered,
+    VERIFIED against the digest the transition out of that round recorded.
+    Raises ``OptimizationGateFailed`` naming the file on a mismatch: what runs
+    must be what was registered before the transition fired (P6b review H1)."""
+    from orchestrator.optimize import policy as policy_mod
+    from orchestrator.optimize.stage_runner import OptimizationGateFailed
+
+    seats = ((conf or {}).get("allocation") or {}).get("seats") or []
+    if not seats:
+        return []
+    it = (conf or {}).get("iteration")
+    row = next((t for t in reversed(policy_mod.epoch_transitions(pol, Path(work_dir)))
+                if t.get("iteration") == it and t.get("from") == "confirm"), None)
+    want = ((row or {}).get("observations") or {}).get("allocate_seats_sha256")
+    got = seats_digest(seats)
+    if want != got:
+        raise OptimizationGateFailed(
+            f"runs/iter-{it}/confirmation.json: the allocate seats on disk "
+            f"(sha256 {got[:12]}) are not the seats registered when the round "
+            f"closed (transitions.jsonl iteration {it} records "
+            f"{str(want)[:12] if want else 'no digest'}). The registered seats "
+            f"were edited after registration; refusing to measure them.")
+    return seats
+
+
 def _read(p: Path) -> dict | None:
     try:
         return json.loads(p.read_text()) if p.exists() else None

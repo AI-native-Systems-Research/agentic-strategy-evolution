@@ -59,6 +59,7 @@ DOCUMENTED_NON_BRANCHING = frozenset({
     "behavioral_violation",         # reporting key, deliberately never branched
     "runs_needed_foldover",         # magnitude behind foldover_affordable
     "runs_needed_confirm",          # magnitude behind confirm_affordable
+    "allocate_seats_sha256",        # digest of the registered allocate seats (P6b H1)
     "residual_regret", "epsilon",   # reported into report.json
     "model_adequate",               # read by _confirm_rows, not by a `when`
     "all_within_noise",             # reaches findings.json

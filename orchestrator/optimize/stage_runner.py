@@ -6276,8 +6276,8 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         where they were registered before the transition fired. Selected on
         the model's predictions; measured here on fresh replicates like every
         other finalist, and judged only on those."""
-        alloc = ((_latest_confirmation(work_dir) or {}).get("allocation") or {})
-        for s_ in alloc.get("seats") or []:
+        for s_ in _alloc_seat.registered_seats(pol, work_dir,
+                                               _latest_confirmation(work_dir)):
             _add(s_.get("levels"), s_.get("why") or "allocate")
 
     if pareto_stage.objectives(pol):
@@ -6304,6 +6304,9 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             # look or the gap-fill branch registered, never a refill or plain
             # top-up round.
             _prev_conf = {k_: v_ for k_, v_ in _prev_conf.items() if k_ != "allocation"}
+        elif _prev_conf and (_prev_conf.get("allocation") or {}).get("seats"):
+            # P6b review H1: verified against the registered digest (raises).
+            _alloc_seat.registered_seats(pol, work_dir, _prev_conf)
         for lv, why, measured in pareto_stage.shortlist_plan(
                 pol, work_dir, rec, rnd, _prev_conf):
             if lv in finalists:
@@ -7992,6 +7995,10 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         summary["allocation"] = _alloc_seat.plan(
             pol, work_dir, factors, summary, _rec_for_bias)
     _write_json(iter_dir / "confirmation.json", summary)
+    if "allocation" in summary:
+        # A hashed provenance input (provenance.INPUT_FILES): the seats the
+        # next round reads, so an edit is visible to check_inputs / anchor.
+        _write_json(iter_dir / "allocation.json", summary["allocation"])
     # `shortlist.json` is the name spec §3.9's artifact table gives this
     # record. Written as a pointer rather than a copy so there is exactly one
     # source of truth for the finalists and their measurements.
@@ -8078,6 +8085,11 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         obs["allocate_available"] = bool(
             _alloc_live and not summary.get("certified")
             and ((summary.get("allocation") or {}).get("seats")))
+        if "allocation" in summary:
+            # P6b review H1: the registered seats' digest, anchored in the
+            # transition row; the next round verifies it before seating.
+            obs["allocate_seats_sha256"] = _alloc_seat.seats_digest(
+                summary["allocation"].get("seats"))
     if "pareto" in summary:
         # The PREFERENCE scalarisation's terminal pair (spec step 7), and the
         # gap-fill branch's own observation (step 6).

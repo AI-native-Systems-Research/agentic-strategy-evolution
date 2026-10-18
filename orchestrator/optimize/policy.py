@@ -54,6 +54,10 @@ OBSERVATION_KEYS: frozenset[str] = frozenset({
     # `confirmation.json["allocation"]["seats"]` -- derived in the runtime,
     # like `refill_available`. Produced only when the branch is registered.
     "allocate_available",
+    # Its companion, NEVER branched on: the sha256 of the seats round r
+    # registered, anchored in the transition row so round r+1 can verify the
+    # seats before measuring them (P6b review H1). A REPORTING key.
+    "allocate_seats_sha256",
     # `behavioral_violation` is INTENTIONALLY never read by a compiled `when`
     # clause, and the intent is the one `stage.decide_after_screen` states in
     # its own words: "Behavioral violations are reported but never block

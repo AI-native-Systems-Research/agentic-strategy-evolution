@@ -406,3 +406,80 @@ def test_the_allocator_constants_are_recorded_when_declared(tmp_path):
     c = r.report["provenance"]["analysis_constants"]
     assert c["allocate.POOL_CAP"] == allocate.POOL_CAP
     assert c["allocate.MC_SEED"] == allocate.MC_SEED
+
+
+# ── P6b review fix round ─────────────────────────────────────────────────────
+
+def _to_allocate_round(s, tmp_path, seed=1, **design_over):
+    """Run ``s`` until the allocate rule has fired (the allocate round not yet
+    run); returns the work_dir. saddle seed 1 reaches it at iteration 4."""
+    r = run_synthetic_campaign(s, seed=seed, parent_dir=tmp_path,
+                               campaign_overrides=_with_allocate(s, **design_over),
+                               max_iterations=4)
+    assert _transitions(r.work_dir)[-1]["rule"].get("accounting") == ALLOCATE_ACCOUNTING
+    return r.work_dir
+
+
+def test_edited_registered_seats_are_refused_not_measured(tmp_path):
+    """Review H1 (probe tamper.py). Edit the seats round r registered: the
+    allocate round refuses to measure them (naming the file), and the edit is
+    visible to the provenance input hashes."""
+    from orchestrator.optimize import provenance
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import OptimizationGateFailed, _confirm_rows
+
+    s = SURFACES["saddle"]()
+    wd = _to_allocate_round(s, tmp_path)
+    h0 = provenance.input_hashes(wd)
+    assert any(k.endswith("/allocation.json") for k in h0)
+    p1 = sorted(wd.glob("runs/iter-*/confirmation.json"),
+                key=lambda p: int(p.parent.name.split("-")[1]))[-1]
+    c1 = json.loads(p1.read_text())
+    c1["allocation"]["seats"] = [{"levels": {"A": 9, "B": 2}, "why": "allocate: hand-picked",
+                                  "score": 1.0}]
+    p1.write_text(json.dumps(c1))
+    a1 = p1.parent / "allocation.json"
+    a1.write_text(json.dumps(c1["allocation"]))
+    assert provenance.input_hashes(wd) != h0
+    pol = json.loads((wd / "policy.json").read_text())
+    factors = parse_factors(synthetic_campaign(s)["optimization"]["factors"])
+    with pytest.raises(OptimizationGateFailed, match=p1.parent.name + "/confirmation.json"):
+        _confirm_rows(pol, wd, factors, "m", "maximize", 99)
+
+
+def test_edited_registered_seats_are_refused_multi_objective(tmp_path):
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import OptimizationGateFailed, _confirm_rows
+
+    s = ALLOCATE_SURFACES["pareto_three_discrete"]()
+    d = copy.deepcopy(synthetic_campaign(s)["optimization"]["design"])
+    d["confirm"]["shortlist_size"] = 4
+    d["confirm"]["allocate"] = {"seats": 2}
+    r = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path, max_iterations=4,
+                               campaign_overrides={"design": d,
+                                                   "policy": {"confirm_max_rounds": 2}})
+    wd = r.work_dir
+    p1 = sorted(wd.glob("runs/iter-*/confirmation.json"),
+                key=lambda p: int(p.parent.name.split("-")[1]))[-1]
+    c1 = json.loads(p1.read_text())
+    assert c1["allocation"]["seats"]
+    c1["allocation"]["seats"][0]["levels"] = {"A": 2, "B": 2, "C": 2}
+    p1.write_text(json.dumps(c1))
+    pol = json.loads((wd / "policy.json").read_text())
+    factors = parse_factors(synthetic_campaign(s)["optimization"]["factors"])
+    with pytest.raises(OptimizationGateFailed, match="confirmation.json"):
+        _confirm_rows(pol, wd, factors, "f1", "maximize", 99)
+
+
+def test_an_allocate_campaign_reanalyzes_identically(tmp_path):
+    """allocation.json is a hashed input; replaying the campaign re-derives it
+    (and every other artifact) identically."""
+    from orchestrator.optimize.reanalyze import reanalyze
+
+    s = SURFACES["saddle"]()
+    r = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path,
+                               campaign_overrides=_with_allocate(s))
+    assert any(t["rule"].get("accounting") == ALLOCATE_ACCOUNTING
+               for t in _transitions(r.work_dir))
+    res = reanalyze(r.work_dir)
+    assert res.identical, (res.differences, res.input_changes)
