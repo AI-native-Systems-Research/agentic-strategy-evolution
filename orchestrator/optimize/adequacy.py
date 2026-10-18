@@ -64,36 +64,107 @@ def _dist2(a, b) -> float:
     return sum((x - y) ** 2 for x, y in zip(a, b))
 
 
-def validation_points(k: int, m: int, seed: int) -> list[tuple[float, ...]]:
-    """``m`` coded points in ``{-0.5, +0.5}^k`` by seeded greedy maximin.
+#: #321 P4 item 2: the OUTER validation ring's coded offset. A quadratic
+#: through {-1, 0, 1} misses a cubic most at |x| = 1/sqrt(3) = 0.58 (the inner
+#: ring) and a quartic at 1/sqrt(2) = 0.71; features near the faces and corners
+#: (a second peak, a cliff close to an edge) lie beyond both. 0.8 is the
+#: interior point closest to the faces that a grid of 7+ steps per half-range
+#: still resolves off the lattice.
+VALIDATION_OUTER_OFFSET = 0.8
+DEFAULT_VALIDATION_OUTER_POINTS = 2
 
-    Deterministic in ``(k, m, seed)``. The candidate set is enumerated up to
-    k = 12 (4096 points) and sampled (4096 seeded sign vectors) above, so the
-    size is bounded before anything is enumerated (RESOURCE-PROTOCOL rule 4).
-    """
-    if m <= 0 or k <= 0:
-        return []
-    rng = random.Random(f"validation:{seed}")
-    o = VALIDATION_OFFSET
+
+def _sign_candidates(k: int, o, rng) -> list[tuple[float, ...]]:
+    """``{-o_j, +o_j}`` per axis; ``o`` is one offset or one per axis."""
+    offs = list(o) if isinstance(o, (list, tuple)) else [float(o)] * k
     if k <= _ENUMERATE_UP_TO_K:
-        cands = [tuple(o * s for s in signs)
-                 for signs in itertools.product((-1.0, 1.0), repeat=k)]
-    else:
-        seen: set = set()
-        cands = []
-        while len(cands) < _SAMPLE:
-            c = tuple(o * rng.choice((-1.0, 1.0)) for _ in range(k))
-            if c not in seen:
-                seen.add(c)
-                cands.append(c)
-    chosen = [cands[rng.randrange(len(cands))]]
-    while len(chosen) < min(m, len(cands)):
-        rest = [c for c in cands if c not in chosen]
-        score = [min(_dist2(c, p) for p in chosen) for c in rest]
+        return [tuple(oj * s for oj, s in zip(offs, signs))
+                for signs in itertools.product((-1.0, 1.0), repeat=k)]
+    seen: set = set()
+    cands = []
+    while len(cands) < _SAMPLE:
+        c = tuple(oj * rng.choice((-1.0, 1.0)) for oj in offs)
+        if c not in seen:
+            seen.add(c)
+            cands.append(c)
+    return cands
+
+
+def _greedy_maximin(cands, m, rng, chosen=(), key=None, forbidden=(), declined=None):
+    """Greedy maximin over ``cands`` given the points already ``chosen``.
+
+    ``key(c)`` is a candidate's image AS RUN (its snapped coded point). A
+    candidate whose image is in ``forbidden`` (a design point) or equals the
+    image of a point already chosen is skipped, and the next-best candidate
+    takes its seat; distances are measured between images, so the maximin is
+    over the points that will actually run."""
+    key = key or (lambda c: c)
+    used = set(forbidden) | {key(c) for c in chosen}
+    pool_img = [key(c) for c in chosen]
+    out: list = []
+    live = [c for c in cands if key(c) not in used]
+    if declined is not None:
+        declined.extend(c for c in cands if key(c) in set(forbidden))
+    if not live or m <= 0:
+        return out
+    if not chosen:
+        first = live[rng.randrange(len(live))]
+        out.append(first)
+        used.add(key(first))
+        pool_img.append(key(first))
+    while len(out) < m:
+        rest = [c for c in live if c not in out and key(c) not in used]
+        if not rest:
+            break
+        score = [min(_dist2(key(c), q) for q in pool_img) for c in rest]
         top = max(score)
         ties = [c for c, s in zip(rest, score) if s == top]
-        chosen.append(ties[rng.randrange(len(ties))])
-    return chosen
+        pick = ties[rng.randrange(len(ties))]
+        out.append(pick)
+        used.add(key(pick))
+        pool_img.append(key(pick))
+    return out
+
+
+def validation_points(k: int, m: int, seed: int, *, outer: int = 0,
+                      outer_offset: float = VALIDATION_OUTER_OFFSET,
+                      key=None, forbidden=(), offsets=None,
+                      declined=None) -> list[tuple[float, ...]]:
+    """``m`` coded points in ``{-0.5, +0.5}^k`` by seeded greedy maximin, then
+    ``outer`` points in ``{-outer_offset, +outer_offset}^k`` chosen by the same
+    greedy maximin against EVERY point already chosen (#321 P4 item 2).
+
+    Deterministic in its arguments. The candidate set is enumerated up to
+    k = 12 (4096 points) and sampled (4096 seeded sign vectors) above, so the
+    size is bounded before anything is enumerated (RESOURCE-PROTOCOL rule 4).
+    The outer ring draws from its own seeded stream. ``key``/``forbidden``
+    (``stage_runner``): a candidate's image as run, and the design points'
+    images; a candidate that SNAPS onto a design point or onto another chosen
+    point is declined and the next-best takes its seat, so fewer than
+    ``m + outer`` points come back only when the candidates run out.
+    ``offsets`` replaces the inner ring's 0.5 per axis.
+    """
+    if k <= 0:
+        return []
+    rng = random.Random(f"validation:{seed}")
+    inner = (_greedy_maximin(_sign_candidates(
+        k, VALIDATION_OFFSET if offsets is None else offsets, rng), m, rng,
+        key=key, forbidden=forbidden, declined=declined) if m > 0 else [])
+    if outer <= 0:
+        return inner
+    rng2 = random.Random(f"validation_outer:{seed}")
+    return inner + _greedy_maximin(_sign_candidates(k, float(outer_offset), rng2),
+                                   outer, rng2, chosen=inner, key=key,
+                                   forbidden=forbidden, declined=declined)
+
+
+def n_validation_outer_points(refine_cfg: dict | None, k: int) -> int:
+    """The registered outer-ring count (``design.refine.validation_outer_points``,
+    default ``DEFAULT_VALIDATION_OUTER_POINTS``), at most 2^k."""
+    raw = (refine_cfg or {}).get("validation_outer_points",
+                                 DEFAULT_VALIDATION_OUTER_POINTS)
+    m = max(0, int(raw))
+    return min(m, 2 ** k) if k < 31 else m
 
 
 # ── linear algebra on small dense matrices (p <= ~45) ───────────────────────
@@ -379,11 +450,25 @@ def prediction_check(fit, cols, terms, points, *, alpha: float = VALIDATION_ALPH
         return {**base, "rejected": None, "reason": "no_validation_point_measured"}
     if not s2 or s2 <= 0 or df <= 0:
         return {**base, "rejected": None, "reason": "no_pure_error"}
-    allc = list(cols) + [list(c) for c in nuisance]
-    try:
-        inv = _invert(_xtx(allc))
-    except ValueError:
-        return {**base, "rejected": None, "reason": "singular_model"}
+    # V from the rows ACTUALLY FITTED (#321 P4 item 2; WP-B limits 9, 11).
+    # A fit that carries its exact covariance (every second-order, blocked or
+    # mixed fit) supplies (X'X)^-1 over its own rows -- the leading block of
+    # the inverse over model + nuisance columns (block term, centre
+    # indicators), which is the marginal covariance a validation point (at 0
+    # on every nuisance column) needs. Otherwise ``cols`` must be the fitted
+    # rows' model matrix (``fit_matrix``).
+    if getattr(fit, "covariance", None) is not None and getattr(fit, "term_terms", ()):
+        inv = [list(r) for r in fit.covariance]
+        terms = list(fit.term_terms)
+        nuisance = ()
+        v_source = "fit_covariance"
+    else:
+        allc = list(cols) + [list(c) for c in nuisance]
+        try:
+            inv = _invert(_xtx(allc))
+        except ValueError:
+            return {**base, "rejected": None, "reason": "singular_model"}
+        v_source = "fitted_rows"
     from orchestrator.optimize.decide import predict
 
     def row(coded):
@@ -391,7 +476,7 @@ def prediction_check(fit, cols, terms, points, *, alpha: float = VALIDATION_ALPH
                 + [0.0] * len(nuisance))
 
     xs = [row(c) for c, _y in points]
-    p = len(allc)
+    p = len(inv)
     e = [float(y) - predict(fit, c) for c, y in points]
     hv = [[sum(xs[a][i] * inv[i][j] * xs[b][j] for i in range(p) for j in range(p))
            for b in range(m)] for a in range(m)]
@@ -409,7 +494,54 @@ def prediction_check(fit, cols, terms, points, *, alpha: float = VALIDATION_ALPH
                     "pi_half_width": half,
                     "outside_bonferroni_pi": abs(ei) > half})
     return {**base, "df": [m, df], "f": fval, "p": pval, "rejected": pval < alpha,
-            "bonferroni_t": tcrit, "points": per}
+            "bonferroni_t": tcrit, "points": per, "v_from": v_source}
+
+
+def fit_matrix(fit, design, factor_ids) -> list[list[float]]:
+    """The model matrix ``fit`` SOLVED, rebuilt from its own terms on
+    ``design``'s points (the rows that fit was fitted on)."""
+    ids = list(factor_ids)
+    idx = {f: i for i, f in enumerate(ids)}
+    terms = [()] + [e.terms for e in list(fit.effects) + list(fit.quadratic)]
+    return [[math.prod(float(pt.coded[idx[t]]) for t in ts) for pt in design.points]
+            for ts in terms], terms
+
+
+#: #321 P4 item 2: the registered adequacy family -- Holm (1979) across every
+#: adequacy TEST of a fitting stage (lack of fit and the validation check, for
+#: the primary and every objective model), so Pr(a true model is declared
+#: inadequate) <= ADEQUACY_ALPHA. Vetoes (an exact rejection against zero pure
+#: error, an objective model that could not be estimated) are not tests: they
+#: reject outright.
+ADEQUACY_ALPHA = 0.05
+ADEQUACY_METHOD = "holm"
+
+
+def adequacy_family(tests, *, alpha: float = ADEQUACY_ALPHA,
+                    method: str = ADEQUACY_METHOD) -> dict:
+    """``tests``: ``[(name, p)]``; ``p is None`` = not computed (outside the
+    family). Returns ``{method, alpha, family_size, tests: [{name, p,
+    p_adjusted, rejected}], rejected: [names]}``."""
+    from orchestrator.optimize.effects import holm
+
+    live = [(n, float(p)) for n, p in tests if p is not None]
+    m = len(live)
+    if method == "holm":
+        rej = holm([p for _n, p in live], alpha)
+    elif method == "per_test":
+        rej = [p < alpha for _n, p in live]
+    else:
+        raise ValueError(f"unknown adequacy multiplicity method {method!r}")
+    order = sorted(range(m), key=lambda i: live[i][1])
+    adj = [0.0] * m
+    run = 0.0
+    for r, i in enumerate(order):
+        run = max(run, min(1.0, (m - r) * live[i][1]))
+        adj[i] = run if method == "holm" else live[i][1]
+    rows = [{"name": n, "p": p, "p_adjusted": a, "rejected": bool(x)}
+            for (n, p), a, x in zip(live, adj, rej)]
+    return {"method": method, "alpha": alpha, "family_size": m, "tests": rows,
+            "rejected": [r["name"] for r in rows if r["rejected"]]}
 
 
 def epoch_verdict(stage_verdicts) -> tuple[object, list, str | None]:

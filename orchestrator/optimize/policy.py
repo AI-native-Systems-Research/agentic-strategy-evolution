@@ -466,6 +466,10 @@ def delta_stated(policy: dict) -> float:
 LEGACY_PRE_P3 = __import__("contextvars").ContextVar("nous_legacy_pre_p3", default=False)
 
 
+#: #321 P4 item 2: refine's default outer-ring validation count (beyond +-0.5).
+_ADQ_OUTER_DEFAULT = 2
+
+
 def screen_selection(design: dict | None) -> dict:
     """The registered screening-multiplicity rule (#321 P4 item 1).
 
@@ -552,6 +556,9 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             "accounting": "per_term_t_on_pure_error",
             # #321 P4 item 1: the survivor rule as ONE registered family.
             "selection": screen_selection(design),
+            # #321 P4 item 2: off-lattice validation points at screen (opt-in).
+            "validation_points": max(0, int((design.get("screen") or {}).get(
+                "validation_points", 0))),
         },
         "report": {"spends": False, "terminal": True},
         "exception": {"spends": False, "terminal": True, "ends_epoch": True},
@@ -588,7 +595,12 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                        "validation_seed": int((design.get("refine") or {}).get(
                            "validation_seed", 0)),
                        "reuse_screen": bool((design.get("refine") or {}).get(
-                           "reuse_screen", False))},
+                           "reuse_screen", False)),
+                       # #321 P4 item 2: the outer ring beyond +-0.5.
+                       "validation_outer_points": max(0, int((design.get("refine") or {}).get(
+                           "validation_outer_points", _ADQ_OUTER_DEFAULT))),
+                       "validation_outer_offset": float((design.get("refine") or {}).get(
+                           "validation_outer_offset", 0.8))},
             "estimator": "ols_normal_equations",
             "accounting": ("per_term_t_on_pure_error; validation points held out, "
                            "joint predictive F at alpha 0.05 (a rejection makes "
@@ -925,6 +937,17 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # the data-chosen winner is covered. Registered from the
             # declaration only. Defaults to delta_terminal.
             **({"delta_feasibility": _df} if _feasibility_registered(opt) else {}),
+            # #321 P4 item 2: the adequacy family. Holm (1979) across every
+            # adequacy TEST of a fitting stage (lack of fit, the validation
+            # check; primary and each objective model) at family-wise alpha,
+            # so a true model is called inadequate w.p. <= alpha. A VETO on
+            # the model half (certification needs adequate), so it spends no
+            # delta; its alpha is the CERTIFICATE'S POWER cost, not its error.
+            "adequacy": {"method": str(pol_cfg.get("adequacy_multiplicity", "holm")),
+                         "alpha": float(pol_cfg.get("adequacy_alpha", 0.05)),
+                         "tests": "lack_of_fit and validation_prediction, primary "
+                                  "and every objective model, per fitting stage",
+                         "role": "veto: a rejection makes model_adequate false"},
             # #321 item 7: the charged cross-epoch mode, when declared.
             **({"campaign_delta": cd_block} if cd_block is not None else {}),
             # #321 P3 item 1: the Brown-Forsythe check of M3 (pure error is

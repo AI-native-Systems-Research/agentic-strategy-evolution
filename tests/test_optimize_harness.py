@@ -930,8 +930,10 @@ def test_the_refine_stage_is_located_by_effects_json_not_by_iteration_number(tmp
     # Both stages are found, and each is found where its own artifact says.
     assert _levels_explored_at_stage(res.work_dir, "screen", "A") == {2, 9, 16}
     # Refine also runs its off-lattice VALIDATION block at coded +-0.5
-    # (A = 5.5 -> 6 and 12.5 -> 12 on the grid of 1; WP-B B1).
-    assert _levels_explored_at_stage(res.work_dir, "refine", "A") == {2, 6, 9, 12, 16}
+    # (A = 5.5 -> 6 and 12.5 -> 12 on the grid of 1; WP-B B1), and since #321
+    # P4 an outer ring at +-0.8 (A = 3.4 -> 3 and 14.6 -> 15).
+    assert _levels_explored_at_stage(res.work_dir, "refine", "A") == {
+        2, 3, 6, 9, 12, 15, 16}
 
     # The per-factor level SETS coincide on this surface (axial points at coded
     # +/-1 snap to the declared extremes on a grid of 1), so the discriminator
@@ -949,9 +951,11 @@ def test_the_refine_stage_is_located_by_effects_json_not_by_iteration_number(tmp
             for line in (it / "runs.jsonl").read_text().splitlines() if line.strip()
         }
 
-    # The four axial pairs, plus the four validation points at coded +-0.5.
+    # The four axial pairs, the four validation points at coded +-0.5, and
+    # the #321 P4 outer ring at +-0.8 (maximin from the inner four).
     assert _pairs("refine") - _pairs("screen") == {
-        (2, 9), (9, 2), (9, 16), (16, 9), (6, 6), (6, 12), (12, 6), (12, 12)}
+        (2, 9), (9, 2), (9, 16), (16, 9), (6, 6), (6, 12), (12, 6), (12, 12),
+        (3, 3), (15, 3)}
 
 
 def test_locating_a_stage_that_never_ran_fails_loudly(tmp_path):

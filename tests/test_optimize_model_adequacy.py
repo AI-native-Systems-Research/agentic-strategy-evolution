@@ -91,8 +91,12 @@ def test_saddle_withholds_on_the_model_bound(tmp_path):
     model bound over the unshortlisted candidates exceeded epsilon on every
     one of them. Now withheld, named, and never wrong. Since #321 H3 (the
     Scheffe constant, 5.3 against Bonferroni's 6.7-12 at df 3) the model half
-    is narrow enough to certify on one seed (6: {A: 16, B: 11}, which TIES
-    the optimum, gap 0.0); every other seed is withheld on the model half."""
+    is narrow enough to certify on some seeds. Since #321 P4 (Holm across
+    lack of fit + validation, the outer ring) 3/8 certify: seeds 2 and 5 had
+    lack of fit p = 0.033 / 0.030, a per-test rejection of a TRUE quadratic
+    that the two-test Holm family (thresholds 0.025, 0.05) does not make; seed
+    4 is the one H3 already certified with the new design. Every certificate
+    has gap 0.0; every other seed is withheld on the model half."""
     certified = 0
     for seed in SEEDS:
         r = run_synthetic_campaign(SURFACES["saddle"](), seed=seed,
@@ -103,24 +107,26 @@ def test_saddle_withholds_on_the_model_bound(tmp_path):
             certified += 1
             continue
         assert "model_bound_above_epsilon" in w or "model_inadequate" in w, w
-    assert certified <= 2
+    assert certified <= 3
 
 
 def test_validation_rows_are_registered_held_out_and_reconciled(tmp_path):
     """Refine pre-registers 4 off-lattice points at coded +-0.5 (A, B in
-    {5.5 -> 6, 12.5 -> 12} on bowl's grid), runs them as their own block AFTER
-    the composite, and holds them out of the fit."""
+    {5.5 -> 6, 12.5 -> 12} on bowl's grid) and, since #321 P4, a 2-point
+    outer ring at +-0.8 (9 -+ 5.6 = 3.4, 14.6 -> 3, 15 on the grid), runs them as
+    their own block AFTER the composite, and holds them out of the fit."""
     r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
     d = _refine_dir(r.work_dir)
     dm = json.loads((d / "design_matrix.json").read_text())
     eff = json.loads((d / "effects.json").read_text())
     val = [row for row in dm["rows"] if row["role"] == "validation"]
-    assert len(val) == 4
-    assert {(v["levels"]["A"], v["levels"]["B"]) for v in val} == {
-        (6, 6), (6, 12), (12, 6), (12, 12)}
+    assert len(val) == 6 and dm["validation"]["ring"] == {"inner": 4, "outer": 2}
+    lv = [(v["levels"]["A"], v["levels"]["B"]) for v in val]
+    assert set(lv[:4]) == {(6, 6), (6, 12), (12, 6), (12, 12)}
+    assert all(a in (3, 15) and b in (3, 15) for a, b in lv[4:]), lv
     idx = sorted(v["row_index"] for v in val)
     assert dm["validation"]["row_indices"] == idx
-    assert dm["run_order"][-4:] and sorted(dm["run_order"][-4:]) == idx
+    assert dm["run_order"][-6:] and sorted(dm["run_order"][-6:]) == idx
     assert eff["held_out_rows"]["row_indices"] == idx
     assert eff["n_runs"] + len(idx) == len(dm["rows"])
 
@@ -180,7 +186,7 @@ def test_without_validation_refine_cannot_overturn_a_screen_rejection(tmp_path):
     epoch verdict is UNKNOWN, screen_rejection_unresolved, and nothing certifies."""
     ov = {"design": {"screen": {"resolution": 5, "center_points": 4},
                      "refine": {"kind": "central_composite", "center_points": 4,
-                                "validation_points": 0},
+                                "validation_points": 0, "validation_outer_points": 0},
                      "confirm": {"replicates": 3}}}
     r = run_synthetic_campaign(NON_QUADRATIC["step_cliff"](), seed=1,
                                parent_dir=tmp_path, campaign_overrides=ov)
@@ -238,8 +244,9 @@ def test_the_preview_counts_validation_runs_and_reports_efficiency():
     camp = synthetic_campaign(SURFACES["bowl"]())
     pv = build_preview(camp, noise_sd=0.05, mean=20.0, run_secs=[1.0])
     refine = next(s for s in pv.stages if s.stage == "refine")
-    assert refine.runs == 12 + 4
-    assert "4 off-lattice validation point(s)" in refine.note
+    # #321 P4: 4 at +-0.5 plus the 2-point outer ring at +-0.8.
+    assert refine.runs == 12 + 6
+    assert "6 off-lattice validation point(s)" in refine.note
     text = "\n".join(format_preview(pv))
     assert "screen design: D-efficiency" in text and "refine design: D-efficiency" in text
 

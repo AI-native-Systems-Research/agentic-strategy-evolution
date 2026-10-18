@@ -1250,6 +1250,19 @@ properties:
                 type: integer
                 minimum: 0
                 description: "Replicated center-point runs, giving a pure-error estimate for the lack-of-fit test. Default: 0."
+              validation_points:
+                type: integer
+                minimum: 0
+                description: >
+                  #321 P4 (opt-in, default 0): off-lattice validation points
+                  at the screen -- +-0.5 on every numeric factor with a
+                  runnable interior, +-1 on the rest, seeded maximin, held out
+                  of the screen fit and checked against it (joint predictive
+                  F) in the adequacy family. Not built for a mixed-level
+                  screen or one with no interior. Never part of the foldover.
+              validation_seed:
+                type: integer
+                description: "Seed of the screen validation maximin (default 0)."
               multiplicity:
                 type: string
                 enum: [holm, per_test]
@@ -1298,6 +1311,20 @@ properties:
               validation_seed:
                 type: integer
                 description: "Seed of the maximin tie-breaks (default 0)."
+              validation_outer_points:
+                type: integer
+                minimum: 0
+                description: >
+                  #321 P4: the OUTER validation ring (default 2): points at
+                  +-validation_outer_offset on every refinable axis, chosen by
+                  the same seeded maximin against the +-0.5 points already
+                  chosen, held out and tested in the same joint predictive F.
+                  Power beyond +-0.5 (features near the faces).
+              validation_outer_offset:
+                type: number
+                exclusiveMinimum: 0.5
+                exclusiveMaximum: 1
+                description: "Coded offset of the outer ring (default 0.8)."
               reuse_screen:
                 type: boolean
                 description: >
@@ -1578,6 +1605,22 @@ properties:
                 anyOf:
                   - {type: string, enum: [geometric]}
                   - {type: array, minItems: 1, items: {type: number, exclusiveMinimum: 0}}
+          adequacy_multiplicity:
+            type: string
+            enum: [holm, per_test]
+            description: >
+              #321 P4: how a fitting stage's adequacy TESTS (lack of fit, the
+              validation check; primary and every objective model) combine.
+              ``holm`` (default): Holm's step-down at adequacy_alpha
+              family-wise, so a true model is called inadequate w.p. <=
+              adequacy_alpha. ``per_test``: any test at adequacy_alpha rejects
+              (the pre-P4 rule; family-wise up to m x alpha). A veto on the
+              model half: it spends no delta.
+          adequacy_alpha:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 0.5
+            description: "Family-wise level of the adequacy tests (default 0.05)."
           delta_feasibility:
             type: number
             exclusiveMinimum: 0

@@ -949,8 +949,13 @@ def test_a_multi_objective_refill_round_never_certifies(tmp_path):
     longer predicted rivals.)"""
     from orchestrator.optimize.policy import REFILL_ACCOUNTING
 
+    # #321 P4: the outer validation ring measures (3, 3), an ADMISSIBLE
+    # configuration (2A + B = 9 <= 12), so confirm would seat it and no seat
+    # would vacate. The refill rule is what this test pins, so the ring is
+    # off here (the premise "only (2, 2) is measured admissible" needs it).
     ov = {"design": {"screen": {"resolution": 5, "center_points": 4},
-                     "refine": {"kind": "central_composite", "center_points": 4},
+                     "refine": {"kind": "central_composite", "center_points": 4,
+                                "validation_outer_points": 0},
                      "confirm": {"replicates": 3, "shortlist_size": 3}},
           "policy": {"confirm_max_rounds": 1}}
     sole = 0
