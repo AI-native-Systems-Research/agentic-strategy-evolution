@@ -91,25 +91,58 @@ under `nous-e2e/bin/heavy`):
 ## Protocol
 
 - **Budget.** For each (surface, noise multiplier, seed), Nous runs first.
-  - N is its total MEASURED rows: every `runs/iter-*/runs.jsonl` row, failed
-    and infeasible ones included. Rows refine copied from the screen
-    (`reused_from.stage`) cost nothing and are not counted.
+  - N is its count of FRESH measurements, from
+    `benchmarks/optimization/measured.py`. That is the one counter every arm
+    and the crash path use. Failed, infeasible and rejected rows count.
+  - Copies do not count. Two kinds of row carry `reused_from` and are
+    excluded: a refine row filled from the screen (`reused_from.stage`), and
+    a row a resumed iteration carried forward (`reused_from.iteration`).
   - Every baseline gets exactly N measurements of the same surface, under the
-    same noise model, over the same candidate axes the oracle's truth is
-    enumerated on (declared levels plus nine snapped points per gridded
-    numeric). A failed measurement still costs a run.
+    same noise model, over the SAME candidate domain Nous can recommend from
+    (next bullet). A failed measurement still costs a run.
   - A Nous campaign that crashes is charged the worst admissible regret, and
-    its baselines get the runs it spent. None crashed in any section.
+    its baselines get the runs it spent.
   - Each ablation arm and each multi-objective arm is compared at its OWN N.
+- **Candidate domain and truth (one for every method).** `surfaces.lattice_axis`
+  defines the domain per factor:
+  - a choice or `levels_only` numeric: its declared levels;
+  - a two-level numeric: its declared pair (Nous never interpolates one);
+  - a refinable numeric with `grid: g`: every multiple of g in [min, max],
+    plus the declared levels. `decode_coded` snaps any fitted or design value
+    onto that lattice, so Nous can recommend any of them;
+  - a refinable numeric with no grid: a dense grid of 201 points, to a
+    tolerance of half the spacing. No suite surface has one.
+
+  The truth (the optimum, its value and the worst admissible value) is
+  enumerated over that lattice, and it is the same for every method. The
+  lattice is sized before it is enumerated and capped at 2,000,000 points.
+  The largest are the geometric knobs, at 1,032,256.
+
+  **Change from the previous version (P7 review H3).** The truth and the
+  baselines used nine snapped points per gridded axis
+  (`synthetic.candidate_grid`), while Nous could recommend any lattice point.
+  An audit of every surface found:
+
+  | surface | old grid optimum | lattice optimum | effect |
+  |---|---|---|---|
+  | `two_peaks` | 14.754 | (14, 3) = 15.653 | Nous's (15, 3) was scored 0.364 against the grid; its real regret is 1.263 |
+  | `sparse_knobs` 6/8/12 | X00 = 12, 25.07 | X00 = 13, 25.08 | +0.01 |
+  | `geometric_knob(_log)` | (8, 2048) = 100.0 | (8, 2048) = 100.0 | none. Nous recommends off the old grid (for example INT 7, BUF 1869), and those points were already scored by their own value: off-grid but correct |
+  | every other single-objective surface | | identical | none |
+  | the multi-objective surfaces except `pareto_three_discrete` | | | the lattice front has more points, so the true HV is higher (for example `pareto_convex` 0.745 → 0.763) |
+
+  The baselines now sample the same lattice, so every method chooses from one
+  domain. That costs CPU: GP-BO on the 1,032,256-point geometric-knob lattice
+  takes about 200 s per campaign, against 0.1 s on the old 100-point grid.
 - **Metric.** TRUE regret of the recommendation on the NOISELESS surface,
   `f(true optimum) - f(recommendation)`. An infeasible recommendation (outside
-  `X_valid`) or no recommendation is charged the regret of the worst
+  `X_valid`), or no recommendation at all, is charged the regret of the worst
   admissible configuration. Normalised regret divides by
   `f_best - f_worst_admissible`.
 - **Recommendation rules, both reported.**
   - `obs`: the measured configuration with the best mean over its replicates.
-    It is feasible only if every replicate passed every constraint, the rule
-    Nous uses.
+    It is feasible only if every replicate passed every constraint, which is
+    the rule Nous uses.
   - `GP mean`: the measured feasible configuration with the best posterior mean
     of the GP below, fitted to the method's own data. Measured points only,
     never an unmeasured argmax.
@@ -117,36 +150,44 @@ under `nous-e2e/bin/heavy`):
     `GP mean` for GP-BO, the standard noisy-BO recommendation.
   - Exception: `GP-BO-crude`'s GP-mean pick is the audit's, and it is NOT
     restricted to feasible points. That is why it scores 8.2 on `sla`.
-- **Anytime curves.** Each curve gives regret at 10, 20, 40, 60, 80 and 100% of
-  N (`run.FRACTIONS`).
+- **Anytime curves.** Regret is recorded at 10, 20, 40, 60, 80 and 100% of N
+  (`run.FRACTIONS`).
   - Nous: the best-so-far always-admissible measured configuration after its
-    first n measured rows, in execution order.
+    first n fresh measurements, in execution order.
   - Baselines: their primary-rule pick on the first n of their own
-    measurements.
-  - The 100% point of a baseline is its recorded answer. Nous's 100% point is
-    its best measured configuration, which is not always its recommendation.
+    measurements. A baseline's prefix GP is fitted with the same seed as its
+    final GP-mean pick.
+  - A configuration with any row the runner marked `infeasible` or `rejected`
+    is struck for good, in Nous's curve and the baselines' alike. A `failed`
+    row (no measurement) just contributes nothing.
+  - A baseline's 100% point is its recorded answer. Nous's 100% point is its
+    best measured configuration, which is not always its recommendation.
 - **Intervals.** Every interval on a mean is a percentile bootstrap over SEEDS:
   10,000 resamples, seed 20261018 (`stats.BOOT_SEED`, recorded in each JSON's
-  `meta.boot`). The t interval is printed beside the primary. Head-to-head
-  proportions get Wilson score intervals.
-  - With 8 seeds a percentile bootstrap is coarse, and it collapses to a point
-    when every seed agrees, which is common here. A zero-width interval means
+  `meta.boot`). The primary also prints the t interval.
+  - With 8 seeds a percentile bootstrap is coarse. It collapses to a point when
+    every seed agrees, which happens often here. A zero-width interval means
     "identical on every seed", not "certain".
+  - Head-to-head proportions get Wilson score intervals. These are conditional
+    on THESE surfaces and noise levels: each campaign is one trial, and the
+    surfaces are a fixed, non-random selection. The interval says nothing about
+    other surfaces.
 - **Ties.** "Exact" ties need identical regret. The "within ε" columns treat a
   difference of at most Nous's own resolved ε (a percentage of Nous's best value
   in that campaign) as a tie. That is Nous's indifference width, not a neutral
   one.
-- **False certificate.** A certified campaign whose recommendation is
-  infeasible, or whose true regret exceeds its ε. Multi-objective: certified
-  while the recommendation is not within ε of the true front
-  (`harness.evaluate_pareto_campaign`).
+- **False certificate.**
+  - Single-objective: a certified campaign whose recommendation is infeasible,
+    or whose true regret exceeds its ε.
+  - Multi-objective: certified while the recommendation is not within ε of the
+    true front (`harness.evaluate_pareto_campaign`).
 - **Surfaces.**
   - Single-objective: every surface in `synthetic.SURFACES` except
-    `bowl_out_of_hull` (its optimum lies outside the hull by construction),
-    with the constraints each constrained surface was built for.
+    `bowl_out_of_hull` (its optimum lies outside the hull by construction).
+    Each constrained surface carries the constraints it was built for.
   - The audit's non-quadratic `step_cliff`, `ridge_cubic` and `two_peaks`.
   - `sparse_knobs(6/8/12)`, with 3 active knobs.
-  - Multi-objective: all of `synthetic.PARETO_SURFACES` plus
+  - Multi-objective: all of `synthetic.PARETO_SURFACES`, plus
     `ALLOCATE_SURFACES["pareto_three_discrete"]`.
 - **Size.**
   - Suite: seeds 1-8, noise ×1 and ×4 of each surface's `noise_sd`.
