@@ -3,10 +3,12 @@
 **Code audited:** branch `nousko` at `4ccc6b3`. That is the merge of P1-P6b
 for PR #302 (#320, #321), plus the fix this audit found (`01eded8`, §12 H-P8).
 
-**Benchmarks (Q6):** read from branch `nk-p7-bench` at `0c57b40`,
-`docs/benchmarks/optimization-benchmark.md` and its four JSON files. Those
-benchmarks were generated at Nous digest `44d94bc5ee2a41b2`, which is code
-before `01eded8`. P7 re-runs them on the fixed code before the release.
+**Benchmarks (Q6):** read from `docs/benchmarks/optimization-benchmark.md`
+and its six JSON files on `nousko` (merge `f8c57ab`), the final P7 run at Nous
+digest `eca5f9dfd8fcbe5d` and benchmark digest `659d385ed99dfafa`. That code
+includes `01eded8` and the benchmark's lattice-truth fix (Q6). An earlier run
+(`nk-p7-bench@0c57b40`, Nous digest `44d94bc5ee2a41b2`) is superseded and none
+of its numbers are used.
 
 **Questions.** The audit asks Q1-Q11 as a panel of specialists would: design
 of experiments; statistics and multiple testing; Bayesian optimization and
@@ -101,8 +103,9 @@ route (Q4), so they need no δ share.
   - rounds sweep, 320 campaigns: 0/56 (`p2/final_rounds.json`);
   - WP-B oracle, 288 campaigns: 0/50 under the shipped per-test adequacy
     rule (`p4/review_new.json`);
-  - P7 benchmark: 0 false in every arm. Suite 50/336, audit repro 60/360,
-    ablations, and 36/72 front certificates.
+  - P7 benchmark (Nous digest `eca5f9dfd8fcbe5d`): 0 false in every arm.
+    Suite 50/336, audit repro 60/360, ablations 30/128, 12/112, 13/112 and
+    24/48, and front certificates 36/72, 37/72 and 35/72.
 - Constants. These match the guide; I recomputed them.
   - At df 3, Bonferroni over 15 challengers is 6.74 and Scheffé (q = 3) is
     5.28.
@@ -320,10 +323,10 @@ Constructed:
 - Many knobs (`p2/src-item1_many.json`: sparse_knobs 5/6/8, 36 campaigns):
   0 certified; `model_bound_above_epsilon` in 32 of 36; true regret at most
   0.08.
-- P7 benchmark, 48 campaigns: 0 certified (47 before P3/P4), 42 of 48
-  `model_bound_above_epsilon`.
-- CPU: `sparse_knobs_12` 2.8 s → 37.5 s per campaign. `region_bound` is
-  47.7 s of a 98 s profile.
+- P7 benchmark, 48 campaigns: 0 certified (37 before P3/P4, none false),
+  42 of 48 `model_bound_above_epsilon`.
+- CPU: `sparse_knobs_12` median 2.79 s → 37.6 s per campaign (GP-BO 80.9 s).
+  `region_bound` is 47.3 s of a 97.8 s profile.
 
 **Tests run.**
 - `test_optimize_screening_multiplicity.py::test_the_screen_holds_its_family_wise_error_under_the_global_null`
@@ -404,103 +407,201 @@ refuses to wrap a post-selection block onto a confirm seed
 
 ## Q6. Benchmarks against random search, LHS, GP-BO and ParEGO
 
-Source: `nk-p7-bench@0c57b40`, `docs/benchmarks/optimization-benchmark.md` and
-its JSON files, at Nous digest `44d94bc5ee2a41b2`. That code is before
-`01eded8`, and P7 re-runs the benchmark on the fixed code. The fix only widens
-model bounds on fits that lost rows, so regret is unaffected unless the
-ranking changes; certificate counts can only fall.
+Source: `docs/benchmarks/optimization-benchmark.md` and its six JSON files on
+`nousko` (merge `f8c57ab`), generated at Nous digest `eca5f9dfd8fcbe5d` and
+benchmark digest `659d385ed99dfafa`. That code includes the exact-covariance
+fix `01eded8` and the lattice-truth fix below. Every row in every JSON records
+those two digests. It replaces the superseded run at `nk-p7-bench@0c57b40`
+(Nous digest `44d94bc5ee2a41b2`), all of whose numbers are withdrawn. I
+re-derived the primary differences, the post-hoc splits, the per-arm
+certificate table, the run totals and the CPU medians from the JSON with an
+independent script (`statistics`, `random`, `scipy.stats.t`, the same
+bootstrap seed); each matched the document to the printed precision.
 
 **Answer.**
 
 *Protocol and baselines.*
-- The analysis was pre-declared and committed in `dc489e0` before the first
-  regenerated row.
-- **Matched budget:** each baseline gets exactly Nous's own N on the same
-  (surface, noise, seed).
+- The analysis was pre-declared and committed in `dc489e0` (06:02) before the
+  first regenerated row (07:24). `PRIMARY_RULE` is unchanged.
+- **Matched budget:** each baseline gets exactly Nous's own N of fresh
+  measurements on the same (surface, noise, seed) and the same candidate
+  domain. Every comparison is therefore at Nous's chosen budget.
 - **Primary metric:** per family, the mean normalised true regret, Nous minus
-  GP-BO (GP-mean pick), with a seeded bootstrap over 8 seeds.
+  GP-BO (GP-mean pick), percentile bootstrap over 8 seeds (10,000 resamples,
+  seed 20261018), with the t interval beside it.
 - **Baselines:** RS, LHS, a fitted GP-BO (Matern-5/2 ARD with MAP priors, EI,
   constrained EI) and the audit's crude GP-BO.
 - **Multi-objective:** ParEGO, judged by hypervolume regret.
 
-*Single objective, suite.*
+*Single objective, suite (336 campaigns).*
 - **Primary results, Nous minus GP-BO, per family:**
 
-  | family | difference [95%] |
-  |---|---|
-  | shipped | −0.055 [−0.066, −0.037] |
-  | non-quadratic | −0.059 [−0.082, −0.021] |
-  | many-knob | +0.0002 [−0.0002, +0.0008] |
+  | family | bootstrap [95%] | t 95% | read |
+  |---|---|---|---|
+  | shipped (21 × 2) | −0.057 [−0.066, −0.039] | [−0.077, −0.037] | favours Nous, but see the split |
+  | non-quadratic (3 × 2) | −0.020 [−0.063, +0.037] | [−0.083, +0.043] | **inconclusive** |
+  | many-knob sparse (3 × 2) | +0.0012 [+0.0008, +0.0017] | [+0.0007, +0.0017] | **GP-BO slightly better**, 0.1% of the range |
 
-- **Both "favours Nous" results rest on one surface each.** This reading is
-  post hoc and labelled so.
-  - Without `stochastic_constraint_boundary`, the shipped result is
-    **+0.004 [+0.0004, +0.007]**, a small loss.
-  - Without `two_peaks`, the non-quadratic result is **+0.043 [+0.032,
-    +0.052]**, a loss.
-  - Part of the stochastic-boundary gap is design asymmetry: Nous replicates
-    its finalists and the baselines do not.
+- **Post-hoc split, labelled as such (not part of the declared analysis).**
+  - **The shipped result rests on `stochastic_constraint_boundary`.** Nous
+    0.875, every baseline 7.0. Without that surface, Nous minus GP-BO is
+    **+0.0015 [+0.0002, +0.0028]**, a small loss. That excludes 0 only under
+    the bootstrap; the t interval, [−0.0002, +0.0031], includes 0. Part of the
+    gap is design asymmetry, not a better optimizer: Nous replicates its
+    finalists, while a baseline's "feasible" pick is usually feasible by one
+    draw.
+  - **The non-quadratic mean is pulled toward Nous by `two_peaks`**, where no
+    method finds the narrow peak (Nous 1.263, GP-BO 1.99-2.17, LHS best at
+    0.883). Without `two_peaks`, the difference is **+0.046 [+0.033,
+    +0.059]**, a loss.
+- **Head-to-head against GP-BO** (Wilson 95%, conditional on these surfaces):
+  Nous is better in 0.20 [0.16, 0.25] and worse in 0.26 [0.22, 0.31] of 336
+  exact; within ε, 0.09 [0.07, 0.13] against 0.08 [0.06, 0.11].
 - **Wins and ties.**
-  - Smooth surfaces are parity with GP-BO: 1 better / 127 tie / 0 worse
-    within ε.
-  - Nous wins clearly against RS and LHS.
-  - Drift: Nous has 0 regret. The ablation shows this is NOT from randomized
-    order: regret is unchanged with randomization off, while certificates fall
-    10 → 4 of 16.
+  - Smooth surfaces (128 campaigns): 23 better / 100 tie / 5 worse exact
+    against GP-BO, 0 / 128 / 0 within ε. That is parity, not a win. Nous never
+    loses to RS or LHS within ε there.
+  - `geometric_knob` coded linearly: Nous 0.188, GP-BO 0.78 (×1) and 3.13
+    (×4); Nous is the best method there.
+  - Drift: Nous 0 regret on all 16, as is every baseline once all share one
+    domain. With run-order randomization off, Nous's regret is still 0 on all
+    16, so randomization does not explain it. Certificates move 10 → 4 of 16
+    (Fisher p = 0.073), and on `bowl` 8 → 14 (p = 0.054): not
+    distinguishable from seed noise at 8 seeds.
 - **Losses.**
-  - GP-BO wins on `ridge_cubic` (10-70× lower regret), `step_cliff`,
-    `sla` (Nous 0.40 / 0.275 against 0) and `fails_at_one_level` (0.32-0.36
-    against 0.08).
-  - Many knobs: GP-BO reaches 0.004 by 20% of N.
-- **Audit repro.** Against the fitted GP-BO, Nous is 83 better / 166 tie /
-  111 worse exact, and 56 / 264 / 40 within ε. Nous still loses more often
-  than it wins.
+  - `ridge_cubic`: GP-BO 0.000-0.014 against Nous 0.22-0.23. `step_cliff`:
+    GP-BO 0.112-0.225 against 0.40-0.46. Nous no longer certifies either
+    (0 of 48 non-quadratic, against 22 of 48 before, all 22 false), but its
+    answer is still the quadratic model's.
+  - `sla`: Nous 0.40 (×1) and 0.275 (×4), GP-BO 0.000.
+  - `fails_at_one_level`: a tie at 0.32-0.36 for every method. The old
+    run's 0.08 for GP-BO was an artefact of a domain without CPU = 24.
+  - **Many knobs: a small GP-BO advantage** on the primary (+0.0012, above).
+    Nous's regret is at most 0.024 in every cell and it ties GP-BO within ε in
+    48 of 48, but GP-BO reaches 0.004 by 20% of N, while Nous's best-so-far
+    sits at 0.066 until its final confirm.
+- **Anytime, shipped family.** Nous is lower at 10% of N (0.194 [0.178,
+  0.219] against 0.285 [0.267, 0.307]); the intervals overlap at 20%; **at
+  40% of N GP-BO is ahead**, 0.101 [0.087, 0.116] against Nous's 0.144
+  [0.119, 0.162]; from 60% Nous is lower, ending at 0.018 [0.009, 0.035]
+  against 0.075 at N. Stopped early, GP-BO is the better tool.
+- **Audit repro (360 campaigns, the audit's setup).** Against the fitted GP-BO
+  under GP mean, Nous is 112 better / 149 tie / 99 worse exact, and 43 / 275
+  / 42 within ε, which is a tie. Against the audit's crude GP-BO, 154 / 136 /
+  70. Every certificate on the audit's four hard surfaces is gone: 0 of 160,
+  against 54 of 160 before, 53 of them false.
 
-*Multi-objective.*
-- Pooled HV regret, Nous minus ParEGO: **+0.038 [+0.035, +0.040]**. ParEGO wins
-  the majority of seeds on all 9 surfaces.
-- Nous beats RS (−0.022 [−0.027, −0.017]) and LHS (−0.015 [−0.020, −0.009]).
-
-*Certificates and cost.*
-- **0 false certificates in every arm of every section.**
-  - Suite: 50 of 336 certified, against 162 with 26 false before P3/P4.
-  - Audit repro: 60 of 360, against 170 with 53 false.
-  - Fronts: 36 of 72.
-- **Cost of the soundness fixes:**
-  - runs +24% (suite) and +54% (audit repro);
-  - many-knob certificates 47 → 0;
-  - `sparse_knobs_12` CPU 2.8 s → 37.5 s, against GP-BO's 79.6 s.
+*Multi-objective (216 campaigns, 9 surfaces).*
+- **ParEGO is ahead.** Pooled HV regret, Nous minus ParEGO at Nous's budget:
+  **+0.045 [+0.043, +0.048]**. ParEGO wins the majority of seeds on every one
+  of the 9 surfaces. On `pareto_choice_split` and `pareto_three_noisy`, Nous
+  also loses to RS and LHS on every seed.
+- Pooled, Nous beats RS (−0.012 [−0.018, −0.007]) and LHS (−0.0085 [−0.011,
+  −0.006]).
 
 *D4 ablations.*
-- **Allocate, single objective.**
-  - Paired Δ normalised regret: −0.0012 [−0.0032, 0.0000] on smooth surfaces.
-  - Runs 45.1 → 52.3, certificates 20 → 12.
-- **Allocate, multi-objective.**
-  - Paired Δ HV regret: −0.0063 [−0.0100, −0.0029].
-  - Front certificates 36 → 37 of 72.
-- **BO proposer.** No measurable benefit: MO −0.0039 [−0.0080, +0.0002], and
-  on `pareto_with_constraint` certificates 2 → 0 of 8.
+- **Allocate, single objective.** No detectable regret change: paired Δ
+  normalised regret −0.0012 [−0.0032, 0.0000] (smooth) and +0.0001 [0.0000,
+  +0.0004] (non-quadratic). Mean runs 45.1 → 52.3, certificates 20 → 12 of
+  112. The round fired in 22 of 112.
+- **Allocate, multi-objective.** Paired Δ HV regret −0.0062 [−0.0098,
+  −0.0029], runs 68.4 → 72.2, front certificates 36 → 37 of 72.
+- **BO proposer.** No measurable benefit: single-objective regret identical
+  to allocate alone except bowl ×4; multi-objective −0.0039 [−0.0078,
+  +0.0002]; on `pareto_with_constraint` front certificates 2 → 0 of 8.
 
-**Tests.** `test_optimization_benchmark_smoke.py::test_every_method_spends_exactly_nous_budget_and_is_judged_in_truth`
-was run, with the smoke suite in the targeted run.
+*Certificates and cost.*
+- **0 false certificates in every arm of every section:**
 
-**Falsification.** The likeliest break is a family mean carried by one cell, or
-a matched-budget rule tilted toward Nous. The benchmark itself shows the first
-(both headline wins vanish without one surface each) and states the second:
-- every comparison is at Nous's chosen N;
-- the anytime curves show GP-BO ahead earlier on many-knob surfaces;
+  | section | arm | campaigns | certified | false |
+  |---|---|---|---|---|
+  | suite | nous | 336 | 50 | 0 |
+  | audit repro | nous | 360 | 60 | 0 |
+  | ablations | nous (default) | 128 | 30 | 0 |
+  | ablations | nous+alloc | 112 | 12 | 0 |
+  | ablations | nous+alloc+bo | 112 | 13 | 0 |
+  | ablations | nous-order | 48 | 24 | 0 |
+  | multi-objective | nous | 72 | 36 | 0 |
+  | multi-objective | nous+alloc | 72 | 37 | 0 |
+  | multi-objective | nous+alloc+bo | 72 | 35 | 0 |
+
+- **The cost of the P3/P4 conservatism, against the previous run (`fd2e722`,
+  Nous digest `10d74ceaa7add3b7`):**
+  - Runs: suite 21,056 → 26,208 (+24%); audit repro 10,460 → 16,080 (+54%).
+    Every baseline gets the larger N too.
+  - Certificates: suite 162 (26 false) → 50 (0 false); audit repro 170 (53
+    false) → 60 (0 false).
+  - The trade: 26 + 53 false certificates removed, against 45 sound ones lost
+    on the smooth family (89 → 44, none false before) and all 37 on the
+    many-knob family (37 → 0, none false before). On the many-knob family the
+    recorded reason is `model_bound_above_epsilon` in 42 of 48.
+- **CPU profile.** Median Nous analysis CPU on `sparse_knobs_12` rose from
+  2.79 s to 37.6 s per campaign; GP-BO takes 80.9 s there. In a cProfile of
+  one `sparse_knobs_12` campaign (97.8 s under the profiler),
+  `certificate.region_bound` (P2 branch-and-bound, 115,130 inner `upper`
+  calls) is 47.3 s and `_validation_plan` → `adequacy._greedy_maximin` (P4
+  outer ring) is 38.7 s. On a real target the runs, not the analysis,
+  dominate. GP-BO on the 1,032,256-point geometric-knob lattice takes a
+  median of 217.6 s per campaign.
+
+*How the benchmark's ground truth was corrected (a methodological finding of
+the P7 review).* The superseded run took the truth, and the baselines'
+samples, from nine snapped points per gridded axis, while Nous could
+recommend any lattice point. Nous was being scored against an optimum it was
+never asked to beat, and baselines could not reach configurations Nous
+measured. The rule is now one domain for every method: the declared lattice
+(every level, every multiple of `grid`) plus the centre configurations the
+campaign's designs actually run, with truth enumerated over it (capped at
+2,000,000 points). On `two_peaks` the optimum moved to (14, 3) = 15.653, and
+Nous's (15, 3), scored 0.364 against the old grid, has real regret 1.263.
+`fails_at_one_level`'s CPU = 24 became reachable for the baselines. An
+intermediate version of the fix gave each two-level numeric its own centre
+independently. That over-stated the domain: it made {BS: 20, CMP: 2, PF: 8} =
+14.7 reachable on `infeasible_corner_interior`, a point no design runs, and
+produced 6 spurious "false" certificates, all of which in fact certified the
+declared-space optimum {32, 0, 8} = 14.4. It was reverted to Nous's own centre
+configurations, read off `stage_runner._build_design` and `matrix.expand`
+rather than hand-coded. The review caught both errors before any number was
+published; a benchmark's truth needs the same audit as the method it scores.
+
+**Falsification.** The likeliest break is a family mean carried by one cell,
+or a matched-budget rule tilted toward Nous. The benchmark shows the first and
+states the second:
+- the shipped win vanishes without `stochastic_constraint_boundary`, and the
+  non-quadratic result is inconclusive with `two_peaks` and a loss without it;
+- every comparison is at Nous's chosen N, and the anytime curves show GP-BO
+  ahead at 40% of N on the shipped family and from 20% on many knobs;
 - the within-ε tie width is Nous's own ε.
 
 **Documented limits:**
-- 8 seeds, so percentile intervals collapse when seeds agree;
+- 8 seeds, so percentile intervals collapse to a point when every seed agrees;
+- the post-hoc splits are not part of the declared analysis, and the shipped
+  split excludes 0 only under the bootstrap;
 - no EHVI baseline; ParEGO only;
-- no replicated-confirmation baseline;
-- the regenerated numbers predate `01eded8` until P7 re-runs.
+- no replicated-confirmation baseline, so the `stochastic_constraint_boundary`
+  gap mixes method and design asymmetry;
+- the surfaces are a fixed selection; Wilson intervals are conditional on
+  them.
+
+**Tests.**
+- `test_optimization_benchmark_smoke.py::test_every_method_spends_exactly_nous_budget_and_is_judged_in_truth`.
+- The domain tests in the same file:
+  `test_truth_lies_in_the_domain_on_every_surface`,
+  `test_every_recommendation_nous_made_is_in_the_shared_domain`,
+  `test_every_method_samples_the_domain_the_truth_is_taken_over`,
+  `test_centre_configurations_come_from_the_matrix_not_a_per_factor_centre`,
+  `test_infeasible_corner_interior_truth_is_the_declared_space_optimum`,
+  `test_two_peaks_truth_is_at_least_every_lattice_point`,
+  `test_baselines_draw_the_off_lattice_centres_and_nothing_else` and
+  `test_geometric_knob_off_candidate_grid_recommendations_are_scored_exactly`.
+- Run in the targeted `-k "audit or doc or guide or benchmark"` pass.
 
 **Verdict: holds with stated limits.** Nous does not beat GP-BO on regret
-except where it replicates finalists under noisy constraints, and it loses to
-ParEGO on fronts. Its distinct value is a certificate that was sound in every
-campaign measured.
+except where it replicates finalists under noisy constraints and on a
+linearly coded geometric knob; it is inconclusive on non-quadratic surfaces,
+slightly behind on many knobs and behind ParEGO on fronts. Its distinct value
+is a certificate that was sound in every campaign measured, bought with 24-54%
+more runs and far fewer certificates than before.
 
 ---
 
@@ -850,6 +951,12 @@ and `data-model.md` for "certified", "unbiased", "exact", "lower bound",
 
 **Verified as backed** (spot-checked against the cited source):
 - every number in Q1-Q5 and Q7-Q11 above;
+- Q6's benchmark numbers: the family primaries, post-hoc splits, per-arm
+  certificate table, run totals and CPU medians re-derived from the JSON at
+  Nous digest `eca5f9dfd8fcbe5d` / benchmark digest `659d385ed99dfafa`, the
+  rest read from the benchmark document. The superseded run's figures
+  (`44d94bc5ee2a41b2`), including "many-knob certificates 47 → 0" (the
+  previous run had 37), are withdrawn;
 - "TRUE lower bound" (planner): pinned by its counterexample test;
 - "unbiased" (post-selection validation): fresh draws, test-pinned;
 - "exact" for `chance` (binomial), `support:` (Hoeffding), interval branch and
@@ -875,10 +982,12 @@ guide or a spec at the place it applies. None is a deferred fix.
    approximate under CRN. The bootstrap-t is second-order accurate, not exact.
 4. **Certification power.** The simultaneous constants are conservative. At
    3 pure-error df, many-knob and near-tied campaigns withhold on width
-   (`model_bound_above_epsilon`; P7: 0 of 48 many-knob campaigns certified).
+   (`model_bound_above_epsilon`; P7: 0 of 48 many-knob campaigns certified,
+   against 37 before, none false).
    A max-t quantile would be tighter but is not shipped.
-5. **Cost.** P3/P4 raised runs by 24-54% (P7). `region_bound` and the
-   outer-ring maximin dominate the CPU on 12 knobs (37.5 s per campaign).
+5. **Cost.** P3/P4 raised runs by 24-54% (P7: suite 21,056 → 26,208, audit
+   repro 10,460 → 16,080). `region_bound` and the outer-ring maximin dominate
+   the CPU on 12 knobs (median 37.6 s per campaign).
 6. **Censoring is informative.** Fits with censored rows are optimistic about
    them, and confirm withholds such finalists. `mean` constraint semantics are
    approximate at small n.
@@ -899,5 +1008,7 @@ guide or a spec at the place it applies. None is a deferred fix.
     The allocate look costs certificates even when it does not fire. The BO
     proposer showed no measurable benefit in P7.
 13. **Benchmarks.** They are descriptive at 8 seeds, use ParEGO without EHVI,
-    have no replicated-confirmation baseline, and their regenerated figures
-    predate `01eded8` until P7 re-runs them.
+    and have no replicated-confirmation baseline. At the final P7 run
+    (`eca5f9dfd8fcbe5d` / `659d385ed99dfafa`), the shipped-family win rests on
+    one surface, non-quadratic is inconclusive, GP-BO is slightly ahead on many
+    knobs, and ParEGO is ahead on fronts (Q6).
