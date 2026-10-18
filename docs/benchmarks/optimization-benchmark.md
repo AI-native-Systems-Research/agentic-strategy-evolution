@@ -459,3 +459,15 @@ _Tables aggregated by `python -m benchmarks.optimization.run --audit-repro --wor
 | two_peaks | ×1 | 0.13 | 0.01 | 0.01 | 0.06 | 0.01 |
 | two_peaks | ×8 | 0.14 | 0.01 | 0.01 | 0.05 | 0.01 |
 <!-- END GENERATED audit-repro -->
+
+
+## Results: ablations (D4; seeds 1-8, noise ×1/×4)
+
+<!-- BEGIN GENERATED ablations -->
+<!-- END GENERATED ablations -->
+
+
+## Results: multi-objective (seeds 1-8)
+
+<!-- BEGIN GENERATED mo -->
+<!-- END GENERATED mo -->
