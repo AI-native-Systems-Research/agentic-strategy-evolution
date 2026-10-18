@@ -327,8 +327,8 @@ Quickstart: "**Any number of knobs works** (up to 100 at resolution V)".
 
 **(e) Limits.**
 1. **Screening multiplicity.** k per-term tests at α = 0.05 have no family-wise or false-discovery control. The resulting forks spend no δ (spec §6).
-2. **Efficiency is D only.** G- and I-efficiency are not reported.
-3. **`reuse_screen` is refused with any choice factor.**
+2. **Efficiency: D, G and I** (#321 P4). G is exact for first-order models and an upper bound with quadratics; I is exact by region moments; both are declined for multi-level categorical contrasts.
+3. **`reuse_screen` with any choice factor is a validation error** (rule 33, #321 P4): partial reuse across choice slices is rejected because a block term cannot absorb choice-by-numeric interactions.
 4. **The certificate covers a slice** when refine holds factors fixed (see Q8 and Q5).
 5. **HIGH (H3), "any knob count" holds for design and recommendation, not for certification.**
    - Above `decide.CANDIDATE_CAP` = 50,000 candidates, the space is searched and `_global_bound` always adds `model_bound_not_exhaustive`. That is 5 refinable numeric knobs at 9 points each (59,049 candidates).

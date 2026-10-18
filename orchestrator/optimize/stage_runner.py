@@ -9006,8 +9006,17 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
                          or fit.lof_exact == "rejected"),
         },
         "press": adq.press(cols + nuis, ys_for_fit),
-        "design_efficiency": adq.design_efficiency(cols, labels),
+        "design_efficiency": adq.design_efficiency(
+            cols, labels,
+            # G/I need the region; multi-level categorical contrasts make it
+            # not a cube, so they are declined there (named in the record).
+            terms=None if design_for_fit.groups else terms,
+            factor_ids=None if design_for_fit.groups else fit_factor_ids,
+            discrete=[f.id for f in factors
+                      if f.type == "choice" and f.id in set(fit_factor_ids)]),
     }
+    if design_for_fit.groups and rec["design_efficiency"] is not None:
+        rec["design_efficiency"]["g_i_declined"] = "categorical_contrasts_region_not_a_cube"
     if nuis and fit.block_effect is not None:
         b, se, t, pv, df = fit.block_effect
         rec["reuse"] = {"block_effect": {"estimate": b, "se": se, "t": t, "p": pv,

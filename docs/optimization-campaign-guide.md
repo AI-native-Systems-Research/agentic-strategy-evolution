@@ -757,8 +757,8 @@ not chosen freely.
     (`screen_rejection_unresolved`). Any other verdict is superseded by a
     later stage of at least its class. `recommendation.json["model_adequacy"]` records how the
     verdict was reached: lack of fit with its df, the validation check,
-    PRESS / R²_pred (Allen 1974), and the D-efficiency and centred VIFs of
-    the design as run.
+    PRESS / R²_pred (Allen 1974), and the D-, G- and I-criteria and centred
+    VIFs of the design as run (limit 6).
   - **An inadequate model is never the answer.** When the verdict is false,
     confirm seats measured leaders. With no confirm stage, the report's
     `model` rung is barred and the `measured` rung answers. `report.md`
@@ -806,7 +806,7 @@ What the validation check and the sticky verdict do NOT do (spec
 3. **The α cost on smooth surfaces.** A true quadratic is rejected about 5% of the time (2 of 144 certificates lost at seeds 1-8). The check sits beside lack of fit with no multiplicity correction across the two tests.
 4. **Validation rows can be shortlist nominees under a rejected model** (as measured leaders). They are re-measured before they can win.
 5. **No validation points at screen or foldover.** Their curvature detection rests on the centre points (one df).
-6. **Efficiency reporting is D only.** D-efficiency is on the ±1 coded scale with an intercept, so it compares designs of one model; G- and I-efficiency are not reported.
+6. **Efficiency: D, G and I (#321 P4).** `model_adequacy.design_efficiency` records D-efficiency `|X'X/n|^(1/p)` and centred VIFs, plus G-efficiency `p / max SPV` and the I-criterion `i_average_spv` (the average scaled prediction variance `n f'(X'X)^-1 f` over the coded region; Atkinson, Donev & Tobias 2007, §10.6, §11.4), all from the same exact `(X'X)^-1`. I is exact (region moments, uniform on [-1, 1] per numeric axis, {-1, +1} per two-level choice factor). No I-efficiency RATIO is reported, because no closed-form I-optimal reference exists for a general model; compare `i_average_spv` between designs of one model (smaller is better). G is exact for first-order + 2fi models (max at a vertex, `g_exact: true`). With quadratic terms it is a max over a 5-level grid polished by coordinate ascent, so it is an upper bound (`g_exact: false`); past a fixed budget the evaluation set is a seeded sample (`g_seed`). Declined, named `g_i_declined`, for multi-level categorical contrasts, where the region is not a cube. Measured on the k = 2 face-centred CCD with 4 centres: D = 0.408, G = 0.632 (max SPV 9.5), I = 3.633.
 7. **Under `screen_rejection_unresolved`** (reachable only with `validation_points: 0`), the report's `model` rung still answers with the model's argmax. Certification is withheld.
 8. **Snapping can cancel a point's power.** On a `levels_only` or coarse-grid knob, ±0.5 can snap onto a lattice level, and that point then adds no power.
 9. **The objective-model check builds V from the full design columns**, while the model may have been fitted on a subset of rows (where that metric is missing). V is then slightly too small.

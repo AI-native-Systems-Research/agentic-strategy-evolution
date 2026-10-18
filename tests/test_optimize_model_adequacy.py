@@ -442,3 +442,74 @@ def test_a_block_term_cannot_absorb_a_choice_by_numeric_interaction():
     slice_only = _solve_normal_equations(
         [[1.0] * 6, [a for a, c in rows if c > 0]], [v for v, (_a, c) in zip(y, rows) if c > 0])
     assert slice_only[1] == pytest.approx(6.0)
+
+
+# ── #321 P4 item 3: G- and I-efficiency beside D ────────────────────────────
+
+def _fc_ccd(k_centres=4):
+    from orchestrator.optimize.design import Design, DesignPoint
+
+    pts = ([((a, b), "corner") for a in (-1.0, 1.0) for b in (-1.0, 1.0)]
+           + [((-1.0, 0.0), "axial"), ((1.0, 0.0), "axial"),
+              ((0.0, -1.0), "axial"), ((0.0, 1.0), "axial")]
+           + [((0.0, 0.0), "center")] * k_centres)
+    return Design(points=tuple(DesignPoint(coded=c, role=r) for c, r in pts),
+                  factor_ids=("A", "B"), kind="ccd", resolution=None)
+
+
+def test_g_and_i_efficiency_match_textbook_values():
+    """2^2 factorial, first-order model: G = 1 (an orthogonal two-level design is
+    G-optimal for it; max SPV = p = 3 at the vertices) and the average
+    prediction variance over [-1,1]^2 is (1 + 1/3 + 1/3) / 4 = 5/12."""
+    from orchestrator.optimize import adequacy
+    from orchestrator.optimize.design import full_factorial
+    from orchestrator.optimize.effects import model_matrix
+
+    d = full_factorial(("A", "B"))
+    labels, terms, cols, _q, _a = model_matrix(d, ("A", "B"), include_interactions=False)
+    e = adequacy.design_efficiency(cols, labels, terms=terms, factor_ids=("A", "B"))
+    assert e["g_efficiency"] == pytest.approx(1.0) and e["g_exact"] is True
+    assert e["i_average_variance"] == pytest.approx(5 / 12, abs=1e-6)
+
+
+def test_g_and_i_agree_with_brute_force_on_a_face_centred_composite():
+    """k = 2 face-centred CCD, 4 centres, full quadratic. The exact-moment I and
+    the searched G against a dense 401^2 grid and a 200k-point Monte Carlo
+    average (computed here, independently of the implementation)."""
+    from orchestrator.optimize import adequacy
+    from orchestrator.optimize.effects import model_matrix
+
+    d = _fc_ccd()
+    labels, terms, cols, _q, _a = model_matrix(d, ("A", "B"))
+    e = adequacy.design_efficiency(cols, labels, terms=terms, factor_ids=("A", "B"))
+    inv = adequacy._invert(adequacy._xtx(cols))
+    n, p = len(cols[0]), len(cols)
+
+    def spv(x):
+        f = [1.0] + [__import__("math").prod(x[0 if t == "A" else 1] for t in ts)
+                     for ts in terms[1:]]
+        return n * sum(f[i] * inv[i][j] * f[j] for i in range(p) for j in range(p))
+
+    dense = max(spv((i / 200 - 1, j / 200 - 1)) for i in range(401) for j in range(401))
+    rng = random.Random(1)
+    mc = sum(spv((rng.uniform(-1, 1), rng.uniform(-1, 1))) for _ in range(50_000)) / 50_000
+    assert e["g_max_spv"] == pytest.approx(dense, rel=1e-6)          # 9.5
+    assert e["g_efficiency"] == pytest.approx(p / dense, rel=1e-6)    # 0.632
+    assert e["i_average_spv"] == pytest.approx(mc, rel=0.01)          # 3.633
+    assert e["g_exact"] is False and "upper bound" in e["g_note"]
+
+
+def test_g_and_i_are_recorded_for_the_design_as_run_and_previewed(tmp_path):
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.preview import build_preview, format_preview
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
+    recs = {x["stage"]: x for x in _recs(r.work_dir)}
+    s = recs["screen"]["model_adequacy"]["design_efficiency"]
+    q = recs["refine"]["model_adequacy"]["design_efficiency"]
+    assert s["g_exact"] is True and 0 < s["g_efficiency"] <= 1
+    assert q["g_efficiency"] == pytest.approx(6 / 9.5, rel=1e-4)
+    assert q["i_method"] == "exact_region_moments" and q["i_average_spv"] > 0
+    text = "\n".join(format_preview(build_preview(
+        synthetic_campaign(SURFACES["bowl"]()), noise_sd=0.05, mean=20.0, run_secs=[1.0])))
+    assert "G-efficiency" in text and "average scaled prediction variance" in text
