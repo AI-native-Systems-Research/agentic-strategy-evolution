@@ -127,10 +127,10 @@ def synthetic_campaign(surface: Surface, **overrides) -> dict:
         "factors": [dict(f) for f in surface.factors],
         "design": {"screen": {"resolution": 5, "center_points": 4},
                    "refine": {"kind": "central_composite", "center_points": 4},
-                   "confirm": {"replicates": 6}},
+                   "confirm": {"replicates": 3}},
     }
     opt.update(overrides)
-    if "confirm" not in ((overrides.get("design") or {}) if "design" in overrides else {}):
+    if not surface.objectives and "confirm" not in (overrides.get("design") or {}):
         # #321 P3: the confirm replicate count a real author would declare is
         # the A5 floor of THIS campaign (6 at the defaults, 7 once a declared
         # constraint registers the refill look).
