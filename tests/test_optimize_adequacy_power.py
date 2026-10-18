@@ -309,3 +309,44 @@ def test_an_exact_rejection_stays_a_veto_whatever_the_family_says(tmp_path):
         assert fam["vetoes"] == ["lack_of_fit:f2"] and fam["rejected"] == []
         assert rec["model_adequate"] is False
         assert "model_inadequate" in r.report["certification_withheld"]
+
+
+def test_lack_of_fit_not_computable_stays_unknown_under_the_family(tmp_path):
+    """No centre points: no pure error, so no lack-of-fit test exists and the
+    family has nothing to overturn. Under adequacy_multiplicity: holm the
+    verdict stays UNKNOWN with its basis (a guard: an overturn needs a
+    rejected TEST, which this basis excludes by construction)."""
+    r = run_synthetic_campaign(
+        SURFACES["additive"](), seed=1, parent_dir=tmp_path,
+        campaign_overrides={"stages": ["verify", "screen", "confirm"],
+                            "policy": {"adequacy_multiplicity": "holm"},
+                            "design": {"screen": {"resolution": 5, "center_points": 0}}})
+    rec = _recs(r.work_dir)[0]
+    assert rec["model_adequate"] is None
+    assert rec["model_adequate_basis"] == "lack_of_fit_not_computable"
+    assert "lack_of_fit_not_computable" in r.report["certification_withheld"]
+
+
+def test_a_mixed_level_campaign_never_reports_adequate_without_isolation(tmp_path):
+    """curvature_not_isolated guard through campaigns: a 3-level categorical
+    whose middle level fails at every corner, holm family, 8 seeds. The
+    identifiability reduction drops the lost level first, so the fit is
+    isolated on every seed (measured 120/120 in a wider hunt) -- and whenever
+    adequate is reported True, the fit WAS isolated."""
+    from orchestrator.optimize.synthetic import _choice
+
+    lv = {"a": 0, "b": 1, "c": 2}
+    surf = Surface(name="lost_mid", noise_sd=0.05,
+                   factors=(_choice("C", levels=("a", "b", "c")), _numeric("A", levels=(2, 16))),
+                   fn=lambda x: 10 + 0.1 * x["A"] + lv[x["C"]],
+                   fails_at=lambda x: x["C"] == "b" and x["A"] != 9)
+    for seed in range(1, 9):
+        r = run_synthetic_campaign(surf, seed=seed, parent_dir=tmp_path / str(seed),
+                                   campaign_overrides={"stages": ["verify", "screen", "confirm"],
+                                                       "policy": {"adequacy_multiplicity": "holm"},
+                                                       "design": {"screen": {"resolution": 5,
+                                                                             "center_points": 8}}})
+        rec = _recs(r.work_dir)[0]
+        eff = json.loads(next(r.work_dir.glob("runs/iter-*/effects.json")).read_text())
+        if rec["model_adequate"] is True:
+            assert eff.get("centre_isolated") is not False

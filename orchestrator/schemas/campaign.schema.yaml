@@ -1611,11 +1611,13 @@ properties:
             description: >
               #321 P4: how a fitting stage's adequacy TESTS (lack of fit, the
               validation check; primary and every objective model) combine.
-              ``holm`` (default): Holm's step-down at adequacy_alpha
-              family-wise, so a true model is called inadequate w.p. <=
-              adequacy_alpha. ``per_test``: any test at adequacy_alpha rejects
-              (the pre-P4 rule; family-wise up to m x alpha). A veto on the
-              model half: it spends no delta.
+              ``per_test`` (default): any test at adequacy_alpha rejects --
+              each is a veto on the model half, and a larger veto size is the
+              conservative side for validity (measured 0.068-0.072 on a true
+              quadratic). ``holm``: Holm's step-down decides at family-wise
+              adequacy_alpha (measured 0.032-0.037), more certificates and a
+              weaker guard. The Holm family is recorded either way. Spends
+              no delta.
           adequacy_alpha:
             type: number
             exclusiveMinimum: 0

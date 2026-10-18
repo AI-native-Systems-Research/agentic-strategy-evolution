@@ -259,7 +259,7 @@ Guide, "Model adequacy: documented limits", item 1:
 **(e) Limits** (WP-B §6, all in the guide):
 - power beyond ±0.5: an outer ring at ±0.8 (#321 P4; `corner_bumps` 0/4 -> 4/4 rejections); a feature narrower than the point spacing can still pass;
 - the check's denominator is centre pure error, which is M3 again;
-- Holm across lack of fit + validation at family-wise α (#321 P4): smooth-surface certificates 55 -> 67 of 144, non-quadratic false certificates 0/64 on both sides;
+- adequacy tests are per-test vetoes at α by default; the Holm family over them is recorded, and decides only under `adequacy_multiplicity: holm` (more certificates, weaker guard);
 - opt-in validation at screen (#321 P4); none at foldover, which still rests on the centre points;
 - snapping: a candidate that snaps onto a composite point is declined and named (#321 P4);
 - V is built from the rows actually fitted (#321 P4);
