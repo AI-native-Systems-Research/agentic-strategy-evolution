@@ -243,6 +243,7 @@ def test_every_checkable_invariant_has_a_teeth_test():
         "check_supported_feasible_candidate",
         "check_pareto_front", "check_pareto_certificate", "check_gap_fill_branch",
         "check_single_objective_untouched", "check_refill_branch",
+        "check_allocate_branch",
         "check_candidate_space",
         "check_recommendation_avoids_lost_levels",
         "check_adequacy_determination",
@@ -395,8 +396,11 @@ def test_observation_keys_have_no_dead_vocabulary():
     con = _campaign()
     con["optimization"]["response"]["constraints"] = [
         {"metric": "m", "op": ">=", "value": 0}]
+    # ... and an ALLOCATE one: `allocate_available` is read only there.
+    alloc = _campaign()
+    alloc["optimization"]["design"]["confirm"]["allocate"] = {"seats": 1}
     assert inv.check_observation_keys_consumed(
-        [pol, compile_policy(mo), compile_policy(con)],
+        [pol, compile_policy(mo), compile_policy(con), compile_policy(alloc)],
         documented_non_branching=DOCUMENTED_NON_BRANCHING,
     ) == []
     # Teeth: with no exemptions at all, the non-branching keys must be reported.
@@ -1545,6 +1549,29 @@ def test_single_objective_untouched_checker_holds_and_has_teeth(tmp_path):
     assert inv.check_single_objective_untouched(single, {"pareto": {}})
     _, pol = _mo_report(tmp_path)
     assert inv.check_single_objective_untouched(pol, {"pareto": {}}) == []
+
+
+def test_allocate_branch_checker_holds_and_has_teeth():
+    """INV-VOC11."""
+    a = _campaign()
+    a["optimization"]["design"]["confirm"]["allocate"] = {"seats": 1}
+    pol = compile_policy(a)
+    assert any("allocate_available" in (t.get("when") or {}) for t in pol["transitions"])
+    assert inv.check_allocate_branch(pol) == []
+    assert inv.check_allocate_branch(compile_policy(_campaign())) == []
+    bad = json.loads(json.dumps(pol))
+    rules = bad["transitions"]
+    i = next(k for k, t in enumerate(rules) if "allocate_available" in (t.get("when") or {}))
+    rules.append(rules.pop(i))  # after every decline guard
+    assert any("after a decline" in e for e in inv.check_allocate_branch(bad))
+    bad = json.loads(json.dumps(pol))
+    for t in bad["transitions"]:
+        if "allocate_available" in (t.get("when") or {}):
+            t["when"].pop("confirm_affordable")
+    assert any("not guarded" in e for e in inv.check_allocate_branch(bad))
+    bad = json.loads(json.dumps(pol))
+    bad["states"]["confirm"]["design"].pop("allocate")
+    assert any("not compiled" in e for e in inv.check_allocate_branch(bad))
 
 
 def test_refill_branch_checker_holds_and_has_teeth():
