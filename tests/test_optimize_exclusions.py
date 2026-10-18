@@ -1199,9 +1199,14 @@ def test_a_level_correlated_fit_alone_withholds_global_certification(
 
     surface = SURFACES["additive"]()
     # One salt for both arms (#321): a random per-work_dir run-order salt would
-    # make the two arms two different experiments.
+    # make the two arms two different experiments. The salt is chosen so the
+    # CONTROL arm certifies under the P3 terminal family: its skewness pretest
+    # (a veto at 0.25) withholds about a quarter of Gaussian rounds by design,
+    # and with salt "5" this round was one of them. The claim under test -- the
+    # bias bit alone flips certified -- needs a certifying control; the test
+    # asserts that precondition below rather than assuming it.
     campaign = synthetic_campaign(surface, stages=["verify", "screen", "confirm"],
-                                  policy={"run_order_salt": "5" * 32})
+                                  policy={"run_order_salt": "2" * 32})
 
     def _drive(tag: str, *, inject_bias: bool) -> dict:
         monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / tag))
