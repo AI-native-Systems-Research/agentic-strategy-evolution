@@ -488,6 +488,16 @@ def screen_selection(design: dict | None) -> dict:
             else "none (per-test)"}
 
 
+def _selection_accounting(design: dict | None, on: str) -> str:
+    sel = screen_selection(design)
+    if sel["method"] == "holm":
+        return (f"screen selection: Holm step-down over the main-effect tests on the "
+                f"{on}, family-wise alpha={sel['alpha']} (routing only; no dropped "
+                f"factor is held)")
+    return (f"screen selection at alpha={sel['alpha']} per main effect on the {on} "
+            f"(per_test: no multiplicity control)")
+
+
 def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1) -> dict:
     opt = campaign.get("optimization") or {}
     factors = parse_factors(opt["factors"])
@@ -645,7 +655,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
         transitions.append(dict(fold_rule))
     if refine_on:
         transitions.append({"from": "screen", "when": {"refinable_survivors": {">": 0}}, "to": "refine",
-                            "accounting": "screen selection at alpha=0.05 per main effect (Task 8 adds regret)"})
+                            "accounting": _selection_accounting(design, "screen fit")})
         transitions.append(dict(_curvature_rule("screen")))
     transitions.append({"from": "screen", "default": ("confirm" if confirm_on else "report")})
     if fold_on:
@@ -662,7 +672,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             transitions.append({
                 "from": "foldover", "when": {"refinable_survivors": {">": 0}},
                 "to": "refine",
-                "accounting": "screen selection at alpha=0.05 per main effect on the combined fit",
+                "accounting": _selection_accounting(design, "combined fit"),
             })
             transitions.append(dict(_curvature_rule("foldover")))
         transitions.append(
