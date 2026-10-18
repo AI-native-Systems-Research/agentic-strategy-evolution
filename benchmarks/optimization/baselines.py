@@ -134,6 +134,13 @@ def crude_mean_recommendation(log: Log, coder: Coder) -> dict | None:
 
 
 def _random_point(ax, rng):
+    """A uniform draw from the domain: the product of the axes UNION the
+    off-lattice centre configurations (``surfaces.Domain.extra``)."""
+    extra = getattr(ax, "extra", None) or []
+    if extra:
+        n_prod = math.prod(len(v) for _, v in ax)
+        if rng.random() < len(extra) / (n_prod + len(extra)):
+            return dict(rng.choice(extra))
     return {f["id"]: rng.choice(vals) for f, vals in ax}
 
 
@@ -145,7 +152,15 @@ def _lhs(ax, n, rng):
         strata = [(i + rng.random()) / n for i in range(n)]
         rng.shuffle(strata)
         cols.append([vals[min(len(vals) - 1, int(u * len(vals)))] for u in strata])
-    return [{f["id"]: cols[j][i] for j, (f, _) in enumerate(ax)} for i in range(n)]
+    pts = [{f["id"]: cols[j][i] for j, (f, _) in enumerate(ax)} for i in range(n)]
+    # The off-lattice centre configurations cannot be stratified per axis: each
+    # sample is swapped for one with their share of the domain, so the design's
+    # marginal over the whole domain stays uniform.
+    extra = getattr(ax, "extra", None) or []
+    if extra:
+        share = len(extra) / (math.prod(len(v) for _, v in ax) + len(extra))
+        pts = [dict(rng.choice(extra)) if rng.random() < share else p for p in pts]
+    return pts
 
 
 def _finish(log, coder, seed):
@@ -191,11 +206,12 @@ def _pool(ax, rng, incumbent):
     total = 1
     for _, vals in ax:
         total *= len(vals)
-    if total <= POOL:
+    extra = [dict(c) for c in (getattr(ax, "extra", None) or [])]
+    if total + len(extra) <= POOL:
         import itertools
         return [dict(zip([f["id"] for f, _ in ax], c))
-                for c in itertools.product(*[vals for _, vals in ax])]
-    pts = [_random_point(ax, rng) for _ in range(POOL)]
+                for c in itertools.product(*[vals for _, vals in ax])] + extra
+    pts = [_random_point(ax, rng) for _ in range(POOL)] + extra
     if incumbent is not None:
         for f, vals in ax:
             for v in vals:
@@ -285,8 +301,9 @@ def gp_bo_crude(surface, name, budget, rng):
     if grid_size(surface) <= 20000:
         grid = [dict(zip([f["id"] for f, _ in ax], c))
                 for c in itertools.product(*[vals for _, vals in ax])]
+        grid += [dict(c) for c in ax.extra]
     else:
-        grid = [_random_point(ax, rng) for _ in range(20000)]
+        grid = [_random_point(ax, rng) for _ in range(20000)] + [dict(c) for c in ax.extra]
     Gx = np.array([coder(g) for g in grid])
     idx = [rng.randrange(len(grid)) for _ in range(min(6, budget))]
     ys = []

@@ -130,39 +130,21 @@ MAX_LATTICE = 2_000_000
 
 
 def lattice_axis(f: dict) -> list:
-    """Every value factor ``f`` can be RECOMMENDED at, which is also the domain
-    every baseline samples:
+    """The DECLARED lattice of factor ``f`` (P7 review H3):
 
     * ``choice`` and ``levels_only`` numerics: the declared levels;
-    * a two-level numeric: its declared pair plus its CENTRE, the value its
-      centre points run at (snapped to ``grid``; an integer when the levels are
-      integers, ``factors._integral_as_int``). ``decide._axis`` never
-      interpolates such a factor, but confirm can recommend the measured centre
-      (measured: ``fails_at_one_level`` recommends CPU = 24 of [8, 40]);
+    * a two-level numeric: its declared pair (``decide._axis`` never
+      interpolates one; its design centre enters through ``centre_configs``);
     * a refinable numeric with ``grid: g``: every multiple of ``g`` in
       [min, max], plus the declared levels -- ``decode_coded`` snaps a fitted
       or design value to that lattice, so any of them can be recommended;
     * a refinable numeric with no grid: ``DENSE_POINTS`` evenly spaced points
-      (stated tolerance: half the spacing).
-
-    Before this, the truth and the baselines used ``candidate_grid``'s nine
-    snapped points per axis, while Nous could recommend any lattice point: on
-    ``two_peaks`` the true optimum (14, 3) = 15.653 was off that grid, so a
-    recommendation of (15, 3) was scored against 14.754.
+      (stated tolerance: half the spacing). No suite surface has one.
     """
     lv = list(f["levels"])
-    if f["type"] != "numeric" or f.get("levels_only"):
+    if f["type"] != "numeric" or f.get("levels_only") or len(lv) <= 2:
         return sorted(lv, key=lambda v: (str(type(v)), v))
     lo, hi = min(lv), max(lv)
-    if len(lv) <= 2:
-        from orchestrator.optimize.factors import snap_to_grid
-
-        mid = (float(lo) + float(hi)) / 2.0
-        if f.get("grid") is not None:
-            mid = snap_to_grid(mid, float(f["grid"]))
-        if all(isinstance(v, int) for v in lv) and float(mid).is_integer():
-            mid = int(mid)
-        return sorted(set(lv) | {mid}, key=float)
     if f.get("grid") is None:
         return sorted({lo + (hi - lo) * i / (DENSE_POINTS - 1) for i in range(DENSE_POINTS)}
                       | set(lv))
@@ -171,6 +153,61 @@ def lattice_axis(f: dict) -> list:
     g = float(f["grid"])
     n = int(math.floor((float(hi) - float(lo)) / g + 1e-9))
     return sorted({snap_to_grid(float(lo) + i * g, g) for i in range(n + 1)} | set(lv))
+
+
+_CENTRES: dict = {}
+
+
+def centre_configs(surface: Surface) -> list[dict]:
+    """The centre configurations the campaign's designs actually RUN, read off
+    Nous's own design code -- ``stage_runner._build_design`` then
+    ``matrix.expand`` (which applies ``matrix.centre_configurations`` and the
+    diagonal cyclic choice assignment) -- for each fitting stage the campaign
+    declares. Never hand-coded, so it cannot drift from what the matrix emits.
+
+    A two-level numeric's centre is reached ONLY jointly, in these rows: on
+    ``infeasible_corner_interior`` the one centre configuration is
+    {BS: 20, CMP: 1, PF: 5}; a per-factor centre had made {BS: 20, CMP: 2}
+    reachable, which no design runs and no ranking scores.
+    """
+    if surface.name in _CENTRES:
+        return _CENTRES[surface.name]
+    from orchestrator.optimize import matrix
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.stage_runner import _build_design
+
+    c = synthetic_campaign(surface, **(campaign_overrides(surface.name) or {}))
+    opt = c["optimization"]
+    fs = parse_factors(opt["factors"])
+    stages = [s for s in (opt.get("stages") or ["screen", "refine"]) if s in ("screen", "refine")]
+    seen, out = set(), []
+    for st in stages:
+        try:
+            design = _build_design(fs, opt["design"], st)
+        except Exception:  # noqa: BLE001 -- a stage with nothing to design runs no rows
+            continue
+        for row in matrix.expand(design, fs):
+            if row.role != "center":
+                continue
+            # A stage that designs only some factors (refine designs the
+            # refinable ones) runs the others at the previous stage's
+            # recommendation -- any declared-lattice value -- so each missing
+            # factor ranges over its lattice. Sized before enumeration.
+            import itertools
+
+            miss = [f for f in surface.factors if f["id"] not in row.levels]
+            n_fill = math.prod(len(lattice_axis(f)) for f in miss) if miss else 1
+            if n_fill > 100_000:
+                raise ValueError(f"{surface.name}: {n_fill:,} fills of a centre row")
+            for combo in itertools.product(*[lattice_axis(f) for f in miss]):
+                lv = {**dict(row.levels), **{f["id"]: v for f, v in zip(miss, combo)}}
+                k = tuple(sorted(lv.items(), key=lambda kv: kv[0]))
+                if k not in seen:
+                    seen.add(k)
+                    out.append(lv)
+    _CENTRES[surface.name] = out
+    return out
 
 
 def _judged_factors(surface: Surface):
@@ -183,37 +220,81 @@ def _judged_factors(surface: Surface):
     return act, pinned
 
 
+def _extra_judged(surface: Surface) -> list[dict]:
+    """Centre configurations NOT already on the declared lattice, projected
+    onto the judged factors (exact: inert factors do not move the response)."""
+    act, pinned = _judged_factors(surface)
+    axes_ = {f["id"]: set(lattice_axis(f)) for f in act}
+    out, seen = [], set()
+    for c in centre_configs(surface):
+        lv = {**pinned, **{f["id"]: c[f["id"]] for f in act}}
+        if all(lv[k] in axes_[k] for k in axes_):
+            continue
+        k = tuple(sorted(lv.items(), key=lambda kv: kv[0]))
+        if k not in seen:
+            seen.add(k)
+            out.append(lv)
+    return out
+
+
 def lattice_size(surface: Surface) -> int:
     act, _ = _judged_factors(surface)
-    return math.prod(len(lattice_axis(f)) for f in act)
+    return math.prod(len(lattice_axis(f)) for f in act) + len(_extra_judged(surface))
 
 
 def iter_lattice(surface: Surface):
-    """Stream the judged lattice (refuses one above ``MAX_LATTICE``)."""
+    """Stream the truth domain: the declared lattice of the judged factors,
+    then the off-lattice centre configurations (refuses above ``MAX_LATTICE``)."""
     import itertools
 
     act, pinned = _judged_factors(surface)
     n = lattice_size(surface)
     if n > MAX_LATTICE:
-        raise ValueError(f"{surface.name}: truth lattice of {n:,} points exceeds "
+        raise ValueError(f"{surface.name}: truth domain of {n:,} points exceeds "
                          f"{MAX_LATTICE:,}; declare Surface.active")
     ids = [f["id"] for f in act]
     for combo in itertools.product(*[lattice_axis(f) for f in act]):
         yield {**pinned, **dict(zip(ids, combo))}
+    yield from _extra_judged(surface)
 
 
-def axes(surface: Surface) -> list[tuple[dict, list]]:
-    """Each factor with the candidate values a method may choose from: its
-    ``lattice_axis`` -- the same domain Nous can recommend from, so every
-    method shares one candidate domain and one truth."""
-    return [(f, lattice_axis(f)) for f in surface.factors]
+class Domain(list):
+    """The candidate domain every method samples: a list of ``(factor,
+    declared-lattice values)`` pairs (iterates exactly as before, so ``Coder``
+    is unchanged), plus ``extra`` -- the off-lattice centre configurations
+    over ALL factors. The domain is the product of the axes UNION ``extra``."""
+
+    extra: list
+
+    def product_size(self) -> int:
+        return math.prod(len(v) for _, v in self)
+
+    def size(self) -> int:
+        return self.product_size() + len(self.extra)
+
+
+def axes(surface: Surface) -> Domain:
+    """The domain Nous can recommend from: the declared lattice plus the
+    centre configurations its designs run. Every method samples it, and the
+    truth is taken over it."""
+    d = Domain((f, lattice_axis(f)) for f in surface.factors)
+    lat = {f["id"]: set(v) for f, v in d}
+    d.extra = [c for c in centre_configs(surface)
+               if not all(c[k] in lat[k] for k in lat)]
+    return d
+
+
+def in_domain(surface: Surface, lv: dict) -> bool:
+    """``lv`` lies in ``axes(surface)`` (inert factors of an ``active`` surface
+    are not checked: nothing judged depends on them)."""
+    act, _ = _judged_factors(surface)
+    if all(lv.get(f["id"]) in set(lattice_axis(f)) for f in act):
+        return True
+    return any(all(lv.get(f["id"]) == c[f["id"]] for f in act) for c in centre_configs(surface))
 
 
 def grid_size(surface: Surface) -> int:
-    n = 1
-    for _, vals in axes(surface):
-        n *= len(vals)
-    return n
+    return axes(surface).size()
 
 
 def _ok(value: float, op: str, bound: float) -> bool:

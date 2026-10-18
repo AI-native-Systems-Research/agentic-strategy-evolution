@@ -458,18 +458,53 @@ def test_two_peaks_truth_is_at_least_every_lattice_point():
 def test_every_method_samples_the_domain_the_truth_is_taken_over():
     for name in ("two_peaks", "geometric_knob", "drift", "fails_at_one_level"):
         s = S.get(name)
-        lat = {f["id"]: set(S.lattice_axis(f)) for f in s.factors}
-        for f, vals in S.axes(s):
-            assert set(vals) == lat[f["id"]]
-    # A two-level numeric is its pair plus the centre its centre points run at
-    # (Nous can recommend that measured centre); a gridded one is every integer.
-    two = S.get("drift").factors[0]
-    assert S.lattice_axis(two) == [2, 9, 16]
-    cpu = [f for f in S.get("fails_at_one_level").factors if f["id"] == "CPU"][0]
-    assert S.lattice_axis(cpu) == [8, 24, 40]
-    bs = [f for f in S.get("infeasible_corner_interior").factors if f["id"] == "BS"][0]
-    assert S.lattice_axis(bs) == [8, 20, 32] and isinstance(S.lattice_axis(bs)[1], int)
+        ax = S.axes(s)
+        assert {f["id"]: list(v) for f, v in ax} == {f["id"]: S.lattice_axis(f) for f in s.factors}
+        assert ax.extra == [c for c in S.centre_configs(s)
+                            if not all(c[f["id"]] in S.lattice_axis(f) for f in s.factors)]
+    # A two-level numeric's axis is its declared pair; a gridded one is every integer.
+    assert S.lattice_axis(S.get("drift").factors[0]) == [2, 16]
     assert S.lattice_axis(S.get("bowl").factors[0]) == list(range(2, 17))
+
+
+def test_centre_configurations_come_from_the_matrix_not_a_per_factor_centre():
+    """The design's centre rows, read off ``matrix.expand``: joint for two-level
+    numerics, cycled over the choice levels (fails_at_one_level runs CPU = 24
+    with each of its two diagonal choice configurations)."""
+    assert S.axes(S.get("infeasible_corner_interior")).extra == [{"BS": 20, "CMP": 1, "PF": 5}]
+    fa = S.axes(S.get("fails_at_one_level")).extra
+    assert sorted(fa, key=str) == sorted([{"EV": "lru", "DEV": "nvme", "CPU": 24},
+                                          {"EV": "arc", "DEV": "sata_ssd", "CPU": 24}], key=str)
+    s = S.get("infeasible_corner_interior")
+    assert not S.in_domain(s, {"BS": 20, "CMP": 2, "PF": 8})   # the per-factor-centre point
+
+
+def test_truth_lies_in_the_domain_on_every_surface():
+    """(a) On every surface the benchmark truth configuration is in the domain."""
+    for name in S.ALL:
+        s = S.get(name)
+        assert S.in_domain(s, S.truth(s)["optimum"]), name
+
+
+def test_infeasible_corner_interior_truth_is_the_declared_space_optimum():
+    """(c) The declared candidate space is {8, 32} x {0, 2} x PF plus the design
+    centre {20, 1, 5}; its best admissible point is {32, 0, 8} = 14.4."""
+    tr = S.truth(S.get("infeasible_corner_interior"))
+    assert tr["optimum"] == {"BS": 32, "CMP": 0, "PF": 8}
+    assert tr["best"] == pytest.approx(14.4)
+
+
+def test_baselines_draw_the_off_lattice_centres_and_nothing_else():
+    import random as _r
+
+    from benchmarks.optimization.baselines import _lhs, _pool, _random_point
+
+    s = S.get("fails_at_one_level")
+    ax = S.axes(s)
+    rng = _r.Random(0)
+    draws = [_random_point(ax, rng) for _ in range(2000)] + _lhs(ax, 200, rng) + _pool(ax, rng, None)
+    assert all(S.in_domain(s, lv) for lv in draws)
+    assert any(lv["CPU"] == 24 for lv in draws)
 
 
 def test_geometric_knob_off_candidate_grid_recommendations_are_scored_exactly():
@@ -489,15 +524,14 @@ def _write_runs(d, rows_by_iter):
 
 
 def test_every_recommendation_nous_made_is_in_the_shared_domain():
-    """Nous recommends only points the baselines can also sample and the truth
-    covers (every row of the committed suite and audit JSON)."""
+    """(b) Nous recommends only points the baselines can also sample and the
+    truth covers (every row of the committed suite and audit JSON)."""
     for f in ("optimization-benchmark.json", "optimization-benchmark-audit-repro.json"):
         d = json.loads((ROOT / "docs" / "benchmarks" / f).read_text())
         for r in d["nous"]:
             s = S.get(r["surface"])
-            lat = {fa["id"]: set(S.lattice_axis(fa)) for fa in s.factors}
-            for k, v in (r.get("rec") or {}).items():
-                assert v in lat[k], (f, r["surface"], k, v)
+            if r.get("rec"):
+                assert S.in_domain(s, r["rec"]), (f, r["surface"], r["seed"], r["rec"])
 
 
 def test_one_measured_row_counter_excludes_stage_and_iteration_copies(tmp_path):
