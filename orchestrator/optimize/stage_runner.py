@@ -1678,8 +1678,10 @@ def _check_crn_probe(campaign: dict, work_dir: Path, factors,
         logger.info("verify: CRN probe -- %s reaches the target (%s)", env,
                     verdict.get("basis") or f"F={verdict.get('f'):.3g}, p={verdict.get('p'):.3g}")
         return
-    why = ("the seed changed nothing: different seeds gave measurements no more "
-           "different than the same seed run twice"
+    why = ("the seed was not SHOWN to matter: different seeds gave measurements "
+           "no more different than the same seed run twice, at this probe's size "
+           "(power about 0.6 at a seed effect twice the run noise, 0.94 at five "
+           "times; failing to reject is not proof of no effect)"
            if verdict["verdict"] == "decorative" else
            f"the probe could not be completed ({verdict.get('reason') or 'fewer than 2 seeds'})")
     raise OptimizationGateFailed(
@@ -7520,6 +7522,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         skip=model_inadequate or adequacy_unknown,
         delta_s=float(pol["objective"]["delta_screen"]),
         delta_c=pol["objective"].get("delta_constraint"),
+        delta_f=pol["objective"].get("delta_feasibility"),
         xhat_measured_infeasible=bool(_rec_for_bias.get("levels")) and
         _measured_infeasible_contains(work_dir, dict(_rec_for_bias["levels"])),
         hetero_rule=pol["objective"].get("heteroscedasticity"))
@@ -8467,6 +8470,7 @@ def _certificate_scope(rec: dict, boundary: dict | None,
 def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
                   bound, eps, *, delta_t: float, delta_s: float, skip: bool,
                   delta_c: float | None = None,
+                  delta_f: float | None = None,
                   xhat_measured_infeasible: bool = False,
                   hetero_rule: dict | None = None) -> tuple[dict | None, list[str]]:
     """``G = R_model_out + R_terminal`` and why it cannot certify (WP-A A1).
@@ -8490,12 +8494,14 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
            "x_hat": dict(xhat), "x_hat_key": None,
            "delta_screen": delta_s, "delta_terminal_per_look": delta_t,
            **({"delta_constraint": delta_c} if delta_c is not None else {}),
+           **({"delta_feasibility": delta_f} if delta_f is not None else {}),
            "rule": "G = R_model_outside + R_terminal, R_model_outside the model "
                    "bound over the candidates OUTSIDE the measured shortlist; "
                    "certified needs G <= epsilon and the fitted argmax measured "
                    "admissibly in this round. Pr(certified and gap > epsilon) "
                    "<= delta_screen + delta_terminal (+ delta_constraint when "
-                   "constraint exclusion is registered) under the stated "
+                   "constraint exclusion is registered, + delta_feasibility "
+                   "when a distributional constraint is) under the stated "
                    "assumptions."}
     if not rec or not isinstance(r_model, (int, float)):
         return out, ["model_bound_not_computable"]
@@ -9506,6 +9512,30 @@ def _measured_infeasible(work_dir) -> list[dict]:
         for row in artifacts.read_runs(d):
             if row.get("status") in ("infeasible", "rejected") and row.get("levels"):
                 out.append(dict(row["levels"]))
+        out.extend(_distributionally_struck(d))
+    return out
+
+
+def _distributionally_struck(iter_dir: Path) -> list[dict]:
+    """Finalists a confirm round struck off because a distributional
+    constraint (``semantics: mean | chance``) was not SHOWN feasible (P3 review
+    M1). That verdict is a fact about the configuration from its replicates,
+    recorded only in confirmation.json -- no single row is infeasible -- so
+    the row scan above misses it and the report could hand one back."""
+    p = Path(iter_dir) / "confirmation.json"
+    if not p.exists():
+        return []
+    try:
+        conf = json.loads(p.read_text())
+    except (OSError, ValueError):
+        return []
+    df = conf.get("distributional_feasibility") or {}
+    verdicts = df.get("finalists") or {}
+    out = []
+    for f in conf.get("finalists") or []:
+        v = verdicts.get(f.get("key"))
+        if v is not None and v.get("shown_feasible") is False and f.get("levels"):
+            out.append(dict(f["levels"]))
     return out
 
 

@@ -2881,7 +2881,8 @@ writing).
 **Constraint semantics.** `response.constraints[].semantics` is
 `every_replicate` (the default: one violating replicate strikes the
 configuration off), `mean` (the configuration's mean must satisfy the
-comparison, shown by a one-sided t bound) or `chance:<alpha>` (the
+comparison, shown by the worse of a one-sided t and a bootstrap-t bound) or
+`chance:<alpha>` (the
 probability that one run violates it must be at most alpha, shown by a
 one-sided Clopper-Pearson bound). Either of the last two registers
 `policy.delta_feasibility` (default `delta_terminal`), spent over finalists ×
@@ -2890,6 +2891,16 @@ constraints × looks. It is added to the stated budget and to
 alpha)` replicates even with no violation, so set `design.confirm.replicates`
 accordingly; `distributional_feasibility.finalists.*.constraints[].min_replicates`
 says how many.
+
+How exact each is: `chance` is exact (binomial). `mean` cannot be exact at
+small n for every distribution (Bahadur & Savage 1956), and is recorded
+`level_basis: approximate`. Measured, true mean ON the threshold, n = 6, a
+nominal per-test level of 0.0167: a plain t judges a lognormal metric
+"shown feasible" 3.5x (sigma 0.5) and 9x (sigma 1) too often; the shipped
+max(t, bootstrap-t) cuts that to about 2x and 4x. For a skewed constraint
+metric (stall time, a tail latency), either use `chance:<alpha>` or declare
+the metric's range, `support: [lo, hi]`, which gives an exact Hoeffding
+(1963) bound at the cost of width.
 
 #### Certification: documented limits
 
@@ -2921,7 +2932,11 @@ What a certificate does NOT cover (spec
    right-censored at `run_timeout_sec` (`runs.jsonl` `censored`), never
    imputed. A finalist with one still withholds `finalist_unmeasured`. A
    censored row's bound is stated, but it is not used in any estimate (no
-   Tobit or Kaplan-Meier model).
+   Tobit or Kaplan-Meier model). That is NOT unbiased: censoring is
+   informative. In a minimisation campaign the dropped rows are the slow
+   ones, so a timeout-prone configuration looks faster than it is in screen
+   and refine. Confirm still withholds such a finalist, so this is no false
+   certificate, but treat a fit with censored rows as optimistic about them.
 3. **Pure error stands in for every configuration.** The model bound's
    variance comes from the centre replicates only. If those under-state the
    variance elsewhere, the model half is anti-conservative. Since #321 P3 a

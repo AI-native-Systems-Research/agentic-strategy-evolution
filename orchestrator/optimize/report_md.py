@@ -799,6 +799,9 @@ def render_report_markdown(work_dir: Path) -> str:
         f"| delta, terminal | {_fmt(report.get('delta_terminal'))} |",
         *([f"| delta, constraint exclusion | {_fmt(report.get('delta_constraint'))} |"]
           if report.get("delta_constraint") is not None else []),
+        *([f"| delta, feasibility (distributional constraints) | "
+           f"{_fmt(report.get('delta_feasibility'))} |"]
+          if report.get("delta_feasibility") is not None else []),
         "",
     ]
     if basis != "model" and par is None:
@@ -905,6 +908,7 @@ def _error_budget_lines(report: dict) -> list[str]:
         return []
     rows = [f"| {e.get('epoch')} | {_fmt(e.get('delta_screen'))} | "
             f"{_fmt(e.get('delta_terminal'))} | {_fmt(e.get('delta_constraint') or 0.0)} | "
+            f"{_fmt(e.get('delta_feasibility') or 0.0)} | "
             f"{_fmt(e.get('spent'))} | "
             f"{'yes' if e.get('compiled_after_data') else 'no'} |"
             for e in eb.get("epochs") or []]
@@ -914,8 +918,8 @@ def _error_budget_lines(report: dict) -> list[str]:
     return [
         "## Error budget across epochs",
         "",
-        "| epoch | delta, screen | delta, terminal | delta, constraint | spent | compiled after earlier data |",
-        "|---|---|---|---|---|---|",
+        "| epoch | delta, screen | delta, terminal | delta, constraint | delta, feasibility | spent | compiled after earlier data |",
+        "|---|---|---|---|---|---|---|",
         *rows,
         "",
         f"**Cumulative (union bound over epochs): {cum}.** Certification above is "
