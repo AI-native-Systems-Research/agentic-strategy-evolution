@@ -696,6 +696,29 @@ PARETO_SURFACES: dict[str, Callable[[], Surface]] = {
 }
 
 
+def _pareto_three_discrete() -> Surface:
+    """``pareto_three`` over LEVELS-ONLY knobs (4^3 = 64 configurations).
+
+    WP-D D1's recombination oracle (``ALLOCATE_SURFACES``). Only the declared
+    levels run, so the predicted front can name only grid points, and the
+    measured front's points each take the high level on SOME knob: f3 rewards
+    moderate A and B, f1/f2 reward high A/B. Configurations such as
+    ``{A: 8, B: 16, C: 16}`` take A from one measured front point and B from
+    another, and no fitting or first-round point measured them. Kept out of
+    ``PARETO_SURFACES`` so every sweep over that dict is unchanged."""
+    base = _pareto_three(name="pareto_three_discrete")
+    fs = tuple({**{k: v for k, v in _numeric(f).items() if k != "grid"},
+                "levels_only": True} for f in "ABC")
+    return Surface(name="pareto_three_discrete", noise_sd=base.noise_sd, factors=fs,
+                   fn=base.fn, objectives=base.objectives)
+
+
+#: Surfaces for the WP-D allocate-round oracles only.
+ALLOCATE_SURFACES: dict[str, Callable[[], Surface]] = {
+    "pareto_three_discrete": _pareto_three_discrete,
+}
+
+
 #: Largest oracle grid ``candidate_grid`` will materialise (~200 MB).
 MAX_ORACLE_POINTS = 1_000_000
 

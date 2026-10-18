@@ -1300,6 +1300,51 @@ def check_refill_branch(policy: dict) -> list[str]:
     return out
 
 
+def check_allocate_branch(policy: dict) -> list[str]:
+    """INV-VOC11: ``allocate_available`` is read only by the opt-in allocate
+    branch -- ``confirm -> confirm``, accounting ``ALLOCATE_ACCOUNTING``,
+    guarded by ``allocate_available``, affordability and the round cap --
+    registered only when ``design.confirm.allocate`` is compiled, after
+    ``certified`` and before every decline guard, and charged as one look by
+    ``confirm_looks``."""
+    from orchestrator.optimize.policy import ALLOCATE_ACCOUNTING, confirm_looks
+
+    pol = policy or {}
+    out: list[str] = []
+    design = (((pol.get("states") or {}).get("confirm") or {}).get("design") or {})
+    cap = design.get("max_rounds")
+    confirm_rules = [t for t in pol.get("transitions") or []
+                     if t.get("from") == "confirm" and "when" in t]
+    hits = 0
+    for i, t in enumerate(confirm_rules):
+        when = t.get("when") or {}
+        if "allocate_available" not in when and t.get("accounting") != ALLOCATE_ACCOUNTING:
+            continue
+        hits += 1
+        where = f"{t.get('from')}->{t.get('to')}"
+        if t.get("to") != "confirm" or t.get("accounting") != ALLOCATE_ACCOUNTING:
+            out.append(f"{where}: allocate_available read outside the allocate branch")
+        if when.get("allocate_available") is not True or when.get(
+                "confirm_affordable") is not True or when.get("round") != {">=": cap}:
+            out.append(f"{where}: allocate not guarded by availability, affordability "
+                       f"and the round cap")
+        if not any("certified" in (r.get("when") or {}) for r in confirm_rules[:i]):
+            out.append(f"{where}: registered before the certified rule")
+        if any(r.get("to") == "report" and "certified" not in (r.get("when") or {})
+               for r in confirm_rules[:i]):
+            out.append(f"{where}: registered after a decline rule")
+    if hits and "allocate" not in design:
+        out.append("allocate branch registered but design.allocate was not compiled")
+    if "allocate" in design and not hits:
+        out.append("design.allocate compiled but no allocate branch is registered")
+    if hits:
+        rounds = max(1, int(cap or 1))
+        if confirm_looks(pol) < rounds + 1:
+            out.append(f"confirm_looks={confirm_looks(pol)} does not charge the "
+                       f"allocate look (round cap {rounds})")
+    return out
+
+
 def check_single_objective_untouched(policy: dict, report: dict | None = None) -> list[str]:
     """INV-ST11: a single-objective campaign carries no multi-objective
     vocabulary -- no ``objective.objectives``, no ``front_gap_large`` guard, no
@@ -1680,6 +1725,14 @@ _ENTRIES: tuple[Invariant, ...] = (
               violated_by="a real Go campaign: 2 of 3 finalists measured infeasible at "
                           "the round cap, R_terminal = 0 over no feasible rival, two "
                           "thirds of confirm's budget spent and never refilled"),
+
+    Invariant("INV-VOC11", "allocate_available is read only by the opt-in allocate "
+                           "branch (confirm -> confirm, accounting 'allocate round', "
+                           "guarded by allocate_available, confirm_affordable and the "
+                           "round cap), registered after certified and before every "
+                           "decline guard, and charged as one look by confirm_looks.",
+              "VOC", "artifact", "policy.ALLOCATE_ACCOUNTING; compile_policy", TEST,
+              check_allocate_branch),
 
     # ── semantic / accounting ─────────────────────────────────────────────
     Invariant("INV-SEM01", "residual_regret_model and residual_regret_terminal are separate "

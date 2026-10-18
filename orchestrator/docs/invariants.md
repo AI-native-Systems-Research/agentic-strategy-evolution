@@ -132,6 +132,7 @@ they are the ones that went unnoticed for 14 hours.
 | `INV-VOC08` | A closed vocabulary's producers and consumers agree: no consumer compares against a value no producer can emit, and no produced value falls through every consumer. | module | the `n_excluded == "excluded"` regression in `_finish_confirm` | `always` | **yes** |
 | `INV-VOC09` | `front_gap_large` is read only by the registered gap-fill branch — `confirm -> confirm`, accounting `front gap fill, Bonferroni over rounds`, guarded by the round cap and `confirm_affordable` — and only in a multi-objective policy. | artifact | `policy.FRONT_GAP_ACCOUNTING`; `compile_policy` | `test` — `check_gap_fill_branch` | — |
 | `INV-VOC10` | `finalists_vacated`, `feasible_finalists` and `refill_available` are read only by the registered refill branch — `confirm -> confirm`, accounting `refill vacated seats`, guarded by `refill_available`, `confirm_affordable` and the round cap — registered (constrained campaigns only) before certification and every decline guard. | artifact | `policy.REFILL_ACCOUNTING`; `compile_policy` | `test` — `tests/test_optimize_refill.py` + `check_refill_branch` | **yes** — a real Go campaign spent two thirds of confirm on infeasible finalists at the round cap and never refilled |
+| `INV-VOC11` | `allocate_available` is read only by the opt-in allocate branch — `confirm -> confirm`, accounting `allocate round (WP-D D1)`, guarded by `allocate_available`, `confirm_affordable` and the round cap — registered only when `design.confirm.allocate` is declared, after `certified` and before every decline guard, and charged as one look by `confirm_looks` (and so by the replicate floor). | artifact | `policy.ALLOCATE_ACCOUNTING`; `compile_policy` | `test` — `tests/test_optimize_allocate_seat.py` + `check_allocate_branch` | — |
 
 **`INV-VOC08` — the defect class, and why it needs its own invariant.** A
 status literal produced in one place and compared in another is a reference
@@ -494,17 +495,17 @@ they disagree.
 | Type | Count | `always` | `paranoid` | `test` | `audit` |
 |---|---|---|---|---|---|
 | Structural (`INV-ST`) | 11 | 10 | 0 | 1 | 0 |
-| Closed vocabulary (`INV-VOC`) | 10 | 7 | 0 | 3 | 0 |
+| Closed vocabulary (`INV-VOC`) | 11 | 7 | 0 | 4 | 0 |
 | Semantic (`INV-SEM`) | 20 | 17 | 0 | 3 | 0 |
 | Statistical (`INV-STAT`) | 18 | 7 | 0 | 11 | 0 |
 | Temporal (`INV-TMP`) | 8 | 4 | 0 | 2 | 2 |
 | Provenance (`INV-PROV`) | 6 | 4 | 0 | 2 | 0 |
 | Resource (`INV-RES`) | 6 | 5 | 0 | 1 | 0 |
 | Economic (`INV-ECO`) | 3 | 2 | 0 | 1 | 0 |
-| **Total** | **82** | **56** | **0** | **24** | **2** |
+| **Total** | **83** | **56** | **0** | **25** | **2** |
 
-By level: `function` 26, `module` 6, `artifact` 35, `iteration` 5, `epoch` 7, `campaign` 3. Checkable (a
-checker function exists): 57 of 82. The 25 without one are
+By level: `function` 26, `module` 6, `artifact` 36, `iteration` 5, `epoch` 7, `campaign` 3. Checkable (a
+checker function exists): 58 of 83. The 25 without one are
 recorded with a `note` saying WHY — an invariant enforced by construction, by an
 exception type, or by a call-site discipline is real, and dropping it because it
 resists a checker would make the inventory a list of what is easy to check

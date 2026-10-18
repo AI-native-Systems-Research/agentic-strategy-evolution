@@ -1172,6 +1172,70 @@ def _rule33_reuse_screen_with_choice_factor(design: dict, factors: list[dict],
     ]
 
 
+def _rule34_confirm_allocate(opt: dict) -> list[str]:
+    """Rule 34 (WP-D D1 / P6b): the opt-in ``design.confirm.allocate`` round.
+
+    ERRORS (a campaign that could never use the branch, or whose extra look
+    makes every confirm round uncertifiable, is refused, never compiled):
+
+    * ``allocate_seats_exceed_shortlist``: the allocate round seats within
+      ``shortlist_size``, so ``seats`` above it can never be honoured;
+    * ``allocate_without_confirm``: ``stages`` omits confirm;
+    * ``allocate_look_below_replicate_floor``: the extra look is charged to
+      every confirm divisor and so raises the P3 replicate floor
+      (``policy.replicate_floor``). A DECLARED ``design.confirm.replicates``
+      that met the floor without the branch and misses it with the branch
+      would make every round withhold ``replicates_below_floor`` -- declaring
+      allocation would make certification impossible. (Omitting replicates
+      takes the raised floor, so the defaults always remain certifiable.)
+    """
+    design = opt.get("design") or {}
+    confirm = design.get("confirm") or {}
+    a = confirm.get("allocate")
+    if a is None:
+        return []
+    if not isinstance(a, dict):
+        return [f"optimization.design.confirm.allocate must be a mapping "
+                f"{{seats: k}}, got {a!r}."]
+    errs = []
+    seats = a.get("seats")
+    if not isinstance(seats, int) or isinstance(seats, bool) or seats < 1:
+        errs.append(f"optimization.design.confirm.allocate.seats={seats!r} must be "
+                    f"an integer >= 1.")
+        return errs
+    mo = bool((opt.get("response") or {}).get("objectives"))
+    k = confirm.get("shortlist_size")
+    if not isinstance(k, int) or isinstance(k, bool):
+        k = 2 * len((opt.get("response") or {}).get("objectives") or []) + 2 if mo else 3
+    if seats > k:
+        errs.append(f"allocate_seats_exceed_shortlist: design.confirm.allocate.seats="
+                    f"{seats} exceeds shortlist_size={k}; the allocate round seats "
+                    f"within the shortlist, so lower seats or raise shortlist_size.")
+    stages = opt.get("stages")
+    if isinstance(stages, list) and "confirm" not in stages:
+        errs.append("allocate_without_confirm: design.confirm.allocate is declared "
+                    "but stages omits confirm, so the round can never run.")
+    reps = confirm.get("replicates")
+    if not mo and isinstance(reps, int) and not isinstance(reps, bool):
+        from orchestrator.optimize.policy import replicate_floor
+
+        try:
+            with_a = replicate_floor(opt)
+            without = {**opt, "design": {**design, "confirm": {
+                kk: v for kk, v in confirm.items() if kk != "allocate"}}}
+            base = replicate_floor(without)
+        except (TypeError, ValueError, ZeroDivisionError):
+            return errs
+        if base <= reps < with_a:
+            errs.append(
+                f"allocate_look_below_replicate_floor: the allocate branch adds one "
+                f"confirm look, which raises the replicate floor from {base} to "
+                f"{with_a}; design.confirm.replicates={reps} would then withhold "
+                f"every round as replicates_below_floor. Raise replicates to >= "
+                f"{with_a}, omit it (the default is the floor), or drop allocate.")
+    return errs
+
+
 def _rule30_mixed_resolution_three_foldover(opt: dict, design: dict,
                                             factors: list[dict]) -> list[str]:
     """Rule 30: no resolution-III screen with a multi-level categorical while
@@ -2250,6 +2314,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule26_objectives(opt))
     errors.extend(_rule32_confirm_replicate_floor(opt))
     errors.extend(_rule33_reuse_screen_with_choice_factor(design, factors, opt.get("stages")))
+    errors.extend(_rule34_confirm_allocate(opt))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
     # locked_observables keys, and a WARN naming every unenforceable lock.
