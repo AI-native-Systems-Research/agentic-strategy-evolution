@@ -326,7 +326,11 @@ def _repair(campaign: dict) -> list[str]:
     return notes
 
 
-def validate_campaign(campaign: dict) -> list[str]:
+def validate_campaign(campaign: dict, *, epoch: int = 1) -> list[str]:
+    """Schema + cross-field rules + a compile, AT the epoch the campaign would
+    run as (final review M1: a charged ``campaign_delta`` raises the replicate
+    floor in later epochs, so a proposal valid as epoch 1 can be one that can
+    never certify as epoch e+1)."""
     import jsonschema
 
     from orchestrator.validate import validate_optimization_campaign
@@ -339,10 +343,35 @@ def validate_campaign(campaign: dict) -> list[str]:
     try:
         from orchestrator.optimize.policy import compile_policy
 
-        compile_policy(campaign)
+        compile_policy(campaign, epoch=int(epoch))
     except Exception as exc:  # noqa: BLE001 -- recorded as the move's reason
         errs.append(f"[compile] {type(exc).__name__}: {exc}")
+    errs += _floor_at_epoch(campaign, int(epoch))
     return errs
+
+
+def _floor_at_epoch(campaign: dict, epoch: int) -> list[str]:
+    """A DECLARED confirm replicate count below the replicate floor of the
+    epoch it would run as is refused: every round would withhold
+    ``replicates_below_floor`` while spending its share and runs."""
+    opt = campaign.get("optimization") or {}
+    if (opt.get("response") or {}).get("objectives"):
+        return []
+    reps = ((opt.get("design") or {}).get("confirm") or {}).get("replicates")
+    if not isinstance(reps, int) or isinstance(reps, bool):
+        return []      # omitted: the compile takes that epoch's floor
+    from orchestrator.optimize.policy import replicate_floor
+
+    try:
+        floor = replicate_floor(opt, epoch)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return []
+    if reps < floor:
+        return [f"[floor] design.confirm.replicates={reps} is below epoch {epoch}'s "
+                f"replicate floor {floor} (the charged campaign_delta share shrinks "
+                f"delta_terminal in later epochs); the epoch could never certify. "
+                f"Raise it to >= {floor} or omit it."]
+    return []
 
 
 def campaign_hash(campaign: dict) -> str:
@@ -943,7 +972,7 @@ def plan(work_dir: Path) -> dict:
             options.append(opt)
             continue
         seen[h] = mv["id"]
-        errs = validate_campaign(c)
+        errs = validate_campaign(c, epoch=ep["epoch"] + 1)
         if errs:
             opt.update(feasible=False, reason="proposal_invalid", errors=errs[:12])
             options.append(opt)
@@ -1324,7 +1353,7 @@ def accept(work_dir: Path, campaign_path: Path, *, force_overwrite: bool = False
     c = yaml.safe_load(text)
     if campaign_hash(c) != d["proposed_campaign"]["campaign_hash"]:
         raise PlanError("stale_decision: the proposed campaign file was edited after planning")
-    errs = validate_campaign(c)
+    errs = validate_campaign(c, epoch=e + 1)
     if errs:
         raise PlanError(f"proposal_invalid: {errs[:3]}")
     # The budgets as they stand NOW, not as the decision recorded them.

@@ -2177,6 +2177,14 @@ def _assign_workload_seeds(rows, payload, pol, *, iteration: int, confirm: bool,
 
     def _seed(i: int, base: int) -> int:
         if seeds:
+            if fresh_offset and i >= len(seeds):
+                # A post-selection block (validate / inertness) would wrap back
+                # onto the draws that selected the winner (final review H1).
+                # Rule 31 refuses such a list; this is the runtime backstop.
+                raise OptimizationGateFailed(
+                    f"workload.seeds has {len(seeds)} seed(s), too few for a fresh "
+                    f"post-selection block (replicate index {i}); declare more seeds "
+                    f"or omit workload.seeds")
             return int(seeds[i % len(seeds)])
         # 7919 is prime and much larger than any plausible row/replicate count,
         # so consecutive bases cannot collide into overlapping seed runs the way
