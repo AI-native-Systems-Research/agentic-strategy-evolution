@@ -940,13 +940,14 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # the data-chosen winner is covered. Registered from the
             # declaration only. Defaults to delta_terminal.
             **({"delta_feasibility": _df} if _feasibility_registered(opt) else {}),
-            # #321 P4 item 2: the adequacy family. Holm (1979) across every
-            # adequacy TEST of a fitting stage (lack of fit, the validation
-            # check; primary and each objective model) at family-wise alpha,
-            # so a true model is called inadequate w.p. <= alpha. A VETO on
-            # the model half (certification needs adequate), so it spends no
-            # delta; its alpha is the CERTIFICATE'S POWER cost, not its error.
-            "adequacy": {"method": str(pol_cfg.get("adequacy_multiplicity", "holm")),
+            # #321 P4 item 2 / review MEDIUM 1: the adequacy tests (lack of
+            # fit, the validation check; primary and each objective model).
+            # Each is a VETO on the model half, so the default is `per_test`:
+            # every test at alpha, conservative for validity (a smaller veto
+            # size lowers the M1 guard). The Holm family over them is
+            # recorded as information; `holm` makes it decide (the
+            # false-inadequacy rate then <= alpha, at a cost in the guard).
+            "adequacy": {"method": str(pol_cfg.get("adequacy_multiplicity", "per_test")),
                          "alpha": float(pol_cfg.get("adequacy_alpha", 0.05)),
                          "tests": "lack_of_fit and validation_prediction, primary "
                                   "and every objective model, per fitting stage",

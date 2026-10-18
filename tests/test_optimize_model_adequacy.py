@@ -91,12 +91,11 @@ def test_saddle_withholds_on_the_model_bound(tmp_path):
     model bound over the unshortlisted candidates exceeded epsilon on every
     one of them. Now withheld, named, and never wrong. Since #321 H3 (the
     Scheffe constant, 5.3 against Bonferroni's 6.7-12 at df 3) the model half
-    is narrow enough to certify on some seeds. Since #321 P4 (Holm across
-    lack of fit + validation, the outer ring) 3/8 certify: seeds 2 and 5 had
-    lack of fit p = 0.033 / 0.030, a per-test rejection of a TRUE quadratic
-    that the two-test Holm family (thresholds 0.025, 0.05) does not make; seed
-    4 is the one H3 already certified with the new design. Every certificate
-    has gap 0.0; every other seed is withheld on the model half."""
+    is narrow enough to certify on some seeds (at most 3/8 since #321 P4:
+    under adequacy_multiplicity: holm, seeds 2 and 5 -- lack of fit p = 0.033
+    / 0.030, which the two-test family does not reject -- also certify; the
+    per-test default withholds them). Every certificate has gap 0.0; every
+    other seed is withheld on the model half."""
     certified = 0
     for seed in SEEDS:
         r = run_synthetic_campaign(SURFACES["saddle"](), seed=seed,
@@ -429,6 +428,11 @@ def test_reuse_screen_with_a_choice_factor_is_a_validation_error():
     assert errs and "interactions" in errs[0] and "constant shift" in errs[0]
     ok = synthetic_campaign(SURFACES["bowl"](), **_REUSE)
     assert not [e for e in validate_optimization_campaign(ok) if "reuse_screen" in e]
+    # Exempt when refine is not a stage: the option can never act.
+    inert = synthetic_campaign(SURFACES["bowl_centred"](), **_REUSE,
+                               stages=["verify", "screen", "confirm"])
+    assert not [e for e in validate_optimization_campaign(inert)
+                if "reuse_screen" in e and not e.startswith("WARN")]
 
 
 def test_a_block_term_cannot_absorb_a_choice_by_numeric_interaction():

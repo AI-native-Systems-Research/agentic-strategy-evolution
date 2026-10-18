@@ -5244,6 +5244,7 @@ def _run_stage_body(
         adequacy_basis, decision, val_rows, val_outcomes, val_ys,
         response_spec, primary, _omodels, blocks=blocks_for_fit,
         adequacy_rule=(pol.get("objective") or {}).get("adequacy"),
+        untested_levels=untested, mo_untested_names=mo_untested,
         val_meta={k: payload["validation"][k]
                   for k in ("ring", "points_declined", "declined_reason")
                   if k in (payload.get("validation") or {})})
@@ -9071,16 +9072,27 @@ def _model_adequacy(decision, mo_rejected, fit, untested, design_for_fit,
         return False, None
     if fit.lof_exact == "rejected":
         return False, None
+    basis = _unknown_adequacy_basis(fit, untested, design_for_fit, mo_untested)
+    return (None, basis) if basis else (True, None)
+
+
+def _unknown_adequacy_basis(fit, untested, design_for_fit, mo_untested=()):
+    """Why adequacy is UNKNOWN, computed INDEPENDENTLY of whether lack of fit
+    rejected (#321 P4 review HIGH 2): ``lack_of_fit_not_computable`` (incl. a
+    secondary objective with no verdict), ``curvature_untested`` or
+    ``curvature_not_isolated``; ``None`` when nothing is unknown. Any later
+    step that sets aside a rejection must re-apply this, so an unknown never
+    becomes adequate."""
     if (fit.lack_of_fit_p is None and not fit.lof_exact_fit) or mo_untested:
-        return None, "lack_of_fit_not_computable"
+        return "lack_of_fit_not_computable"
     if untested:
-        return None, "curvature_untested"
+        return "curvature_untested"
     mixed = bool(design_for_fit.groups) and any(
         c != g for c, g in zip(design_for_fit.factor_ids, design_for_fit.groups))
     if (mixed and any(p.role == "center" for p in design_for_fit.points)
             and not fit.centre_isolated):
-        return None, "curvature_not_isolated"
-    return True, None
+        return "curvature_not_isolated"
+    return None
 
 
 def _screen_reuse(work_dir, pol, design, rows, payload, factors):
@@ -9233,7 +9245,8 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
                      factors, fitted_ids, interactions_dropped, omitted_terms,
                      adequate, basis, decision, val_rows, val_outcomes, val_ys,
                      response_spec, primary, omodels, blocks=None,
-                     adequacy_rule=None, val_meta=None):
+                     adequacy_rule=None, val_meta=None, untested_levels=None,
+                     mo_untested_names=()):
     """``(model_adequacy record, model_adequate, basis)`` for this stage.
 
     THE THIS-STAGE VERDICT. Lack of fit (``_model_adequacy``) as before, and at
@@ -9377,9 +9390,18 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
             "points_declined": val_meta.get("points_declined") or []}
     if fam_cfg:
         fam = adq.adequacy_family(tests, alpha=float(fam_cfg["alpha"]),
-                                  method=str(fam_cfg["method"]))
+                                  method="holm")
         fam["vetoes"] = vetoes
+        fam["decides"] = str(fam_cfg["method"]) == "holm"
         rec["family"] = fam
+    if fam_cfg and str(fam_cfg["method"]) != "holm":
+        # #321 P4 review MEDIUM 1 (default): every adequacy test is a VETO at
+        # its own alpha -- conservative for validity, since lowering a veto's
+        # size lowers the M1 guard. The Holm family above is recorded as
+        # information only; the decision is per-test, so nothing it says can
+        # promote a rejected or unknown verdict.
+        fam_cfg = None
+    if fam_cfg:
         rejected_names = list(fam["rejected"]) + vetoes
         # Each check's `rejected` is the FAMILY's decision on it (so INV-STAT19
         # reads one verdict); the per-test outcome is kept as rejected_at_alpha.
@@ -9392,7 +9414,8 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
                 _oc["rejected_at_alpha"] = _oc["rejected"]
                 _oc["rejected"] = f"validation_prediction:{_m}" in fam["rejected"]
     else:
-        rejected_names = ([n for n, p in tests if p < 0.05] + vetoes)
+        _a = float(((adequacy_rule or {}).get("alpha")) or 0.05)
+        rejected_names = ([n for n, p in tests if p < _a] + vetoes)
     lof_names = [n for n in rejected_names if n.startswith("lack_of_fit")]
     val_names = [n for n in rejected_names if n.startswith("validation_prediction")]
     # The cause names are those the pre-P4 record used: an objective model that
@@ -9414,7 +9437,12 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
         if rejected_names:
             adequate, basis = False, None
         elif adequate is False and not _non_test_rejection(fit, omodels, primary):
-            adequate, basis = True, None
+            # The family set aside a per-test rejection. Re-apply the UNKNOWN
+            # bases (#321 P4 review HIGH 2): an untested level, a curvature
+            # leak or a missing verdict stays unknown, never adequate.
+            _ub = _unknown_adequacy_basis(fit, untested_levels, design_for_fit,
+                                          mo_untested_names)
+            adequate, basis = (None, _ub) if _ub else (True, None)
     elif val_names:
         adequate, basis = False, None
     validated = val_check_done

@@ -244,17 +244,68 @@ def test_screen_validation_rejects_a_cliff_the_centre_points_cannot_attribute(tm
         assert not r.report.get("certified")
 
 
-def test_a_veto_is_never_overturned_by_the_family():
-    """An exact lack-of-fit rejection on zero pure error, or an objective model
-    that could not be estimated, is a veto outside the Holm family: the family
-    never turns it into adequate."""
-    from types import SimpleNamespace
+def _hunt(amp=0.08) -> Surface:
+    """A, B numeric with mild curvature plus a two-level choice C. With 3
+    screen centre points the centres never run C = on, so curvature under it
+    is UNTESTED (curvature_untested)."""
+    from orchestrator.optimize.synthetic import _choice
 
-    from orchestrator.optimize.stage_runner import _non_test_rejection
+    def fn(lv):
+        xa, xb = (lv["A"] - 9) / 7.0, (lv["B"] - 9) / 7.0
+        c = 1.0 if lv["C"] == "on" else 0.0
+        return 10 + 0.3 * xa + 0.2 * xb + 0.2 * c - amp * (xa * xa + xb * xb)
+    return Surface(name="hunt", noise_sd=0.05,
+                   factors=(_numeric("A"), _numeric("B"), _choice("C")), fn=fn)
 
-    ok = SimpleNamespace(lof_exact=None, lack_of_fit_p=0.5)
-    assert _non_test_rejection(SimpleNamespace(lof_exact="rejected"), {}, "m")
-    assert _non_test_rejection(ok, {"f2": SimpleNamespace(fit=None)}, "m")
-    assert not _non_test_rejection(ok, {"f2": SimpleNamespace(fit=ok)}, "m")
-    fam = adequacy.adequacy_family([("lack_of_fit", 0.03), ("validation_prediction", 0.4)])
-    assert fam["rejected"] == [] and fam["family_size"] == 2   # 0.03 > 0.025
+
+_UNTESTED = {"stages": ["verify", "screen", "confirm"],
+             "design": {"screen": {"resolution": 5, "center_points": 3, "validation_points": 4},
+                        "refine": {"kind": "central_composite", "center_points": 4}}}
+
+
+def test_the_family_never_promotes_curvature_untested_to_adequate(tmp_path):
+    """#321 P4 review HIGH 2. Seed 7: the screen's lack of fit is p = 0.033
+    (a per-test rejection), the screen validation check p = 0.099, so Holm
+    (thresholds 0.025, 0.05) sets the rejection aside -- and C = on was never
+    measured at the centre. On 17b067c the verdict became True (adequate) and
+    the curvature_untested basis was lost; now it is UNKNOWN with that basis
+    (adequacy_multiplicity: holm). Under the per-test default the rejection
+    stands (False)."""
+    holm = run_synthetic_campaign(_hunt(), seed=7, parent_dir=tmp_path / "h",
+                                  campaign_overrides={**_UNTESTED,
+                                                      "policy": {"adequacy_multiplicity": "holm"}})
+    rec = _recs(holm.work_dir)[0]
+    fam = rec["model_adequacy"]["family"]
+    assert [t["name"] for t in fam["tests"] if t["p"] < 0.05] == ["lack_of_fit"]
+    assert fam["rejected"] == []
+    assert rec["curvature_untested_levels"] == {"C": ["on"]}
+    assert rec["model_adequate"] is None
+    assert rec["model_adequate_basis"] == "curvature_untested"
+    assert "curvature_untested" in holm.report["certification_withheld"]
+    per = run_synthetic_campaign(_hunt(), seed=7, parent_dir=tmp_path / "p",
+                                 campaign_overrides=_UNTESTED)
+    assert _recs(per.work_dir)[0]["model_adequate"] is False
+
+
+def test_an_exact_rejection_stays_a_veto_whatever_the_family_says(tmp_path):
+    """Replaces the private-helper veto test with a campaign. The second
+    objective is DETERMINISTIC (zero pure error) and curved at the centre, so
+    its lack of fit is an EXACT rejection: a veto outside the Holm family. Its
+    primary tests pass, so the family rejects nothing -- and the verdict must
+    still be False, under holm and under the per-test default alike."""
+    from orchestrator.optimize.synthetic import _obj
+
+    f1 = lambda lv: 10 + 0.1 * lv["A"] + 0.1 * lv["B"]  # noqa: E731
+    f2 = lambda lv: 5 + 0.1 * lv["A"] + (1.0 if lv["A"] == 9 else 0.0)  # noqa: E731
+    surf = Surface(name="mo_exact", noise_sd=0.05,
+                   factors=(_numeric("A", levels=(2, 16)), _numeric("B", levels=(2, 16))),
+                   fn=f1, objectives=(_obj("f1", f1), _obj("f2", f2, noise_sd=0.0)))
+    for adq in ("holm", "per_test"):
+        r = run_synthetic_campaign(surf, seed=1, parent_dir=tmp_path / adq,
+                                   campaign_overrides={"stages": ["verify", "screen", "confirm"],
+                                                       "policy": {"adequacy_multiplicity": adq}})
+        rec = _recs(r.work_dir)[0]
+        fam = rec["model_adequacy"]["family"]
+        assert fam["vetoes"] == ["lack_of_fit:f2"] and fam["rejected"] == []
+        assert rec["model_adequate"] is False
+        assert "model_inadequate" in r.report["certification_withheld"]

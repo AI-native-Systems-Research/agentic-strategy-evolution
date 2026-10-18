@@ -1114,7 +1114,8 @@ def _rule32_confirm_replicate_floor(opt: dict) -> list[str]:
     return out
 
 
-def _rule33_reuse_screen_with_choice_factor(design: dict, factors: list[dict]) -> list[str]:
+def _rule33_reuse_screen_with_choice_factor(design: dict, factors: list[dict],
+                                           stages=None) -> list[str]:
     """Rule 33 (#321 P4 item 4): ``design.refine.reuse_screen`` with a choice
     factor is an ERROR, and partial reuse across choice slices is REJECTED.
 
@@ -1141,6 +1142,8 @@ def _rule33_reuse_screen_with_choice_factor(design: dict, factors: list[dict]) -
     refine = design.get("refine")
     if not isinstance(refine, dict) or not refine.get("reuse_screen"):
         return []
+    if isinstance(stages, list) and "refine" not in stages:
+        return []      # refine never runs: the option is inert, nothing to reject
     choice = [f.get("id") for f in factors
               if isinstance(f, dict) and f.get("type") == "choice"]
     if not choice:
@@ -2210,7 +2213,7 @@ def validate_optimization_campaign(campaign: dict) -> list[str]:
     errors.extend(_rule30_mixed_resolution_three_foldover(opt, design, factors))
     errors.extend(_rule26_objectives(opt))
     errors.extend(_rule32_confirm_replicate_floor(opt))
-    errors.extend(_rule33_reuse_screen_with_choice_factor(design, factors))
+    errors.extend(_rule33_reuse_screen_with_choice_factor(design, factors, opt.get("stages")))
     errors.extend(_check_mechanism_paths_are_literal(opt))
     # #246/F1 on the matrix path: locked-vs-factor collision, typo'd
     # locked_observables keys, and a WARN naming every unenforceable lock.
