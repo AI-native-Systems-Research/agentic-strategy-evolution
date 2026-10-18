@@ -472,23 +472,21 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
         screening = {
             "method": sel.get("method"), "alpha": sel.get("alpha"),
             "union_term": False,
-            "role": "routing_only_conditional_scope",
+            "role": "reported_labels_only",
             "statement": (
-                "The screen's main-effect drops are ONE family "
+                "The screen's main-effect survivor LABELS are one Holm family "
                 f"({sel.get('method')}, family-wise alpha {sel.get('alpha')}; "
-                "recommendation.json screen_selection records m). They are NOT a "
-                "term of the certificate's union bound, and need not be: a "
-                "dropped factor is never held (refine's composite spans every "
-                "refinable factor; the screen model keeps every coefficient), so "
-                "no drop shrinks the region the model half ranges over. A drop "
-                "decides only whether refine runs. A Type I error (an inert "
-                "factor kept) costs refine runs, never validity. A Type II error "
-                "(an active refinable factor dropped, with no lack-of-fit "
-                "rejection) routes screen -> confirm, and the certificate then "
-                "rests on the first-order + 2fi model: it is CONDITIONAL on that "
-                "response class (assumption M1), whose failure is vetoed by the "
-                "lack-of-fit test (model_inadequate), not charged to delta. "
-                "certificate_scope.screening names the model class.")}
+                "recommendation.json screen_selection records m): an FWER "
+                "statement about which main effects are declared active. They "
+                "decide NOTHING downstream (#321 P4 review): routing to refine is "
+                "'refine unless shown inert', and no screen-stage test can show a "
+                "refinable factor's curvature inert, so refine runs whenever a "
+                "refinable factor exists, and no factor is held because it was "
+                "dropped. Hence the labels spend no delta and are not a term of "
+                "the union bound. A certificate whose model half rests on the "
+                "first-order + 2fi screen model while two or more refinable factors exist "
+                "is withheld (model_class_unchecked): the 1-df centre contrast "
+                "is blind to cancelling quadratics, so M1 is unchecked there.")}
     return {
         "epochs": epochs,
         "this_epoch": epochs[-1]["spent"] if epochs else None,

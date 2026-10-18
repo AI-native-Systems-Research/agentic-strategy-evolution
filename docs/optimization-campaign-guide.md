@@ -723,36 +723,52 @@ not chosen freely.
   it is weak either way, so prefer 4–6 centre points when the constraint
   models matter.
 - **`screen.multiplicity`** (default `holm`) and **`screen.selection_alpha`**
-  (default 0.05). The screen's main-effect drops form ONE family: Holm's
-  (1979) step-down over the m screened factors' tests (factors × objectives
-  for a multi-objective campaign). It holds Pr(any inert factor survives) ≤ α
-  under any dependence; the tests are dependent, because they share the
-  pure-error denominator. FWER rather than Benjamini–Hochberg FDR, because
-  the branch the policy reads is "is ANY refinable factor active" (a
-  family-wise question), and BH's validity here would need PRDS, which
-  two-sided t tests on a shared denominator are not shown to satisfy
-  (Benjamini & Yekutieli 2001). `recommendation.json["screen_selection"]`
-  records the method, α, m, each p and Holm-adjusted p. `per_test` is the
-  pre-#321 rule (each test at α, no control).
-  - **What a drop does to the certificate.** Nothing is held because it was
-    dropped: refine's composite spans every refinable factor, and the screen
-    model keeps every factor's coefficient. So a drop never shrinks the
-    certificate's region, and screening is **not a term of the union bound**
-    (`error_budget.screening`, `union_term: false`). A drop decides only
-    whether refine runs. An inert factor kept (Type I) costs refine runs. An
-    active refinable factor dropped (Type II) with no lack-of-fit rejection
-    routes screen → confirm, and the certificate then rests on the
-    first-order + 2fi model. It is conditional on that response class (M1),
-    which the lack-of-fit test vetoes; `certificate_scope.screening` names
-    the model class and the drops.
-  - **Measured.** Global null, 6 factors, 2^(6-1) + 4 centres (36 runs, pure-error df 3), 2000 screens:
-    per-test FWER 0.173, Holm 0.031. One active factor at β = 1 sd: power
-    0.953 per-test vs 0.501 Holm (k = 3: 0.496 vs 0.230). On the WP-B oracle
-    (288 campaigns, k ≤ 4) the drop sets differ in 11, and no path,
-    recommendation or certificate changes. On `sparse_knobs(6)` (16 seeds
-    per arm), Holm keeps no inert factor where per-test kept one in 4/16. At
-    noise 0.5 it drops an active factor in 3/16 (per-test 1/16), and refine
-    still runs in every campaign, with an identical mean gap of 0.005.
+  (default 0.05). The screen's main-effect **survivor labels** are one
+  family: Holm's (1979) step-down over the m screened factors' tests
+  (factors × objectives for a multi-objective campaign). It holds Pr(any
+  inert factor labelled active) ≤ α under any dependence; the tests are
+  dependent, because they share the pure-error denominator. FWER rather than
+  Benjamini–Hochberg FDR: the labels answer "which effects are active" as a
+  family, and BH's validity here would need PRDS, which two-sided t tests on
+  a shared denominator are not shown to satisfy (Benjamini & Yekutieli 2001).
+  `recommendation.json["screen_selection"]` records the method, α,
+  `family_size` (tests computed), `m_declared` (factors screened), each p and
+  Holm-adjusted p. `per_test` labels each test at α, with no control.
+  - **The labels decide nothing downstream (#321 P4 review).** Routing is
+    *refine unless shown inert* (`screen_selection.routing`): refine runs
+    whenever a refinable factor exists. The losses are asymmetric. A Type I
+    routing error costs refine runs. A Type II error (an active refinable
+    factor dropped, refine skipped) costs validity: the certificate would
+    rest on the first-order + 2fi model, whose only curvature check is the
+    1-df centre-vs-corner contrast. That contrast estimates the SUM of the
+    pure quadratics and is blind when they cancel (a saddle).
+    - Measured on f = 10 + x_A² − x_B² + 0.036 x_B (noise 0.02, 40 seeds),
+      before this fix: false certificates 6/23 per-test and 12/24 under
+      Holm, gap 0.96 against ε ≈ 0.20.
+    - No screen-stage test can show a refinable factor's curvature inert,
+      because its pure quadratic is aliased with the intercept, so none is.
+    - Nothing is held because it was dropped: refine's composite spans every
+      refinable factor. So the labels spend no δ and are not a term of the
+      union bound (`error_budget.screening`).
+  - **`model_class_unchecked`.** A certificate whose model half rests on the
+    screen or foldover model while **two or more** refinable factors exist is
+    withheld under this name. That happens when refine is not in `stages`,
+    or the route ended there for another reason. The terminal comparison and
+    the within-shortlist bound are still reported.
+    - Two or more, because the centre contrast is the sum of the pure
+      quadratics, and a sum can cancel only with at least two terms.
+    - With exactly one refinable factor, the contrast IS its quadratic:
+      lack of fit tests it with full power, and a rejection withholds as
+      `model_inadequate`. Refine could not run there anyway (validator rule
+      4).
+    - With none (all choice or two-level), there is no curvature to miss.
+  - **Measured.**
+    - Labels: global null, 6 factors, 2^(6-1) + 4 centres (36 runs,
+      pure-error df 3), 2000 screens: per-test FWER 0.173, Holm 0.031. One
+      active factor at β = 1 sd: power 0.953 per-test vs 0.501 Holm (k = 3:
+      0.496 vs 0.230).
+    - Routing: see the guide's measured rates under "Model adequacy:
+      documented limits".
 - **`refine`** — `{kind: central_composite, center_points, validation_points,
   validation_seed, reuse_screen}`. Runs only
   when at least two `numeric` factors with more than 2 levels survive
@@ -820,9 +836,9 @@ each of them at a named place:
 
 | assumption | relied on at | what breaks when it fails | what catches it |
 |---|---|---|---|
-| **effect sparsity**: few factors matter | the screen's survivor rule: Holm's step-down over the m main-effect tests at family-wise α = 0.05 (`design.screen.multiplicity`); it decides only whether refine runs | an active refinable factor dropped by chance, with no lack-of-fit rejection, routes screen -> confirm, so the answer rests on the first-order + 2fi model; no dropped factor is held (refine spans every refinable factor; the screen model keeps every coefficient) | screen lack of fit (curvature routes to refine on every refinable factor); `certificate_scope.screening.model_class` |
+| **effect sparsity**: few factors matter | the screen's survivor LABELS (Holm at family-wise α = 0.05); they decide no route | nothing downstream: refine runs whenever a refinable factor exists, and no factor is held because it was dropped | — (a Type II label costs nothing; a screen-only certificate with two or more refinable factors is withheld, `model_class_unchecked`) |
 | **hierarchy**: low-order terms dominate, so terms of order 3 and above are ~0 | the screen model (mains + 2fi); refine's quadratic | an unmodelled cubic or 3fi biases the argmax (`ridge_cubic`) | screen lack of fit; refine's off-lattice validation check |
-| **heredity** (strong): no curvature or interaction without the parent main effect | dropped factors are held fixed and never refined | curvature in a dropped factor goes unseen | screen centre points, through lack of fit, which routes to refine on every refinable factor |
+| **heredity** (strong): no curvature or interaction without the parent main effect | not relied on for routing (#321 P4 review): every refinable factor is refined whatever its main effect | — | refine's composite and validation check, on every refinable factor |
 | **low-order smoothness** over the declared ranges | refine fits and ranks with a quadratic | a cliff, threshold or second peak: the model is confidently wrong | the validation check (`step_cliff` 8/8, `ridge_cubic` 8/8 at ×1); the sticky verdict; then measured leaders, and report.md names remedies |
 
 Two more apply to held factors. Refine holds non-refinable factors at one

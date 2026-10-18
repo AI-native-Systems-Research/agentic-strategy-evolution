@@ -540,7 +540,8 @@ def adequacy_family(tests, *, alpha: float = ADEQUACY_ALPHA,
         adj[i] = run if method == "holm" else live[i][1]
     rows = [{"name": n, "p": p, "p_adjusted": a, "rejected": bool(x)}
             for (n, p), a, x in zip(live, adj, rej)]
-    return {"method": method, "alpha": alpha, "family_size": m, "tests": rows,
+    return {"method": method, "alpha": alpha, "family_size": m,
+            "m_declared": len(list(tests)), "tests": rows,
             "rejected": [r["name"] for r in rows if r["rejected"]]}
 
 

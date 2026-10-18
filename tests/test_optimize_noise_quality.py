@@ -30,11 +30,17 @@ def _ramp(h: float, sd0: float = 0.05) -> Surface:
     def u(lv, k):
         return (float(lv[k]) - 9.0) / 7.0
     return Surface(
-        name="ramp_het", noise_sd=sd0, factors=(_numeric("A"), _numeric("B")),
+        name="ramp_het", noise_sd=sd0,
+        factors=(_numeric("A", levels=(2, 16)), _numeric("B", levels=(2, 16))),
         fn=lambda lv: 10 + 0.5 * lv["A"] + 0.3 * lv["B"],
         noise_sd_at=lambda lv: sd0 * (1 + h * (u(lv, "A") ** 2 + u(lv, "B") ** 2) / 2))
 
 
+# #321 P4 review: a screen-only certificate with two or more refinable
+# factors is withheld (model_class_unchecked). The ramp's A and B are
+# refinable, so the screen-only arms here declare them TWO-LEVEL (same
+# corners, same centre): no curvature exists to be missed, and the gates under
+# test are the only ones that can withhold.
 _SCREEN_CONFIRM = {"stages": ["verify", "screen", "confirm"]}
 
 

@@ -913,6 +913,9 @@ def screening_family_over(fits: dict, factor_ids, *, alpha: float = SCREEN_ALPHA
     ids = list(factor_ids)
     return {
         "method": method, "alpha": alpha, "family_size": m,
+        # The DECLARED family (screened factors x objectives) beside the tests
+        # actually computed: a factor with no pure error is outside the family.
+        "m_declared": len(list(factor_ids)) * max(1, sum(1 for f in fits.values() if f is not None)),
         "objectives": [o for o in fits if o is not None] or None,
         "factors": {fid: per[fid] for fid in ids if fid in per},
         "kept": [f for f in ids if f in per and per[f]["rejected"]],

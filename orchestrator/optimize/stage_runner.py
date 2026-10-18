@@ -5247,6 +5247,37 @@ def _run_stage_body(
         val_meta={k: payload["validation"][k]
                   for k in ("ring", "points_declined", "declined_reason")
                   if k in (payload.get("validation") or {})})
+    by_fid = {f.id: f for f in factors}
+    if screen_selection is not None:
+        # #321 P4 review HIGH 1: ROUTING is not the survivor labels. A Type II
+        # routing error (an active refinable factor dropped, so refine is
+        # skipped) costs VALIDITY: the certificate then rests on the class-1
+        # model, whose only curvature check is the 1-df centre-vs-corner
+        # contrast -- zero power when the pure quadratics cancel (a saddle;
+        # measured 12/24 false certificates under Holm, 6/23 per-test, on
+        # f = 10 + xa^2 - xb^2 + 0.036 xb). A Type I routing error costs only
+        # refine runs. So the route is refine UNLESS a refinable factor is
+        # affirmatively shown inert -- and no screen-stage test can show a
+        # factor's CURVATURE inert (its pure quadratic is aliased with the
+        # intercept on a two-level design plus centres), so none is: refine
+        # runs whenever a refinable factor exists. The Holm family stays the
+        # REPORTED survivor labels (screen_selection), an FWER statement about
+        # which main effects are declared active.
+        _routed = [f.id for f in factors if is_refinable(f)]
+        screen_selection = dict(screen_selection)
+        screen_selection["routing"] = {
+            "rule": "refine_unless_shown_inert",
+            "refinable": _routed, "shown_inert": [],
+            "why": ("no screen-stage test can show a refinable factor's curvature "
+                    "inert (pure quadratics are aliased with the intercept), so "
+                    "every refinable factor routes to refine; the Holm labels "
+                    "above decide nothing")}
+        _route_count = len(_routed)
+    else:
+        _route_count = sum(
+            1 for fid in (set(decision.surviving) | mo_survivors
+                          if mo_record is not None else decision.surviving)
+            if fid in by_fid and is_refinable(by_fid[fid]))
     _write_json(iter_dir / "recommendation.json", {
         "stage": stage_name,
         "iteration": iteration,
@@ -5435,16 +5466,7 @@ def _run_stage_body(
     by_fid = {f.id: f for f in factors}
     obs = observations_from_decision(
         decision, fit,
-        refinable_survivors=sum(
-            1 for fid in (
-                # #321 P4: under the registered family the multi-objective
-                # survivors ARE one Holm family over factors x objectives; a
-                # union with the primary's own family would spend alpha twice.
-                mo_survivors if (mo_record is not None and screen_selection)
-                else set(decision.surviving) | mo_survivors
-                if mo_record is not None else decision.surviving)
-            if fid in by_fid and is_refinable(by_fid[fid])
-        ),
+        refinable_survivors=_route_count,
         stationary_in_hull=(
             None if stage_name != Stage.REFINE.value
             # Multi-objective: not computed (see the override below), so the
@@ -7611,6 +7633,27 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                         and _rec_for_bias["model_adequate"] is None)
     adequacy_reason = str(_rec_for_bias.get("model_adequate_basis")
                           or "model_adequacy_unknown")
+    # #321 P4 review HIGH 1: MODEL CLASS UNCHECKED. When the model half rests
+    # on a class-1 fit (screen / foldover: first order + 2fi, no curvature
+    # terms) while the campaign declares a REFINABLE factor, the response
+    # class M1 assumes was never checked where it matters: the only curvature
+    # check is the 1-df centre-vs-corner contrast, which estimates the SUM of
+    # the pure quadratics and has zero power when they cancel (a saddle).
+    # Measured: f = 10 + xa^2 - xb^2 + 0.036 xb certified falsely 12/24
+    # (gap 0.96 vs eps 0.20) when refine was skipped. The global claim is
+    # withheld; the terminal comparison and the within-shortlist bound are
+    # still reported. The hole needs TWO OR MORE refinable factors: the centre
+    # contrast estimates the sum of the pure quadratics, which can cancel only
+    # when there are at least two. With exactly one refinable factor the
+    # contrast IS that factor's quadratic, and lack of fit tests it with full
+    # power (a rejection withholds as model_inadequate); refine could not run
+    # anyway (validator rule 4 needs two). With none, there is no curvature
+    # to miss. Single-objective only: a multi-objective front certificate
+    # makes no global model claim (no model half; spec 2026-10-17 §7).
+    model_class_unchecked = bool(
+        _rec_for_bias and not pareto_stage.objectives(pol)
+        and str(_rec_for_bias.get("stage")) in (Stage.SCREEN.value, Stage.FOLDOVER.value)
+        and sum(1 for f in factors if is_refinable(f)) >= 2)
     # EVERY non-"ok" status counts, and the reason is a bug this line already
     # caused once. The statuses were split into "infeasible" (measured
     # inadmissible) and "unmeasured" (the instrument failed on an admissible
@@ -7696,7 +7739,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         and bound.value is not None and eps is not None and bound.value <= eps
         and not (n_excluded - (n_infeasible if infeasible_caveat else 0))
         and not fit_bias and not model_inadequate and not refilled
-        and not adequacy_unknown
+        and not adequacy_unknown and not model_class_unchecked
         and not (noise_diag or {}).get("withheld")
         and (bool(pareto_stage.objectives(pol)) or not model_reasons)
     )
@@ -7827,6 +7870,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 ("fit_exclusions_level_correlated", fit_bias),
                 ("model_inadequate", model_inadequate),
                 (adequacy_reason, adequacy_unknown),
+                ("model_class_unchecked", model_class_unchecked),
                 ("campaign_delta_exhausted", budget_exhausted),
                 *((r, True) for r in ((noise_diag or {}).get("withheld") or [])),
                 ("campaign_delta_exceeded", budget_exceeded),
@@ -8606,13 +8650,13 @@ def _certificate_scope(rec: dict, boundary: dict | None,
          + " held fixed; the other levels of those factors are NOT covered")
         if held else
         "epsilon-optimal over the declared ranges of every factor")
-    # #321 P4 item 1: what the screen's drops did to this scope. A factor the
-    # screening family did not reject is NOT held: refine's composite spans
-    # every refinable factor (CURVATURE_ACCOUNTING) and the screen/foldover
-    # model keeps every factor's coefficient, so held_fixed is exactly the
-    # non-refinable factors refine holds, dropped or not. A drop can change
-    # only WHICH fitting stage supplies the model half (screen -> confirm
-    # skips refine), i.e. the model class the certificate is conditional on.
+    # #321 P4: what the screen's survivor LABELS did to this scope: nothing.
+    # A factor the Holm family did not reject is NOT held (refine's composite
+    # spans every refinable factor; the screen/foldover model keeps every
+    # coefficient) and does not change the route (refine runs whenever a
+    # refinable factor exists, #321 P4 review). So held_fixed is exactly the
+    # non-refinable factors refine holds, and the fitting stage is refine
+    # whenever a refinable factor exists.
     sel = selection
     if sel is not None:
         dropped = list(sel.get("dropped") or [])
@@ -8624,13 +8668,13 @@ def _certificate_scope(rec: dict, boundary: dict | None,
         }
         if dropped and region != "none":
             out["statement"] += (
-                f"; screening dropped {', '.join(dropped)} ({sel.get('method')}, "
-                f"family-wise alpha {sel.get('alpha')} over {sel.get('family_size')} "
-                f"tests) but held none of them: "
-                + ("refine still varied every refinable factor"
+                f"; the screen labelled {', '.join(dropped)} inactive "
+                f"({sel.get('method')}, family-wise alpha {sel.get('alpha')} over "
+                f"{sel.get('family_size')} tests), which held none of them and "
+                f"changed no route: "
+                + ("refine varied every refinable factor"
                    if out["fitting_stage"] == Stage.REFINE.value else
-                   "their coefficients stay in the screen model the certificate "
-                   "rests on, which is first order + 2fi (no refine ran)"))
+                   "the model half is the first-order + 2fi screen model"))
     if inertness is not None and held:
         # #321 item 8: what the inertness check showed. A factor shown inert
         # changes the response AT THE WINNER by less than the margin at every
@@ -8696,10 +8740,11 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
                    "<= delta_screen + delta_terminal (+ delta_constraint when "
                    "constraint exclusion is registered, + delta_feasibility "
                    "when a distributional constraint is) under the stated "
-                   "assumptions. The screening family (Holm, #321 P4) is not a "
-                   "term: a dropped factor is never held, so it decides only "
-                   "the fitting stage, whose response class (M1) the claim is "
-                   "conditional on and lack of fit vetoes."}
+                   "assumptions. The screen's Holm survivor labels (#321 P4) "
+                   "are not a term: they decide no route and hold no factor. "
+                   "A model half resting on the first-order + 2fi screen model "
+                   "while two or more refinable factors exist is withheld "
+                   "(model_class_unchecked)."}
     if not rec or not isinstance(r_model, (int, float)):
         return out, ["model_bound_not_computable"]
     if r_out is None:

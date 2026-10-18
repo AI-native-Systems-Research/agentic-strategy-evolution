@@ -479,10 +479,13 @@ def screen_selection(design: dict | None) -> dict:
     ``alpha``, no control (the pre-P4 rule). ``alpha`` is
     ``design.screen.selection_alpha`` (default 0.05). A multi-objective
     campaign's family is factors x objectives (a factor survives if any of its
-    tests is rejected). Its role: it decides only whether refine runs
-    (``refinable_survivors > 0``); refine's composite spans every refinable
-    factor regardless, so no factor is HELD because it was dropped. Not a
-    term of the certificate's union bound (see ``error_budget.screening``).
+    tests is rejected). Its role (#321 P4 review): the REPORTED survivor
+    labels only. Routing is ``refine unless shown inert`` -- refine runs
+    whenever a refinable factor exists -- because a Type II routing error costs
+    validity (the class-1 model's centre contrast is blind to cancelling
+    quadratics) while a Type I one costs only runs. No factor is held because
+    it was dropped. Not a term of the certificate's union bound (see
+    ``error_budget.screening``).
     """
     sc = (design or {}).get("screen") or {}
     return {"method": str(sc.get("multiplicity", "holm")),
@@ -496,8 +499,8 @@ def _selection_accounting(design: dict | None, on: str) -> str:
     sel = screen_selection(design)
     if sel["method"] == "holm":
         return (f"screen selection: Holm step-down over the main-effect tests on the "
-                f"{on}, family-wise alpha={sel['alpha']} (routing only; no dropped "
-                f"factor is held)")
+                f"{on}, family-wise alpha={sel['alpha']} (reported labels; the route "
+                f"is refine whenever a refinable factor exists)")
     return (f"screen selection at alpha={sel['alpha']} per main effect on the {on} "
             f"(per_test: no multiplicity control)")
 

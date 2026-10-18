@@ -231,6 +231,7 @@
           "finalist_unmeasured",
           "fit_exclusions_level_correlated",
           "model_inadequate",
+          "model_class_unchecked",
           "no_admissible_finalist",
           "front_point_possibly_dominated",
           "no_front_point",

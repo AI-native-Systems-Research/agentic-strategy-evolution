@@ -165,9 +165,15 @@ def test_choice_x_numeric_recommends_the_on_branch(tmp_path):
     actually runs: ``test_refine_holds_a_choice_factor_at_the_screen_
     recommendation``, on ``additive``.
     """
+    # #321 P4 review: the route is now refine whenever a refinable factor
+    # exists, so this surface runs screen -> refine -> confirm and refine holds
+    # C at the screen's argmax. The claim under test is about the SCREEN's
+    # argmax, so it is read from the screen's record.
     res = run_synthetic_campaign(SURFACES["choice_x_numeric"](), seed=4, parent_dir=tmp_path)
     assert res.recommendation["C"] == "on" and _gap_pct(res) <= 2.0
-    rec = _read_recommendation(res.work_dir)
+    rec = json.loads(next(
+        p for p in sorted(res.work_dir.glob("runs/iter-*/recommendation.json"))
+        if json.loads(p.read_text())["stage"] == "screen").read_text())
     assert "C" in rec["fitted_ids"], (
         f"the choice factor was not a dimension of the argmax: "
         f"fitted_ids={rec['fitted_ids']}"
