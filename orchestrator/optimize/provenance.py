@@ -498,13 +498,21 @@ def record_continue_gate_stop(work_dir: Path, *, iteration: int) -> None:
         fh.write(json.dumps(row, sort_keys=True) + "\n")
 
 
-def _declared_campaign_totals(work_dir: Path, current: int, cd: dict | None) -> dict:
+def _declared_campaign_totals(work_dir: Path, current: int, cd: dict | None,
+                              unknown: list | None = None) -> dict:
     """``{epoch: total}`` for every epoch that declared ``campaign_delta``,
-    read from the campaigns each epoch registered (declarations, not data)."""
+    read from the campaigns each epoch registered (declarations, not data).
+    Earlier epochs whose registration is missing or unreadable are appended
+    to ``unknown`` (never silently treated as undeclared)."""
+    if unknown is None:
+        unknown = []
     out: dict[int, float] = {}
     for e in range(1, current):
         p = Path(work_dir) / f"campaign.epoch-{e}.yaml"
         if not p.exists():
+            # An earlier epoch whose registration is gone: its total is
+            # unknown, and an unknown is never "not declared" (final review H2).
+            unknown.append(e)
             continue
         try:
             import yaml
@@ -517,16 +525,26 @@ def _declared_campaign_totals(work_dir: Path, current: int, cd: dict | None) -> 
         except Exception as exc:  # noqa: BLE001 -- recorded, not hidden
             logger.warning("could not read epoch %d's campaign_delta from %s: %s",
                            e, p.name, exc)
+            unknown.append(e)
     if cd and cd.get("total") is not None:
         out[current] = float(cd["total"])
     return out
 
 
 def campaign_delta_exceeded(work_dir: Path, pol: dict) -> bool:
-    """True when a charged campaign-wide budget is declared and the cumulative
-    spend exceeds it: the epoch then certifies nothing (P2 review M2)."""
+    """True when a charged campaign-wide budget binds and the spend is not
+    SHOWN within it: the epoch then certifies nothing (P2 review M2).
+
+    Not shown within it covers three cases (final review H2): the cumulative
+    exceeds the total; the cumulative is only a lower bound (an earlier
+    epoch's deltas could not be recovered); or an earlier epoch's declared
+    total could not be read. A gate that cannot see the whole spend withholds."""
     eb = error_budget(work_dir, pol)
-    return eb.get("mode") == "charged" and not eb.get("within_total", True)
+    if eb.get("mode") != "charged":
+        return False
+    return (not eb.get("within_total", True)
+            or bool(eb.get("cumulative_is_lower_bound"))
+            or bool(eb.get("declared_total_unknown")))
 
 
 def error_budget(work_dir: Path, pol: dict) -> dict:
@@ -555,7 +573,8 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
                                        else f"campaign.epoch-{e}.yaml recompiled by "
                                             f"the current Nous")})
     cd = (pol.get("objective") or {}).get("campaign_delta")
-    declared = _declared_campaign_totals(work_dir, current, cd)
+    _total_unknown: list = []
+    declared = _declared_campaign_totals(work_dir, current, cd, _total_unknown)
     charged = {}
     if declared:
         # P2 review M2: the mode, once declared in ANY epoch, stays charged,
@@ -579,6 +598,10 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
         charged = {"mode": "charged", "binding": True,
                    "campaign_total": binding_total,
                    "declared_totals": {str(k): v for k, v in sorted(declared.items())},
+                   # Earlier epochs whose declaration could not be read: the
+                   # binding total may be smaller than shown, so the gate
+                   # withholds (final review H2).
+                   "declared_total_unknown": sorted(_total_unknown),
                    "schedule": (cd or {}).get("schedule", "geometric"),
                    "within_total": total <= binding_total + 1e-12,
                    "stops_at_continue_gate": stops,

@@ -1578,7 +1578,16 @@ def _rule31_pinned_seeds_are_fresh(opt: dict) -> list[str]:
     if not post:
         return []
     confirm = design.get("confirm") or {}   # the compile reads design.confirm
-    conf_reps = _reps(confirm) or 3
+    conf_reps = _reps(confirm)
+    if not conf_reps:
+        # Undeclared: the compiled default is the A5 replicate floor (P3), not
+        # the pre-P3 3 (final review H1) -- the same count the runtime offset uses.
+        from orchestrator.optimize.policy import default_confirm_replicates
+
+        try:
+            conf_reps = int(default_confirm_replicates(opt))
+        except (TypeError, ValueError, ZeroDivisionError, KeyError):
+            conf_reps = 3
     need = conf_reps + post
     if len(seeds) >= need:
         return []

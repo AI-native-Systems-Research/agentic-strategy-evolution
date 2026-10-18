@@ -531,3 +531,95 @@ def test_a_later_epoch_cannot_raise_the_charged_total(tmp_path, monkeypatch):
     assert eb["campaign_total"] == 0.1 and eb["declared_totals"] == {"1": 0.1, "2": 0.2}
     assert not eb["within_total"]
     assert campaign_delta_exceeded(r0.work_dir, read_policy(r0.work_dir))
+
+
+# ── final whole-PR review fixes ─────────────────────────────────────────────
+
+def test_pinned_seeds_with_undeclared_confirm_replicates_are_refused():
+    """Final review H1: rule 31 assumed 3 confirm replicates when undeclared,
+    but the compile defaults to the A5 floor (6), so a 7-seed list passed and
+    validate then re-used confirm's draws."""
+    from orchestrator.validate import _rule31_validate_block
+
+    opt = {"known_valid_baseline": {"A": 2},
+           "workload": {"seed_env": "S", "seeds": list(range(1, 8))},
+           "design": {"validate": {"replicates": 4}}}
+    errs = _rule31_validate_block(opt)
+    assert any("fresh draws" in e and "= 10" in e for e in errs), errs
+
+
+def test_the_runtime_refuses_to_wrap_a_post_selection_block_onto_confirm(tmp_path):
+    """Final review H1 backstop: even past the validator, validate never runs
+    on a seed confirm used."""
+    import pytest
+
+    from orchestrator.optimize.stage_runner import (
+        OptimizationGateFailed,
+        _assign_workload_seeds,
+    )
+    from orchestrator.optimize.matrix import ConfigRow
+
+    pol = {"workload": {"seed_env": "S", "seeds": [1, 2, 3]}}
+    rows = [ConfigRow(row_index=i, levels={}, role="validate", replicate=i, apply={})
+            for i in range(2)]
+    with pytest.raises(OptimizationGateFailed, match="too few"):
+        _assign_workload_seeds(rows, {}, pol, iteration=9, confirm=True, fresh_offset=2)
+
+
+def test_an_unrecoverable_earlier_epoch_withholds_under_the_charged_budget(tmp_path):
+    """Final review H2: the gate compared a LOWER-BOUND cumulative with the
+    total and passed, so epoch 2 could certify past an unknown epoch-1 spend."""
+    from orchestrator.optimize.policy import read_policy
+    from orchestrator.optimize.provenance import campaign_delta_exceeded, error_budget
+    from orchestrator.optimize.synthetic import SURFACES
+    from orchestrator.optimize import policy as pm
+    import pytest as _pt
+
+    mp = _pt.MonkeyPatch()
+    real = pm.compile_policy
+    mp.setattr(pm, "compile_policy", lambda c, **kw: real(c, **{**kw, "epoch": 2}))
+    try:
+        r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path,
+                                   campaign_overrides={"policy": {"campaign_delta": {
+                                       "total": 0.2, "schedule": [0.1, 0.1]}}})
+    finally:
+        mp.undo()
+    (r.work_dir / "campaign.epoch-1.yaml").write_text("optimization: [not, a, campaign]\n")
+    pol = read_policy(r.work_dir)
+    eb = error_budget(r.work_dir, pol)
+    assert eb["cumulative_is_lower_bound"] or eb.get("declared_total_unknown")
+    assert campaign_delta_exceeded(r.work_dir, pol)
+
+
+def test_confirm_replicates_may_be_omitted_as_the_docs_advise():
+    """Final review M2: the schema required replicates while the guide and the
+    validator said to omit it (the default is the floor)."""
+    import jsonschema
+    import yaml as _y
+
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    schema = _y.safe_load((Path(__file__).resolve().parents[1] / "orchestrator"
+                           / "schemas" / "campaign.schema.yaml").read_text())
+    c = synthetic_campaign(SURFACES["bowl"]())
+    c["optimization"].setdefault("design", {})["confirm"] = {"allocate": {"seats": 1}}
+    errs = [e.message for e in jsonschema.Draft202012Validator(schema).iter_errors(c)]
+    assert not any("replicates" in e for e in errs), errs
+
+
+def test_plan_next_refuses_a_proposal_below_the_next_epochs_floor():
+    """Final review M1: under a charged campaign_delta the floor rises with the
+    epoch; a proposal valid as epoch 1 must be refused as epoch 2."""
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.planner import validate_campaign
+    from orchestrator.optimize.policy import replicate_floor
+    from orchestrator.optimize.synthetic import SURFACES
+
+    c = synthetic_campaign(SURFACES["bowl"](), policy={"campaign_delta": {"total": 0.2}})
+    opt = c["optimization"]
+    f1, f2 = replicate_floor(opt, 1), replicate_floor(opt, 2)
+    assert f2 > f1
+    opt.setdefault("design", {}).setdefault("confirm", {})["replicates"] = f1
+    assert not [e for e in validate_campaign(c, epoch=1) if e.startswith("[floor]")]
+    assert any(e.startswith("[floor]") for e in validate_campaign(c, epoch=2))

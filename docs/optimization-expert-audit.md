@@ -154,7 +154,11 @@ fixed in `2f2c913`).
 1. M1 is checked, not proved (Q3).
 2. M3 is checked by a veto with limited power (Q2).
 3. The cross-epoch `error_budget` is informational unless
-   `campaign_delta` is declared. When declared, it binds.
+   `campaign_delta` is declared. When declared, it binds: an epoch withholds
+   `campaign_delta_exceeded` unless the spend is SHOWN within the smallest
+   total ever declared -- including when an earlier epoch's deltas or total
+   cannot be recovered (final whole-PR review H2,
+   `test_an_unrecoverable_earlier_epoch_withholds_under_the_charged_budget`).
 4. The constants are conservative, so the measured rates are 0 against a
    nominal 0.10. The price is power (Q4).
 
@@ -380,7 +384,13 @@ selecting replicates. Without `design.validate`, `recommendation.value`,
 `finalists[*].mean` and a percentage ε all come from selecting data. All
 three are labelled as such. The interval, not the point, is the claim. The
 pinned-seed case, where "fresh" draws could reuse confirm's seeds, is
-constructed and refused.
+constructed and refused. The final whole-PR review found one way through: with
+`design.confirm.replicates` undeclared, rule 31 assumed 3 replicates while the
+compile used the A5 floor (6), so a 7-seed list passed and validate re-used
+confirm's draws. Fixed: rule 31 counts the compiled default, and the runtime
+refuses to wrap a post-selection block onto a confirm seed
+(`test_pinned_seeds_with_undeclared_confirm_replicates_are_refused`,
+`test_the_runtime_refuses_to_wrap_a_post_selection_block_onto_confirm`).
 
 **Documented limits:**
 - unbiased points only with the opt-in block, which costs 2r runs;

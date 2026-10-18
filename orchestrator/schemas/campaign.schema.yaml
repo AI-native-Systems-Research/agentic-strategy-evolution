@@ -1386,7 +1386,9 @@ properties:
                   another policy.
           confirm:
             type: object
-            required: [replicates]
+            # replicates is optional (final review M2): omitted, it compiles
+            # to the A5 replicate floor (policy.default_confirm_replicates),
+            # which the guide and the validator messages tell authors to do.
             additionalProperties: false
             description: >
               The terminal DISCRIMINATION stage (the paper's ``discriminate``;
