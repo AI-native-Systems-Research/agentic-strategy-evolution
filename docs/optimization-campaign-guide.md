@@ -2857,6 +2857,7 @@ term). Each withholds under its own name, and each is registered in
 | skewness | confirm, `noise_diagnostics` | `noise_skewed` | studentized third moment, Monte-Carlo null, 0.25 |
 | robust terminal bound | confirm, `terminal_bound` | `robust_bound_not_computable` | max(t, sign-flip under CRN / bootstrap-t) |
 | outlying rows | screen / refine, `effects.json` `outliers` | (a flag; none) | externally studentized, Bonferroni |
+| outlying replicates | confirm, `confirmation.json` `outliers` | (a flag; none) | deleted-residual t within each finalist, Bonferroni |
 | timeouts | every stage, `runs.jsonl` `censored` | `finalist_unmeasured` at confirm | right-censored at `run_timeout_sec`, never imputed |
 | CRN seed | verify, `crn_probe.json` | verify fails | one-way random-effects ANOVA on 4 seeds × 2 runs |
 | control across the build (oracle 2(c)) | verify, `baseline_equivalence.json` `tost` | verify fails | ratio-of-means TOST at the tolerance, paired under CRN |

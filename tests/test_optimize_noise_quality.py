@@ -541,3 +541,27 @@ def test_a_chance_constraint_too_few_replicates_to_ever_show_warns():
                                          "semantics": "chance:0.05"}]}}
     w = [e for e in _rule32_confirm_replicate_floor(opt) if "Clopper-Pearson" in e]
     assert w and w[0].startswith("WARN")
+
+
+def test_confirm_flags_an_outlying_replicate_without_removing_it():
+    from orchestrator.optimize.noise import replicate_outliers
+
+    rng = random.Random(2)
+    g = {"f0": [10 + rng.gauss(0, 0.1) for _ in range(6)],
+         "f1": [9 + rng.gauss(0, 0.1) for _ in range(6)]}
+    assert replicate_outliers(g)["flagged"] == {}
+    g["f1"][3] += 5.0
+    r = replicate_outliers(g)
+    assert r["flagged"] == {"f1": [3]}
+    # heteroscedastic finalists: a LOUD finalist is not an outlier of a quiet one
+    h = {"q": [rng.gauss(0, 0.01) for _ in range(6)], "l": [rng.gauss(0, 5) for _ in range(6)]}
+    assert replicate_outliers(h)["flagged"] == {}
+
+
+def test_confirmation_records_outliers(tmp_path, monkeypatch):
+    import orchestrator.optimize.synthetic as S
+    from orchestrator.optimize.synthetic import SURFACES
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
+    o = _confirmations(r.work_dir)[-1]["outliers"]
+    assert o["deleted"] is False and o["flagged"] == {} and o["sensitivity"] is None

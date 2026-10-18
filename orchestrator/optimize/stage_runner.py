@@ -7683,6 +7683,8 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                     "branch is registered)"},
         **({"noise_diagnostics": noise_diag} if noise_diag is not None else {}),
         **({"distributional_feasibility": dist_feas} if dist_feas else {}),
+        **({"outliers": _confirm_outliers(ok, best, sign)}
+           if _robust_rule and best is not None else {}),
         **({"terminal_bound_measured_only": measured_only.as_dict()}
            if measured_only is not None else {}),
         **({"certification_caveats": ["finalist_measured_infeasible"]}
@@ -8349,6 +8351,26 @@ def _distributional_feasibility(pol, campaign, fin, by_idx, outcomes, status,
         if not shown and status.get(k) == "ok":
             status[k] = "infeasible"
     return out
+
+
+def _confirm_outliers(ok: dict, best, sign: float) -> dict:
+    """``confirmation.json["outliers"]`` (#321 P3 item 3): flagged replicates,
+    never removed, and whether dropping them would change the winner."""
+    from statistics import mean as _mean_
+
+    from orchestrator.optimize import noise as noise_mod
+
+    rec = noise_mod.replicate_outliers(ok)
+    rec["deleted"] = False
+    if rec["flagged"]:
+        trimmed = {k: [v for i, v in enumerate(xs) if i not in set(rec["flagged"].get(k, []))]
+                   for k, xs in ok.items()}
+        alt = max(trimmed, key=lambda k: sign * _mean_(trimmed[k])) if trimmed else None
+        rec["sensitivity"] = {"winner_without_flagged": alt,
+                              "decision_changes": alt != best}
+    else:
+        rec["sensitivity"] = None
+    return rec
 
 
 def noise_mod_censored(direction: str, at_sec) -> dict:
