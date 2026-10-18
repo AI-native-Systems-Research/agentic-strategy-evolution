@@ -174,6 +174,13 @@ Item 3:
 Drift between screen and refine is tested only under the opt-in
 `reuse_screen`.
 
+**(g) Update, #321 P3.** A5, A6 and the M3 check are implemented (spec §7
+items 1, 2, 2a): the robust terminal family, the replicate floor, the skewness
+pretest, Brown-Forsythe on M3, outlier flags and censoring. The terminal
+half's false-certificate rate under heteroscedastic, skewed noise is now
+<= 0.05 + 2 SE in all 96 measured cells. The worst is 0.048 +- 0.003. The M3
+check's conditional miss rate at h >= 8 is NOT within δ (0.32 at h = 8).
+
 **(f) Verdict: PARTIAL.** Documented limits A5 and A6. The campaign-level
 false-certification rate is now 0 in every swept cell, but by
 conservatism. The terminal half's small-n anti-conservatism is stated, not
@@ -616,6 +623,11 @@ held-out workload, and manipulation checks are echo-based.
 - no `constraint_semantics: mean | chance`;
 - no feasibility probability on a certified answer;
 - the constraint δ is not in the stated sum.
+
+**(g) Update, #321 P3.** Timeouts are right-censored and never imputed.
+`constraints[].semantics: every_replicate | mean | chance:<alpha>` is
+implemented, with a one-sided t or Clopper-Pearson bound per finalist at
+`δ_feasibility/(S C L)`. `δ_feasibility` is in the stated sum.
 
 **(f) Verdict: PARTIAL.** Unchanged from stage-0 in substance. Missing data
 is detected honestly and now named. Documented limit: censoring and chance

@@ -14,7 +14,7 @@ Evidence: the stage-0 audit, Q1 (error control), Q2 (robustness) and Q4
 
 In scope (MUST): A1 the whole bound, A2 alpha-spending, A4 the scope record.
 In scope (SHOULD): A3 the baseline as a reference finalist.
-Deferred to documented limits (§7): A5 (noise diagnostics, a robust small-n
+Deferred to documented limits (§7), and implemented since in #321 P3: A5 (noise diagnostics, a robust small-n
 bound) and A6 (outliers, censoring).
 
 ## 1. What a certificate claims
@@ -252,14 +252,69 @@ pure error (M3).
   Fixed in report.md / report.json (`delta_guaranteed`).
 
 
-1. **A5, small-n noise.** No per-finalist variance-ratio or skewness
-   diagnostic is recorded. No robust bound (bootstrap-t or permutation on CRN
-   differences) or replicate floor is applied. The terminal Monte Carlo with
-   heteroscedastic, skewed noise at n = 3 gives 0.17 vs 0.05 for the
-   terminal half alone (stage-0 Q2).
-2. **A6, outliers and censoring.** No studentized-residual flag is written.
-   A timeout is "unmeasured", not right-censored. Constraints are "every
-   replicate passes", not a mean or chance constraint.
+1. **A5, small-n noise: implemented in #321 P3.** The terminal family is,
+   per challenger, `max(t, robust)` at the same `δ_t/(L(S-1))`. The robust
+   bound is the exact sign-flip bound (Hartigan 1969) under CRN and the
+   bootstrap-t (Hall 1988, B = 999, fixed seed) otherwise. Two vetoes:
+   `replicates_below_floor` (floor = smallest n with
+   `2^-n <= δ_t/(L(S-1))`, from the declaration) and `noise_skewed` (pooled
+   studentized third moment, Monte-Carlo null under independent normal
+   groups, exact under heteroscedastic normal noise because each group's
+   studentized residuals are ancillary; level 0.25 a priori, Bancroft 1964).
+   The single-objective confirm default rises to the floor (6, or 7 with a
+   constraint).
+   Measured on the terminal half alone (3 finalists at true values (0, ε +
+   0.001, -1), sds (3/r, 3, 1), so the loud finalist is the true best).
+   δ_t = 0.05, one look, 4000 trials per cell, Monte-Carlo SE <= 0.0034.
+   Tuning seed base 0; the reported table is on fresh seed base 1000
+   (`nous-e2e/audit/p3/mc_a5_final_seed1000.txt`). False-certificate rate,
+   t alone → shipped:
+
+   | | n | gauss r=10 | skew r=10 | lognorm r=3 | lognorm r=10 |
+   |---|---|---|---|---|---|
+   | paired | 3 | 0.006 → 0 | 0.052 → 0 | 0.046 → 0 | 0.092 → 0 |
+   | paired | 6 | 0.021 → 0.006 | 0.084 → 0.028 | 0.086 → 0.027 | 0.148 → 0.045 |
+   | paired | 8 | 0.019 → 0.011 | 0.093 → 0.036 | 0.098 → 0.044 | 0.138 → 0.048 |
+   | paired | 12 | 0.023 → 0.018 | 0.086 → 0.013 | 0.106 → 0.043 | 0.134 → 0.024 |
+   | Welch | 3 | 0.011 → 0 | 0.066 → 0 | 0.073 → 0 | 0.102 → 0 |
+   | Welch | 6 | 0.020 → 0.012 | 0.086 → 0.017 | 0.103 → 0.026 | 0.147 → 0.024 |
+   | Welch | 8 | 0.024 → 0.013 | 0.088 → 0.008 | 0.099 → 0.010 | 0.139 → 0.009 |
+   | Welch | 12 | 0.029 → 0.018 | 0.093 → 0.002 | 0.108 → 0.001 | 0.130 → 0.002 |
+
+   Every one of the 96 measured cells (t3 included) is <= δ + 2 SE. The
+   largest is 0.0483 +- 0.0034 (paired, n = 8, lognormal, r = 10). The
+   earlier 0.058 cell came from the tuning run at skew level 0.2 and was not
+   kept. Below the floor nothing certifies (0 in every n = 3 cell, all
+   withheld). The issue's 0.17 (Welch, n = 3, skewed, one challenger) is now
+   withheld. Power cost: on Gaussian noise the pretest withholds about 26%
+   of certifiable rounds; on the noise sweep (1008 campaigns) certificates
+   went from 245 to 149, with 0 false before and after, and mean runs from
+   32.2 to 42.9.
+   Not shipped: a robust bound below the floor. At n = 3, Welch, bootstrap-t
+   and their max all exceed δ under skew, and the sign-flip bound does not
+   exist.
+2. **A6, outliers, censoring, constraint semantics: implemented in #321 P3.**
+   - Externally studentized residuals, Bonferroni (FWER <= α = 0.05;
+     measured 0.046 over 4000 null fits of a 13-run CCD), flag only, with a sensitivity refit
+     (`effects.json` / `recommendation.json` `outliers`). The flag declines
+     under lack of fit.
+   - Timeouts are right-censored at `run_timeout_sec` (`runs.jsonl`
+     `censored`), never imputed. No censored-data estimator is used, so a
+     censored finalist still withholds.
+   - `constraints[].semantics: mean | chance:<a>` is decided at confirm per
+     finalist (one-sided t on the mean; one-sided Clopper-Pearson) at
+     `δ_feasibility/(S C L)`. That is a fourth union term in
+     `delta_stated` and `error_budget`.
+2a. **M3 heteroscedasticity check: implemented in #321 P3**, the one-sided
+   Brown-Forsythe contrast "finalists spread more than the pure-error cells"
+   at α = 0.05. P2 sweep re-measured (1000 fits, 6 finalist replicates): the
+   conditional miss rate given lack of fit and the check both pass is 0.013
+   / 0.041 / 0.317 / 0.296 at h = 1 / 3 / 8 / 10 (bowl), so it is NOT within
+   δ at h >= 8. The unconditional Pr(pass and miss) falls from 0.046 to
+   0.033 at h = 8. Over 800 end-to-end campaigns at h up to 8, no false
+   certificate was observed. Limit, stated not fixed: a test on 3 cells of
+   4-6 rows has power 0.71 at a 9× sd ratio, and the residual fits are the
+   ones it missed.
 3. **M1 is checked, not proved.** The global bound inherits the response
    class. WP-B's checks have local power only (its limits 1-12).
 4. **The constraint-exclusion δ** is in the stated sum since #321 (§6).
