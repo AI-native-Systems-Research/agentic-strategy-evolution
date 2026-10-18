@@ -122,6 +122,21 @@ def _snap(spec: dict, v):
     return float(v)
 
 
+def _on_step(spec: dict, v):
+    """``v`` as the distribution's type, on its ``low + k*step`` grid."""
+    if spec["kind"] == "categorical":
+        return v
+    st = spec.get("step")
+    if spec["kind"] == "int":
+        st = int(st or 1)
+        return int(min(max(spec["low"] + round((float(v) - spec["low"]) / st) * st,
+                           spec["low"]), spec["high"]))
+    if st:
+        k = round((float(v) - spec["low"]) / float(st))
+        return float(min(max(spec["low"] + k * float(st), spec["low"]), spec["high"]))
+    return float(v)
+
+
 def _optuna_sampler(trials, space, objectives, config, n) -> list[dict]:
     """The default seam: Optuna TPE over an IN-MEMORY study, rebuilt here."""
     try:
@@ -147,8 +162,9 @@ def _optuna_sampler(trials, space, objectives, config, n) -> list[dict]:
         directions=[("minimize" if o["direction"] == "minimize" else "maximize")
                     for o in objectives], sampler=sampler)
     for params, values in trials:
-        p = {k: (int(v) if space[k]["kind"] == "int" else
-                 float(v) if space[k]["kind"] == "float" else v) for k, v in params.items()}
+        # Snapped onto the distribution's step grid (create_trial refuses an
+        # off-grid value); the row was already checked to be inside the range.
+        p = {k: _on_step(space[k], v) for k, v in params.items()}
         study.add_trial(optuna.trial.create_trial(params=p, distributions=dists, values=values))
     return [dict(study.ask(dists).params) for _ in range(int(n))]
 

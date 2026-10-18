@@ -160,3 +160,14 @@ def test_the_proposer_imports_optuna_lazily():
     tree = ast.parse((ROOT / "orchestrator/optimize/bo_proposer.py").read_text())
     top = [n for n in tree.body if isinstance(n, (ast.Import, ast.ImportFrom))]
     assert not any("optuna" in ast.dump(n) for n in top)
+
+
+def test_an_off_step_measured_level_is_snapped_not_refused():
+    """A row at A=5 with grid 2 starting at 2 (off the low + k*step grid)."""
+    pytest.importorskip("optuna")
+    f = parse_factors([_numeric("A", levels=(2, 4, 8, 16), grid=2), _numeric("B")])
+    rows = [{"levels": {"A": a, "B": b}, "response": {"m": float(a + b)}}
+            for a, b in [(2, 2), (5, 16), (16, 4), (8, 8)]]
+    props, prov = bo_proposer.propose(rows, factors=f, objectives=OBJ, n=2,
+                                      config={"seed": 1, "n_startup": 2})
+    assert prov["n_trials_from_rows"] == 4 and props

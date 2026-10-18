@@ -270,3 +270,25 @@ def test_single_objective_without_a_measured_incumbent_declines():
                          factors=FACTORS, fitted_ids=IDS, held_fixed={}, measured=[],
                          model_adequate=True)
     assert out.declined == "no_measured_incumbent"
+
+
+def test_more_than_three_objectives_is_a_named_decline():
+    fit = _fit(lambda a, b, c: a)
+    out = allocate.score([{"levels": _lv(1, 1, 1)}], fits={m: fit for m in "wxyz"},
+                         objectives=[{"metric": m, "direction": "maximize"} for m in "wxyz"],
+                         factors=FACTORS, fitted_ids=IDS, held_fixed={},
+                         measured=[{"levels": _lv(-1, -1, -1), "mean": {}}],
+                         model_adequate=True)
+    assert out.declined == "too_many_objectives"
+
+
+def test_a_measured_configuration_the_model_cannot_code_is_recorded():
+    fit = _fit(lambda a, b, c: a + b)
+    out = allocate.score([{"levels": _lv(1, 1, 1)}], fits={"m": fit},
+                         objectives=[{"metric": "m", "direction": "maximize"}],
+                         factors=FACTORS, fitted_ids=IDS, held_fixed={},
+                         measured=[{"levels": _lv(-1, -1, -1)},
+                                   {"levels": {"A": 2, "B": 2, "C": 500}}],
+                         model_adequate=True)
+    assert out.declined is None
+    assert len(out.method["measured_not_predictable"]) == 1

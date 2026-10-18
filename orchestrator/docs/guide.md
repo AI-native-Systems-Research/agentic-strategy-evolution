@@ -3077,10 +3077,15 @@ incumbent: the best posterior mean among this epoch's measured
 configurations, under the fitted model's predictive `yhat + se * t_nu`.
 `runs` is the next epoch's worst-case run count from the design preview. The
 maximum EI over a region is a lower bound on the region's expected
-improvement, whatever the dependence between points. It assumes the next
-epoch's design finds that point, which is optimistic, and the file says so.
-For several objectives the score is the same with EHVI: exact in 2-D,
-seeded Monte Carlo for three or more, in one normalised frame. A widened
+improvement, whatever the dependence between points. Each score is NET of
+the do-nothing baseline, the same bound over the configurations already
+measured (what `stop` keeps). Without that, the incumbent's own posterior
+uncertainty would count as the value of every move. The bound assumes the
+next epoch's design finds that point, which is optimistic, and the file says
+so. Comparing single-point bounds also leans the ranking toward small, cheap
+moves; that is stated too. For several objectives the score is the same with
+EHVI: exact in 2-D, seeded Monte Carlo for three, in one normalised frame;
+more than three objectives decline (`too_many_objectives`). A widened
 axis is scored past its fitted edge out to |coded| 2, and the option is
 marked `extrapolated: true`.
 

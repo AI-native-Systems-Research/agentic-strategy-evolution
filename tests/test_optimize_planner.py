@@ -149,8 +149,8 @@ def test_a_declared_stop_threshold_is_compiled_and_used(tmp_path):
     res = run_synthetic_campaign(SURFACES["bowl_out_of_hull"](), seed=3, parent_dir=tmp_path,
                                  campaign_overrides={"planner": {"stop_value_per_run": 1e6}})
     d, _ = _decision(res)
-    assert d["stopping"] == {"threshold_per_run": 1e6,
-                             "rule": "declared: optimization.planner.stop_value_per_run"}
+    assert d["stopping"]["threshold_per_run"] == 1e6
+    assert d["stopping"]["rule"] == "declared: optimization.planner.stop_value_per_run"
     assert d["chosen"] == "stop"
 
 
@@ -342,3 +342,16 @@ def test_an_inadequate_model_offers_the_bo_block_as_a_model_free_alternative(tmp
                        reason="model rejected; try the TPE region")
     dd = json.loads((res.work_dir / "plan_next/epoch-1/planner_decision.json").read_text())
     assert dd["chosen"] == "bo_block" and dd["override"]["scored_choice"] == "stop"
+
+
+def test_every_move_is_scored_net_of_the_do_nothing_baseline(converged):
+    """Without the baseline, the incumbent's own posterior uncertainty (EI at
+    the measured best ~ 0.4 se) would make every move look worth something."""
+    d, _ = _decision(converged)
+    base = d["stopping"]["baseline_bound"]
+    assert base > 0
+    for o in d["options"]:
+        u = o.get("utility") or {}
+        if u.get("region_bound") is not None:
+            assert u["baseline_bound"] == base
+            assert u["value"] == pytest.approx(max(u["region_bound"] - base, 0.0))

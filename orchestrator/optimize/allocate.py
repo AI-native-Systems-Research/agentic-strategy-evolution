@@ -29,8 +29,12 @@ THE PREDICTIVE DISTRIBUTION (stated, not approximated silently)
 For each objective the fitted linear model gives ``yhat(x)`` and
 ``se(x) = s * sqrt(phi(x)' (X'X)^-1 phi(x))``, with ``s^2`` the pure-error
 variance on ``nu = pure_error_df`` degrees of freedom
-(``constraint_models.predicted_with_se``). That is exact for second-order and
-mixed fits; for orthogonal two-level fits it is exact for their columns. The
+(``constraint_models.predicted_with_se``). It is exact whenever the fit carries
+its ``(X'X)^-1``: every second-order and mixed fit at the fitting stage, and
+every multi-objective ``objective_fits`` record. Otherwise it is the per-term
+diagonal, which is exact for orthogonal two-level columns and understates se
+for non-orthogonal ones; ``plan-next`` names the objectives where that
+fallback was used. The
 belief about the TRUE mean response ``f(x)`` is taken as a location-scale
 Student t: ``f(x) ~ yhat + se * T_nu``. This is the flat-prior Bayesian
 posterior of a linear model's mean response when ``sigma^2`` is estimated
@@ -72,9 +76,13 @@ THE SCORES
   With K = 2 it is EXACT: in 2-D the region a new point ``y`` adds is a union
   of strips ``[l_i, u_i] x [h_i, y_2]``, so under independent marginals
   ``EHVI = sum_i E[(min(u_i, Y_1) - l_i)^+] * E[(Y_2 - h_i)^+]``, and each
-  factor is a closed-form t partial expectation. With K >= 3 it is a seeded
-  Monte Carlo (``MC_SAMPLES`` draws, ``MC_SEED``; common random numbers
-  across candidates). The method string records both numbers.
+  factor is a closed-form t partial expectation. With K = 3 it is a seeded
+  Monte Carlo over the t draws (``MC_SAMPLES``, ``MC_SEED``; common random
+  numbers across candidates), each draw's hypervolume computed EXACTLY by
+  slicing (``pareto.hypervolume``). The method string records both numbers.
+  K > 3 DECLINES (``too_many_objectives``): ``pareto.hypervolume`` is itself
+  a Monte Carlo there, and a nested Monte Carlo per candidate is neither
+  affordable nor stated.
   Per-run cost: EHVI / r. EHVI is a property of the TRUE value, so more
   replicates do not raise it. Dividing by ``r`` only states the cost.
 
@@ -114,6 +122,8 @@ DECLINE_REASONS = {
     "empty_pool": "no candidate survived (every pool point was measured, "
                   "unpredictable, or the inputs named none)",
     "pool_too_large": f"the recombination product exceeds POOL_CAP={POOL_CAP}",
+    "too_many_objectives": "more than 3 objectives: exact EHVI is not implemented "
+                           "and the hypervolume itself would be a nested Monte Carlo",
 }
 
 
@@ -337,6 +347,8 @@ def _sign(direction: str) -> float:
 
 
 def _check_models(fits: dict, model_adequate) -> Allocation | None:
+    if len(fits) > 3:
+        return _decline("too_many_objectives")
     if model_adequate is False:
         return _decline("model_inadequate")
     if model_adequate is not True:
@@ -386,13 +398,13 @@ def score(pool: list[dict], *, fits: dict, objectives: list[dict], factors,
                              "reason": f"unpredictable: {exc}"})
             continue
         cands.append((e, c))
-    inc = []
+    inc, inc_dropped = [], []
     for mpt in measured or ():
         try:
             inc.append((mpt, coded_of(mpt["levels"], fitted_ids=fitted_ids,
                                       factors=factors, held_fixed=held_fixed)))
-        except (ValueError, KeyError):
-            continue
+        except (ValueError, KeyError) as exc:
+            inc_dropped.append({"levels": mpt.get("levels"), "reason": str(exc)})
     if not cands:
         return _decline("empty_pool", unscored=unscored, pool_size=len(pool))
 
@@ -464,7 +476,8 @@ def score(pool: list[dict], *, fits: dict, objectives: list[dict], factors,
             "replicates_per_seat": r,
             "nu": nu,
         }
-        return Allocation(None, "", {**method, "assumptions": assumptions}, ranked,
+        return Allocation(None, "", {**method, "assumptions": assumptions,
+                                     "measured_not_predictable": inc_dropped}, ranked,
                           unscored, len(pool))
 
     # ── multi-objective: EHVI in the normalised frame ────────────────────────
@@ -540,10 +553,12 @@ def score(pool: list[dict], *, fits: dict, objectives: list[dict], factors,
         "approximations": [
             "objectives independent (correlated noise across objectives is ignored)",
             "the current front is the PREDICTED values at measured configurations",
-        ] + (["Monte Carlo EHVI"] if K > 2 else []),
+        ] + (["Monte Carlo EHVI over the t draws (each draw's hypervolume exact)"]
+             if K > 2 else []),
         "replicates_per_seat": r,
     }
-    return Allocation(None, "", {**method, "assumptions": assumptions}, ranked,
+    return Allocation(None, "", {**method, "assumptions": assumptions,
+                                 "measured_not_predictable": inc_dropped}, ranked,
                       unscored, len(pool))
 
 

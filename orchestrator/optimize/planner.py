@@ -21,7 +21,10 @@ the incumbent ``tau``. The incumbent is the best posterior mean over this
 epoch's measured configurations. The belief is the fitted model's predictive
 ``f(x) ~ yhat + se T_nu`` (``allocate``). The SCORE is the lower bound
 ``max_{x in R} EI(x) <= E[max_{x in R} (f(x) - tau)^+]``, which holds for ANY
-dependence between points, divided by the move's cost: the next epoch's
+dependence between points, MINUS the same bound over the configurations
+already measured (the do-nothing baseline that ``stop`` keeps: without it the
+incumbent's own posterior uncertainty, about 0.4 se, would count as the value
+of every move), floored at 0 and divided by the move's cost: the next epoch's
 worst-case run count (``preview.build_preview(...).max_runs``). The bound is
 attained only if the next epoch's design finds that best point. That
 assumption is optimistic, and it is recorded.
@@ -700,8 +703,9 @@ def _frame(ep: dict):
     return pareto.make_frame(objs, rows, eps), eps
 
 
-def _value(ep: dict, cands, frame) -> dict:
-    """The move's utility lower bound over its region (see module doc)."""
+def _region_bound(ep: dict, cands, frame) -> dict:
+    """``max_{x in cands}`` EI (single objective) or EHVI (several): a lower
+    bound on the expected improvement of the best point of ``cands``."""
     from orchestrator.optimize import allocate
     from orchestrator.optimize.constraint_models import predicted_with_se
 
@@ -745,6 +749,34 @@ def _value(ep: dict, cands, frame) -> dict:
     top = al.ranked[0]
     return {"value": top["ehvi"], "argmax": top["levels"], "predicted": top["predicted"],
             "ehvi_method": al.method.get("ehvi_method")}
+
+
+def baseline_bound(ep: dict, frame) -> dict:
+    """The DO-NOTHING bound: ``_region_bound`` over the configurations already
+    measured. It is what ``stop`` keeps. Each move is credited only with how
+    far its region's bound exceeds it, so the incumbent's own uncertainty is
+    never counted as the value of a new epoch (P6a audit round 2, finding 1)."""
+    from orchestrator.optimize.allocate import coded_of
+
+    cands = []
+    for m in ep["measured"]:
+        try:
+            cands.append((m["levels"], coded_of(m["levels"], fitted_ids=ep["fitted_ids"],
+                                                factors=ep["factors"],
+                                                held_fixed=ep["held_fixed"])))
+        except (ValueError, KeyError):
+            continue
+    return _region_bound(ep, cands, frame)
+
+
+def _value(ep: dict, cands, frame, base: dict) -> dict:
+    """The move's value: its region's bound MINUS the do-nothing bound,
+    floored at zero (see the module docstring)."""
+    v = _region_bound(ep, cands, frame)
+    if v.get("value") is None or base.get("value") is None:
+        return v
+    return {**v, "region_bound": v["value"], "baseline_bound": base["value"],
+            "value": max(v["value"] - base["value"], 0.0)}
 
 
 def _cost(campaign: dict) -> tuple[int | None, str | None]:
@@ -869,6 +901,7 @@ def plan(work_dir: Path) -> dict:
                       "model_free": True})
     seen, options = {}, []
     base_hash = campaign_hash(ep["campaign"])
+    base = baseline_bound(ep, frame) if scorable else {}
     cap = REGION_CAP_SO if len(ep["objectives"]) == 1 else REGION_CAP_MO
     for mv in moves:
         c = mv["campaign"]
@@ -910,7 +943,7 @@ def plan(work_dir: Path) -> dict:
                                     pins=mv.get("pins"))
             opt["region"] = grid_rec
             opt["extrapolated"] = mv["max_coded"] > 1.0
-            v = _value(ep, cands, frame)
+            v = _value(ep, cands, frame, base)
             opt["utility"] = v
             opt["score"] = (v["value"] / cost) if v.get("value") is not None and cost else None
             if mv["kind"] == "recombination":
@@ -958,7 +991,11 @@ def plan(work_dir: Path) -> dict:
                   "held_fixed": ep["held_fixed"], "predictive": ep["predictive"],
                   **({"declined": gate.declined, "detail": gate.detail} if gate else {})},
         "utility": _utility_statement(ep),
-        "stopping": {"threshold_per_run": thr, "rule": thr_rule},
+        "stopping": {"threshold_per_run": thr, "rule": thr_rule,
+                     **({"baseline_bound": base.get("value"),
+                         "baseline": "max EI/EHVI over the configurations already measured "
+                                     "(what stop keeps); each move is scored by how far "
+                                     "its region's bound exceeds it"} if scorable else {})},
         "assumptions": _assumptions(ep),
         "error_budget": bstate,
         **({"bo": bo_prov} if bo_prov is not None else {}),
@@ -985,22 +1022,28 @@ def _utility_statement(ep: dict) -> dict:
                                f"the move's region, tau the best posterior mean over this "
                                f"epoch's measured configurations, and runs the next epoch's "
                                f"worst-case run count"),
-                "computed_as": "max_{x in region} EI(x) / runs: a LOWER bound on the "
-                               "region's expected improvement, valid for any dependence "
-                               "between points",
+                "computed_as": "(max_{x in region} EI(x) - max_{x measured} EI(x))^+ / runs: "
+                               "a LOWER bound on the region's expected improvement (valid "
+                               "for any dependence between points), net of the do-nothing "
+                               "baseline",
                 "units": f"{o['metric']} per benchmark run"}
     return {"name": "expected_hypervolume_improvement_per_run",
             "definition": ("E[HV(front + x*) - HV(front)] / runs in the normalised frame "
                            "(pareto.make_frame), the front being the predicted values at "
                            "this epoch's measured configurations"),
-            "computed_as": "max_{x in region} EHVI(x) / runs: a LOWER bound (hypervolume "
-                           "is monotone in the point set); exact 2-D, seeded Monte Carlo "
-                           "for K >= 3 (allocate.MC_SAMPLES, allocate.MC_SEED)",
+            "computed_as": "(max_{x in region} EHVI(x) - max_{x measured} EHVI(x))^+ / "
+                           "runs: a LOWER bound (hypervolume is monotone in the point "
+                           "set), net of the do-nothing baseline; exact 2-D, seeded "
+                           "Monte Carlo for K = 3 (allocate.MC_SAMPLES, allocate.MC_SEED)",
             "units": "normalised hypervolume per benchmark run"}
 
 
 def _assumptions(ep: dict) -> list[str]:
-    return [
+    diag = sorted(m for m, h in (ep.get("predictive") or {}).items() if h != "exact"
+                  and not str(h).startswith("exact"))
+    return ([f"objective(s) {diag}: predictive se from the per-term diagonal (the fit's "
+             f"exact covariance was not recorded); understates se for non-orthogonal "
+             f"columns"] if diag else []) + [
         "the belief about every objective is the current epoch's fitted model's predictive "
         "f(x) ~ yhat + se T_nu (flat-prior posterior of the linear model; requires "
         "model_adequate is True, else nothing is scored)",
@@ -1014,6 +1057,12 @@ def _assumptions(ep: dict) -> list[str]:
         "is effect sparsity (Box & Meyer 1986), not proof of inertness; the next epoch's "
         "certificate is scoped to the pinned value",
         "a widened edge is assumed not to be a hard limit of the system",
+        "moves are compared by single-point lower bounds of different tightness: a "
+        "larger region's batch value is understated relative to its cost, so the ranking "
+        "leans toward small, cheap moves (q-EI / q-EHVI would remove the lean; not "
+        "computed)",
+        "every score is net of the do-nothing baseline (the same bound over the "
+        "configurations already measured)",
         "cost is the next epoch's worst-case run count from the design preview "
         "(every registered branch taken, every confirm round)",
         "the planner chooses only WHERE the next epoch looks; the next epoch is compiled, "
