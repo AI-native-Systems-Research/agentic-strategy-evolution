@@ -518,3 +518,15 @@ def test_accept_refuses_a_decision_without_its_seal(tmp_path):
     (wd / "plan_next/epoch-1/planner_decision.json.seal").unlink()
     with pytest.raises(planner.PlanError, match="decision_unsealed"):
         planner.accept(wd, cf)
+
+
+def test_reanalysis_is_identical_right_after_an_accept(tmp_path):
+    """M3: accept writes epoch_end.planned-1.json after epoch 1's report; it
+    is a decision about epoch 2, not an input epoch 1 changed."""
+    from orchestrator.optimize.reanalyze import reanalyze
+
+    wd, cf = _planned(tmp_path)
+    planner.accept(wd, cf)
+    ra = reanalyze(wd)
+    assert ra.identical, (ra.differences[:3], ra.input_changes[:3])
+    assert "epoch_end.planned-1.json" in ra.not_rederived

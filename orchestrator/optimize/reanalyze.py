@@ -66,7 +66,7 @@ NOT_DERIVED = frozenset({
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
     "clean_tree.manifest.json", "clean_tree.extras.json", "clean_tree.probe.json",
     "planner_decision.json", "proposed_campaign.yaml", "proposed_campaign.diff",
-    "accepted_stop.json",
+    "accepted_stop.json", "planner_decision.json.seal",
 })
 
 #: Build-gate records carried into the scratch dir (report.json's waivers are
@@ -296,14 +296,30 @@ def check_inputs(work_dir: Path) -> list[dict]:
                  "(written by a Nous older than the provenance block)"}]
     now = input_hashes(work_dir)
     out = []
+    ep = (json.loads(rep.read_text()) or {}).get("epoch")
     for rel in sorted(set(recorded) | set(now)):
         if rel not in now:
             out.append({"file": rel, "change": "missing now"})
+        elif rel not in recorded and _planned_after(rel, ep):
+            # WP-D (review M3): `nous plan-next --accept` writes
+            # epoch_end.planned-<e>.json AFTER epoch e's report, by design --
+            # it is a decision about epoch e+1, not an input to epoch e.
+            continue
         elif rel not in recorded:
             out.append({"file": rel, "change": "added after the report was written"})
         elif recorded[rel] != now[rel]:
             out.append({"file": rel, "change": "content changed after the report was written"})
     return out
+
+
+def _planned_after(rel: str, report_epoch) -> bool:
+    """Is ``rel`` a plan-next boundary for the report's own epoch (or later)?"""
+    if not (rel.startswith("epoch_end.planned-") and rel.endswith(".json")):
+        return False
+    try:
+        return int(rel[len("epoch_end.planned-"):-len(".json")]) >= int(report_epoch or 1)
+    except ValueError:
+        return False
 
 
 def _skip_pre_epoch(engine, work_dir: Path, iteration: int) -> None:
@@ -477,7 +493,10 @@ def reanalyze(work_dir: Path, *, campaign: dict | None = None,
         a, b = _files(orig, result.excluded), _files(new)
         for rel in sorted(a | b):
             name = rel.rsplit("/", 1)[-1]
-            if name in NOT_DERIVED:
+            if name in NOT_DERIVED or (name.startswith("epoch_end.planned-")
+                                       and name.endswith(".json")):
+                # A plan-next boundary is a recorded DECISION (an input,
+                # carried), never a derived artifact (review M3).
                 result.not_rederived.append(rel)
                 continue
             if rel not in b:
