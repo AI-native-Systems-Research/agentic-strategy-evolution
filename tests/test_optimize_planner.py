@@ -530,3 +530,17 @@ def test_reanalysis_is_identical_right_after_an_accept(tmp_path):
     ra = reanalyze(wd)
     assert ra.identical, (ra.differences[:3], ra.input_changes[:3])
     assert "epoch_end.planned-1.json" in ra.not_rederived
+
+
+def test_a_failed_active_region_is_a_recorded_infeasible_narrow(boundary, monkeypatch):
+    """M4: an exception computing the active region used to drop `narrow`
+    silently; it is now an infeasible option naming the exception."""
+    def boom(*_a, **_k):
+        raise RuntimeError("synthetic failure")
+
+    monkeypatch.setattr(planner, "_active_box", boom)
+    d, _ = _decision(boundary)
+    n = next(o for o in d["options"] if o["id"] == "narrow")
+    assert n["feasible"] is False and n["reason"].startswith("region_failed: RuntimeError")
+    with pytest.raises(planner.PlanError, match="option_not_overridable"):
+        planner.apply_override(d, "narrow", "anyway")

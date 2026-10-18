@@ -484,12 +484,16 @@ def _moves(ep: dict) -> list[dict]:
                     "max_coded": 1.0, "pins": pins})
 
     # narrow around the active region
-    old_cands = []
+    old_cands, pts = [], []
     try:
-        old_cands, _ = _grid(base, ep, cap=REGION_CAP_SO, max_coded=1.0)
-    except Exception:  # noqa: BLE001
-        old_cands = []
-    pts = _active_box(ep, old_cands) if old_cands or len(ep["objectives"]) > 1 else []
+        if len(ep["objectives"]) == 1:
+            old_cands, _ = _grid(base, ep, cap=REGION_CAP_SO, max_coded=1.0)
+        pts = _active_box(ep, old_cands) if old_cands or len(ep["objectives"]) > 1 else []
+    except Exception as exc:  # noqa: BLE001 -- recorded as the option's reason (M4)
+        out.append({"id": "narrow", "kind": "narrow", "campaign": None,
+                    "failed": f"region_failed: {type(exc).__name__}: {exc}",
+                    "notes": ["the active region could not be computed"], "max_coded": 1.0})
+        pts = []
     if pts:
         c, notes, changed, pins = fresh(), [], False, {}
         for fid in ep["fitted_ids"]:
@@ -924,6 +928,10 @@ def plan(work_dir: Path) -> dict:
     for mv in moves:
         c = mv["campaign"]
         opt = {"id": mv["id"], "kind": mv["kind"], "changes": mv["notes"], "score": None}
+        if mv.get("failed"):
+            opt.update(feasible=False, reason=mv["failed"])
+            options.append(opt)
+            continue
         h = campaign_hash(c)
         opt["campaign_hash"] = h
         if h == base_hash and mv["kind"] != "replicate":
