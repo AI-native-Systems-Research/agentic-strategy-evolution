@@ -6264,11 +6264,11 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
     from orchestrator.optimize import allocate_seat as _alloc_seat
 
     # Seats are registered in the PREVIOUS round's confirmation.json (only
-    # when the branch is declared): the allocate round at the cap seats them,
-    # and so does every earlier registered round r > 1 (multi-objective: the
-    # gap-fill rounds), each already one of the charged looks.
-    allocating = rnd > 1 and bool(_alloc_seat.seats_declared(pol)) and bool(
-        ((_latest_confirmation(work_dir) or {}).get("allocation") or {}).get("seats"))
+    # when the branch is declared). Single-objective: only the allocate round
+    # seats them. Multi-objective: the allocate round and the registered
+    # gap-fill rounds (``pareto_stage.shortlist_plan``), each already a charged
+    # look. A REFILL round never does, so its seats are exactly the refill's.
+    allocating = rnd > 1 and _alloc_seat.is_allocate_round(pol, work_dir)
 
     def _seat_allocated() -> None:
         """The ALLOCATE branch's seats (policy.ALLOCATE_ACCOUNTING, WP-D D1):
@@ -6295,9 +6295,11 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             _add((prev_.get("preference") or {}).get("chosen"),
                  "previous round's preferred point", measured=True)
             _seat_refill_pool()
+        _prev_conf = _latest_confirmation(work_dir) if rnd > 1 else None
+        if refill and _prev_conf:
+            _prev_conf = {k_: v_ for k_, v_ in _prev_conf.items() if k_ != "allocation"}
         for lv, why, measured in pareto_stage.shortlist_plan(
-                pol, work_dir, rec, rnd,
-                _latest_confirmation(work_dir) if rnd > 1 else None):
+                pol, work_dir, rec, rnd, _prev_conf):
             if lv in finalists:
                 continue
             if len(finalists) >= k:
