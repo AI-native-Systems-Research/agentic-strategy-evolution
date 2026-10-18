@@ -195,6 +195,8 @@ def analysis_constants() -> dict:
         "noise.SKEW_NULL_SEED": _get(noise, "SKEW_NULL_SEED"),
         "noise.BOOT_RESAMPLES": _get(noise, "BOOT_RESAMPLES"),
         "noise.BOOT_SEED": _get(noise, "BOOT_SEED"),
+        "noise.SIGN_FLIP_MC_SEED": _get(noise, "SIGN_FLIP_MC_SEED"),
+        "noise.SIGN_FLIP_MC_DRAWS": _get(noise, "SIGN_FLIP_MC_DRAWS"),
         "noise.SIGN_FLIP_EXACT_MAX_N": _get(noise, "SIGN_FLIP_EXACT_MAX_N"),
     }
 

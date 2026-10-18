@@ -375,30 +375,50 @@ def _registered_looks(opt: dict) -> int:
     return max(1, rounds) + (1 if refill else 0)
 
 
-def replicate_floor(opt: dict) -> int:
+def effective_delta_terminal(opt: dict, epoch: int = 1) -> float:
+    """``delta_terminal`` as confirm will actually spend it: the declared value,
+    scaled by the charged cross-epoch share when ``campaign_delta`` is declared
+    (P3 review H2: a floor computed from the unscaled value was too small, so
+    the charged mode could never certify). A function of the declaration and
+    the epoch index only."""
+    pol_cfg = opt.get("policy") or {}
+    dt = float(pol_cfg.get("delta_terminal", 0.05))
+    share = campaign_delta_share(pol_cfg.get("campaign_delta"), int(epoch))
+    if share is None or not share > 0.0:
+        return dt
+    ds = float(pol_cfg.get("delta_screen", 0.05))
+    dc = (float(pol_cfg.get("delta_constraint", ds))
+          if _constraint_exclusion_registered(opt) else 0.0)
+    df = (float(pol_cfg.get("delta_feasibility", dt))
+          if _feasibility_registered(opt) else 0.0)   # same default as compile
+    return dt * share / (ds + dt + dc + df)
+
+
+def replicate_floor(opt: dict, epoch: int = 1) -> int:
     """The A5 replicate floor (#321 P3 item 2) for a single-objective campaign:
     the smallest n with ``2^-n <= delta_t / (L (S - 1))`` -- the exact
     sign-flip bound's existence condition at the per-look, per-challenger
-    level. A function of the declaration only."""
+    level, at the delta_terminal the epoch will spend. A function of the
+    declaration and the epoch index only."""
     from orchestrator.optimize.noise import sign_flip_floor
 
-    pol_cfg = opt.get("policy") or {}
     confirm_cfg = (opt.get("design") or {}).get("confirm") or {}
-    dt = float(pol_cfg.get("delta_terminal", 0.05))
+    dt = effective_delta_terminal(opt, epoch)
     seats = int(confirm_cfg.get("shortlist_size", 3)) + (
         1 if opt.get("known_valid_baseline") else 0)
     alpha = dt / _registered_looks(opt) / max(1, seats - 1)
     return sign_flip_floor(alpha)
 
 
-def default_confirm_replicates(opt: dict) -> int:
+def default_confirm_replicates(opt: dict, epoch: int = 1) -> int:
     """The single-objective default for ``design.confirm.replicates``: the A5
     floor (#321 P3). Was 3, at which no bound holds its level under skewed,
     heteroscedastic noise (spec §7)."""
-    return replicate_floor(opt)
+    return replicate_floor(opt, epoch)
 
 
-def terminal_robustness_rule(pol_cfg: dict, campaign: dict, *, looks: int) -> dict:
+def terminal_robustness_rule(pol_cfg: dict, campaign: dict, *, looks: int,
+                             epoch: int = 1) -> dict:
     """The registered A5 rule (#321 P3 item 2), a function of the declaration.
 
     ``floor`` is the smallest replicate count at which the robust bound exists
@@ -413,11 +433,10 @@ def terminal_robustness_rule(pol_cfg: dict, campaign: dict, *, looks: int) -> di
     opt = campaign.get("optimization") or {}
     design = opt.get("design") or {}
     confirm_cfg = design.get("confirm") or {}
-    dt = float(pol_cfg.get("delta_terminal", 0.05))
+    dt = effective_delta_terminal(opt, epoch)
     assert looks == _registered_looks(opt), (looks, _registered_looks(opt))
-    # The charged cross-epoch mode scales delta_terminal down; the floor uses
-    # the declared value, so it is a function of the declaration and is the
-    # SMALLEST floor the epoch could need (a larger n is still allowed).
+    # The floor is computed at the delta_terminal confirm SPENDS: under the
+    # charged cross-epoch mode that is the scaled share (P3 review H2).
     seats = int(confirm_cfg.get("shortlist_size", 3)) + (
         1 if opt.get("known_valid_baseline") else 0)
     alpha = dt / max(1, looks) / max(1, seats - 1)
@@ -561,7 +580,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                        "replicates": max(1, int(confirm_cfg.get(
                            "replicates",
                            3 if (mo or LEGACY_PRE_P3.get())
-                           else default_confirm_replicates(opt)))),
+                           else default_confirm_replicates(opt, int(epoch))))),
                        "max_rounds": int(pol_cfg.get("confirm_max_rounds",
                                                      default_rounds))},
             "estimator": "sample_means",
@@ -884,7 +903,7 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # #321 P3 item 2 (A5): the robust terminal family, its replicate
             # floor and the skewness pretest, all fixed at compile time.
             **({"terminal_robustness": terminal_robustness_rule(
-                pol_cfg, campaign, looks=confirm_looks(
+                pol_cfg, campaign, epoch=int(epoch), looks=confirm_looks(
                     {"states": states, "transitions": transitions}))}
                if confirm_on and mo is None and not LEGACY_PRE_P3.get() else {}),
         },

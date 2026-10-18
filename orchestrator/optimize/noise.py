@@ -92,6 +92,10 @@ BOOT_SEED = 3210
 
 #: Exact sign-flip bound up to this many paired differences (2^16 subsets).
 SIGN_FLIP_EXACT_MAX_N = 16
+#: Monte Carlo sign-flip above SIGN_FLIP_EXACT_MAX_N (P3 review H1): a fixed
+#: seed and draw count, recorded in provenance like BOOT_SEED.
+SIGN_FLIP_MC_SEED = 4093
+SIGN_FLIP_MC_DRAWS = 9999
 
 SKEW_METHOD = "studentized_third_moment_mc_null"
 
@@ -188,14 +192,97 @@ def sign_flip_upper(d, alpha: float) -> float | None:
     """
     d = [float(v) for v in d]
     n = len(d)
-    k = math.floor(alpha * 2 ** n + 1e-12)
-    if k < 1 or n > SIGN_FLIP_EXACT_MAX_N:
+    k = math.floor(alpha * 2 ** n + 1e-12) if n <= SIGN_FLIP_EXACT_MAX_N else None
+    if n > SIGN_FLIP_EXACT_MAX_N:
+        # P3 review H1: beyond the exact enumeration, a Monte Carlo sign-flip
+        # test inverted at a conservative level -- still valid (below).
+        return sign_flip_upper_mc(d, alpha)
+    if k < 1:
         return None
     sums = [(0.0, 0)]
     for v in d:
         sums += [(s + v, c + 1) for s, c in sums]
     means = sorted((s / c for s, c in sums[1:]), reverse=True)
     return means[k - 1]
+
+
+def sign_flip_upper_mc(d, alpha: float, *, seed: int = SIGN_FLIP_MC_SEED,
+                       draws: int = SIGN_FLIP_MC_DRAWS) -> float | None:
+    """Upper bound for the centre of symmetric paired differences ``d`` at
+    level ``1 - alpha`` by a MONTE CARLO sign-flip test, for n too large to
+    enumerate all ``2^n`` sign vectors (P3 review H1: without it, a CRN
+    campaign with more than 16 replicates could never certify).
+
+    For each candidate centre ``mu``, test ``centre = mu`` against
+    ``centre < mu`` with statistic ``T = mean(d - mu)`` and the p-value
+    ``(1 + #{b : T*_b <= T}) / (B + 1)`` over ``B`` random sign vectors. With
+    the observed vector counted, that p-value is valid at any ``B`` (Phipson &
+    Smyth 2010; Hemerik & Goeman 2018), so the inverted set keeps its level
+    exactly as the enumerated bound does -- it is only less sharp. The sign
+    draws are FIXED (seeded constant, reused for every ``mu``), which makes
+    the bound reproducible and the rejection monotone in ``mu`` (``T*_b <= T``
+    is ``mean(s_b d) - mean(d) <= mu (mean(s_b) - 1)``, whose right side never
+    increases), so the bound is found by bisection. ``None`` when
+    ``alpha < 1 / (B + 1)`` (no draw count could reject) or ``d`` is empty."""
+    import random
+
+    d = [float(v) for v in d]
+    n = len(d)
+    if n < 1 or alpha * (draws + 1) < 1.0:
+        return None
+    rng = random.Random(seed)
+    signs = [[1.0 if rng.random() < 0.5 else -1.0 for _ in range(n)]
+             for _ in range(draws)]
+    sd_ = [sum(sg[i] * d[i] for i in range(n)) / n for sg in signs]
+    sbar = [sum(sg) / n for sg in signs]
+    md = sum(d) / n
+
+    def rejected(mu: float) -> bool:
+        le = sum(1 for a_, b_ in zip(sd_, sbar) if a_ - md <= mu * (b_ - 1.0) + 1e-12)
+        return (1 + le) / (draws + 1) <= alpha
+
+    span = (max(d) - min(d)) + 1.0
+    lo, hi = min(d) - span, max(d) + span
+    while rejected(lo):
+        lo -= span
+    while not rejected(hi):
+        hi += span
+    for _ in range(60):
+        m = (lo + hi) / 2.0
+        if rejected(m):
+            hi = m
+        else:
+            lo = m
+    return hi
+
+
+def _bootstrap_t_upper_one(x, alpha: float, *, seed: int, resamples: int) -> float | None:
+    """One-sample bootstrap-t upper bound on ``mean(x)`` (Hall 1988)."""
+    import random
+
+    n = len(x)
+    if n < 2:
+        return None
+
+    def var(v):
+        m = sum(v) / len(v)
+        return sum((u - m) ** 2 for u in v) / (len(v) - 1)
+
+    est = sum(x) / n
+    se = math.sqrt(var(x) / n)
+    if not se > 0.0:
+        return None
+    rng = random.Random(seed)
+    ts = []
+    for _ in range(resamples):
+        b = [x[int(rng.random() * n)] for _ in range(n)]
+        s = math.sqrt(var(b) / n)
+        ts.append(((sum(b) / n) - est) / s if s > 0.0 else -math.inf)
+    ts.sort()
+    j = math.floor(alpha * (resamples + 1))
+    if j < 1:
+        return None
+    return est - ts[j - 1] * se
 
 
 def bootstrap_t_upper(xk, xb, alpha: float, *, seed: int = BOOT_SEED,
@@ -211,6 +298,8 @@ def bootstrap_t_upper(xk, xb, alpha: float, *, seed: int = BOOT_SEED,
     import random
 
     xk = [float(v) for v in xk]
+    if xb is None:
+        return _bootstrap_t_upper_one(xk, alpha, seed=seed, resamples=resamples)
     xb = [float(v) for v in xb]
     nk, nb = len(xk), len(xb)
     if nk < 2 or nb < 2:
@@ -541,12 +630,48 @@ def feasibility_shown(constraint: dict, values, *, level: float) -> dict:
             return out
         m = sum(vals) / len(vals)
         sd = math.sqrt(sum((v - m) ** 2 for v in vals) / (len(vals) - 1))
+        sup = constraint.get("support")
+        if isinstance(sup, (list, tuple)) and len(sup) == 2:
+            # Exact for every distribution on [lo, hi] (Hoeffding 1963): the
+            # only kind of small-n mean bound that holds without a shape
+            # assumption (Bahadur & Savage 1956 rule out any other).
+            lo_, hi_ = float(sup[0]), float(sup[1])
+            if any(v < lo_ - 1e-12 or v > hi_ + 1e-12 for v in vals):
+                out.update(mean=m, reason="value_outside_declared_support", shown=False,
+                           level_basis="exact_hoeffding")
+                return out
+            hh = (hi_ - lo_) * math.sqrt(math.log(1.0 / level) / (2.0 * len(vals)))
+            worst = m + hh if op in ("<", "<=") else m - hh
+            out.update(mean=m, bound=worst, method="hoeffding_one_sided",
+                       support=[lo_, hi_], level_basis="exact_hoeffding",
+                       shown=not _violates(op, worst, thr))
+            return out
         if not sd > 0.0:
             out.update(shown=not _violates(op, m, thr), mean=m, basis="zero_spread_exact")
             return out
         h = float(student_t.ppf(1.0 - level, len(vals) - 1)) * sd / math.sqrt(len(vals))
-        worst = m + h if op in ("<", "<=") else m - h
-        out.update(mean=m, bound=worst, method="one_sided_t_on_the_mean",
+        worst_t = m + h if op in ("<", "<=") else m - h
+        # P3 review H3: a plain t understates the level several-fold for the
+        # skewed metrics constraints usually are (stall time, p99): measured
+        # 3.5x / 9x nominal at lognormal sigma 0.5 / 1, n = 6. The worse of the
+        # t and a one-sample bootstrap-t (Hall 1988) cuts that to about 2x / 4x.
+        # A skewness veto was measured too: it lowers the size only to 1.8x /
+        # 3.4x and costs a quarter of the Gaussian power, so it is not used.
+        # No small-n mean bound is valid for EVERY distribution (Bahadur &
+        # Savage 1956): without a declared support the level is approximate,
+        # recorded as such; declare `support: [lo, hi]` for the exact
+        # Hoeffding bound above.
+        sgn = 1.0 if op in ("<", "<=") else -1.0
+        bt = bootstrap_t_upper([sgn * v for v in vals], None, level)
+        worst = worst_t if bt is None else (
+            max(worst_t, sgn * bt) if sgn > 0 else min(worst_t, sgn * bt))
+        out.update(mean=m, bound=worst, bound_t=worst_t,
+                   bound_bootstrap_t=None if bt is None else sgn * bt,
+                   method="max_one_sided_t_and_bootstrap_t",
+                   # No support declared: no small-n bound on a mean is valid
+                   # for every distribution (Bahadur & Savage 1956), so this
+                   # level is approximate; measured in spec section 7.
+                   level_basis="approximate",
                    shown=not _violates(op, worst, thr))
         return out
     if kind == "chance":

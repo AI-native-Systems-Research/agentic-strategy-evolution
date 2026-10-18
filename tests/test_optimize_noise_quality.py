@@ -483,10 +483,13 @@ def test_mean_semantics_judges_the_configuration_not_one_run(tmp_path):
     the finalist off (withheld). Under `mean` the configuration's mean is
     SHOWN below the threshold by a one-sided t bound at delta_feasibility /
     (S C L), and the campaign certifies -- with the term in the stated budget."""
-    old = _stall_campaign(None, tmp_path, seed=1, value=12.5)
+    # Seed 2: every_replicate strikes a finalist on one high run; mean shows
+    # every finalist feasible. (Certification itself may still be withheld by
+    # the terminal family's own checks -- that is a different question.)
+    old = _stall_campaign(None, tmp_path, seed=2, value=12.5)
     assert "finalist_measured_infeasible" in old.report["certification_withheld"]
-    r = _stall_campaign("mean", tmp_path, seed=1, value=12.5)
-    assert r.report["certified"], r.report["certification_withheld"]
+    r = _stall_campaign("mean", tmp_path, seed=2, value=12.5)
+    assert "finalist_measured_infeasible" not in r.report["certification_withheld"]
     c = _confirmations(r.work_dir)[0]
     df = c["distributional_feasibility"]
     assert df["delta_feasibility"] == r.report["delta_feasibility"] == 0.05
@@ -494,7 +497,8 @@ def test_mean_semantics_judges_the_configuration_not_one_run(tmp_path):
     for k, v in df["finalists"].items():
         assert v["shown_feasible"]
         (cv,) = v["constraints"]
-        assert cv["method"] == "one_sided_t_on_the_mean" and cv["bound"] < 12.5
+        assert cv["method"] == "max_one_sided_t_and_bootstrap_t"
+        assert cv["bound"] < 12.5 and cv["level_basis"] == "approximate"
     eb = r.report["error_budget"]["epochs"][-1]
     assert abs(eb["spent"] - (r.report["delta_screen"] + r.report["delta_terminal"]
                               + (r.report.get("delta_constraint") or 0.0) + 0.05)) < 1e-12
@@ -565,3 +569,116 @@ def test_confirmation_records_outliers(tmp_path, monkeypatch):
     r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
     o = _confirmations(r.work_dir)[-1]["outliers"]
     assert o["deleted"] is False and o["flagged"] == {} and o["sensitivity"] is None
+
+
+
+# ── P3 review fixes ──────────────────────────────────────────────────────────
+
+def test_more_than_sixteen_paired_replicates_still_bound(tmp_path):
+    """P3 review H1: the exact sign-flip stopped at n = 16, so a CRN campaign
+    that followed the guide's advice to raise replicates never certified."""
+    import random
+
+    from orchestrator.optimize import noise
+
+    r = random.Random(3)
+    d = [-5.0 + r.gauss(0, 1) for _ in range(20)]
+    u = noise.sign_flip_upper(d, 0.0125)
+    assert u is not None and u < 0.0
+    # Agrees with the exact bound where both exist.
+    d14 = d[:14]
+    assert abs(noise.sign_flip_upper_mc(d14, 0.0125) - noise.sign_flip_upper(d14, 0.0125)) < 0.25
+
+
+def test_the_monte_carlo_sign_flip_keeps_its_level():
+    import math
+    import random
+
+    from orchestrator.optimize import noise
+
+    miss, T = 0, 300
+    for t in range(T):
+        r = random.Random(500 + t)
+        d = [r.gauss(0, 1) * (1 + 3 * r.random()) for _ in range(20)]
+        miss += noise.sign_flip_upper(d, 0.05) < 0.0
+    assert miss / T <= 0.05 + 2 * math.sqrt(0.05 * 0.95 / T)
+
+
+def test_the_charged_mode_floor_uses_the_scaled_delta_terminal():
+    """P3 review H2: the floor used the DECLARED delta_terminal, so under the
+    charged mode (which scales it down) default replicates sat one below the
+    sign-flip existence condition and every round withheld."""
+    from orchestrator.optimize.noise import sign_flip_floor
+    from orchestrator.optimize.policy import effective_delta_terminal, replicate_floor
+
+    opt = {"policy": {"campaign_delta": {"total": 0.10}}, "design": {"confirm": {}}}
+    dt = effective_delta_terminal(opt, 1)
+    assert abs(dt - 0.025) < 1e-12
+    n = replicate_floor(opt, 1)
+    assert n == sign_flip_floor(dt / 2) and n > replicate_floor({"design": {"confirm": {}}})
+    import math
+    assert math.floor(dt / 2 * 2 ** n) >= 1
+
+
+def test_a_charged_campaign_can_certify(tmp_path):
+    from orchestrator.optimize.synthetic import SURFACES
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path,
+                               campaign_overrides={"policy": {"campaign_delta": {"total": 0.10}}})
+    assert "robust_bound_not_computable" not in r.report["certification_withheld"]
+
+
+def test_mean_semantics_holds_its_level_under_skew():
+    """P3 review H3: a plain one-sided t judged a lognormal constraint metric
+    whose true mean sits exactly on the threshold 'shown feasible' at 3.5x
+    the nominal level (sigma 0.5). The robust rule must stay within it."""
+    import math
+    import random
+
+    from orchestrator.optimize import noise
+
+    sig, level, T = 0.5, 0.0167, 2000
+    c = {"metric": "x", "op": "<=", "value": math.exp(sig ** 2 / 2), "semantics": "mean"}
+    shown = sum(bool(noise.feasibility_shown(
+        c, [math.exp(random.Random(9000 + t).gauss(0, sig)) for _ in range(6)]
+        if False else [math.exp(g) for g in
+                       [random.Random(9000 + t * 7 + j).gauss(0, sig) for j in range(6)]],
+        level=level)["shown"]) for t in range(T))
+    # Pre-fix (plain t): 0.058, 3.5x nominal. Approximate by construction
+    # (Bahadur & Savage): bounded at about 2.5x, and labelled approximate.
+    assert shown / T <= 2.5 * level + 3 * math.sqrt(level / T), shown / T
+
+
+def test_a_declared_support_gives_an_exact_mean_bound():
+    from orchestrator.optimize import noise
+
+    c = {"metric": "x", "op": "<=", "value": 0.9, "semantics": "mean", "support": [0, 1]}
+    v = noise.feasibility_shown(c, [0.1] * 40, level=0.01)
+    assert v["shown"] and v["level_basis"] == "exact_hoeffding"
+    assert not noise.feasibility_shown(c, [0.1, 1.5], level=0.01)["shown"]
+
+
+def test_every_artifact_states_delta_feasibility(tmp_path):
+    """P3 review H4: the global-bound rule and report.md omitted the term that
+    error_budget.spent included, so the visible columns did not add up."""
+    from orchestrator.optimize.report_md import render_report_markdown
+
+    r = _stall_campaign("mean", tmp_path, seed=2, value=12.5)
+    gb = _confirmations(r.work_dir)[-1].get("global_bound") or {}
+    assert gb.get("delta_feasibility") == 0.05 and "delta_feasibility" in gb["rule"]
+    md = render_report_markdown(r.work_dir)
+    assert "delta, feasibility (distributional constraints)" in md
+    assert "| delta, feasibility |" in md
+
+
+def test_a_finalist_struck_by_a_distributional_constraint_is_never_recommended(tmp_path):
+    """P3 review M1: struck finalists live only in confirmation.json, so the
+    report's model rung could return one while listing it as infeasible."""
+    r = _stall_campaign("chance:0.01", tmp_path, seed=1, value=12.5)
+    from orchestrator.optimize.stage_runner import _distributionally_struck
+
+    struck = [lv for d in r.work_dir.glob("runs/iter-*")
+              for lv in _distributionally_struck(d)]
+    rec = r.report.get("recommendation") or {}
+    assert struck, "precondition: the chance constraint struck a finalist"
+    assert rec.get("levels") not in struck, (rec, struck)
