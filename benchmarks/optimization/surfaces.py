@@ -32,9 +32,7 @@ from orchestrator.optimize.synthetic import (
     Surface,
     _choice,
     _numeric,
-    candidate_grid,
     sparse_knobs,
-    true_optimum,
 )
 
 
@@ -120,25 +118,183 @@ def campaign_overrides(name: str) -> dict | None:
     return o or None
 
 
-# ── the shared measurement model ────────────────────────────────────────────
-def axes(surface: Surface) -> list[tuple[dict, list]]:
-    """Each factor with the candidate values a method may choose from: the
-    same per-factor axis ``synthetic.candidate_grid`` (and therefore the
-    oracle's truth) uses -- declared levels plus, for gridded numerics, nine
-    snapped points spanning the range."""
-    out = []
-    for f in surface.factors:
-        vals = sorted({g[f["id"]] for g in candidate_grid([f])},
-                      key=lambda v: (str(type(v)), v))
-        out.append((f, vals))
+# ── the shared candidate domain (P7 review H3) ─────────────────────────────
+#: Points per refinable numeric WITHOUT a grid (none in the suite today): such
+#: a factor's recommendable domain is continuous, so the truth is taken over a
+#: dense grid of this many points and the tolerance is half its spacing.
+DENSE_POINTS = 201
+
+#: Largest lattice the truth is ever computed over (streamed, never
+#: materialised; sized BEFORE enumeration, resource rule 4).
+MAX_LATTICE = 2_000_000
+
+
+def lattice_axis(f: dict) -> list:
+    """The DECLARED lattice of factor ``f`` (P7 review H3):
+
+    * ``choice`` and ``levels_only`` numerics: the declared levels;
+    * a two-level numeric: its declared pair (``decide._axis`` never
+      interpolates one; its design centre enters through ``centre_configs``);
+    * a refinable numeric with ``grid: g``: every multiple of ``g`` in
+      [min, max], plus the declared levels -- ``decode_coded`` snaps a fitted
+      or design value to that lattice, so any of them can be recommended;
+    * a refinable numeric with no grid: ``DENSE_POINTS`` evenly spaced points
+      (stated tolerance: half the spacing). No suite surface has one.
+    """
+    lv = list(f["levels"])
+    if f["type"] != "numeric" or f.get("levels_only") or len(lv) <= 2:
+        return sorted(lv, key=lambda v: (str(type(v)), v))
+    lo, hi = min(lv), max(lv)
+    if f.get("grid") is None:
+        return sorted({lo + (hi - lo) * i / (DENSE_POINTS - 1) for i in range(DENSE_POINTS)}
+                      | set(lv))
+    from orchestrator.optimize.factors import snap_to_grid
+
+    g = float(f["grid"])
+    n = int(math.floor((float(hi) - float(lo)) / g + 1e-9))
+    return sorted({snap_to_grid(float(lo) + i * g, g) for i in range(n + 1)} | set(lv))
+
+
+_CENTRES: dict = {}
+
+
+def centre_configs(surface: Surface) -> list[dict]:
+    """The centre configurations the campaign's designs actually RUN, read off
+    Nous's own design code -- ``stage_runner._build_design`` then
+    ``matrix.expand`` (which applies ``matrix.centre_configurations`` and the
+    diagonal cyclic choice assignment) -- for each fitting stage the campaign
+    declares. Never hand-coded, so it cannot drift from what the matrix emits.
+
+    A two-level numeric's centre is reached ONLY jointly, in these rows: on
+    ``infeasible_corner_interior`` the one centre configuration is
+    {BS: 20, CMP: 1, PF: 5}; a per-factor centre had made {BS: 20, CMP: 2}
+    reachable, which no design runs and no ranking scores.
+    """
+    if surface.name in _CENTRES:
+        return _CENTRES[surface.name]
+    from orchestrator.optimize import matrix
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.stage_runner import _build_design
+
+    c = synthetic_campaign(surface, **(campaign_overrides(surface.name) or {}))
+    opt = c["optimization"]
+    fs = parse_factors(opt["factors"])
+    stages = [s for s in (opt.get("stages") or ["screen", "refine"]) if s in ("screen", "refine")]
+    seen, out = set(), []
+    for st in stages:
+        try:
+            design = _build_design(fs, opt["design"], st)
+        except Exception:  # noqa: BLE001 -- a stage with nothing to design runs no rows
+            continue
+        for row in matrix.expand(design, fs):
+            if row.role != "center":
+                continue
+            # A stage that designs only some factors (refine designs the
+            # refinable ones) runs the others at the previous stage's
+            # recommendation -- any declared-lattice value -- so each missing
+            # factor ranges over its lattice. Sized before enumeration.
+            import itertools
+
+            miss = [f for f in surface.factors if f["id"] not in row.levels]
+            n_fill = math.prod(len(lattice_axis(f)) for f in miss) if miss else 1
+            if n_fill > 100_000:
+                raise ValueError(f"{surface.name}: {n_fill:,} fills of a centre row")
+            for combo in itertools.product(*[lattice_axis(f) for f in miss]):
+                lv = {**dict(row.levels), **{f["id"]: v for f, v in zip(miss, combo)}}
+                k = tuple(sorted(lv.items(), key=lambda kv: kv[0]))
+                if k not in seen:
+                    seen.add(k)
+                    out.append(lv)
+    _CENTRES[surface.name] = out
     return out
 
 
+def _judged_factors(surface: Surface):
+    """Factors the truth enumerates (the ``active`` ones when declared) and the
+    inert ones pinned at their first level -- exact, since nothing judged
+    depends on them."""
+    act = [f for f in surface.factors if not surface.active or f["id"] in surface.active]
+    pinned = {f["id"]: f["levels"][0] for f in surface.factors
+              if surface.active and f["id"] not in surface.active}
+    return act, pinned
+
+
+def _extra_judged(surface: Surface) -> list[dict]:
+    """Centre configurations NOT already on the declared lattice, projected
+    onto the judged factors (exact: inert factors do not move the response)."""
+    act, pinned = _judged_factors(surface)
+    axes_ = {f["id"]: set(lattice_axis(f)) for f in act}
+    out, seen = [], set()
+    for c in centre_configs(surface):
+        lv = {**pinned, **{f["id"]: c[f["id"]] for f in act}}
+        if all(lv[k] in axes_[k] for k in axes_):
+            continue
+        k = tuple(sorted(lv.items(), key=lambda kv: kv[0]))
+        if k not in seen:
+            seen.add(k)
+            out.append(lv)
+    return out
+
+
+def lattice_size(surface: Surface) -> int:
+    act, _ = _judged_factors(surface)
+    return math.prod(len(lattice_axis(f)) for f in act) + len(_extra_judged(surface))
+
+
+def iter_lattice(surface: Surface):
+    """Stream the truth domain: the declared lattice of the judged factors,
+    then the off-lattice centre configurations (refuses above ``MAX_LATTICE``)."""
+    import itertools
+
+    act, pinned = _judged_factors(surface)
+    n = lattice_size(surface)
+    if n > MAX_LATTICE:
+        raise ValueError(f"{surface.name}: truth domain of {n:,} points exceeds "
+                         f"{MAX_LATTICE:,}; declare Surface.active")
+    ids = [f["id"] for f in act]
+    for combo in itertools.product(*[lattice_axis(f) for f in act]):
+        yield {**pinned, **dict(zip(ids, combo))}
+    yield from _extra_judged(surface)
+
+
+class Domain(list):
+    """The candidate domain every method samples: a list of ``(factor,
+    declared-lattice values)`` pairs (iterates exactly as before, so ``Coder``
+    is unchanged), plus ``extra`` -- the off-lattice centre configurations
+    over ALL factors. The domain is the product of the axes UNION ``extra``."""
+
+    extra: list
+
+    def product_size(self) -> int:
+        return math.prod(len(v) for _, v in self)
+
+    def size(self) -> int:
+        return self.product_size() + len(self.extra)
+
+
+def axes(surface: Surface) -> Domain:
+    """The domain Nous can recommend from: the declared lattice plus the
+    centre configurations its designs run. Every method samples it, and the
+    truth is taken over it."""
+    d = Domain((f, lattice_axis(f)) for f in surface.factors)
+    lat = {f["id"]: set(v) for f, v in d}
+    d.extra = [c for c in centre_configs(surface)
+               if not all(c[k] in lat[k] for k in lat)]
+    return d
+
+
+def in_domain(surface: Surface, lv: dict) -> bool:
+    """``lv`` lies in ``axes(surface)`` (inert factors of an ``active`` surface
+    are not checked: nothing judged depends on them)."""
+    act, _ = _judged_factors(surface)
+    if all(lv.get(f["id"]) in set(lattice_axis(f)) for f in act):
+        return True
+    return any(all(lv.get(f["id"]) == c[f["id"]] for f in act) for c in centre_configs(surface))
+
+
 def grid_size(surface: Surface) -> int:
-    n = 1
-    for _, vals in axes(surface):
-        n *= len(vals)
-    return n
+    return axes(surface).size()
 
 
 def _ok(value: float, op: str, bound: float) -> bool:
@@ -178,15 +334,30 @@ class Target:
         return y, feas, {c["metric"]: float(obs[c["metric"]]) for c in self.constraints}
 
 
-def truth(surface: Surface) -> dict:
-    """The oracle: optimum, its value, and the WORST valid value (the penalty
-    a recommendation earns when it is infeasible or missing)."""
-    opt, best = true_optimum(surface)
-    from orchestrator.optimize.synthetic import _truth_grid
+_TRUTH: dict = {}
 
-    worst = min(surface.fn(lv) for lv in _truth_grid(surface)
-                if surface.invalid is None or not surface.invalid(lv))
-    return {"optimum": opt, "best": best, "worst": worst}
+
+def truth(surface: Surface) -> dict:
+    """The oracle over the RECOMMENDABLE lattice (``iter_lattice``): optimum,
+    its value, and the WORST valid value (the penalty a recommendation earns
+    when it is infeasible or missing). Cached per surface name (the noise
+    multiplier does not change ``fn``)."""
+    if surface.name in _TRUTH:
+        return _TRUTH[surface.name]
+    sign = 1.0 if surface.direction == "maximize" else -1.0
+    best = worst = opt = None
+    for lv in iter_lattice(surface):
+        if surface.invalid is not None and surface.invalid(lv):
+            continue
+        v = surface.fn(lv)
+        if best is None or sign * v > sign * best:
+            best, opt = v, lv
+        if worst is None or sign * v < sign * worst:
+            worst = v
+    if best is None:
+        raise ValueError(f"surface {surface.name!r} has no valid point")
+    _TRUTH[surface.name] = {"optimum": opt, "best": best, "worst": worst}
+    return _TRUTH[surface.name]
 
 
 def true_regret(surface: Surface, rec: dict | None, tr: dict) -> tuple[float, str]:
@@ -203,3 +374,25 @@ def true_regret(surface: Surface, rec: dict | None, tr: dict) -> tuple[float, st
         return tr["best"] - tr["worst"], "infeasible"
     # Not clamped: a recommendation off the truth grid can beat its optimum.
     return tr["best"] - surface.fn(rec), "ok"
+
+
+# ── multi-objective surfaces (the MO arm) ───────────────────────────────────
+def mo_surfaces() -> dict[str, Callable[[], Surface]]:
+    """``PARETO_SURFACES`` plus ``ALLOCATE_SURFACES["pareto_three_discrete"]``
+    when the checkout has it (WP-D P6b). Absent on code before P6b: the
+    surface is then listed as unavailable, never silently dropped."""
+    from orchestrator.optimize import synthetic as _syn
+
+    out = dict(_syn.PARETO_SURFACES)
+    alloc = getattr(_syn, "ALLOCATE_SURFACES", {}) or {}
+    if "pareto_three_discrete" in alloc:
+        out["pareto_three_discrete"] = alloc["pareto_three_discrete"]
+    return out
+
+
+MO_WANTED = [*__import__("orchestrator.optimize.synthetic", fromlist=["x"]).PARETO_SURFACES,
+             "pareto_three_discrete"]
+
+
+def get_mo(name: str) -> Surface:
+    return mo_surfaces()[name]()
