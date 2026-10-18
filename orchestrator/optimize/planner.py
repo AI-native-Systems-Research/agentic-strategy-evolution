@@ -350,6 +350,32 @@ def validate_campaign(campaign: dict, *, epoch: int = 1) -> list[str]:
     return errs
 
 
+def _lift_replicates_to_floor(campaign: dict, epoch: int) -> str | None:
+    """Raise a DECLARED ``design.confirm.replicates`` to the replicate floor of
+    the epoch the proposal would run as, in place, and say so (final review
+    M1). Under a charged ``campaign_delta`` the floor rises with the epoch; a
+    count that met epoch e's floor would make epoch e+1 withhold every round.
+    An omitted count needs nothing: the compile takes that epoch's floor."""
+    opt = campaign.get("optimization") or {}
+    if (opt.get("response") or {}).get("objectives"):
+        return None
+    conf = (opt.get("design") or {}).get("confirm")
+    reps = conf.get("replicates") if isinstance(conf, dict) else None
+    if not isinstance(reps, int) or isinstance(reps, bool):
+        return None
+    from orchestrator.optimize.policy import replicate_floor
+
+    try:
+        floor = replicate_floor(opt, epoch)
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    if reps >= floor:
+        return None
+    conf["replicates"] = floor
+    return (f"design.confirm.replicates {reps} -> {floor}: epoch {epoch}'s replicate "
+            f"floor (the charged campaign_delta share shrinks delta_terminal)")
+
+
 def _floor_at_epoch(campaign: dict, epoch: int) -> list[str]:
     """A DECLARED confirm replicate count below the replicate floor of the
     epoch it would run as is refused: every round would withhold
@@ -956,6 +982,10 @@ def plan(work_dir: Path) -> dict:
     cap = REGION_CAP_SO if len(ep["objectives"]) == 1 else REGION_CAP_MO
     for mv in moves:
         c = mv["campaign"]
+        _lift = (_lift_replicates_to_floor(c, ep["epoch"] + 1)
+                 if isinstance(c, dict) else None)
+        if _lift:
+            mv["notes"] = list(mv["notes"]) + [_lift]
         opt = {"id": mv["id"], "kind": mv["kind"], "changes": mv["notes"], "score": None}
         if mv.get("failed"):
             opt.update(feasible=False, reason=mv["failed"])
