@@ -744,8 +744,9 @@ not chosen freely.
     2007, ch. 15). Refine cube corners that the screen already measured at
     identical levels (held factors included) are not re-run, and the screen's
     centre rows join as block-1 centres. The fit carries a block term, whose
-    t test is the between-stage drift check (`model_adequacy.reuse`). It is
-    refused when a choice factor is declared or when the screen ran under
+    t test is the between-stage drift check (`model_adequacy.reuse`). With
+    a choice factor declared it is a validation error (rule 33; see limit 12
+    below for why). It is refused at runtime when the screen ran under
     another policy. On `bowl` it saves 4 of 33 runs.
   - **Model adequacy is sticky.** `model_adequate` is the EPOCH verdict.
     A rejection is overturned ONLY by a later stage of a STRICTLY higher
@@ -811,7 +812,7 @@ What the validation check and the sticky verdict do NOT do (spec
 9. **The objective-model check builds V from the full design columns**, while the model may have been fitted on a subset of rows (where that metric is missing). V is then slightly too small.
 10. **The Pareto path and a rejected model (fixed in #321).** `shortlist_plan` reads the epoch's `model_adequate`: when it is false, round 1 seats no predicted extreme and no predicted preferred point; each objective's measured best and the measured nondominated points take those seats (up to `max(K, shortlist_size // 2)`), and the predicted front's spread fills the rest, as on the single-objective ladder. Predicted rivals stay in the front statuses: a rival can only remove confidence, so that is the conservative side. Certification is withheld (`model_inadequate`) as before. Cost: on `pareto_with_constraint` seed 3 the measured anchor makes a constraint-boundary point preferred, a later round strikes it off, and the hypervolume drops 0.967 -> 0.952 (1 of 16 seeds).
 11. **The mixed-fit V would omit the centre indicators.** Refine fits are never mixed, so this is not reachable today.
-12. **`reuse_screen` is refused with any choice factor declared** (the cyclic centre assignment does not match refine's held level). A refusal is logged at INFO; partial reuse across choice slices is not attempted.
+12. **`reuse_screen` with a choice factor is a validation error (rule 33), and partial reuse across choice slices is rejected.** Refine fits one slice of each choice factor. A screen row at another level of that factor carries the factor's effect and its interactions with the refined numerics, and the per-slice model has no column for either, so reusing the row biases the slice fit. A block term absorbs only a constant shift between slices, never those interactions (Box & Draper 2007, §15.3: blocking assumes additive block effects; `test_a_block_term_cannot_absorb_a_choice_by_numeric_interaction` shows a slice slope of 6 pooled to 2). Reusing only the rows AT the held level would be unbiased, but it is declined: at most 1/L of the screen's corners lie on the slice, and the screen's centres cycle the choice levels, so the slice has too few block-1 centres to estimate the block effect.
 
 #### How many knobs: any number, at resolution III, IV or V
 

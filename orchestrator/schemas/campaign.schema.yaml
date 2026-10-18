@@ -1291,8 +1291,11 @@ properties:
                   corners the screen already measured at identical levels
                   (held factors included) are not re-run, and the screen's
                   centre rows join as block-1 centres; the fit carries a
-                  block (drift) term. Refused silently when a choice factor
-                  is declared or the screen ran under another policy.
+                  block (drift) term. A validation error (rule 33) when a
+                  choice factor is declared: off-slice rows carry the choice
+                  effect and its interactions, which a block term cannot
+                  absorb. Refused at runtime when the screen ran under
+                  another policy.
           confirm:
             type: object
             required: [replicates]

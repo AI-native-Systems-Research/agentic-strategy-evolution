@@ -405,3 +405,40 @@ def test_reuse_does_not_double_count_measurements(tmp_path):
         vs = sums[json.dumps(t["levels"], sort_keys=True)]
         assert t["n"] == len(vs)
         assert t["m"] == pytest.approx(sum(vs) / len(vs))
+
+
+# ── #321 P4 item 4: partial reuse across choice slices is REJECTED ──────────
+
+def test_reuse_screen_with_a_choice_factor_is_a_validation_error():
+    """Declaring reuse_screen with a choice factor used to be refused silently
+    at runtime (an option that could never take effect). It is now a hard
+    validation error naming the reason; without a choice factor it is clean."""
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.validate import validate_optimization_campaign
+
+    bad = synthetic_campaign(SURFACES["bowl_centred"](), **_REUSE)
+    errs = [e for e in validate_optimization_campaign(bad)
+            if "reuse_screen" in e and not e.startswith("WARN")]
+    assert errs and "interactions" in errs[0] and "constant shift" in errs[0]
+    ok = synthetic_campaign(SURFACES["bowl"](), **_REUSE)
+    assert not [e for e in validate_optimization_campaign(ok) if "reuse_screen" in e]
+
+
+def test_a_block_term_cannot_absorb_a_choice_by_numeric_interaction():
+    """Why the rejection holds, by arithmetic. Truth: y = 1 + 2A + 3C + 4AC,
+    with C = +1 the refine slice. Fitting the slice model (1, A) plus a block
+    indicator on slice rows (C = +1) together with reused off-slice rows
+    (C = -1) recovers the slice slope 2 + 4 = 6 only if the off-slice rows
+    differ by a constant. They differ by 3C + 4AC, so the slope is biased."""
+    from orchestrator.optimize.effects import _solve_normal_equations
+
+    a_lv = [-1.0, 0.0, 1.0]
+    rows = [(a, 1.0) for a in a_lv] * 2 + [(a, -1.0) for a in a_lv] * 2
+    y = [1 + 2 * a + 3 * c + 4 * a * c for a, c in rows]
+    cols = [[1.0] * len(rows), [a for a, _c in rows],
+            [1.0 if c < 0 else 0.0 for _a, c in rows]]   # block = off-slice
+    b = _solve_normal_equations(cols, y)
+    assert b[1] == pytest.approx(2.0)        # the pooled slope, not the slice's 6
+    slice_only = _solve_normal_equations(
+        [[1.0] * 6, [a for a, c in rows if c > 0]], [v for v, (_a, c) in zip(y, rows) if c > 0])
+    assert slice_only[1] == pytest.approx(6.0)
