@@ -29,6 +29,16 @@
 >   regret curves at six budget fractions of N; certificate counts with their
 >   false-certificate counts, per arm. A false certificate in any arm is a
 >   core-claim failure and is reported as such, not averaged away.
+> - **Multi-objective primary.** Mean hypervolume regret at the matched
+>   budget N, `(HV(true front) - HV(reported, truly valid)) / HV(true front)`
+>   in the oracle's normalised frame. Nous's reported front is every point its
+>   report lists (both statuses); a baseline's is its measured non-dominated
+>   set. Same seeded bootstrap over seeds. Lower is better.
+> - **Ablations.** Each switch is compared with the default arm on the same
+>   seeds: mean paired difference in normalised regret (or HV regret), with
+>   the same bootstrap, and the certificate / false-certificate counts. The
+>   drift attribution is tested by switching run-order randomization off
+>   (every design and confirm block executed in design order).
 > - **Nothing is tuned on these surfaces.** Ablation settings (allocate
 >   `seats: 2`, the BO proposer's defaults) are the guide's documented
 >   example and the module defaults, fixed before any run.
