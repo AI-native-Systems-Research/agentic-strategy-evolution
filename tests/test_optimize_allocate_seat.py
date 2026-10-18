@@ -249,23 +249,39 @@ def test_the_front_improves_and_stays_sound_with_allocate(discrete_front):
 
 
 def test_single_objective_seats_a_new_configuration_and_judges_it_freshly(tmp_path):
-    """bowl seed 3: the first round does not certify at the cap, the allocator
-    seats two configurations the campaign never ran, the allocate round
-    measures them with the floor's replicates, and the campaign certifies."""
-    s = SURFACES["bowl"]()
-    r = run_synthetic_campaign(s, seed=3, parent_dir=tmp_path,
+    """saddle seed 1: the round at the cap does not certify, the allocator
+    (knowledge gradient per run, positive) seats two configurations the
+    campaign never ran, and the allocate round measures them with the floor's
+    replicates like every other finalist."""
+    s = SURFACES["saddle"]()
+    r = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path,
                                campaign_overrides=_with_allocate(s))
     trans = _transitions(r.work_dir)
     assert [t["rule"].get("accounting") for t in trans].count(ALLOCATE_ACCOUNTING) == 1
     c1, c2 = _confirmations(r.work_dir)[:2]
     seats = c1["allocation"]["seats"]
     assert seats and c1["allocation"]["declined"] is None
+    assert all(x["score"] > 0 for x in seats)
+    assert c1["allocation"]["method"]["score"] == "knowledge_gradient_per_run"
     before = _levels_measured_before(r.work_dir, c2["iteration"])
     fin = {json.dumps(f["levels"], sort_keys=True): f for f in c2["finalists"]}
     for x in seats:
         k = json.dumps(x["levels"], sort_keys=True)
-        assert k not in before and fin[k]["n"] == 7
-    assert r.report["certified"] and r.true_gap <= r.report["epsilon"]
+        assert k not in before and fin[k]["n"] == 7 and fin[k]["why"].startswith("allocate:")
+    assert c2["alpha_spending"]["looks"] == 2       # the look the branch registered
+    assert not (r.report.get("certified") and r.true_gap > r.report["epsilon"])
+
+
+def test_a_model_that_expects_no_gain_spends_no_round(tmp_path):
+    """bowl seed 3: every seatable candidate's KG per run is zero, so the
+    branch declines ``no_expected_value`` and the campaign ends at the cap."""
+    s = SURFACES["bowl"]()
+    r = run_synthetic_campaign(s, seed=3, parent_dir=tmp_path,
+                               campaign_overrides=_with_allocate(s))
+    a = _confirmations(r.work_dir)[0]["allocation"]
+    assert a["declined"] == "no_expected_value" and a["seats"] == []
+    assert not any(t["rule"].get("accounting") == ALLOCATE_ACCOUNTING
+                   for t in _transitions(r.work_dir))
 
 
 # ── oracle 2 + every decline named ──────────────────────────────────────────
@@ -324,9 +340,11 @@ def test_rewriting_every_predicted_number_leaves_every_bound_unchanged(tmp_path,
     """Same seats, scrambled predictions / scores / rationales in the record:
     every bound, certificate and recommendation on disk is identical. Only the
     seats' fresh replicates reach inference."""
-    s = SURFACES["bowl"]()
-    a = run_synthetic_campaign(s, seed=3, parent_dir=tmp_path / "a",
+    s = SURFACES["saddle"]()
+    a = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path / "a",
                                campaign_overrides=_with_allocate(s))
+    assert any(t["rule"].get("accounting") == ALLOCATE_ACCOUNTING
+               for t in _transitions(a.work_dir))          # the round ran
     real = allocate_seat.plan
 
     def scrambled(*args, **kw):
@@ -334,12 +352,12 @@ def test_rewriting_every_predicted_number_leaves_every_bound_unchanged(tmp_path,
         for x in out.get("ranked_top") or []:
             x["score"], x["rationale"] = -1e9, "scrambled"
         for x in out.get("seats") or []:
-            x["why"] = "allocate: scrambled"
+            x["why"], x["score"] = "allocate: scrambled", 1e9
         out["method"] = {"scrambled": True}
         return out
 
     monkeypatch.setattr(allocate_seat, "plan", scrambled)
-    b = run_synthetic_campaign(s, seed=3, parent_dir=tmp_path / "b",
+    b = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path / "b",
                                campaign_overrides=_with_allocate(s))
     keys = ("certified", "residual_regret_terminal", "residual_regret_model",
             "epsilon", "recommendation", "certification_withheld", "global_bound")

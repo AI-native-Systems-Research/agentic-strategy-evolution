@@ -52,6 +52,9 @@ SEAT_DECLINE_REASONS = {
     "no_seatable_candidate": "the allocator ranked candidates, but every one was "
                              "already measured, measured inadmissible or names a "
                              "barred level",
+    "no_expected_value": "every seatable candidate scores zero (knowledge gradient "
+                         "/ EHVI per run): the model expects no gain from measuring "
+                         "it, so the round is not spent",
 }
 
 
@@ -244,16 +247,24 @@ def plan(pol: dict, work_dir, factors, conf: dict, rec: dict | None) -> dict:
     if al.declined is not None:
         return decline(al.declined, al.detail)
     measured_keys = {json.dumps(x["levels"], sort_keys=True, default=str) for x in measured}
-    for r in al.ranked:
+    seatable = [r for r in al.ranked
+                if _seatable(work_dir, dict(r["levels"]), measured_keys)]
+    if not seatable:
+        return decline("no_seatable_candidate")
+    # A seat is spent only where the model expects a gain: a zero score means
+    # measuring the candidate cannot move the best claimable value (KG) or the
+    # front (EHVI). Allocation buys information, it does not fill seats.
+    for r in seatable:
         if len(out["seats"]) >= k:
             break
+        if not (isinstance(r.get("score"), (int, float)) and r["score"] > 0.0):
+            break       # ranked best first: nothing after it scores either
         lv = dict(r["levels"])
-        if not _seatable(work_dir, lv, measured_keys):
-            continue
         if any(s["levels"] == lv for s in out["seats"]):
             continue
         out["seats"].append({"levels": lv, "source": r.get("source"),
+                             "score": float(r["score"]),
                              "why": f"allocate: {r.get('rationale')}"})
     if not out["seats"]:
-        return decline("no_seatable_candidate")
+        return decline("no_expected_value")
     return out
