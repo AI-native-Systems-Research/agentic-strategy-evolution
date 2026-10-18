@@ -55,7 +55,7 @@ are collected in §12.
   - Confirm looks: Bonferroni α-spending at δ_t / L, where L is the registered round cap, plus 1 when the refill branch is registered. L is fixed at compile time.
   - Single- and multi-objective confirm share the same divisor.
   - Epochs: a union-bound `error_budget` in `report.json`. It is **informational**. Each epoch certifies at its own deltas.
-  - Earlier stages' routing decisions (screen drops, foldover, curvature routing) spend no stated δ. They are covered only through assumption M1. Screen drops are a Holm family at α = 0.05 (#321 P4), recorded beside the budget (`error_budget.screening`) and in report.md Bounds; no dropped factor is held, so they cannot shrink the certificate's region.
+  - Earlier stages' routing decisions (screen drops, foldover, curvature routing) spend no stated δ. They are covered only through assumption M1. Screen survivor labels are a Holm family at α = 0.05 (#321 P4), recorded beside the budget (`error_budget.screening`) and in report.md Bounds; they decide no route and hold no factor.
 
 **(b) Evidence.**
 - The rule:
@@ -326,7 +326,7 @@ does not read it.
 Quickstart: "**Any number of knobs works** (up to 100 at resolution V)".
 
 **(e) Limits.**
-1. **Screening multiplicity (fixed in #321 P4).** Holm's step-down over the k main-effect tests at family-wise α = 0.05 (FWER 0.173 -> 0.031 under the global null at k = 6). Screening is not a union term: no dropped factor is held, so a drop only routes; the certificate is conditional on the fitting stage's model class, named in `certificate_scope.screening`.
+1. **Screening multiplicity (fixed in #321 P4 and its review).** The survivor LABELS are a Holm family at family-wise α = 0.05 (FWER 0.173 -> 0.031 under the global null at k = 6), and they decide nothing: refine runs whenever a refinable factor exists (a Type II routing error had cost validity, 12/24 false certificates on a masked saddle). A screen-only certificate with two or more refinable factors is withheld (`model_class_unchecked`).
 2. **Efficiency: D, G and I** (#321 P4). G is exact for first-order models and an upper bound with quadratics; I is exact by region moments; both are declined for multi-level categorical contrasts.
 3. **`reuse_screen` with any choice factor is a validation error** (rule 33, #321 P4): partial reuse across choice slices is rejected because a block term cannot absorb choice-by-numeric interactions.
 4. **The certificate covers a slice** when refine holds factors fixed (see Q8 and Q5).
