@@ -198,15 +198,18 @@ def analysis_constants() -> dict:
         "noise.SIGN_FLIP_MC_SEED": _get(noise, "SIGN_FLIP_MC_SEED"),
         "noise.SIGN_FLIP_MC_DRAWS": _get(noise, "SIGN_FLIP_MC_DRAWS"),
         "noise.SIGN_FLIP_EXACT_MAX_N": _get(noise, "SIGN_FLIP_EXACT_MAX_N"),
-        # WP-D D1: the allocator's constants (selection only; no bound reads them).
-        **_allocate_constants(),
     }
 
 
-def _allocate_constants() -> dict:
+def _allocate_constants(work_dir: Path) -> dict:
+    """WP-D D1: the allocator's constants, recorded only when the epoch's
+    policy registers the opt-in allocate branch (so every other report is
+    byte-identical). Selection only; no bound reads them."""
     from orchestrator.optimize import allocate_seat
+    from orchestrator.optimize.policy import read_policy
 
-    return allocate_seat.constants()
+    pol = read_policy(Path(work_dir))
+    return allocate_seat.constants() if pol and allocate_seat.seats_declared(pol) else {}
 
 
 #: The per-iteration inputs every fitted artifact is derived from: the rows,
@@ -397,7 +400,7 @@ def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None 
         "runtime": runtime_versions(),
         "policy_hash": policy_hash,
         "inputs": input_hashes(work_dir),
-        "analysis_constants": analysis_constants(),
+        "analysis_constants": {**analysis_constants(), **_allocate_constants(work_dir)},
         "waivers": waivers(work_dir, campaign),
         "model": model_record(work_dir),
         "manipulation_evidence": manipulation_evidence(campaign),

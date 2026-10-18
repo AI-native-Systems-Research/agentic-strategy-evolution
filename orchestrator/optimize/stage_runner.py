@@ -6296,7 +6296,13 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
                  "previous round's preferred point", measured=True)
             _seat_refill_pool()
         _prev_conf = _latest_confirmation(work_dir) if rnd > 1 else None
-        if refill and _prev_conf:
+        _last_rule = ((policy_mod.epoch_transitions(pol, work_dir) or [{}])[-1]
+                      .get("rule") or {}).get("accounting") if rnd > 1 else None
+        if _prev_conf and _last_rule not in (policy_mod.ALLOCATE_ACCOUNTING,
+                                             policy_mod.FRONT_GAP_ACCOUNTING):
+            # P6b review M2: allocator seats only in the rounds the allocate
+            # look or the gap-fill branch registered, never a refill or plain
+            # top-up round.
             _prev_conf = {k_: v_ for k_, v_ in _prev_conf.items() if k_ != "allocation"}
         for lv, why, measured in pareto_stage.shortlist_plan(
                 pol, work_dir, rec, rnd, _prev_conf):
@@ -6324,11 +6330,6 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
         if _rec_now.get("model_adequate", True) is not False:
             _add(_rec_now.get("levels"), "fitted argmax (links the model bound)",
                  measured=True)
-        if allocating:
-            # After the anchors (the previous winner, and the fitted argmax the
-            # model half needs), BEFORE the carried challengers: the round the
-            # registered allocate look pays for.
-            _seat_allocated()
         for f in prev.get("finalists") or []:
             bound = (prev.get("bounds") or {}).get(f["key"])
             # `None` is UNKNOWN, not "small": a challenger whose bound could
@@ -6340,6 +6341,12 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             ):
                 _add(f.get("levels"), f"round {rnd - 1} bound above epsilon",
                      measured=True)
+        if allocating:
+            # AFTER the anchors and EVERY carried challenger still in
+            # contention: a model-chosen seat only takes a slot nothing the
+            # data keep in play needs (P6b review H1), so the prediction never
+            # decides which measured rival leaves the comparison.
+            _seat_allocated()
         if refill:
             _seat_refill_pool()
     if not finalists and not pareto_stage.objectives(pol):
@@ -7965,10 +7972,11 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         if _refill_warnings:
             summary["warnings"] = list(_refill_warnings)
     # WP-D D1 (opt-in): the allocate seats for the NEXT round, registered here
-    # before the transition reads `allocate_available`. Computed only while a
+    # before the transition reads `allocate_available`. Computed only where a
     # next round can use them: the branch is registered and not yet spent, and
-    # the round did not certify -- or, multi-objective, it reported a large
-    # front gap below the cap (the gap-fill branch precedes `certified`).
+    # either the round at the cap did not certify (the allocate round) or,
+    # multi-objective, it reported a large front gap below the cap (the
+    # gap-fill round, which precedes `certified`).
     # A decline is recorded with its named reason.
     from orchestrator.optimize import allocate_seat as _alloc_seat
 
@@ -7976,8 +7984,10 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     _gap_next = bool((summary.get("pareto") or {}).get("front_gap_large")) and int(
         summary["round"]) < int((pol["states"]["confirm"]["design"] or {}).get(
             "max_rounds", 1))
-    _alloc_live = bool(_alloc_k) and (not summary.get("certified") or _gap_next) \
-        and not _alloc_seat.spent(pol, work_dir)
+    _at_cap = int(summary["round"]) >= int(
+        (pol["states"]["confirm"]["design"] or {}).get("max_rounds", 1))
+    _alloc_live = bool(_alloc_k) and not _alloc_seat.spent(pol, work_dir) and (
+        (_at_cap and not summary.get("certified")) or _gap_next)
     if _alloc_live:
         summary["allocation"] = _alloc_seat.plan(
             pol, work_dir, factors, summary, _rec_for_bias)

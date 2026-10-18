@@ -456,7 +456,8 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
         # WP-D D1 (opt-in `design.confirm.allocate`): the seats the allocator
         # registered in the previous round's confirmation.json (EHVI per run
         # over the recombination pool, on an ADEQUATE model only; a decline
-        # seats nothing). Selected on predictions, measured freshly here.
+        # seats nothing). Selected on predictions, measured freshly here. The
+        # caller passes the record only into the allocate and gap-fill rounds.
         for s_ in ((prev_conf.get("allocation") or {}).get("seats") or []):
             nominate(s_.get("levels"), s_.get("why") or "allocate", False, None)
         front = par.get("front") or []

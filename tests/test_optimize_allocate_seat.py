@@ -113,7 +113,8 @@ def test_an_undeclared_campaign_never_sees_the_branch(tmp_path):
     assert all("allocation" not in c for c in _confirmations(r.work_dir))
     assert all("allocate_available" not in t["observations"]
                for t in _transitions(r.work_dir))
-    assert "allocate.POOL_CAP" in r.report["provenance"]["analysis_constants"]
+    assert not any(k.startswith("allocate.")
+                   for k in r.report["provenance"]["analysis_constants"])
 
 
 # ── registration and the extra look ─────────────────────────────────────────
@@ -366,3 +367,36 @@ def test_rewriting_every_predicted_number_leaves_every_bound_unchanged(tmp_path,
         for k in ("bounds", "terminal_bound", "residual_regret_terminal", "certified",
                   "delta_terminal", "global_bound"):
             assert ca.get(k) == cb.get(k), k
+
+
+def test_allocated_seats_never_displace_a_challenger_still_in_contention(tmp_path):
+    """P6b review H1. Every finalist of the round before the allocate round
+    whose bound stayed above epsilon is re-seated; allocator picks fill only
+    the slots left. With shortlist_size 3 and two seats declared, a carried
+    challenger must survive into the allocate round."""
+    s = SURFACES["saddle"]()
+    for seed in (1, 3):
+        r = run_synthetic_campaign(s, seed=seed, parent_dir=tmp_path / str(seed),
+                                   campaign_overrides=_with_allocate(s, seats=2))
+        cs = _confirmations(r.work_dir)
+        if len(cs) < 2 or "allocation" not in cs[0]:
+            continue
+        c1, c2 = cs[0], cs[1]
+        keep = [f["levels"] for f in c1["finalists"] if f["status"] == "ok"
+                and f["key"] != c1["best"]
+                and (c1["bounds"].get(f["key"]) is None
+                     or c1["epsilon"] is None or c1["bounds"][f["key"]] > c1["epsilon"])]
+        seated = [f["levels"] for f in c2["finalists"]]
+        for lv in keep:
+            assert lv in seated, (seed, lv, seated)
+        n_alloc = sum(f["why"].startswith("allocate:") for f in c2["finalists"])
+        assert n_alloc <= 2
+
+
+def test_the_allocator_constants_are_recorded_when_declared(tmp_path):
+    s = SURFACES["saddle"]()
+    r = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path,
+                               campaign_overrides=_with_allocate(s))
+    c = r.report["provenance"]["analysis_constants"]
+    assert c["allocate.POOL_CAP"] == allocate.POOL_CAP
+    assert c["allocate.MC_SEED"] == allocate.MC_SEED
