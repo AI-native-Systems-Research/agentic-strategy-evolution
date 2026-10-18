@@ -242,3 +242,19 @@ def test_screen_validation_rejects_a_cliff_the_centre_points_cannot_attribute(tm
         sc = _recs(r.work_dir)[0]["model_adequacy"]
         assert sc["screen_validation"]["rejected"] is True
         assert not r.report.get("certified")
+
+
+def test_a_veto_is_never_overturned_by_the_family():
+    """An exact lack-of-fit rejection on zero pure error, or an objective model
+    that could not be estimated, is a veto outside the Holm family: the family
+    never turns it into adequate."""
+    from types import SimpleNamespace
+
+    from orchestrator.optimize.stage_runner import _non_test_rejection
+
+    ok = SimpleNamespace(lof_exact=None, lack_of_fit_p=0.5)
+    assert _non_test_rejection(SimpleNamespace(lof_exact="rejected"), {}, "m")
+    assert _non_test_rejection(ok, {"f2": SimpleNamespace(fit=None)}, "m")
+    assert not _non_test_rejection(ok, {"f2": SimpleNamespace(fit=ok)}, "m")
+    fam = adequacy.adequacy_family([("lack_of_fit", 0.03), ("validation_prediction", 0.4)])
+    assert fam["rejected"] == [] and fam["family_size"] == 2   # 0.03 > 0.025

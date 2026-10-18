@@ -9164,6 +9164,21 @@ def _screen_reuse(work_dir, pol, design, rows, payload, factors):
     return design, new_rows, payload, record
 
 
+def _non_test_rejection(fit, omodels, primary) -> bool:
+    """A rejection that is not a lack-of-fit / validation TEST: an exact
+    lack-of-fit rejection against zero pure error, or an objective model that
+    could not be estimated. Vetoes; the adequacy family never overturns them."""
+    if getattr(fit, "lof_exact", None) == "rejected":
+        return True
+    for metric, m in (omodels or {}).items():
+        if metric == primary:
+            continue
+        f2 = getattr(m, "fit", None)
+        if f2 is None or getattr(f2, "lof_exact", None) == "rejected":
+            return True
+    return False
+
+
 def _stage_model_class(stage_name: str) -> int:
     """1: first-order + 2fi (screen, foldover); 2: second-order (refine)."""
     return 2 if stage_name == Stage.REFINE.value else 1
@@ -9249,8 +9264,7 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
             continue
         f2 = getattr(m, "fit", None)
         if f2 is None:
-            if adequate is False:
-                vetoes.append(f"lack_of_fit:{metric}")
+            vetoes.append(f"not_estimable:{metric}")
             continue
         if getattr(f2, "lof_exact", None) == "rejected":
             vetoes.append(f"lack_of_fit:{metric}")
@@ -9336,17 +9350,25 @@ def _adequacy_record(work_dir, stage_name, fit, design_for_fit, ys_for_fit,
         rejected_names = ([n for n, p in tests if p < 0.05] + vetoes)
     lof_names = [n for n in rejected_names if n.startswith("lack_of_fit")]
     val_names = [n for n in rejected_names if n.startswith("validation_prediction")]
-    if lof_names:
+    # The cause names are those the pre-P4 record used: an objective model that
+    # could not be estimated is reported under "lack_of_fit" as before (the
+    # family record names it `not_estimable:<metric>`). Without the family
+    # (a pre-P4 policy) the old rule stands verbatim.
+    if lof_names or any(n.startswith("not_estimable") for n in rejected_names) or (
+            not fam_cfg and (rec["lack_of_fit"]["rejected"] or adequate is False)):
         causes.append("lack_of_fit")
     causes += [n for n in val_names if ":" in n]
     if "validation_prediction" in val_names:
         causes.append("validation_prediction")
     if fam_cfg:
         # The family decides lack of fit too: a per-test LoF rejection the
-        # family does not reject no longer makes this stage inadequate.
+        # family does not reject no longer makes this stage inadequate. ONLY
+        # that: a False that `_model_adequacy` reached for any other reason
+        # (an objective model that could not be estimated) is a veto and
+        # stands; an UNKNOWN (None) is never promoted.
         if rejected_names:
             adequate, basis = False, None
-        elif adequate is False:
+        elif adequate is False and not _non_test_rejection(fit, omodels, primary):
             adequate, basis = True, None
     elif val_names:
         adequate, basis = False, None
