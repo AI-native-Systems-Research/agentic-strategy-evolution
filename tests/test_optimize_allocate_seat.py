@@ -547,3 +547,45 @@ def test_every_registered_seat_is_measured_in_the_allocate_round(tmp_path):
         seated = [f for f in cs[-1]["finalists"] if f["why"].startswith("allocate:")]
         assert len(seated) == len(reg) >= 1
     assert fired
+
+
+def test_mo_allocated_seats_never_displace_gap_fills_or_contested_front_points(tmp_path):
+    """Review M2: the MO counterpart of the SO no-displacement test. Take
+    pareto_three_discrete to the gap-fill round with seats registered, mark a
+    front point ``possibly_dominated`` (in contention), and rebuild the next
+    shortlist: the preferred point, every gap fill and the contested point are
+    all seated ahead of the allocator's picks, which fill only what is left."""
+    from orchestrator.optimize.factors import parse_factors
+    from orchestrator.optimize.stage_runner import _confirm_rows
+
+    s = ALLOCATE_SURFACES["pareto_three_discrete"]()
+    d = copy.deepcopy(synthetic_campaign(s)["optimization"]["design"])
+    d["confirm"]["shortlist_size"] = 5
+    d["confirm"]["allocate"] = {"seats": 2}
+    r = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path, max_iterations=4,
+                               campaign_overrides={"design": d,
+                                                   "policy": {"confirm_max_rounds": 2}})
+    wd = r.work_dir
+    pol = json.loads((wd / "policy.json").read_text())
+    factors = parse_factors(synthetic_campaign(s)["optimization"]["factors"])
+    c1 = _confirmations(wd)[-1]
+    assert c1["allocation"]["seats"]
+    _rows, payload = _confirm_rows(pol, wd, factors, "f1", "maximize", 99)
+    whys = [f["why"] for f in payload["finalists"]]
+    first_alloc = next(i for i, w in enumerate(whys) if w.startswith("allocate:"))
+    assert all(not w.startswith(("gap fill", "front point still")) for w in whys[first_alloc:]), whys
+    assert any(w.startswith("gap fill") for w in whys), whys
+    # In contention: one confident front point made possibly_dominated. The
+    # seats' digest is untouched, so the round still verifies.
+    p1 = sorted(wd.glob("runs/iter-*/confirmation.json"),
+                key=lambda p: int(p.parent.name.split("-")[1]))[-1]
+    chosen = c1["pareto"]["preference"]["chosen"]
+    tgt = next(f for f in c1["pareto"]["front"] if f["levels"] != chosen)
+    tgt["status"] = "possibly_dominated"
+    p1.write_text(json.dumps(c1))
+    _rows, payload = _confirm_rows(pol, wd, factors, "f1", "maximize", 99)
+    seated = [f["levels"] for f in payload["finalists"]]
+    whys = [f["why"] for f in payload["finalists"]]
+    assert tgt["levels"] in seated, whys
+    k = whys.index("front point still possibly dominated")
+    assert all(not w.startswith("allocate:") for w in whys[:k]), whys
