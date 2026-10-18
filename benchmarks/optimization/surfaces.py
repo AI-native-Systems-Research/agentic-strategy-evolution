@@ -32,9 +32,7 @@ from orchestrator.optimize.synthetic import (
     Surface,
     _choice,
     _numeric,
-    candidate_grid,
     sparse_knobs,
-    true_optimum,
 )
 
 
@@ -120,18 +118,83 @@ def campaign_overrides(name: str) -> dict | None:
     return o or None
 
 
-# ── the shared measurement model ────────────────────────────────────────────
+# ── the shared candidate domain (P7 review H3) ─────────────────────────────
+#: Points per refinable numeric WITHOUT a grid (none in the suite today): such
+#: a factor's recommendable domain is continuous, so the truth is taken over a
+#: dense grid of this many points and the tolerance is half its spacing.
+DENSE_POINTS = 201
+
+#: Largest lattice the truth is ever computed over (streamed, never
+#: materialised; sized BEFORE enumeration, resource rule 4).
+MAX_LATTICE = 2_000_000
+
+
+def lattice_axis(f: dict) -> list:
+    """Every value factor ``f`` can be RECOMMENDED at, which is also the domain
+    every baseline samples:
+
+    * ``choice`` and ``levels_only`` numerics: the declared levels;
+    * a two-level numeric: its declared pair (Nous never interpolates one;
+      ``decide._axis``);
+    * a refinable numeric with ``grid: g``: every multiple of ``g`` in
+      [min, max], plus the declared levels -- ``decode_coded`` snaps a fitted
+      or design value to that lattice, so any of them can be recommended;
+    * a refinable numeric with no grid: ``DENSE_POINTS`` evenly spaced points
+      (stated tolerance: half the spacing).
+
+    Before this, the truth and the baselines used ``candidate_grid``'s nine
+    snapped points per axis, while Nous could recommend any lattice point: on
+    ``two_peaks`` the true optimum (14, 3) = 15.653 was off that grid, so a
+    recommendation of (15, 3) was scored against 14.754.
+    """
+    lv = list(f["levels"])
+    if f["type"] != "numeric" or f.get("levels_only") or len(lv) <= 2:
+        return sorted(lv, key=lambda v: (str(type(v)), v))
+    lo, hi = min(lv), max(lv)
+    if f.get("grid") is None:
+        return sorted({lo + (hi - lo) * i / (DENSE_POINTS - 1) for i in range(DENSE_POINTS)}
+                      | set(lv))
+    from orchestrator.optimize.factors import snap_to_grid
+
+    g = float(f["grid"])
+    n = int(math.floor((float(hi) - float(lo)) / g + 1e-9))
+    return sorted({snap_to_grid(float(lo) + i * g, g) for i in range(n + 1)} | set(lv))
+
+
+def _judged_factors(surface: Surface):
+    """Factors the truth enumerates (the ``active`` ones when declared) and the
+    inert ones pinned at their first level -- exact, since nothing judged
+    depends on them."""
+    act = [f for f in surface.factors if not surface.active or f["id"] in surface.active]
+    pinned = {f["id"]: f["levels"][0] for f in surface.factors
+              if surface.active and f["id"] not in surface.active}
+    return act, pinned
+
+
+def lattice_size(surface: Surface) -> int:
+    act, _ = _judged_factors(surface)
+    return math.prod(len(lattice_axis(f)) for f in act)
+
+
+def iter_lattice(surface: Surface):
+    """Stream the judged lattice (refuses one above ``MAX_LATTICE``)."""
+    import itertools
+
+    act, pinned = _judged_factors(surface)
+    n = lattice_size(surface)
+    if n > MAX_LATTICE:
+        raise ValueError(f"{surface.name}: truth lattice of {n:,} points exceeds "
+                         f"{MAX_LATTICE:,}; declare Surface.active")
+    ids = [f["id"] for f in act]
+    for combo in itertools.product(*[lattice_axis(f) for f in act]):
+        yield {**pinned, **dict(zip(ids, combo))}
+
+
 def axes(surface: Surface) -> list[tuple[dict, list]]:
-    """Each factor with the candidate values a method may choose from: the
-    same per-factor axis ``synthetic.candidate_grid`` (and therefore the
-    oracle's truth) uses -- declared levels plus, for gridded numerics, nine
-    snapped points spanning the range."""
-    out = []
-    for f in surface.factors:
-        vals = sorted({g[f["id"]] for g in candidate_grid([f])},
-                      key=lambda v: (str(type(v)), v))
-        out.append((f, vals))
-    return out
+    """Each factor with the candidate values a method may choose from: its
+    ``lattice_axis`` -- the same domain Nous can recommend from, so every
+    method shares one candidate domain and one truth."""
+    return [(f, lattice_axis(f)) for f in surface.factors]
 
 
 def grid_size(surface: Surface) -> int:
@@ -178,15 +241,30 @@ class Target:
         return y, feas, {c["metric"]: float(obs[c["metric"]]) for c in self.constraints}
 
 
-def truth(surface: Surface) -> dict:
-    """The oracle: optimum, its value, and the WORST valid value (the penalty
-    a recommendation earns when it is infeasible or missing)."""
-    opt, best = true_optimum(surface)
-    from orchestrator.optimize.synthetic import _truth_grid
+_TRUTH: dict = {}
 
-    worst = min(surface.fn(lv) for lv in _truth_grid(surface)
-                if surface.invalid is None or not surface.invalid(lv))
-    return {"optimum": opt, "best": best, "worst": worst}
+
+def truth(surface: Surface) -> dict:
+    """The oracle over the RECOMMENDABLE lattice (``iter_lattice``): optimum,
+    its value, and the WORST valid value (the penalty a recommendation earns
+    when it is infeasible or missing). Cached per surface name (the noise
+    multiplier does not change ``fn``)."""
+    if surface.name in _TRUTH:
+        return _TRUTH[surface.name]
+    sign = 1.0 if surface.direction == "maximize" else -1.0
+    best = worst = opt = None
+    for lv in iter_lattice(surface):
+        if surface.invalid is not None and surface.invalid(lv):
+            continue
+        v = surface.fn(lv)
+        if best is None or sign * v > sign * best:
+            best, opt = v, lv
+        if worst is None or sign * v < sign * worst:
+            worst = v
+    if best is None:
+        raise ValueError(f"surface {surface.name!r} has no valid point")
+    _TRUTH[surface.name] = {"optimum": opt, "best": best, "worst": worst}
+    return _TRUTH[surface.name]
 
 
 def true_regret(surface: Surface, rec: dict | None, tr: dict) -> tuple[float, str]:

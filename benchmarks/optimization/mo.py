@@ -104,23 +104,42 @@ def measured_front(rows, objectives) -> list[dict]:
 
 
 class HVTruth:
-    """Cached true-front hypervolume of one surface (the frame and the true
-    front are enumerated once)."""
+    """The true front and its hypervolume over the RECOMMENDABLE lattice
+    (``surfaces.iter_lattice``, P7 review H3) -- the domain every method
+    shares. Frame as ``harness.true_front_hypervolume``: each objective
+    normalised by its range over the valid lattice, reference = the worst
+    valid value of each. Enumerated once per surface."""
 
     def __init__(self, surface):
-        from orchestrator.optimize.harness import true_front_hypervolume
+        from orchestrator.optimize import pareto
+        from orchestrator.optimize.synthetic import objective_values
+
+        from benchmarks.optimization.surfaces import iter_lattice
 
         self.s = surface
-        self._hv = true_front_hypervolume
-        self.true = true_front_hypervolume(surface, [])[1]
+        self._ov = objective_values
+        self._hvf = pareto.hypervolume
+        valid = [lv for lv in iter_lattice(surface)
+                 if surface.invalid is None or not surface.invalid(lv)]
+        objs = [pareto.Objective(o["metric"], o["direction"], {}) for o in surface.objectives]
+        self.frame = pareto.make_frame(objs, [objective_values(surface, lv) for lv in valid], {})
+        self.ref = [0.0] * len(objs)
+        signs = [_sign(o) for o in surface.objectives]
+        vec = [[sg * objective_values(surface, lv)[o["metric"]]
+                for sg, o in zip(signs, surface.objectives)] for lv in valid]
+        self.front = [valid[i] for i in pareto.nondominated_indices(vec)]
+        self.true = self.hv(self.front)
+
+    def hv(self, levels_list) -> float:
+        pts = [self.frame.z(self._ov(self.s, lv)) for lv in levels_list]
+        return self._hvf(pts, self.ref)[0] if pts else 0.0
 
     def regret(self, levels_list) -> float:
         valid = [lv for lv in levels_list
                  if self.s.invalid is None or not self.s.invalid(lv)]
         if not self.true > 0:
             return 0.0
-        hv = self._hv(self.s, valid)[0] if valid else 0.0
-        return (self.true - hv) / self.true
+        return (self.true - self.hv(valid)) / self.true
 
 
 def anytime_hv(rows, surface, counts, truth: HVTruth | None = None) -> list[float]:
@@ -226,36 +245,24 @@ def run_mo_method(method: str, surface, name: str, budget: int, seed: int):
 
 
 def nous_mo_rows(work_dir, surface) -> list[tuple]:
-    """Nous's measured rows in execution order as ``(levels, values|None,
-    feasible)``, for the anytime curve (rows carried by reuse are skipped)."""
-    import json
-    from pathlib import Path
-
-    from orchestrator.optimize.harness import _latest_iter_dirs
+    """Nous's fresh measurements (``measured.measured_rows``) in execution
+    order as ``(levels, values|None, feasible)``, for the anytime curve."""
+    from benchmarks.optimization.measured import measured_rows
 
     out = []
     cons = list(surface.constraints or ())
-    for it in _latest_iter_dirs(Path(work_dir)):
-        p = it / "runs.jsonl"
-        if not p.exists():
-            continue
-        for ln in p.read_text().splitlines():
-            if not ln.strip():
-                continue
-            r = json.loads(ln)
-            if r.get("reused_from"):
-                continue
-            resp = r.get("response") or {}
-            vals = None
-            if r.get("status") == "complete":
-                try:
-                    vals = {o["metric"]: float(resp[o["metric"]]) for o in surface.objectives}
-                except (KeyError, TypeError, ValueError):
-                    vals = None
-                if vals is not None and not all(math.isfinite(x) for x in vals.values()):
-                    vals = None
-            feas = vals is not None and all(
-                c["metric"] in resp and _ok(float(resp[c["metric"]]), c["op"], float(c["value"]))
-                for c in cons)
-            out.append((dict(r["levels"]), vals, feas))
+    for r in measured_rows(work_dir):
+        resp = r.get("response") or {}
+        vals = None
+        if r.get("status") == "complete":
+            try:
+                vals = {o["metric"]: float(resp[o["metric"]]) for o in surface.objectives}
+            except (KeyError, TypeError, ValueError):
+                vals = None
+            if vals is not None and not all(math.isfinite(x) for x in vals.values()):
+                vals = None
+        feas = vals is not None and all(
+            c["metric"] in resp and _ok(float(resp[c["metric"]]), c["op"], float(c["value"]))
+            for c in cons)
+        out.append((dict(r["levels"]), vals, feas))
     return out

@@ -233,7 +233,6 @@ def test_bootstrap_ci_is_seeded_and_brackets_the_mean():
     assert a == b                                  # same seed, same interval
     est, lo, hi = a
     assert est == 2.0 and lo < 2.0 < hi and 0.0 <= lo and hi <= 4.0
-    assert ST.bootstrap_mean_ci(v, seed=1) != a or True  # another seed is allowed to differ
     assert ST.bootstrap_mean_ci([0.5, 0.5]) == (0.5, 0.5, 0.5)
     assert all(x != x for x in ST.bootstrap_mean_ci([]))
 
@@ -327,9 +326,15 @@ def test_hypervolume_regret_against_a_hand_computed_front():
     # 0.2 + 0.2 - 0.04 = 0.36.
     two = t.regret([{"A": 2, "B": 16}, {"A": 16, "B": 16}])
     assert two == pytest.approx((t.true - 0.36) / t.true)
-    # The whole true front scores 0.
+    # The lattice front (every integer A at B = 16) scores 0, and it is the
+    # A-sweep at the top of B: 15 points.
+    assert t.regret(t.front) == pytest.approx(0.0, abs=1e-12)
+    assert sorted(lv["A"] for lv in t.front) == list(range(2, 17)) and \
+        all(lv["B"] == 16 for lv in t.front)
+    # The OLD nine-point candidate-grid front misses lattice points (H3), so it
+    # is charged a positive regret against the recommendable domain.
     from orchestrator.optimize.synthetic import true_front
-    assert t.regret([lv for lv, _ in true_front(s)]) == pytest.approx(0.0, abs=1e-12)
+    assert t.regret([lv for lv, _ in true_front(s)]) > 0.0
 
 
 def test_measured_front_uses_means_and_strikes_infeasible_configurations():
@@ -430,3 +435,130 @@ def test_mo_pooled_paired_differences_on_a_fixed_input():
     assert pl["arm_minus_default"]["nous+alloc"][0] == pytest.approx(-0.1)
     assert pl["default_minus_baseline"]["RS"][0] == pytest.approx(-0.3)
     assert pl["arm_mean"]["nous:runs"] == 10
+
+
+# ─── P7 review round: H3 truth domain, M5 counter, arm overrides, MO pairing ──
+
+
+def test_two_peaks_truth_is_at_least_every_lattice_point():
+    """H3: the truth is taken over the domain Nous can recommend from (every
+    integer of [2, 16] on both axes), not the nine-point candidate grid, whose
+    axes miss the narrow peak at (14, 3)."""
+    s = S.get("two_peaks")
+    tr = S.truth(s)
+    for a in range(2, 17):
+        for b in range(2, 17):
+            assert tr["best"] >= s.fn({"A": a, "B": b}) - 1e-12
+    assert tr["optimum"] == {"A": 14, "B": 3}
+    assert tr["best"] == pytest.approx(15.6529, abs=1e-4)
+    # The recommendation the previous grid scored 0.364 is really worth ~1.26.
+    assert S.true_regret(s, {"A": 15, "B": 3}, tr)[0] == pytest.approx(1.263, abs=1e-3)
+
+
+def test_every_method_samples_the_domain_the_truth_is_taken_over():
+    for name in ("two_peaks", "geometric_knob", "drift", "fails_at_one_level"):
+        s = S.get(name)
+        lat = {f["id"]: set(S.lattice_axis(f)) for f in s.factors}
+        for f, vals in S.axes(s):
+            assert set(vals) == lat[f["id"]]
+    # A two-level numeric is never interpolated; a gridded one is every integer.
+    two = S.get("drift").factors[0]
+    assert S.lattice_axis(two) == [2, 16]
+    assert S.lattice_axis(S.get("bowl").factors[0]) == list(range(2, 17))
+
+
+def test_geometric_knob_off_candidate_grid_recommendations_are_scored_exactly():
+    s = S.get("geometric_knob")
+    tr = S.truth(s)
+    assert tr["optimum"] == {"INT": 8, "BUF": 2048} and tr["best"] == pytest.approx(100.0)
+    # An off-old-grid lattice point is scored by its own value, not snapped.
+    lv = {"INT": 9, "BUF": 2000}
+    assert S.true_regret(s, lv, tr)[0] == pytest.approx(tr["best"] - s.fn(lv))
+
+
+def _write_runs(d, rows_by_iter):
+    for it, rows in rows_by_iter.items():
+        p = d / "runs" / f"iter-{it}"
+        p.mkdir(parents=True)
+        (p / "runs.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+
+
+def test_one_measured_row_counter_excludes_stage_and_iteration_copies(tmp_path):
+    from benchmarks.optimization import measured as M
+    from benchmarks.optimization import mo as MO
+    from benchmarks.optimization.run import _measured_rows
+    from orchestrator.optimize.synthetic import PARETO_SURFACES
+
+    w = tmp_path / "camp-1"
+    row = {"levels": {"A": 2, "B": 2}, "status": "complete",
+           "response": {"m": 1.0, "f1": 1.0, "f2": 1.0}}
+    _write_runs(w, {
+        1: [row, row],
+        2: [{**row, "reused_from": {"stage": "screen", "row_index": 0, "iteration": 1}}, row],
+        10: [{**row, "reused_from": {"iteration": 2, "epoch": 1}}, row],
+    })
+    (w / "runs" / "iter-10" / "runs.jsonl").open("a").write('{"torn')
+    assert len(M.measured_rows(w)) == 4
+    assert len(_measured_rows(w)) == 4
+    s = PARETO_SURFACES["pareto_convex"]()
+    assert len(MO.nous_mo_rows(w, s)) == 4
+    assert M.spent_under(tmp_path) == 4          # the crash path counts the same
+
+
+def test_best_so_far_strikes_rejected_and_infeasible_but_not_failed():
+    from benchmarks.optimization.run import best_so_far
+
+    def row(a, m, status="complete"):
+        return {"levels": {"A": a}, "status": status, "response": {"m": m}}
+
+    rows = [row(1, 5.0), row(2, 9.0), row(2, 9.0, "rejected"), row(3, 8.0),
+            row(3, None, "failed"), row(4, 10.0), row(4, 10.0, "infeasible")]
+    assert best_so_far(rows) == {"A": 3}
+
+
+def test_allocate_arms_declare_the_round_and_the_raised_floor_only_where_asked():
+    from benchmarks.optimization import run as R
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.policy import compile_policy
+
+    s = S.get("bowl")
+    assert R.arm_overrides("nous", s, None) is None
+    o = R.arm_overrides("nous+alloc", s, None)
+    assert o["design"]["confirm"]["allocate"] == {"seats": R.ALLOCATE_SEATS}
+    assert "replicates" not in o["design"]["confirm"]      # the raised floor
+    assert "planner" not in o
+    ob = R.arm_overrides("nous+alloc+bo", s, None)
+    assert ob["planner"] == {"bo": {}} and ob["design"] == o["design"]
+    # The surface's own overrides survive (constraints on sla).
+    oc = R.arm_overrides("nous+alloc", S.get("sla"), S.campaign_overrides("sla"))
+    assert oc["response"]["constraints"] == S.CONSTRAINTS["sla"]
+    pol = compile_policy(synthetic_campaign(s, **o))
+    assert pol["states"]["confirm"]["design"]["allocate"] == {"seats": R.ALLOCATE_SEATS}
+    assert pol["states"]["confirm"]["design"]["replicates"] == 7
+    off = compile_policy(synthetic_campaign(s))
+    assert "allocate" not in off["states"]["confirm"]["design"]
+
+
+def test_mo_baselines_are_paired_with_each_arms_own_budget(tmp_path, monkeypatch):
+    from benchmarks.optimization import run as R
+
+    def fake_nous(name, seed, scratch, arm="nous"):
+        return {"surface": name, "seed": seed, "arm": arm, "status": "ok",
+                "budget": {"nous": 10, "nous+alloc": 14}[arm], "hv_regret": 0.1,
+                "certified": False, "false_cert": False, "anytime": [], "code": "n"}
+
+    seen = []
+
+    def fake_base(method, name, seed, budget):
+        seen.append((method, name, seed, budget))
+        return {"surface": name, "seed": seed, "method": method, "budget": budget,
+                "used": budget, "hv_regret": 0.2, "anytime": [], "code": "b"}
+
+    monkeypatch.setattr(R, "run_nous_mo", fake_nous)
+    monkeypatch.setattr(R, "run_baseline_mo", fake_base)
+    nous, base = R.run_mo(["pareto_convex"], [1], 1, str(tmp_path), None,
+                          arms=("nous", "nous+alloc"), methods=("RS",))
+    assert sorted(seen) == [("RS", "pareto_convex", 1, 10), ("RS", "pareto_convex", 1, 14)]
+    mo = R.summarize_mo(nous, base, ("RS",))
+    by_arm = {r["arm"]: r for r in mo["rows"]}
+    assert by_arm["nous"]["RS:h2h"] == (1, 0, 0) and by_arm["nous+alloc"]["RS:h2h"] == (1, 0, 0)

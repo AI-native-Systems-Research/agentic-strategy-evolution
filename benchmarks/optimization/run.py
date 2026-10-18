@@ -41,6 +41,7 @@ if str(REPO) not in sys.path:
 
 from benchmarks.optimization import surfaces as S  # noqa: E402
 from benchmarks.optimization import stats as ST  # noqa: E402
+from benchmarks.optimization.measured import measured_rows, spent_under  # noqa: E402
 from benchmarks.optimization.baselines import METHODS, run_method  # noqa: E402
 
 DEFAULT_OUT = REPO / "docs" / "benchmarks"
@@ -142,27 +143,17 @@ def _arm_context(arm: str):
 
 
 def _measured_rows(work_dir) -> list[dict]:
-    """Every MEASURED row (not a stage-reuse copy) in execution order."""
-    from orchestrator.optimize.harness import _latest_iter_dirs
-
-    out = []
-    for it in _latest_iter_dirs(Path(work_dir)):
-        p = it / "runs.jsonl"
-        if not p.exists():
-            continue
-        for ln in p.read_text().splitlines():
-            if ln.strip():
-                r = json.loads(ln)
-                if not (r.get("reused_from") or {}).get("stage"):
-                    out.append(r)
-    return out
+    return measured_rows(work_dir)
 
 
 def best_so_far(rows: list[dict], metric: str = "m", direction: str = "maximize") -> dict | None:
     """The always-admissible measured configuration with the best mean
     ``metric`` over ``rows``: Nous's anytime answer after those rows. A row
-    is admissible when it completed with a finite metric (an ``infeasible`` or
-    failed row strikes its configuration, the same sticky rule as baselines)."""
+    is admissible when it completed with a finite metric. A row the runner
+    marked ``infeasible`` (a constraint failed) or ``rejected`` (a manipulation
+    or invariant check failed) strikes its configuration for good, the same
+    sticky rule the baselines apply; a ``failed`` row (no measurement) only
+    contributes nothing."""
     import math as _m
 
     g: dict = {}
@@ -171,7 +162,7 @@ def best_so_far(rows: list[dict], metric: str = "m", direction: str = "maximize"
         e = g.setdefault(k, {"lv": r["levels"], "ys": [], "ok": True})
         y = (r.get("response") or {}).get(metric)
         if r.get("status") != "complete" or not isinstance(y, (int, float)) or not _m.isfinite(y):
-            if r.get("status") == "infeasible":
+            if r.get("status") in ("infeasible", "rejected"):
                 e["ok"] = False
             continue
         e["ys"].append(float(y))
@@ -209,8 +200,7 @@ def run_nous(name: str, mult: float, seed: int, scratch: str, arm: str = "nous")
             # CHARGED, not dropped (review B2): a campaign that crashed returned
             # no answer, so it scores the worst admissible regret, and the runs
             # it spent before crashing are the budget its baselines get.
-            spent = sum(sum(1 for ln in p.read_text().splitlines() if ln.strip())
-                        for p in Path(d).glob("*/runs/iter-*/runs.jsonl"))
+            spent = spent_under(d)
             regret, status = S.true_regret(s, None, tr)
             return {**head, "budget": spent,
                     "regret": regret, "status": "error", "certified": False,
@@ -264,6 +254,7 @@ def run_baseline(method: str, name: str, mult: float, seed: int, budget: int) ->
     t0, c0 = time.perf_counter(), time.process_time()
     recs, used = run_method(method, s, name, budget, seed)
     log = recs.pop("log", None)
+    gp_seed = recs.pop("gp_seed", 0)
     wall, cpu = time.perf_counter() - t0, time.process_time() - c0
     out = {"surface": name, "mult": mult, "seed": seed, "method": method,
            "budget": budget, "used": used, "wall_s": wall, "cpu_s": cpu,
@@ -273,16 +264,19 @@ def run_baseline(method: str, name: str, mult: float, seed: int, budget: int) ->
         reg, st = S.true_regret(s, rec, tr)
         out[f"regret_{rule}"], out[f"status_{rule}"] = reg, st
     out["anytime"] = baseline_anytime(method, s, log, tr, budget,
-                                      out[f"regret_{PRIMARY_RULE[method]}"])
+                                      out[f"regret_{PRIMARY_RULE[method]}"], gp_seed)
     return out
 
 
-def baseline_anytime(method, surface, log, tr, budget, final) -> list[float]:
+def baseline_anytime(method, surface, log, tr, budget, final, gp_seed: int = 0) -> list[float]:
     """The method's PRIMARY-rule regret on each prefix of its own
     measurements (``anytime_counts(budget)``). A prefix of a run planned for N
     is what the method would hold had it been stopped there (GP-BO's initial
     design is sized for N; a Latin hypercube prefix is a subset of N strata).
-    The last point is the method's recorded answer at N."""
+    The last point is the method's recorded answer at N. The prefix GP is
+    fitted with the SAME seed as the run's own final GP-mean pick
+    (``gp_seed``), so the curve's last point and the recorded answer come
+    from one fitting procedure."""
     from benchmarks.optimization import baselines as B
 
     if log is None:
@@ -301,7 +295,7 @@ def baseline_anytime(method, surface, log, tr, budget, final) -> list[float]:
         elif method == "GP-BO-crude":
             rec = B.crude_mean_recommendation(pre, coder)
         else:
-            rec = B.gp_mean_recommendation(pre, coder, 0)
+            rec = B.gp_mean_recommendation(pre, coder, gp_seed)
         out.append(S.true_regret(surface, rec, tr)[0])
     return out
 
@@ -330,7 +324,15 @@ def _cached_map(fn, jobs, workers, cache: Path | None, key):
                     continue  # a torn last line from a kill
                 done[r["_key"]] = r
     todo = [j for j in jobs if key(j) not in done]
-    if todo:
+    if todo and workers == 1:
+        # In-process: no pool, so one worker costs one process, not two.
+        for j in todo:
+            r = {**fn(j), "_key": key(j)}
+            done[r["_key"]] = r
+            if cache is not None:
+                with open(cache, "a") as fh:
+                    fh.write(json.dumps(r, default=str) + "\n")
+    elif todo:
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = {ex.submit(fn, j): j for j in todo}
             for f in as_completed(futs):
@@ -459,8 +461,7 @@ def run_nous_mo(name: str, seed: int, scratch: str, arm: str = "nous") -> dict:
                     s, seed=seed, parent_dir=Path(d),
                     campaign_overrides=arm_overrides(arm, s, None))
         except Exception as exc:  # noqa: BLE001 -- charged, as single-objective
-            spent = sum(sum(1 for ln in p.read_text().splitlines() if ln.strip())
-                        for p in Path(d).glob("*/runs/iter-*/runs.jsonl"))
+            spent = spent_under(d)
             return {**head, "status": "error", "budget": spent, "hv_regret": 1.0,
                     "certified": False, "false_cert": False,
                     "anytime": [1.0] * len(anytime_counts(spent)),
@@ -500,11 +501,11 @@ def run_baseline_mo(method: str, name: str, seed: int, budget: int) -> dict:
 
 
 def _mo_nous_job(a):
-    return run_nous_mo(*a)
+    return globals()["run_nous_mo"](*a)
 
 
 def _mo_base_job(a):
-    return run_baseline_mo(*a)
+    return globals()["run_baseline_mo"](*a)
 
 
 def run_mo(names, seeds, workers, scratch, cache_dir: Path | None = None,
@@ -1195,7 +1196,7 @@ def main(argv=None):
                               key=_nous_key(nd, bd, "nous"))
         arms = run_ablations(mults, seeds, a.workers, scratch, cache_dir, plan)
         ab = summarize_ablations(default, arms)
-        meta = {**_meta(argv, seeds, mults), "elapsed_s": time.time() - t0,
+        meta = {**_meta(argv, seeds, mults), "elapsed_s": time.time() - t0, "peak_rss": peak_rss_gb(),
                 "arms": ARM_DOC, "plan": plan, "boot": [ST.BOOT_RESAMPLES, ST.BOOT_SEED],
                 "nous_digests": sorted({r["code"] for r in default + arms})}
         (a.out / "optimization-benchmark-ablations.json").write_text(json.dumps(
@@ -1210,7 +1211,7 @@ def main(argv=None):
     elif section == "mo":
         nous, base = run_mo(names, seeds, a.workers, scratch, cache_dir)
         mo = summarize_mo(nous, base)
-        meta = {**_meta(argv, seeds, mults), "elapsed_s": time.time() - t0,
+        meta = {**_meta(argv, seeds, mults), "elapsed_s": time.time() - t0, "peak_rss": peak_rss_gb(),
                 "arms": {k: ARM_DOC[k] for k in MO_ARMS}, "boot": [ST.BOOT_RESAMPLES, ST.BOOT_SEED],
                 "nous_digests": sorted({r["code"] for r in nous}),
                 "bench_digests": sorted({b["code"] for b in base})}
@@ -1221,7 +1222,7 @@ def main(argv=None):
     else:
         nous, base = run_suite(names, mults, seeds, a.methods, a.workers, scratch, cache_dir)
         summary = summarize(nous, base, a.methods)
-        meta = {**_meta(argv, seeds, mults), "elapsed_s": time.time() - t0,
+        meta = {**_meta(argv, seeds, mults), "elapsed_s": time.time() - t0, "peak_rss": peak_rss_gb(),
                 "excluded": EXCLUDED, "primary_rule": PRIMARY_RULE,
                 "fractions": list(FRACTIONS), "boot": [ST.BOOT_RESAMPLES, ST.BOOT_SEED]}
         stem = "optimization-benchmark" + ("-audit-repro" if a.audit_repro else "")
@@ -1262,6 +1263,18 @@ def render_only(section, out: Path, methods, no_markdown=False) -> int:
         write_markdown(out / "optimization-benchmark.md", md, section)
     print(md)
     return 0
+
+
+def peak_rss_gb() -> dict:
+    """Peak resident set size of this process and of its largest finished
+    child (a pool worker), in GB. ``ru_maxrss`` is bytes on macOS and KiB on
+    Linux. Recorded in every section's JSON meta (P7 review M4)."""
+    import resource
+
+    unit = 1.0 if sys.platform == "darwin" else 1024.0
+    me = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * unit / 1e9
+    kid = resource.getrusage(resource.RUSAGE_CHILDREN).ru_maxrss * unit / 1e9
+    return {"self_gb": round(me, 3), "largest_worker_gb": round(kid, 3)}
 
 
 def plan_size(section, names, seeds, mults, methods) -> dict:

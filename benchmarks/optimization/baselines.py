@@ -152,7 +152,8 @@ def _finish(log, coder, seed):
     # ``log`` rides along so the benchmark can read the method's anytime curve
     # (its recommendation on every prefix of its own measurements).
     return {"best_observed": best_observed(log),
-            "gp_mean": gp_mean_recommendation(log, coder, seed), "log": log}
+            "gp_mean": gp_mean_recommendation(log, coder, seed), "log": log,
+            "gp_seed": seed}
 
 
 def prefix(log: Log, n: int) -> Log:
