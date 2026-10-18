@@ -1686,6 +1686,46 @@ properties:
               earlier campaign's run orders exactly (copy that campaign's
               recorded salt).
 
+      planner:
+        type: object
+        additionalProperties: false
+        description: >
+          WP-D (#320): configuration of the planning tools (``nous
+          plan-next`` and the D1 allocator). Compiled into ``policy.json``
+          and hashed, so it is fixed before any data. Proposes candidates
+          only; nothing certifies from it.
+        properties:
+          bo:
+            type: object
+            additionalProperties: false
+            description: >
+              The optional Bayesian-optimization proposer (the ``nous[bo]``
+              extra, Optuna TPE). Absent means no BO. The study is rebuilt
+              deterministically from the epoch's measured rows on every
+              call; proposals go to the recombination pool and, when the
+              RSM model is inadequate, to plan-next's model-free block.
+            properties:
+              sampler: {type: string, enum: [tpe]}
+              n_startup: {type: integer, minimum: 0}
+              seed: {type: integer, minimum: 0}
+          stop_value_per_run:
+            type: number
+            minimum: 0
+            description: >
+              plan-next's declared stopping threshold, in units of the
+              planner's utility per benchmark run (objective units for a
+              single objective, normalised hypervolume for several). A move
+              is chosen only if its expected value per run exceeds it.
+              Default: epsilon / (runs the epoch spent), i.e. a whole
+              epoch's runs must be expected to buy at least one epsilon.
+          campaign_max_runs:
+            type: integer
+            minimum: 1
+            description: >
+              Total benchmark runs the campaign may spend across every
+              epoch. plan-next refuses a move whose next epoch could exceed
+              what remains (``run_budget_insufficient``). Absent: no
+              cross-epoch run cap.
       run_command:
         type: string
         minLength: 1
