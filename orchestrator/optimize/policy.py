@@ -46,6 +46,18 @@ OBSERVATION_KEYS: frozenset[str] = frozenset({
     # Produced only on a round that vacated a seat, so an unvacated round's
     # observations are unchanged.
     "finalists_vacated", "feasible_finalists", "refill_available",
+    # OPT-IN ALLOCATE BRANCH ONLY (WP-D D1 / P6b). Consumer: the registered
+    # `confirm -> confirm` allocate round (`ALLOCATE_ACCOUNTING`), compiled
+    # only when `design.confirm.allocate` is declared. True when the round at
+    # the cap did not certify, the branch is not yet spent this epoch, and the
+    # allocator (models adequate) left at least one seatable candidate in
+    # `confirmation.json["allocation"]["seats"]` -- derived in the runtime,
+    # like `refill_available`. Produced only when the branch is registered.
+    "allocate_available",
+    # Its companion, NEVER branched on: the sha256 of the seats round r
+    # registered, anchored in the transition row so round r+1 can verify the
+    # seats before measuring them (P6b review H1). A REPORTING key.
+    "allocate_seats_sha256",
     # `behavioral_violation` is INTENTIONALLY never read by a compiled `when`
     # clause, and the intent is the one `stage.decide_after_screen` states in
     # its own words: "Behavioral violations are reported but never block
@@ -240,6 +252,37 @@ refill round's terminal bound is taken at ``delta_terminal / rounds spent``, and
 its survivors share the round's replicate seeds with the new seats.
 """
 
+ALLOCATE_ACCOUNTING = (
+    "allocate round (WP-D D1): seats chosen on the fitted model's predictions "
+    "(knowledge gradient / EHVI per run), claims on their fresh replicates only; "
+    "one registered look, Bonferroni over rounds as for gap fill"
+)
+"""The accounting rule of the opt-in allocate branch (``design.confirm.allocate``).
+
+``confirm -> confirm`` once per epoch, AT the round cap, when that round did
+not certify and the allocator (``allocate.allocate``, through
+``allocate_seat.plan``) found a seatable candidate with a free seat on an
+ADEQUATE model. Multi-objective campaigns ALSO seat allocator picks in the
+registered gap-fill rounds below the cap (``FRONT_GAP_ACCOUNTING``), each
+already a charged look, so there the allocator may seat in several rounds
+while the allocate RULE itself still fires at most once. Statistics owns inference, decision
+theory owns allocation: the seats are SELECTED on predictions (recombination
+of the values the measured finalists / front points disagree on, the predicted
+front or ranked candidates, optional BO proposals), but every claim about a
+seat rests on its fresh paired replicates, and its certificate is the ordinary
+terminal or front certificate. No predicted value enters any bound. The branch
+is ONE look, charged to ``confirm_looks`` and to the P3 replicate floor
+whether or not it is taken (a per-look level must be fixed before the data
+decide how many looks there are), exactly like the refill look.
+"""
+
+
+def _allocate_cfg(opt: dict) -> dict | None:
+    """``design.confirm.allocate`` when declared (opt-in), else ``None``."""
+    a = ((opt.get("design") or {}).get("confirm") or {}).get("allocate")
+    return a if isinstance(a, dict) else None
+
+
 #: Whether constrained campaigns register the refill branch. Not a campaign
 #: knob: it exists so the metamorphic oracle can compile the same campaign with
 #: and without the branch.
@@ -368,11 +411,14 @@ TERMINAL_SKEW_ALPHA = 0.25
 def _registered_looks(opt: dict) -> int:
     """``confirm_looks`` from the declaration, before the transitions exist:
     the round cap, plus the refill look when that branch will be compiled
-    (``_REFILL_VACATED`` and any declared constraint)."""
+    (``_REFILL_VACATED`` and any declared constraint), plus the allocate look
+    when ``design.confirm.allocate`` is declared."""
     pol_cfg = opt.get("policy") or {}
     rounds = int(pol_cfg.get("confirm_max_rounds", 1) or 1)
     refill = bool(_REFILL_VACATED and (opt.get("response") or {}).get("constraints"))
-    return max(1, rounds) + (1 if refill else 0)
+    # The opt-in allocate look (WP-D D1), charged whether or not it is taken.
+    allocate = _allocate_cfg(opt) is not None
+    return max(1, rounds) + (1 if refill else 0) + (1 if allocate else 0)
 
 
 def effective_delta_terminal(opt: dict, epoch: int = 1) -> float:
@@ -632,7 +678,11 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                            3 if (mo or LEGACY_PRE_P3.get())
                            else default_confirm_replicates(opt, int(epoch))))),
                        "max_rounds": int(pol_cfg.get("confirm_max_rounds",
-                                                     default_rounds))},
+                                                     default_rounds)),
+                       # WP-D D1 (opt-in): present only when declared, so
+                       # every other policy is byte-identical.
+                       **({"allocate": {"seats": int(_allocate_cfg(opt).get("seats", 1))}}
+                          if _allocate_cfg(opt) is not None else {})},
             "estimator": "sample_means",
             # Bonferroni, not Holm. Holm is uniformly more powerful for
             # TESTING, but the terminal artifact is a BOUND (`R_delta`), and
@@ -783,6 +833,20 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                             "confirm_looks over |S|-1 finalists, plus the model "
                             "bound at delta_screen (spec 2026-10-17-"
                             "certification-soundness)")},
+        ]
+        if "allocate" in states["confirm"]["design"]:
+            # AFTER `certified` (a certified round has nothing for allocation to
+            # buy) and BEFORE every decline guard, like the refill: it fires
+            # only AT the round cap, so it is exactly the one extra look
+            # `confirm_looks` charges, and `allocate_available` caps it at one
+            # round. Its own guard carries affordability.
+            transitions.append({
+                "from": "confirm",
+                "when": {"allocate_available": True, "confirm_affordable": True,
+                         "round": {">=": states["confirm"]["design"]["max_rounds"]}},
+                "to": "confirm", "accounting": ALLOCATE_ACCOUNTING,
+            })
+        transitions += [
             # BEFORE both budget guards below, and the order is load-bearing for
             # the same reason the foldover rule precedes refine: `step` takes the
             # FIRST matching rule, and `budget_remaining < 1` only fires once
@@ -1260,7 +1324,8 @@ def confirm_looks(policy: dict) -> int:
     cap plus one when the refill branch (``REFILL_ACCOUNTING``) is registered,
     because that branch fires only AT the cap and buys exactly one extra round.
     Charged whether or not the refill is ever taken: a per-look level must be
-    fixed before the data decide how many looks there are. One for the default
+    fixed before the data decide how many looks there are. The opt-in allocate
+    branch (``ALLOCATE_ACCOUNTING``) is one more look, charged the same way. One for the default
     unconstrained single-round campaign, so its certificate is unchanged.
     Single- and multi-objective confirm share this divisor
     (spec 2026-10-17-certification-soundness.md).
@@ -1270,7 +1335,10 @@ def confirm_looks(policy: dict) -> int:
     refill = any(t.get("from") == "confirm"
                  and t.get("accounting") == REFILL_ACCOUNTING
                  for t in policy.get("transitions") or [])
-    return max(1, rounds) + (1 if refill else 0)
+    allocate = any(t.get("from") == "confirm"
+                   and t.get("accounting") == ALLOCATE_ACCOUNTING
+                   for t in policy.get("transitions") or [])
+    return max(1, rounds) + (1 if refill else 0) + (1 if allocate else 0)
 
 
 def longest_path(policy: dict) -> int:

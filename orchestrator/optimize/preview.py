@@ -283,11 +283,15 @@ def build_preview(
                         and not (opt.get("response") or {}).get("objectives"))
         per_round = (int(d["shortlist_size"]) + base_seat) * int(d["replicates"])
         rounds = int(d["max_rounds"])
+        # WP-D D1: the opt-in allocate round is one more round at most.
+        alloc = 1 if d.get("allocate") else 0
         pv.stages.append(StageRuns(
-            "confirm", per_round, per_round * rounds, False,
+            "confirm", per_round, per_round * (rounds + alloc), False,
             f"{d['shortlist_size']} finalist(s)"
             + (" + the known_valid_baseline reference seat" if base_seat else "")
-            + f" x {d['replicates']} replicate(s) per round, up to {rounds} round(s)",
+            + f" x {d['replicates']} replicate(s) per round, up to {rounds} round(s)"
+            + (f" + 1 allocate round (up to {d['allocate']['seats']} model-chosen "
+               f"seat(s))" if alloc else ""),
         ))
 
     if "validate" in states:

@@ -644,6 +644,26 @@ def _front_next_steps(work_dir: Path, report: dict) -> list[str]:
     return out + [""]
 
 
+def _allocation_lines(work_dir: Path) -> list[str]:
+    """WP-D D1 (opt-in allocate branch): what the allocator decided in the
+    last round that ran it, with each named decline in plain words. Nothing
+    for a campaign that did not declare the branch (no allocation.json)."""
+    from orchestrator.optimize.allocate_seat import decline_reasons
+
+    recs = sorted(Path(work_dir).glob("runs/iter-*/allocation.json"),
+                  key=lambda p: int(p.parent.name.split("-")[1]))
+    if not recs:
+        return []
+    a = _read_json(recs[-1]) or {}
+    if a.get("declined"):
+        why = decline_reasons().get(a["declined"], "unrecognised reason")
+        return [f"- **Allocate round:** declined `{a['declined']}` ({why}); "
+                f"no model-chosen configuration was measured"]
+    return [f"- **Allocate round:** {len(a.get('seats') or [])} model-chosen "
+            f"configuration(s) seated and measured on fresh replicates "
+            f"(selection on predictions; claims on those replicates only)"]
+
+
 def render_report_markdown(work_dir: Path) -> str:
     """Render ``report.md`` from ``report.json``. Pure; makes no model call.
 
@@ -686,6 +706,7 @@ def render_report_markdown(work_dir: Path) -> str:
         lines.append("- **Certification withheld because:** " + "; ".join(
             f"`{r}` ({WITHHELD_MEANING.get(r, 'unrecognised reason')})"
             for r in withheld))
+    lines += _allocation_lines(work_dir)
     g = report.get("gain_over_baseline") or {}
     if g.get("low") is not None:
         lines.append(f"- **Gain over the baseline** {_fmt_levels(g.get('baseline'))}: "
