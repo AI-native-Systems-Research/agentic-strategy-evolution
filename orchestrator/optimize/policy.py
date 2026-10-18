@@ -466,6 +466,28 @@ def delta_stated(policy: dict) -> float:
 LEGACY_PRE_P3 = __import__("contextvars").ContextVar("nous_legacy_pre_p3", default=False)
 
 
+def screen_selection(design: dict | None) -> dict:
+    """The registered screening-multiplicity rule (#321 P4 item 1).
+
+    ``design.screen.multiplicity``: ``holm`` (default) -- Holm's (1979)
+    step-down over the m screened factors' main-effect tests, family-wise
+    error <= ``alpha`` under any dependence; or ``per_test`` -- each at
+    ``alpha``, no control (the pre-P4 rule). ``alpha`` is
+    ``design.screen.selection_alpha`` (default 0.05). A multi-objective
+    campaign's family is factors x objectives (a factor survives if any of its
+    tests is rejected). Its role: it decides only whether refine runs
+    (``refinable_survivors > 0``); refine's composite spans every refinable
+    factor regardless, so no factor is HELD because it was dropped. Not a
+    term of the certificate's union bound (see ``error_budget.screening``).
+    """
+    sc = (design or {}).get("screen") or {}
+    return {"method": str(sc.get("multiplicity", "holm")),
+            "alpha": float(sc.get("selection_alpha", 0.05)),
+            "family": "main effects of every screened factor (x objectives)",
+            "reference": "Holm 1979" if sc.get("multiplicity", "holm") == "holm"
+            else "none (per-test)"}
+
+
 def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int = 1) -> dict:
     opt = campaign.get("optimization") or {}
     factors = parse_factors(opt["factors"])
@@ -518,6 +540,8 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
                        "center_points": int((design.get("screen") or {}).get("center_points", 4))},
             "estimator": "ols_orthogonal_closed_form",
             "accounting": "per_term_t_on_pure_error",
+            # #321 P4 item 1: the survivor rule as ONE registered family.
+            "selection": screen_selection(design),
         },
         "report": {"spends": False, "terminal": True},
         "exception": {"spends": False, "terminal": True, "ends_epoch": True},

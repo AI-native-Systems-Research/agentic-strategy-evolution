@@ -466,10 +466,34 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
                    "within_total": total <= binding_total + 1e-12,
                    "stops_at_continue_gate": stops,
                    "exhausted": bool((cd or {}).get("exhausted"))}
+    sel = ((pol.get("states") or {}).get("screen") or {}).get("selection")
+    screening = None
+    if sel:
+        screening = {
+            "method": sel.get("method"), "alpha": sel.get("alpha"),
+            "union_term": False,
+            "role": "routing_only_conditional_scope",
+            "statement": (
+                "The screen's main-effect drops are ONE family "
+                f"({sel.get('method')}, family-wise alpha {sel.get('alpha')}; "
+                "recommendation.json screen_selection records m). They are NOT a "
+                "term of the certificate's union bound, and need not be: a "
+                "dropped factor is never held (refine's composite spans every "
+                "refinable factor; the screen model keeps every coefficient), so "
+                "no drop shrinks the region the model half ranges over. A drop "
+                "decides only whether refine runs. A Type I error (an inert "
+                "factor kept) costs refine runs, never validity. A Type II error "
+                "(an active refinable factor dropped, with no lack-of-fit "
+                "rejection) routes screen -> confirm, and the certificate then "
+                "rests on the first-order + 2fi model: it is CONDITIONAL on that "
+                "response class (assumption M1), whose failure is vetoed by the "
+                "lack-of-fit test (model_inadequate), not charged to delta. "
+                "certificate_scope.screening names the model class.")}
     return {
         "epochs": epochs,
         "this_epoch": epochs[-1]["spent"] if epochs else None,
         "cumulative": total,
+        **({"screening": screening} if screening else {}),
         **charged,
         # A lower bound when an earlier epoch's deltas could not be recovered.
         "cumulative_is_lower_bound": bool(unknown),

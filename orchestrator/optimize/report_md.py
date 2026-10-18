@@ -802,6 +802,9 @@ def render_report_markdown(work_dir: Path) -> str:
         *([f"| delta, feasibility (distributional constraints) | "
            f"{_fmt(report.get('delta_feasibility'))} |"]
           if report.get("delta_feasibility") is not None else []),
+        *([f"| alpha, screening ({_scr.get('method')} over {_scr.get('family_size')} "
+           f"tests; routing only, not a union term) | {_fmt(_scr.get('alpha'))} |"]
+          if (_scr := (report.get("certificate_scope") or {}).get("screening")) else []),
         "",
     ]
     if basis != "model" and par is None:
@@ -926,6 +929,12 @@ def _error_budget_lines(report: dict) -> list[str]:
         "judged at this epoch's deltas; the cumulative figure is the probability "
         "bound that ANY epoch's decision on this work_dir is wrong.",
         "",
+        *([f"Screening ({(eb['screening'] or {}).get('method')}, family-wise alpha "
+           f"{_fmt((eb['screening'] or {}).get('alpha'))}) is NOT a term of this sum: "
+           "a dropped factor is never held, so a drop only decides whether refine "
+           "runs, and the certificate is conditional on the fitting stage's "
+           "response class, which lack of fit vetoes.", ""]
+          if eb.get("screening") else []),
     ]
 
 

@@ -53,7 +53,7 @@
       "items": { "type": "string" },
       "description": "The factor ids actually carried in the fit, which can be narrower than the campaign's declared factors when rows were excluded or a factor was held fixed."
     },
-    "held_fixed": {
+    "screen_selection": {"type": "object", "description": "#321 P4 item 1: the screen's survivor rule as ONE registered family (effects.screening_family): method (holm | per_test), alpha (family-wise for holm), family_size m, per-factor p / Holm-adjusted p / rejected, kept, dropped, unknown (no pure error: kept, outside the family). Routing only: a dropped factor is NOT held -- refine spans every refinable factor."}, "held_fixed": {
       "type": "object",
       "description": "Factors pinned to one level for this stage rather than varied, and the level each was pinned at. Empty when every declared factor varied."
     },

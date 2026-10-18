@@ -2682,7 +2682,7 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         "certificate_scope": _certificate_scope(
             _epoch_rec, boundary_block,
             _latest_inertness(work_dir) if "inertness" in (pol.get("states") or {})
-            else None),
+            else None, selection=_screen_selection_record(work_dir)),
         **({"gain_over_baseline": dict(conf["gain_over_baseline"])}
            if conf and conf.get("gain_over_baseline") else {}),
         # #321 item 2: the post-selection validation block, when registered.
@@ -4824,8 +4824,21 @@ def _run_stage_body(
         decision = decide_after_refine(
             fit, fitted_factors, stationary, behavioral_failures=behavioral,
         )
+        screen_selection = None
     else:
-        decision = decide_after_screen(fit, factors, behavioral_failures=behavioral)
+        # #321 P4 item 1: the survivor rule is ONE registered family (Holm at
+        # the registered alpha over the screened factors' main-effect tests).
+        # A policy compiled before P4 has no `selection`: the per-term rule.
+        _sel_cfg = ((pol.get("states") or {}).get("screen") or {}).get("selection")
+        screen_selection = None
+        if _sel_cfg:
+            from orchestrator.optimize.effects import screening_family
+
+            screen_selection = screening_family(
+                fit, [f.id for f in factors], alpha=float(_sel_cfg["alpha"]),
+                method=str(_sel_cfg["method"]))
+        decision = decide_after_screen(fit, factors, behavioral_failures=behavioral,
+                                       selection=screen_selection)
 
     # ── the recommendation: x-hat = argmax over X_valid (spec §3.3) ────────
     #
@@ -5040,7 +5053,12 @@ def _run_stage_body(
         mo_rejected = pareto_stage.models_rejected(_omodels)
         mo_lof = pareto_stage.models_rejected(_omodels, lack_of_fit_only=True)
         mo_untested = pareto_stage.models_untested(_omodels)
-        mo_survivors = pareto_stage.survivors(_omodels, factors)
+        _mo_sel = (((pol.get("states") or {}).get("screen") or {}).get("selection")
+                   if stage_name != Stage.REFINE.value else None)
+        mo_survivors = pareto_stage.survivors(_omodels, factors, _mo_sel)
+        if _mo_sel and screen_selection:
+            # The family that ROUTED (factors x objectives) is the one recorded.
+            screen_selection = pareto_stage.selection_family(_omodels, factors, _mo_sel)
         if _pref_cand is not None:
             rec = _pref_cand
         logger.info(
@@ -5202,6 +5220,7 @@ def _run_stage_body(
         "predicted": rec.predicted,
         "fitted_ids": list(fitted_ids),
         "held_fixed": held_now,
+        **({"screen_selection": screen_selection} if screen_selection else {}),
         "top_candidates": [
             {"levels": c.levels, "coded": c.coded, "predicted": c.predicted}
             for c in top
@@ -5382,8 +5401,13 @@ def _run_stage_body(
     obs = observations_from_decision(
         decision, fit,
         refinable_survivors=sum(
-            1 for fid in (set(decision.surviving) | mo_survivors
-                          if mo_record is not None else decision.surviving)
+            1 for fid in (
+                # #321 P4: under the registered family the multi-objective
+                # survivors ARE one Holm family over factors x objectives; a
+                # union with the primary's own family would spend alpha twice.
+                mo_survivors if (mo_record is not None and screen_selection)
+                else set(decision.surviving) | mo_survivors
+                if mo_record is not None else decision.surviving)
             if fid in by_fid and is_refinable(by_fid[fid])
         ),
         stationary_in_hull=(
@@ -8420,7 +8444,8 @@ def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict
 
 
 def _certificate_scope(rec: dict, boundary: dict | None,
-                       inertness: dict | None = None) -> dict:
+                       inertness: dict | None = None,
+                       selection: dict | None = None) -> dict:
     """``report.json["certificate_scope"]`` (WP-A A4, spec
     2026-10-17-certification-soundness.md section 4): the region the model
     half of the certificate ranged over, read from this epoch's latest
@@ -8446,6 +8471,31 @@ def _certificate_scope(rec: dict, boundary: dict | None,
          + " held fixed; the other levels of those factors are NOT covered")
         if held else
         "epsilon-optimal over the declared ranges of every factor")
+    # #321 P4 item 1: what the screen's drops did to this scope. A factor the
+    # screening family did not reject is NOT held: refine's composite spans
+    # every refinable factor (CURVATURE_ACCOUNTING) and the screen/foldover
+    # model keeps every factor's coefficient, so held_fixed is exactly the
+    # non-refinable factors refine holds, dropped or not. A drop can change
+    # only WHICH fitting stage supplies the model half (screen -> confirm
+    # skips refine), i.e. the model class the certificate is conditional on.
+    sel = selection
+    if sel is not None:
+        dropped = list(sel.get("dropped") or [])
+        out["screening"] = {
+            "method": sel.get("method"), "alpha": sel.get("alpha"),
+            "family_size": sel.get("family_size"), "dropped": dropped,
+            "held_because_dropped": [],
+            "model_class": 2 if out["fitting_stage"] == Stage.REFINE.value else 1,
+        }
+        if dropped and region != "none":
+            out["statement"] += (
+                f"; screening dropped {', '.join(dropped)} ({sel.get('method')}, "
+                f"family-wise alpha {sel.get('alpha')} over {sel.get('family_size')} "
+                f"tests) but held none of them: "
+                + ("refine still varied every refinable factor"
+                   if out["fitting_stage"] == Stage.REFINE.value else
+                   "their coefficients stay in the screen model the certificate "
+                   "rests on, which is first order + 2fi (no refine ran)"))
     if inertness is not None and held:
         # #321 item 8: what the inertness check showed. A factor shown inert
         # changes the response AT THE WINNER by less than the margin at every
@@ -8465,6 +8515,15 @@ def _certificate_scope(rec: dict, boundary: dict | None,
                 f"union bound) -- a local equivalence, not a certificate over "
                 f"those slices")
     return out
+
+
+def _screen_selection_record(work_dir) -> dict | None:
+    """The epoch's latest screening family (screen or foldover record)."""
+    sel = None
+    for r in _epoch_recommendations(work_dir):
+        if r.get("screen_selection"):
+            sel = r["screen_selection"]
+    return sel
 
 
 def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
@@ -8502,7 +8561,10 @@ def _global_bound(rec: dict, fin: list, status: dict, ok: dict, best,
                    "<= delta_screen + delta_terminal (+ delta_constraint when "
                    "constraint exclusion is registered, + delta_feasibility "
                    "when a distributional constraint is) under the stated "
-                   "assumptions."}
+                   "assumptions. The screening family (Holm, #321 P4) is not a "
+                   "term: a dropped factor is never held, so it decides only "
+                   "the fitting stage, whose response class (M1) the claim is "
+                   "conditional on and lack of fit vetoes."}
     if not rec or not isinstance(r_model, (int, float)):
         return out, ["model_bound_not_computable"]
     if r_out is None:

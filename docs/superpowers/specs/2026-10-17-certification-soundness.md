@@ -191,7 +191,8 @@ a valid claim at no extra runs, so the extra block is deferred (§7).
 
 | level | budget | how it is spent |
 |---|---|---|
-| stages within an epoch | δ_screen | one simultaneous model family at the latest fitting stage (§2). Earlier stages' decisions (screen drop, foldover, curvature routing) select the region but spend no stated δ: their errors are covered only through M1 (§7). |
+| stages within an epoch | δ_screen | one simultaneous model family at the latest fitting stage (§2). Earlier stages' decisions (screen drop, foldover, curvature routing) select the fitting stage but spend no stated δ: their errors are covered only through M1 (§7). |
+| screen drops (#321 P4) | α_screen (Holm, FWER, default 0.05) | NOT a union term: a dropped factor is never held (refine spans every refinable factor; the screen model keeps every coefficient), so a drop cannot shrink the region. It only decides whether refine runs; a Type II drop makes the certificate conditional on the first-order + 2fi class, vetoed by lack of fit. `error_budget.screening`, `certificate_scope.screening`. |
 | confirm rounds within an epoch | δ_terminal | Bonferroni over the L registered looks (§3) |
 | constraint exclusion within an epoch | δ_constraint | Bonferroni over the modelled constraints, only at `x*` (§6) |
 | one epoch's certificate | δ_screen + δ_terminal (+ δ_constraint) | union of the families (§2, §6) |

@@ -1250,6 +1250,20 @@ properties:
                 type: integer
                 minimum: 0
                 description: "Replicated center-point runs, giving a pure-error estimate for the lack-of-fit test. Default: 0."
+              multiplicity:
+                type: string
+                enum: [holm, per_test]
+                description: >
+                  #321 P4: how the screen's main-effect drops are controlled.
+                  ``holm`` (default): Holm's step-down over the m screened
+                  factors' tests (x objectives), family-wise error <=
+                  selection_alpha under any dependence. ``per_test``: each at
+                  selection_alpha, no control (the pre-P4 rule).
+              selection_alpha:
+                type: number
+                exclusiveMinimum: 0
+                maximum: 0.5
+                description: "Level of the screening family (default 0.05). Registered in policy.json states.screen.selection."
           refine:
             type: object
             required: [kind]
