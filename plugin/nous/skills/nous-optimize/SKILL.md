@@ -124,7 +124,7 @@ its value, and the **basis**:
 
 | basis | say |
 |---|---|
-| `certified` | within epsilon of the best configuration in `certificate_scope` (a held-factor slice when `region: slice` — say which), at probability 1 − delta_screen − delta_terminal |
+| `certified` | within epsilon of the best configuration in `certificate_scope` (a held-factor slice when `region: slice` — say which), at probability 1 − delta_screen − delta_terminal (− delta_constraint − delta_feasibility when `report.json` carries them), under the response-class and noise assumptions the guide lists |
 | `terminal_best` | best measured finalist, not certified — give the withheld reasons |
 | `model` / `measured` / `baseline` | a fallback rung — say which and why |
 

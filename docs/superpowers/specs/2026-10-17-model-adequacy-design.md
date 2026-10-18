@@ -118,7 +118,7 @@ Recorded for every fitting stage, on the model matrix as run:
 
 The preview prints the planned D-efficiency of the screen and refine designs.
 Example: a 2² screen with 4 centres has D = 0.595 and VIF 1; a k = 2
-face-centred CCD with 4 centres has D = 0.594 and VIF(A²) = 1.04.
+face-centred CCD with 4 centres has D = 0.408 (corrected by the P8 audit from 0.594; recomputed as |X'X/n|^(1/6), matching the guide's limit 6) and VIF(A²) = 1.04.
 
 ### 2.5 Screen-row reuse with a block term (B4, opt-in)
 

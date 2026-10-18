@@ -139,8 +139,8 @@ says which step catches it. **[static]** = `nous validate campaign`,
   candidate-search cap (about 5+ refinable numeric knobs) the unsearched grid is
   bounded by branch and bound under a Scheffé constant. That is valid, but at 4
   centre points (3 pure-error df) the model bound usually exceeds epsilon.
-  Many-knob campaigns find the optimum (measured: regret 0 on `sparse_knobs`
-  5-8) but report `terminal_best` (`model_bound_above_epsilon`), not
+  Many-knob campaigns find the optimum or come close (measured: true regret at
+  most 0.08 on `sparse_knobs` 5/6/8, 36 campaigns) but report `terminal_best` (`model_bound_above_epsilon`), not
   `certified`. To certify, add centre points, or pin dead knobs and refine the
   few live ones in a later epoch. [live]
 - **A factor that moves the objective by less than 2× the noise is a dead

@@ -463,7 +463,7 @@ does and does not claim.
 | `residual_regret_model` | The model bound's value, at `delta_screen` — carries the registered response-class assumption |
 | `residual_regret_terminal` | The terminal bound's value, at `delta_terminal` — does not depend on the fitted model at all |
 | `epsilon` / `certified` | The indifference width, and whether the terminal bound cleared it |
-| `delta_screen` / `delta_terminal` | The two error budgets: `Pr(wrong global decision) ≤ δ_s + δ_t` |
+| `delta_screen` / `delta_terminal` | The two error budgets: `Pr(certified and wrong) ≤ δ_s + δ_t` (+ `delta_constraint`, `delta_feasibility` when registered), under the assumptions M1-M4 of the certification-soundness spec |
 | `finalists` | The terminal shortlist, carried forward from `confirmation.json` |
 | `known_valid_baseline` | The declared baseline, so the bottom rung is visible even when it was not used |
 | `path` | The states this epoch actually visited, read back from `transitions.jsonl` |

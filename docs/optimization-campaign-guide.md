@@ -2667,11 +2667,14 @@ not a rung at all.
 - `residual_regret_model` — the **model bound**, a simultaneous one-sided
   upper bound on how much better any challenger could still be *under the
   registered response class*, at `delta_screen`. Method
-  `bonferroni_one_sided_t`. It carries the response-model assumption.
+  `bonferroni_one_sided_t` or `scheffe_one_sided`, whichever constant is
+  smaller (below). It carries the response-model assumption.
 - `residual_regret_terminal` — the **terminal bound**, computed from the
   fresh finalist measurements only, at `delta_terminal`. Method
-  `bonferroni_one_sided_t_paired` under common random numbers, else
-  `bonferroni_one_sided_welch_t`. It does not depend on the fitted model at
+  `bonferroni_max_t_paired_sign_flip` under common random numbers, else
+  `bonferroni_max_welch_bootstrap_t` (the robust family, limit 1 below; a
+  policy compiled before #321 P3 records `bonferroni_one_sided_t_paired` /
+  `bonferroni_one_sided_welch_t`). It does not depend on the fitted model at
   all.
 
 **A certificate needs an adequate model behind the shortlist (INV-SEM17).**
@@ -2685,9 +2688,12 @@ measured leaders and a rejected ranking, so nothing supports that premise:
 the campaign reports `terminal_best` with `certification_withheld:
 ["model_inadequate"]` and still reports the within-shortlist bound. The cost
 is honest and bounded: on a surface the response class does describe, the
-checks falsely reject at about their alpha, and those campaigns lose a
-certificate they would have earned (measured after WP-B: the validation check
-rejects a smooth surface 1-3 times in 40; see the model-adequacy spec). If
+checks falsely reject at about their alpha EACH, and those campaigns lose a
+certificate they would have earned. Under the default per-test veto, lack of
+fit or the validation check rejects a true quadratic on a k = 2 composite in
+0.068-0.072 of designs (3 x 4000), and the verdict is sticky over every fitting
+stage, so an epoch's false-rejection rate is higher still (model adequacy limit
+3). If
 your factor is geometric, `scale: log` is usually what makes the model
 adequate.
 
@@ -2707,7 +2713,8 @@ With a declared constraint that has a violating side (`<`, `<=`, `>`, `>=`,
 no `when`), constraint models may drop candidates they predict confidently
 infeasible. Wrongly dropping the true constrained optimum is a third,
 separate risk, so the statement becomes `1 − delta_screen − delta_terminal −
-delta_constraint`. `optimization.policy.delta_constraint` sets it (default:
+delta_constraint` (and `− delta_feasibility` when a `mean` or `chance`
+constraint is declared; see "Constraint semantics" below). `optimization.policy.delta_constraint` sets it (default:
 `delta_screen`, Bonferroni over the modelled constraints); `report.json`
 records it as `delta_constraint`, and `error_budget` sums it.
 
@@ -2779,8 +2786,8 @@ to 1 (every fitting stage searched; WP-B oracle, 288 campaigns): 0 → 77
 certificates, 0 false. Cost: well under a second at 4 knobs, about 5 s at 6 knobs
 (converges), and up to about 10 s per fitting stage at 8-16 knobs, where it
 does not converge and the bound is the valid looser one. Many-knob campaigns are no longer vetoed. They still usually withhold
-on width (`model_bound_above_epsilon`; `sparse_knobs` 5-8: R_model 0.76 against
-ε 0.50 at 3 pure-error df). The remedy is more centre points.
+on width (`model_bound_above_epsilon` in 32 of 36 `sparse_knobs` 5/6/8
+campaigns at 3 pure-error df, true regret at most 0.08). The remedy is more centre points.
 - `model_recommendation_not_compared` / `model_recommendation_infeasible`:
   the fitted argmax was not measured admissibly in the final round, so the
   model bound cannot be linked to the winner.
@@ -3012,15 +3019,17 @@ as a mismatch. A revised design is a new epoch: resume recompiles one.
 
 `error_budget` gives the family-wise figure. Each epoch spends
 `delta_screen + delta_terminal` (+ `delta_constraint` when constraint-model
-exclusion is registered), and every epoch after the first was compiled
+exclusion is registered, + `delta_feasibility` when a `mean` or `chance`
+constraint is), and every epoch after the first was compiled
 after the earlier epochs' data were seen. `cumulative` is therefore the union
 bound over every epoch on the work dir, and `report.md` prints it beside the
 per-epoch deltas. Read it with three qualifications:
 
 - It is valid only under each epoch's own response-model assumptions. It does
-  not cover misspecification. Before model adequacy (WP-B) the benchmark's
-  non-quadratic family showed 22 of 22 false certificates at a nominal 0.10;
-  WP-B's validation check withholds those (0 of 48 after), but the bound is
+  not cover misspecification. History, not current behaviour: before
+  model adequacy (WP-B) the benchmark's non-quadratic family showed 22 of 22
+  false certificates at a nominal 0.10. The current checks withhold every one
+  of them (0 certificates of 48 in the regenerated benchmark), but the bound is
   still a statement CONDITIONAL on the response class the checks did not reject.
 - An earlier epoch's deltas are recovered by recompiling its registered campaign
   with the current Nous (`deltas_from` says which).
@@ -3113,9 +3122,12 @@ What a certificate does NOT cover (spec
 2026-10-17-certification-soundness.md §7):
 
 1. **Small-n noise (A5, #321 P3).** The terminal bound is now, per
-   challenger, the larger of the t bound and a robust one: the exact
-   sign-flip bound (Hartigan 1969) on paired differences under CRN, the
-   bootstrap-t (Hall 1988) otherwise. Two vetoes sit beside it. Confirm
+   challenger, the larger of the t bound and a robust one: the sign-flip
+   bound (Hartigan 1969) on paired differences under CRN, exact when the
+   differences are symmetric about their centre (the skewness pretest below is
+   the guard on that assumption, and it is approximate under CRN), and the
+   bootstrap-t (Hall 1988) otherwise, which is second-order accurate, not
+   exact. Two vetoes sit beside it. Confirm
    withholds `replicates_below_floor` below the registered replicate floor
    (the smallest n at which the sign-flip bound exists at the per-look,
    per-challenger level: 6 at the defaults, 7 with a declared constraint).
