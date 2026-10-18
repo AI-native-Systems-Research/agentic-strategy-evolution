@@ -51,7 +51,7 @@ def test_plan_next_chooses_stop_on_a_converged_campaign(converged):
     assert live and all(o["score"] <= d["stopping"]["threshold_per_run"] for o in live)
     assert d["tokens"] == 0
     assert d["utility"]["name"] == "expected_improvement_per_run"
-    assert "LOWER bound" in d["utility"]["computed_as"]
+    assert "TRUE lower bound" in d["utility"]["computed_as"]
 
 
 def test_plan_next_widens_the_edge_on_a_boundary_optimum_campaign(boundary):
@@ -159,7 +159,8 @@ def test_a_multi_objective_campaign_scores_ehvi_in_one_frame(tmp_path):
     d, _ = _decision(res)
     assert d["utility"]["name"] == "expected_hypervolume_improvement_per_run"
     scored = [o for o in d["options"] if o.get("utility", {}).get("value") is not None]
-    assert scored and all(o["utility"]["ehvi_method"] == "exact_2d_strip_decomposition"
+    assert scored and all("monte_carlo" in o["utility"]["method"]
+                          and o["utility"]["seed"] and o["utility"]["samples"]
                           for o in scored)
     rec = next((o for o in d["options"] if o["id"] == "recombination"), None)
     if rec is not None and rec.get("allocation") and not rec["allocation"]["declined"]:
@@ -344,14 +345,95 @@ def test_an_inadequate_model_offers_the_bo_block_as_a_model_free_alternative(tmp
     assert dd["chosen"] == "bo_block" and dd["override"]["scored_choice"] == "stop"
 
 
-def test_every_move_is_scored_net_of_the_do_nothing_baseline(converged):
-    """Without the baseline, the incumbent's own posterior uncertainty (EI at
-    the measured best ~ 0.4 se) would make every move look worth something."""
-    d, _ = _decision(converged)
-    base = d["stopping"]["baseline_bound"]
-    assert base > 0
-    for o in d["options"]:
-        u = o.get("utility") or {}
-        if u.get("region_bound") is not None:
-            assert u["baseline_bound"] == base
-            assert u["value"] == pytest.approx(max(u["region_bound"] - base, 0.0))
+def _iid_fit(n_measured: int, cand_mean: float):
+    """A fit whose posterior makes the n measured points i.i.d. N(0, 1) and
+    the candidate an independent N(cand_mean, 1): one indicator column per
+    point, coefficient variance 1, intercept 0 with no variance, and a huge
+    df so the multivariate t is Gaussian."""
+    from orchestrator.optimize.effects import Effect, Fit
+
+    p = n_measured + 1
+    effs = tuple(Effect(label=f"z{i}", terms=(f"z{i}",), estimate=(cand_mean if i == n_measured
+                                                                    else 0.0), se=1.0)
+                 for i in range(p))
+    cov = [[0.0] * (p + 1) for _ in range(p + 1)]
+    for i in range(1, p + 1):
+        cov[i][i] = 1.0
+    fit = Fit(intercept=0.0, effects=effs, n_runs=10 ** 6, pure_error_var=1.0,
+              pure_error_df=10 ** 6, term_terms=((),) + tuple((f"z{i}",) for i in range(p)),
+              covariance=tuple(tuple(r) for r in cov))
+    pts = [{f"z{j}": (1.0 if j == i else 0.0) for j in range(p)} for i in range(p)]
+    return fit, pts[:n_measured], pts[n_measured:]
+
+
+def test_the_score_is_a_true_lower_bound_on_the_increment():
+    """The reviewer's counterexample (H1): 100 measured i.i.d. N(0, 1) points,
+    tau = 0, and a region adding one x ~ N(0.5, 1). The true increment
+    E[max(M, X, 0)] - E[max(M, 0)] is about 0.014. The old score
+    max_R EI - max_M EI was 0.299 (a difference of two lower bounds); the
+    joint bound must not exceed the true increment."""
+    import random as _r
+
+    from scipy.stats import norm
+
+    from orchestrator.optimize import allocate
+
+    # the true increment, independently (a large plain Monte Carlo)
+    rng = _r.Random(1)
+    n, tot = 100_000, 0.0
+    for _ in range(n):
+        m = max(max(rng.gauss(0, 1) for _ in range(100)), 0.0)
+        tot += max(rng.gauss(0.5, 1) - m, 0.0)
+    true_inc = tot / n
+    assert 0.005 < true_inc < 0.03
+    fit, M, X = _iid_fit(100, 0.5)
+    jb = allocate.joint_increment_bound(
+        fits={"m": fit}, objectives=[{"metric": "m", "direction": "maximize"}],
+        measured_coded=M, cand_coded=X, tau=0.0, samples=4000)
+    assert jb["value"] <= true_inc + 0.01, jb["value"]
+    # the old score, for the record: EI(x) - max_m EI(m) over tau = 0
+    old = (0.5 * norm.cdf(0.5) + norm.pdf(0.5)) - norm.pdf(0.0)
+    assert old > 0.25 and jb["value"] < old / 10
+    assert "seed=" in jb["method"] and jb["samples"] == 4000
+
+
+def test_the_joint_bound_matches_the_one_point_gaussian_case():
+    """With no measured points and tau fixed, the bound is the plain EI."""
+    from scipy.stats import norm
+
+    from orchestrator.optimize import allocate
+
+    fit, _M, X = _iid_fit(0, 0.3)
+    jb = allocate.joint_increment_bound(
+        fits={"m": fit}, objectives=[{"metric": "m", "direction": "maximize"}],
+        measured_coded=[], cand_coded=X, tau=0.0, samples=20000)
+    assert jb["value"] == pytest.approx(0.3 * norm.cdf(0.3) + norm.pdf(0.3), rel=0.03)
+
+
+def test_a_joint_bound_past_the_work_cap_declines(monkeypatch):
+    from orchestrator.optimize import allocate
+
+    fit, M, X = _iid_fit(3, 0.0)
+    monkeypatch.setattr(allocate, "JOINT_WORK_CAP", 10)
+    jb = allocate.joint_increment_bound(
+        fits={"m": fit}, objectives=[{"metric": "m", "direction": "maximize"}],
+        measured_coded=M, cand_coded=X, samples=100)
+    assert jb["value"] is None and jb["declined"] == "joint_work_too_large"
+    assert "joint_work_too_large" in allocate.DECLINE_REASONS
+
+
+def test_the_planner_scores_the_counterexample_by_the_joint_bound(monkeypatch):
+    """Through planner._value (the score plan-next records): on the H1
+    counterexample it must be at most the true increment (~0.014). At
+    60f909e it was max_R EI - max_M EI = 0.299. Levels ARE the fit's
+    coordinates here (coded_of patched to the identity)."""
+    from orchestrator.optimize import allocate
+
+    monkeypatch.setattr(allocate, "coded_of", lambda lv, **_k: dict(lv))
+    fit, M, X = _iid_fit(100, 0.5)
+    ep = {"objectives": [{"metric": "m", "direction": "maximize"}], "fits": {"m": fit},
+          "fitted_ids": [], "factors": [], "held_fixed": {}, "model_adequate": True,
+          "measured": [{"levels": c, "mean": {}} for c in M]}
+    v = planner._value(ep, [(c, c) for c in X], None)
+    assert v["value"] is not None and v["value"] < 0.03, v
+    assert v["marginal_bound_not_used"] > 0.25        # what the old score would have used

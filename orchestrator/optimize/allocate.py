@@ -628,3 +628,155 @@ def allocate(*, front_points: list[dict], preferred: dict, fits: dict,
                   "pool_sources": {"front_recombination": len(rec_pool),
                                    "predicted_front": len(extra), "bo_proposal": len(bo)}}
     return out
+
+
+# ── the joint posterior: increments over the RANDOM measured incumbent ──────
+#
+# WP-D review H1. ``max_R EI - max_M EI`` is a difference of two lower bounds
+# and bounds nothing. What bounds the increment of ADDING a region R to the
+# measured set M is, pointwise in the true f,
+#
+#     max(tau, max_M f, max_R f) - max(tau, max_M f)
+#         >= (f(x) - max(tau, max_M f))^+         for every x in R,
+#
+# so ``max_{x in R} E[(f(x) - max(tau, max_M f))^+]`` is a TRUE lower bound
+# on the expected increment, under the JOINT predictive of (f(M), f(x)).
+# The multi-objective analogue is ``max_x E[HVI(f(x) | front(f(M)))]``,
+# because HV(P + R) - HV(P) >= HV(P + {x}) - HV(P) for every x in R.
+#
+# The joint predictive is the fitted linear model's coefficient posterior,
+# beta ~ yhat-coefficients + L z * sqrt(nu / chi2_nu) (a multivariate t with
+# the pure-error df: the flat-prior posterior when sigma^2 is estimated), with
+# L the Cholesky factor of s^2 (X'X)^-1 (or of the per-term diagonal when the
+# fit carries no covariance, which is exact for orthogonal two-level columns).
+# Every f(m), f(x) is then phi' beta for the SAME draw, so their correlation
+# is the model's. Monte Carlo with ``JOINT_SAMPLES`` draws, seed
+# ``JOINT_SEED``, common random numbers across candidates and moves.
+
+#: Joint-posterior draws per objective, and their seed (fixed constants).
+JOINT_SAMPLES = 2000
+JOINT_SEED = 20261018
+#: Bound on (candidates + measured) x JOINT_SAMPLES x objectives evaluated per
+#: call; past it the call declines (``joint_work_too_large``).
+JOINT_WORK_CAP = 20_000_000
+#: Candidates carried into the joint stage per call, preselected by marginal EI.
+#: A max over a SUBSET of R is still a lower bound (looser), and is recorded.
+JOINT_PRESELECT = 64
+#: Multi-objective: fewer draws and candidates (an exact HV per draw and
+#: candidate). Recorded in every result's ``method``.
+JOINT_SAMPLES_MO = 500
+JOINT_PRESELECT_MO = 16
+
+DECLINE_REASONS.update({
+    "joint_work_too_large": f"(candidates + measured) x JOINT_SAMPLES x objectives "
+                            f"exceeds JOINT_WORK_CAP={JOINT_WORK_CAP:,}",
+})
+
+
+def _cholesky(a):
+    n = len(a)
+    L = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1):
+            s = a[i][j] - sum(L[i][k] * L[j][k] for k in range(j))
+            if i == j:
+                L[i][i] = math.sqrt(max(s, 0.0))
+            else:
+                L[i][j] = s / L[j][j] if L[j][j] > 0 else 0.0
+    return L
+
+
+def _coef_posterior(fit):
+    """``(mean, L, terms)`` of the coefficient vector (intercept first)."""
+    s2 = float(fit.pure_error_var or 0.0)
+    effs = list(fit.effects) + list(fit.quadratic)
+    if fit.covariance is not None:
+        terms = [tuple(t) for t in fit.term_terms]
+        est = {tuple(e.terms): e.estimate for e in effs}
+        mean = [float(fit.intercept)] + [float(est[t]) for t in terms[1:]]
+        cov = [[s2 * float(x) for x in row] for row in fit.covariance]
+    else:
+        terms = [()] + [tuple(e.terms) for e in effs]
+        mean = [float(fit.intercept)] + [float(e.estimate) for e in effs]
+        var = [s2 / max(int(fit.n_runs), 1)] + [float(e.se or 0.0) ** 2 for e in effs]
+        cov = [[var[i] if i == j else 0.0 for j in range(len(var))] for i in range(len(var))]
+    return mean, _cholesky(cov), terms
+
+
+def joint_draws(fit, coded_points: list[dict], *, samples: int = JOINT_SAMPLES,
+                seed: int = JOINT_SEED, sign: float = 1.0) -> list[list[float]]:
+    """``samples`` joint posterior draws of ``sign * f`` at every point:
+    ``out[d][i]``. Multivariate t on the pure-error df, seeded."""
+    mean, L, terms = _coef_posterior(fit)
+    nu = float(fit.pure_error_df)
+    rows = [[math.prod(float(c[t]) for t in ts) for ts in terms] for c in coded_points]
+    rng = random.Random(f"{seed}")
+    p = len(mean)
+    out = []
+    for _ in range(int(samples)):
+        z = [rng.gauss(0.0, 1.0) for _ in range(p)]
+        w = math.sqrt(nu / rng.gammavariate(nu / 2.0, 2.0)) if nu > 0 else 1.0
+        beta = [mean[i] + w * sum(L[i][k] * z[k] for k in range(i + 1)) for i in range(p)]
+        out.append([sign * sum(r[i] * beta[i] for i in range(p)) for r in rows])
+    return out
+
+
+def joint_increment_bound(*, fits: dict, objectives: list[dict], measured_coded: list[dict],
+                          cand_coded: list[dict], tau=None, frame=None,
+                          samples: int = JOINT_SAMPLES, seed: int = JOINT_SEED) -> dict:
+    """``{"value", "index", "per_candidate", "method"}``: the max over the
+    candidates of the expected increment over the RANDOM measured incumbent
+    (one objective) or the random measured front (several), see above.
+
+    ``tau`` (one objective, larger-is-better units) is a fixed floor; the
+    increment is over ``max(tau, max_M f)``. Declines (``value`` None and a
+    ``declined`` reason) when the work bound is exceeded."""
+    K = len(objectives)
+    if K > 3:
+        return {"value": None, "declined": "too_many_objectives"}
+    if not cand_coded:
+        return {"value": None, "declined": "empty_pool"}
+    work = (len(cand_coded) + len(measured_coded)) * int(samples) * K
+    if work > JOINT_WORK_CAP:
+        return {"value": None, "declined": "joint_work_too_large", "work": work}
+    pts = list(measured_coded) + list(cand_coded)
+    nM = len(measured_coded)
+    draws = {}
+    for k, o in enumerate(objectives):
+        # A distinct, recorded stream per objective (independent objectives).
+        draws[o["metric"]] = joint_draws(fits[o["metric"]], pts, samples=samples,
+                                         seed=seed + k, sign=_sign(o["direction"]))
+    per = [0.0] * len(cand_coded)
+    if K == 1:
+        D = draws[objectives[0]["metric"]]
+        for row in D:
+            inc = max(row[:nM]) if nM else -math.inf
+            if tau is not None:
+                inc = max(inc, tau)
+            for j in range(len(cand_coded)):
+                per[j] += max(row[nM + j] - inc, 0.0)
+        how = (f"monte_carlo(n={samples},seed={seed}): joint multivariate-t "
+               f"coefficient posterior, common random numbers")
+    else:
+        from orchestrator.optimize import pareto
+
+        def z(metric, v):
+            return (v - _sign(next(o["direction"] for o in objectives
+                                   if o["metric"] == metric)) * frame.worst[metric]) \
+                / frame.range[metric]
+        mets = [o["metric"] for o in objectives]
+        ref = [0.0] * K
+        for d in range(int(samples)):
+            M = [[z(m, draws[m][d][i]) for m in mets] for i in range(nM)]
+            front = [M[i] for i in pareto.nondominated_indices(M)] if M else []
+            hv0 = pareto.hypervolume(front, ref)[0]
+            for j in range(len(cand_coded)):
+                y = [z(m, draws[m][d][nM + j]) for m in mets]
+                per[j] += max(pareto.hypervolume(front + [y], ref)[0] - hv0, 0.0)
+        how = (f"monte_carlo(n={samples},seed={seed}+k per objective): independent "
+               f"joint multivariate-t coefficient posteriors; each draw's hypervolume "
+               f"exact ({'2-D sweep' if K == 2 else 'slicing'})")
+    per = [v / int(samples) for v in per]
+    j = max(range(len(per)), key=lambda i: per[i])
+    return {"value": per[j], "index": j, "per_candidate": per, "method": how,
+            "samples": int(samples), "seed": int(seed), "work": work}

@@ -3071,23 +3071,33 @@ It writes `plan_next/epoch-<e>/`:
 - `replicate`: re-run the same region (offered only when the model is inadequate).
 - `stop`.
 
-**The utility, stated.** For a single objective a move is scored by
-`max_{x in region} EI(x) / runs`. EI is the expected improvement over the
-incumbent: the best posterior mean among this epoch's measured
-configurations, under the fitted model's predictive `yhat + se * t_nu`.
-`runs` is the next epoch's worst-case run count from the design preview. The
-maximum EI over a region is a lower bound on the region's expected
-improvement, whatever the dependence between points. Each score is NET of
-the do-nothing baseline, the same bound over the configurations already
-measured (what `stop` keeps). Without that, the incumbent's own posterior
-uncertainty would count as the value of every move. The bound assumes the
-next epoch's design finds that point, which is optimistic, and the file says
-so. Comparing single-point bounds also leans the ranking toward small, cheap
-moves; that is stated too. For several objectives the score is the same with
-EHVI: exact in 2-D, seeded Monte Carlo for three, in one normalised frame;
-more than three objectives decline (`too_many_objectives`). A widened
-axis is scored past its fitted edge out to |coded| 2, and the option is
-marked `extrapolated: true`.
+**The utility, stated.** A move is worth the expected increment of adding
+its region R to the configurations M already measured:
+`E[max(max_M f, max_R f) - max_M f]` for one objective, and the expected
+hypervolume increment for several. f is the true mean under the fitted
+model's JOINT posterior (a multivariate t on the pure-error df), so the
+measured points and the candidates are correlated as the model says.
+Pointwise, the increment is at least `(f(x) - max_M f)^+` for any single x
+in R. The score `max_x E[(f(x) - max_M f)^+] / runs` is therefore a TRUE
+lower bound on the increment per run; for several objectives the analogue is
+the expected hypervolume gain of x over the random measured front. `runs` is
+the next epoch's worst-case run count from the design preview.
+
+How it is computed:
+- x ranges over the region's top candidates by marginal score. A subset
+  gives a looser bound, but still a bound.
+- The expectation is a seeded Monte Carlo; the sample count and seed are
+  recorded on every option.
+- The work is capped (`allocate.JOINT_WORK_CAP`); past it the move declines
+  with `joint_work_too_large`.
+- More than three objectives decline (`too_many_objectives`).
+- A widened axis is scored past its fitted edge out to |coded| 2, and the
+  option is marked `extrapolated: true`.
+
+Two optimisms are stated in the file. The bound credits the region with its
+best single point and assumes the next design finds it. And because
+single-point bounds of different tightness are compared, the ranking leans
+toward small, cheap moves.
 
 **Stop.** `stop` is chosen when no feasible move's score per run exceeds the
 threshold. The threshold is `optimization.planner.stop_value_per_run`

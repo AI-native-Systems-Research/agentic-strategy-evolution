@@ -13,29 +13,37 @@ override (``--choose X --reason R``) is recorded in the next epoch's
 provenance (``epoch_end.planned-<e>.json`` -> ``report.json``
 ``provenance.planner``).
 
-THE UTILITY (single objective)
-------------------------------
-``U(move) = E[ max(f(x*) - tau, 0) ]``: the expected improvement in the
-objective's true mean at the best configuration of the move's region, over
-the incumbent ``tau``. The incumbent is the best posterior mean over this
-epoch's measured configurations. The belief is the fitted model's predictive
-``f(x) ~ yhat + se T_nu`` (``allocate``). The SCORE is the lower bound
-``max_{x in R} EI(x) <= E[max_{x in R} (f(x) - tau)^+]``, which holds for ANY
-dependence between points, MINUS the same bound over the configurations
-already measured (the do-nothing baseline that ``stop`` keeps: without it the
-incumbent's own posterior uncertainty, about 0.4 se, would count as the value
-of every move), floored at 0 and divided by the move's cost: the next epoch's
-worst-case run count (``preview.build_preview(...).max_runs``). The bound is
-attained only if the next epoch's design finds that best point. That
-assumption is optimistic, and it is recorded.
+THE UTILITY AND ITS BOUND (WP-D review H1)
+-------------------------------------------
+``U(move) = E[ max(tau_R, ...) ]`` is defined through the increment of
+adding the move's region R to the measured set M:
 
-THE UTILITY (multi-objective)
------------------------------
-``U(move) = max_{x in R} EHVI(x)``, the expected hypervolume improvement of
-the best single point of the region over the predicted front at the measured
-configurations, in one normalised frame (``allocate``, exact in 2-D). It is a
-lower bound on the region's batch EHVI because hypervolume is monotone in the
-point set. It is divided by the same cost.
+    single objective:  Delta = max(max_M f, max_R f) - max_M f
+    several:           Delta = HV(front(f(M ∪ R))) - HV(front(f(M)))
+
+Here f is the TRUE mean response, a random function under the belief. The
+belief is the fitted model's JOINT posterior: coefficients ~ multivariate t
+on the pure-error df, so f(M) and f(x) are correlated as the model says.
+Pointwise, ``Delta >= (f(x) - max_M f)^+`` (resp. ``HV(front(f(M)) + f(x)) -
+HV(front(f(M)))``) for EVERY x in R. The SCORE
+
+    max_{x in S} E[(f(x) - max_M f)^+]  /  runs    (several: E[HVI])
+
+is therefore a TRUE LOWER BOUND on E[Delta] / runs, for any S ⊆ R. ``S`` is
+the top ``allocate.JOINT_PRESELECT`` (``_MO``) candidates by marginal score.
+A subset is looser but still a bound, and its size is recorded. The
+expectation is a Monte Carlo with ``allocate.JOINT_SAMPLES`` (``_MO``)
+draws and seed ``allocate.JOINT_SEED``, both recorded on every option.
+Common random numbers across candidates and moves mean differences between
+moves are not Monte Carlo noise of independent runs. ``runs`` is the next
+epoch's worst-case run count (``preview.build_preview(...).max_runs``). The
+bound credits the region only with its best single point and assumes the
+next epoch's design finds that point. That optimism is recorded.
+
+(The earlier score, ``max_R EI - max_M EI``, was a difference of two lower
+bounds and bounded nothing. On 100 i.i.d. N(0, 1) measured points with
+tau = 0 and one N(0.5, 1) candidate, it gave 0.299 against a true increment
+of 0.014. ``tests/test_optimize_planner.py`` keeps that case.)
 
 STOP
 ----
@@ -703,9 +711,10 @@ def _frame(ep: dict):
     return pareto.make_frame(objs, rows, eps), eps
 
 
-def _region_bound(ep: dict, cands, frame) -> dict:
-    """``max_{x in cands}`` EI (single objective) or EHVI (several): a lower
-    bound on the expected improvement of the best point of ``cands``."""
+def _region_bound(ep: dict, cands, frame, *, keep_all: bool = False) -> dict:
+    """The MARGINAL score of each candidate (EI over the plug-in incumbent, or
+    marginal EHVI), used ONLY to preselect candidates for the joint bound
+    (``_value``). It is not itself a bound on a move's increment."""
     from orchestrator.optimize import allocate
     from orchestrator.optimize.constraint_models import predicted_with_se
 
@@ -717,26 +726,17 @@ def _region_bound(ep: dict, cands, frame) -> dict:
         fit = ep["fits"][o["metric"]]
         sg = -1.0 if o["direction"] == "minimize" else 1.0
         nu = float(fit.pure_error_df)
-        tau = None
-        for m in ep["measured"]:
-            try:
-                c = allocate.coded_of(m["levels"], fitted_ids=ep["fitted_ids"],
-                                      factors=ep["factors"], held_fixed=ep["held_fixed"])
-            except (ValueError, KeyError):
-                continue
-            v = sg * predicted_with_se(fit, c)[0]
-            tau = v if tau is None or v > tau else tau
-        if tau is None:
+        mc = _measured_coded(ep)
+        if not mc:
             return {"value": None, "reason": "no_measured_incumbent"}
-        best = None
-        for lv, c in cands:
+        tau = max(sg * predicted_with_se(fit, c)[0] for c in mc)
+        per = []
+        for _lv, c in cands:
             y, s = predicted_with_se(fit, c)
-            ei = allocate.expected_improvement(sg * y, s, tau, nu)
-            if best is None or ei > best[0]:
-                best = (ei, lv, y, s)
-        return {"value": best[0], "argmax": best[1], "predicted": best[2], "se": best[3],
-                "incumbent": sg * tau}
-    al = allocate.score([{"levels": lv, "source": "region"} for lv, _c in cands],
+            per.append(allocate.expected_improvement(sg * y, s, tau, nu))
+        return {"value": max(per), "per": per}
+    al = allocate.score([{"levels": lv, "source": "region", "_i": i}
+                         for i, (lv, _c) in enumerate(cands)],
                         fits=ep["fits"], objectives=objs, factors=ep["factors"],
                         fitted_ids=ep["fitted_ids"], held_fixed=ep["held_fixed"],
                         measured=ep["measured"], model_adequate=ep["model_adequate"],
@@ -746,37 +746,55 @@ def _region_bound(ep: dict, cands, frame) -> dict:
                         frame=frame)
     if al.declined:
         return {"value": None, "reason": al.declined}
-    top = al.ranked[0]
-    return {"value": top["ehvi"], "argmax": top["levels"], "predicted": top["predicted"],
-            "ehvi_method": al.method.get("ehvi_method")}
+    by = {allocate._key(r["levels"]): r["ehvi"] for r in al.ranked}
+    per = [by.get(allocate._key(lv), 0.0) for lv, _c in cands]
+    return {"value": max(per), "per": per}
 
 
-def baseline_bound(ep: dict, frame) -> dict:
-    """The DO-NOTHING bound: ``_region_bound`` over the configurations already
-    measured. It is what ``stop`` keeps. Each move is credited only with how
-    far its region's bound exceeds it, so the incumbent's own uncertainty is
-    never counted as the value of a new epoch (P6a audit round 2, finding 1)."""
+def _measured_coded(ep: dict) -> list[dict]:
     from orchestrator.optimize.allocate import coded_of
 
-    cands = []
+    out = []
     for m in ep["measured"]:
         try:
-            cands.append((m["levels"], coded_of(m["levels"], fitted_ids=ep["fitted_ids"],
-                                                factors=ep["factors"],
-                                                held_fixed=ep["held_fixed"])))
+            out.append(coded_of(m["levels"], fitted_ids=ep["fitted_ids"], factors=ep["factors"],
+                                held_fixed=ep["held_fixed"]))
         except (ValueError, KeyError):
             continue
-    return _region_bound(ep, cands, frame)
+    return out
 
 
-def _value(ep: dict, cands, frame, base: dict) -> dict:
-    """The move's value: its region's bound MINUS the do-nothing bound,
-    floored at zero (see the module docstring)."""
-    v = _region_bound(ep, cands, frame)
-    if v.get("value") is None or base.get("value") is None:
-        return v
-    return {**v, "region_bound": v["value"], "baseline_bound": base["value"],
-            "value": max(v["value"] - base["value"], 0.0)}
+def _value(ep: dict, cands, frame) -> dict:
+    """The move's value: a TRUE lower bound on the expected increment of
+    adding its region to the measured set (WP-D review H1).
+
+    ``max_{x in S} E[(f(x) - max_{m in M} f(m))^+]`` (one objective) or
+    ``max_{x in S} E[HVI(f(x) | front(f(M)))]`` (several), under the JOINT
+    posterior of the fitted model (``allocate.joint_increment_bound``). Here
+    ``S`` is a subset of the region preselected by the marginal score
+    (``_region_bound``): the top ``allocate.JOINT_PRESELECT`` candidates
+    (``JOINT_PRESELECT_MO`` for several objectives). A max over a subset is
+    still a lower bound, only looser."""
+    from orchestrator.optimize import allocate
+
+    marg = _region_bound(ep, cands, frame, keep_all=True)
+    if marg.get("value") is None:
+        return marg
+    mo = len(ep["objectives"]) > 1
+    k = allocate.JOINT_PRESELECT_MO if mo else allocate.JOINT_PRESELECT
+    order = sorted(range(len(cands)), key=lambda i: (-marg["per"][i], i))[:k]
+    sub = [cands[i] for i in order]
+    jb = allocate.joint_increment_bound(
+        fits=ep["fits"], objectives=ep["objectives"], measured_coded=_measured_coded(ep),
+        cand_coded=[c for _l, c in sub], frame=frame,
+        samples=allocate.JOINT_SAMPLES_MO if mo else allocate.JOINT_SAMPLES)
+    if jb.get("value") is None:
+        return {"value": None, "reason": jb["declined"]}
+    lv = sub[jb["index"]][0]
+    return {"value": jb["value"], "argmax": lv, "method": jb["method"],
+            "samples": jb["samples"], "seed": jb["seed"],
+            "preselected": len(sub), "region_size": len(cands),
+            "marginal_bound_not_used": marg["value"]}
 
 
 def _cost(campaign: dict) -> tuple[int | None, str | None]:
@@ -901,7 +919,7 @@ def plan(work_dir: Path) -> dict:
                       "model_free": True})
     seen, options = {}, []
     base_hash = campaign_hash(ep["campaign"])
-    base = baseline_bound(ep, frame) if scorable else {}
+
     cap = REGION_CAP_SO if len(ep["objectives"]) == 1 else REGION_CAP_MO
     for mv in moves:
         c = mv["campaign"]
@@ -943,7 +961,7 @@ def plan(work_dir: Path) -> dict:
                                     pins=mv.get("pins"))
             opt["region"] = grid_rec
             opt["extrapolated"] = mv["max_coded"] > 1.0
-            v = _value(ep, cands, frame, base)
+            v = _value(ep, cands, frame)
             opt["utility"] = v
             opt["score"] = (v["value"] / cost) if v.get("value") is not None and cost else None
             if mv["kind"] == "recombination":
@@ -991,11 +1009,7 @@ def plan(work_dir: Path) -> dict:
                   "held_fixed": ep["held_fixed"], "predictive": ep["predictive"],
                   **({"declined": gate.declined, "detail": gate.detail} if gate else {})},
         "utility": _utility_statement(ep),
-        "stopping": {"threshold_per_run": thr, "rule": thr_rule,
-                     **({"baseline_bound": base.get("value"),
-                         "baseline": "max EI/EHVI over the configurations already measured "
-                                     "(what stop keeps); each move is scored by how far "
-                                     "its region's bound exceeds it"} if scorable else {})},
+        "stopping": {"threshold_per_run": thr, "rule": thr_rule},
         "assumptions": _assumptions(ep),
         "error_budget": bstate,
         **({"bo": bo_prov} if bo_prov is not None else {}),
@@ -1017,24 +1031,27 @@ def _utility_statement(ep: dict) -> dict:
     if len(ep["objectives"]) == 1:
         o = ep["objectives"][0]
         return {"name": "expected_improvement_per_run",
-                "definition": (f"E[max(f(x*) - tau, 0)] / runs, where f is {o['metric']}'s "
-                               f"true mean ({o['direction']}), x* the best configuration of "
-                               f"the move's region, tau the best posterior mean over this "
-                               f"epoch's measured configurations, and runs the next epoch's "
-                               f"worst-case run count"),
-                "computed_as": "(max_{x in region} EI(x) - max_{x measured} EI(x))^+ / runs: "
-                               "a LOWER bound on the region's expected improvement (valid "
-                               "for any dependence between points), net of the do-nothing "
-                               "baseline",
+                "definition": (f"E[max(max_M f, max_R f) - max_M f] / runs, where f is "
+                               f"{o['metric']}'s true mean ({o['direction']}) under the "
+                               f"fitted model's joint posterior, M this epoch's measured "
+                               f"configurations, R the move's region, and runs the next "
+                               f"epoch's worst-case run count"),
+                "computed_as": "max_{x in S} E[(f(x) - max_{m measured} f(m))^+] / runs "
+                               "under the model's joint posterior (S = the top "
+                               "JOINT_PRESELECT region points by marginal EI): a TRUE lower "
+                               "bound on the expected increment of adding the region to the "
+                               "measured set; seeded Monte Carlo (samples and seed on each "
+                               "option)",
                 "units": f"{o['metric']} per benchmark run"}
     return {"name": "expected_hypervolume_improvement_per_run",
-            "definition": ("E[HV(front + x*) - HV(front)] / runs in the normalised frame "
-                           "(pareto.make_frame), the front being the predicted values at "
-                           "this epoch's measured configurations"),
-            "computed_as": "(max_{x in region} EHVI(x) - max_{x measured} EHVI(x))^+ / "
-                           "runs: a LOWER bound (hypervolume is monotone in the point "
-                           "set), net of the do-nothing baseline; exact 2-D, seeded "
-                           "Monte Carlo for K = 3 (allocate.MC_SAMPLES, allocate.MC_SEED)",
+            "definition": ("E[HV(front(f(M ∪ R))) - HV(front(f(M)))] / runs in the "
+                           "normalised frame (pareto.make_frame), f the true means under the "
+                           "fitted models' joint posteriors"),
+            "computed_as": "max_{x in S} E[HV(front(f(M)) + f(x)) - HV(front(f(M)))] / "
+                           "runs over the RANDOM measured front under the joint "
+                           "posteriors (S = the top JOINT_PRESELECT_MO points by marginal "
+                           "EHVI): a TRUE lower bound on the expected hypervolume "
+                           "increment; seeded Monte Carlo, each draw's hypervolume exact",
             "units": "normalised hypervolume per benchmark run"}
 
 
@@ -1044,9 +1061,9 @@ def _assumptions(ep: dict) -> list[str]:
     return ([f"objective(s) {diag}: predictive se from the per-term diagonal (the fit's "
              f"exact covariance was not recorded); understates se for non-orthogonal "
              f"columns"] if diag else []) + [
-        "the belief about every objective is the current epoch's fitted model's predictive "
-        "f(x) ~ yhat + se T_nu (flat-prior posterior of the linear model; requires "
-        "model_adequate is True, else nothing is scored)",
+        "the belief about every objective is the current epoch's fitted model's JOINT "
+        "coefficient posterior, a multivariate t on the pure-error df (flat-prior posterior "
+        "of the linear model; requires model_adequate is True, else nothing is scored)",
         "the next epoch's design finds the best configuration of its region (optimistic: "
         "the score is the value of reaching it, not the probability of doing so)",
         "a widened axis is scored past its fitted edge out to |coded| <= "
@@ -1061,8 +1078,8 @@ def _assumptions(ep: dict) -> list[str]:
         "larger region's batch value is understated relative to its cost, so the ranking "
         "leans toward small, cheap moves (q-EI / q-EHVI would remove the lean; not "
         "computed)",
-        "every score is net of the do-nothing baseline (the same bound over the "
-        "configurations already measured)",
+        "the region is represented by its top candidates by marginal score; a max over a "
+        "subset is a looser, still valid, lower bound",
         "cost is the next epoch's worst-case run count from the design preview "
         "(every registered branch taken, every confirm round)",
         "the planner chooses only WHERE the next epoch looks; the next epoch is compiled, "
