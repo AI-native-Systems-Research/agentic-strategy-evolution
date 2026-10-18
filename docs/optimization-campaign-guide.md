@@ -3388,19 +3388,28 @@ optimization:
 ```
 
 This registers one extra `confirm -> confirm` round, with accounting
-`allocate round (WP-D D1)`. The round fires at most once, at the round cap,
-when that round did not certify. Each confirm round on disk writes
-`confirmation.json["allocation"]`. That record holds the seats the next round
-will measure and how they were ranked (the pool, method, score and rationale),
-or else the named reason it declined. A multi-objective campaign's gap-fill
-rounds seat them too.
+`allocate round (WP-D D1)`. The allocate rule fires at most once per epoch, at
+the round cap, when that round did not certify. A multi-objective campaign's
+gap-fill rounds below the cap also seat the registered picks, so there
+allocator seats can run in more than one round. Each such round writes
+`confirmation.json["allocation"]` and `runs/iter-N/allocation.json`. The record
+holds the seats the next round will measure and how they were ranked (the pool,
+method, score and rationale), or else the named reason it declined. The seats'
+digest is recorded in the transition row (`allocate_seats_sha256`), and the
+next round refuses to measure seats that no longer match it.
+`allocation.json` is a hashed provenance input. Allocator seats come after
+every carried challenger, gap fill and contested front point, so a model pick
+never displaces a measured rival.
 
 - **When it spends.** Only on an adequate model with a positive expected gain.
   Otherwise it declines with a named reason, and nothing runs:
   `model_inadequate`, `model_adequacy_unknown`, `no_pure_error`,
   `pool_too_large`, `no_seatable_candidate` (every candidate was measured,
   struck off or barred), `no_expected_value` (knowledge gradient or EHVI per
-  run is zero everywhere), and the rest of `DECLINE_REASONS`.
+  run is zero everywhere), `no_free_seat` (the next round's carry-over
+  already fills the shortlist), `allocator_error` (the allocator raised; the
+  measured round is kept), and the rest of `DECLINE_REASONS`. `report.md`
+  names the last decline.
 - **What it claims.** A seated configuration is measured on fresh paired
   replicates like any finalist. Its certificate is the ordinary terminal or
   front certificate. No predicted value enters any bound.

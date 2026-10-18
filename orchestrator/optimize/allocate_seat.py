@@ -14,10 +14,13 @@ rewriting every predicted number leaves every bound unchanged).
 THE BRANCH. ``optimization.design.confirm.allocate: {seats: k}`` (default off).
 When declared, ``policy.compile_policy`` registers one ``confirm -> confirm``
 transition (``policy.ALLOCATE_ACCOUNTING``) guarded by ``allocate_available``,
-``confirm_affordable`` and the round cap. It fires at most once per epoch, AT
-the cap, so it is exactly one extra look, and ``policy.confirm_looks`` and the
-P3 replicate floor (``policy._registered_looks``) charge that look whether or
-not it is taken. Every confirm-stage Bonferroni divisor therefore includes it.
+``confirm_affordable`` and the round cap. The RULE fires at most once per
+epoch, AT the cap, so it is exactly one extra look, and ``policy.confirm_looks``
+and the P3 replicate floor (``policy._registered_looks``) charge that look
+whether or not it is taken. Every confirm-stage Bonferroni divisor therefore
+includes it. Multi-objective campaigns also seat registered picks in their
+gap-fill rounds below the cap (already charged looks), so there allocator
+seats can be measured in more than one round of the epoch.
 
 WHAT IS SEATED. At the end of every confirm round (until the branch is spent)
 ``plan`` runs ``allocate.allocate`` on what is on disk: the round's measured
@@ -25,12 +28,15 @@ admissible finalists (single objective) or the measured non-dominated front
 (multi-objective) as the recombination basis, the round's winner / preferred
 point as the anchor, the fitting stage's model and its ranked candidates or
 predicted front, and (when ``planner.bo`` is compiled) BO proposals. The top
-``seats`` ranked candidates that can be seated (not measured, not measured
-inadmissible, not naming a barred level) are written into that round's
-``confirmation.json["allocation"]``, and ``allocate_available`` is true exactly
-when there is at least one. The allocate round then reads those seats from the
-record -- it does not recompute them -- so what was registered before the
-transition is what runs.
+``seats`` ranked candidates (capped at the free seats left by the next round's
+carry-over) that can be seated (not measured, not measured inadmissible, not
+naming a barred level, positive score) are written into that round's
+``confirmation.json["allocation"]`` and ``allocation.json`` (a hashed
+provenance input), their digest goes into the transition's observations
+(``allocate_seats_sha256``), and ``allocate_available`` is true exactly when
+there is at least one. The next round reads the seats from the record -- it
+does not recompute them -- and verifies the digest first, so what was
+registered before the transition is what runs.
 
 DECLINES ARE NAMED. ``allocate.DECLINE_REASONS`` (the model gate first:
 ``model_inadequate``, ``model_adequacy_unknown``, ...) plus the reasons this
@@ -56,6 +62,8 @@ SEAT_DECLINE_REASONS = {
                     "the fitted argmax, every rival still in contention, gap fills) "
                     "already fills shortlist_size, so an allocate round would seat "
                     "no allocator pick; it is not spent",
+    "allocator_error": "the allocator raised an exception; the measured round is "
+                       "kept and nothing is seated (the exception is in detail)",
     "no_expected_value": "every seatable candidate scores zero (knowledge gradient "
                          "/ EHVI per run): the model expects no gain from measuring "
                          "it, so the round is not spent",
@@ -259,6 +267,26 @@ def _seatable(work_dir, levels: dict, measured_keys: set) -> bool:
 
 
 def plan(pol: dict, work_dir, factors, conf: dict, rec: dict | None) -> dict:
+    """``_plan`` with any exception turned into the named decline
+    ``allocator_error`` (review L5): a measured confirm round is never lost to
+    a failure of the allocation tool, which only proposes."""
+    try:
+        return _plan(pol, work_dir, factors, conf, rec)
+    except Exception as exc:  # noqa: BLE001 -- recorded, never swallowed silently
+        from orchestrator.optimize.stage_runner import OptimizationGateFailed
+
+        if isinstance(exc, OptimizationGateFailed):
+            raise
+        logger.warning("confirm: the allocator raised %s: %s; declining the "
+                       "allocate branch (allocator_error)", type(exc).__name__, exc)
+        return {"seats_declared": seats_declared(pol), "seats": [],
+                "declined": "allocator_error",
+                "detail": f"{type(exc).__name__}: {exc}"[:500],
+                "selection": "on the fitted model's predictions (allocate.py); the "
+                             "claim about any seat rests on its fresh replicates only"}
+
+
+def _plan(pol: dict, work_dir, factors, conf: dict, rec: dict | None) -> dict:
     """The allocation record for the round ``conf`` describes (its summary,
     multi-objective ``pareto`` block included). ``record["seats"]`` is what
     the allocate round will measure, ``[]`` on any decline (named)."""

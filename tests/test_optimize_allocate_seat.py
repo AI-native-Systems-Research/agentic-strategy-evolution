@@ -329,6 +329,7 @@ def test_every_decline_is_named(name, seeds, tmp_path):
     from orchestrator.optimize.synthetic import NON_QUADRATIC
 
     s = (SURFACES.get(name) or NON_QUADRATIC[name])()
+    records = 0
     for seed in seeds:
         r = run_synthetic_campaign(s, seed=seed, parent_dir=tmp_path / str(seed),
                                    campaign_overrides=_with_allocate(s))
@@ -336,18 +337,23 @@ def test_every_decline_is_named(name, seeds, tmp_path):
             a = c.get("allocation")
             if a is None:
                 continue
+            records += 1
             if a["declined"] is None:
                 assert a["seats"]
             else:
                 assert a["declined"] in NAMED and a["detail"] and a["seats"] == []
+    assert records >= 1, f"{name}: no allocation record was written on any seed"
 
 
 # ── allocation cannot leak into inference ───────────────────────────────────
 
 def test_rewriting_every_predicted_number_leaves_every_bound_unchanged(tmp_path, monkeypatch):
-    """Same seats, scrambled predictions / scores / rationales in the record:
-    every bound, certificate and recommendation on disk is identical. Only the
-    seats' fresh replicates reach inference."""
+    """Same seats, every SCORE and RATIONALE in the allocation record (ranked
+    candidates and seats) and the whole ``method`` block scrambled: every
+    bound, certificate and recommendation on disk is identical, over the same
+    number of rounds, with the allocate rule firing in both arms. Only the
+    seats' fresh replicates reach inference. (The seats' levels are kept: a
+    different seat is a different experiment, not a leak.)"""
     s = SURFACES["saddle"]()
     a = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path / "a",
                                campaign_overrides=_with_allocate(s))
@@ -367,6 +373,9 @@ def test_rewriting_every_predicted_number_leaves_every_bound_unchanged(tmp_path,
     monkeypatch.setattr(allocate_seat, "plan", scrambled)
     b = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path / "b",
                                campaign_overrides=_with_allocate(s))
+    assert any(t["rule"].get("accounting") == ALLOCATE_ACCOUNTING
+               for t in _transitions(b.work_dir))
+    assert len(_confirmations(a.work_dir)) == len(_confirmations(b.work_dir)) >= 2
     keys = ("certified", "residual_regret_terminal", "residual_regret_model",
             "epsilon", "recommendation", "certification_withheld", "global_bound")
     assert {k: a.report.get(k) for k in keys} == {k: b.report.get(k) for k in keys}
@@ -589,3 +598,24 @@ def test_mo_allocated_seats_never_displace_gap_fills_or_contested_front_points(t
     assert tgt["levels"] in seated, whys
     k = whys.index("front point still possibly dominated")
     assert all(not w.startswith("allocate:") for w in whys[:k]), whys
+
+
+def test_an_allocator_crash_is_a_named_decline_not_a_lost_round(tmp_path, monkeypatch):
+    """Review L5: an exception inside the allocator is recorded as
+    ``allocator_error`` and the measured round is kept (confirmation.json and
+    the report are written; the branch does not fire)."""
+    from orchestrator.optimize import allocate as alloc_mod
+
+    def boom(**kw):
+        raise RuntimeError("synthetic allocator failure")
+
+    monkeypatch.setattr(alloc_mod, "allocate", boom)
+    s = SURFACES["saddle"]()
+    r = run_synthetic_campaign(s, seed=1, parent_dir=tmp_path,
+                               campaign_overrides=_with_allocate(s))
+    a = _confirmations(r.work_dir)[0]["allocation"]
+    assert a["declined"] == "allocator_error" and "synthetic allocator failure" in a["detail"]
+    assert a["seats"] == [] and "allocator_error" in NAMED
+    assert r.report.get("recommendation")
+    assert not any(t["rule"].get("accounting") == ALLOCATE_ACCOUNTING
+                   for t in _transitions(r.work_dir))

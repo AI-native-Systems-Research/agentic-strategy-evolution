@@ -240,6 +240,17 @@ REFILL_ACCOUNTING = (
     "refill vacated seats: one round, Bonferroni over the rounds actually "
     "spent, CRN-paired with the surviving finalists' replicates"
 )
+"""The accounting rule of the registered refill branch (constrained campaigns).
+
+``confirm -> confirm`` once, when a round measured finalists inadmissible and
+fewer than two admissible finalists remain: with no admissible rival the
+terminal bound is vacuous, so the vacated seats are refilled from the
+supported-feasible pool first, then the constraint-filtered ranking, never with
+a configuration already measured inadmissible. Capped at ONE round regardless of
+``confirm_max_rounds`` (so the default single-round campaign benefits); the
+refill round's terminal bound is taken at ``delta_terminal / rounds spent``, and
+its survivors share the round's replicate seeds with the new seats.
+"""
 
 ALLOCATE_ACCOUNTING = (
     "allocate round (WP-D D1): seats chosen on the fitted model's predictions "
@@ -248,9 +259,13 @@ ALLOCATE_ACCOUNTING = (
 )
 """The accounting rule of the opt-in allocate branch (``design.confirm.allocate``).
 
-``confirm -> confirm`` once, AT the round cap, when that round did not certify
-and the allocator (``allocate.allocate``, through ``allocate_seat.plan``) found
-a seatable candidate on an ADEQUATE model. Statistics owns inference, decision
+``confirm -> confirm`` once per epoch, AT the round cap, when that round did
+not certify and the allocator (``allocate.allocate``, through
+``allocate_seat.plan``) found a seatable candidate with a free seat on an
+ADEQUATE model. Multi-objective campaigns ALSO seat allocator picks in the
+registered gap-fill rounds below the cap (``FRONT_GAP_ACCOUNTING``), each
+already a charged look, so there the allocator may seat in several rounds
+while the allocate RULE itself still fires at most once. Statistics owns inference, decision
 theory owns allocation: the seats are SELECTED on predictions (recombination
 of the values the measured finalists / front points disagree on, the predicted
 front or ranked candidates, optional BO proposals), but every claim about a
@@ -266,17 +281,7 @@ def _allocate_cfg(opt: dict) -> dict | None:
     """``design.confirm.allocate`` when declared (opt-in), else ``None``."""
     a = ((opt.get("design") or {}).get("confirm") or {}).get("allocate")
     return a if isinstance(a, dict) else None
-"""The accounting rule of the registered refill branch (constrained campaigns).
 
-``confirm -> confirm`` once, when a round measured finalists inadmissible and
-fewer than two admissible finalists remain: with no admissible rival the
-terminal bound is vacuous, so the vacated seats are refilled from the
-supported-feasible pool first, then the constraint-filtered ranking, never with
-a configuration already measured inadmissible. Capped at ONE round regardless of
-``confirm_max_rounds`` (so the default single-round campaign benefits); the
-refill round's terminal bound is taken at ``delta_terminal / rounds spent``, and
-its survivors share the round's replicate seeds with the new seats.
-"""
 
 #: Whether constrained campaigns register the refill branch. Not a campaign
 #: knob: it exists so the metamorphic oracle can compile the same campaign with
