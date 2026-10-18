@@ -313,13 +313,15 @@ returns an action from the fitted surface, and a surface fitted over two differe
 instruments has no action to certify.
 
 **Two bounds, never collapsed.** `report.json` carries
-`residual_regret_model` (at `delta_screen`, method `bonferroni_one_sided_t` —
-carries the registered response-class assumption) and
-`residual_regret_terminal` (at `delta_terminal`, method
-`bonferroni_one_sided_t_paired` under common random numbers else
-`bonferroni_one_sided_welch_t` — does not depend on the fitted model at all)
-as **separate** fields. `Pr(wrong global decision) ≤ δ_s + δ_t` is only
-meaningful while they stay apart; one merged "regret" number would advertise
+`residual_regret_model` (at `delta_screen`, the smaller of the Bonferroni and
+Scheffé simultaneous constants, fixed before data — carries the registered
+response-class assumption) and `residual_regret_terminal` (at
+`delta_terminal`, the robust terminal family: the worse of a t bound and a
+sign-flip bound under common random numbers, or bootstrap-t otherwise — does
+not depend on the fitted model at all) as **separate** fields.
+`Pr(certified and wrong) ≤ δ_s + δ_t` (+ `δ_constraint`, + `δ_feasibility`
+when registered), under the stated assumptions, is only meaningful while they
+stay apart; one merged "regret" number would advertise
 the assumption-light guarantee while delivering the model-dependent one. A
 `null` bound means the variance was not estimable — an unknown is not a zero.
 
