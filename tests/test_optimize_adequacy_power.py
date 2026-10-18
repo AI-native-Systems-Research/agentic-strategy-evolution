@@ -153,9 +153,11 @@ def test_the_outer_ring_has_power_where_the_inner_ring_has_none(tmp_path):
 
 def test_the_adequacy_family_is_size_alpha_under_a_true_quadratic():
     """Real composite + 6 validation points (inner + ring), a TRUE quadratic,
-    iid normal noise, 1000 replicates. Each test alone is size alpha, so
-    'reject if either' runs at ~2 alpha (measured below); Holm across the two
-    holds the family at alpha (Holm 1979, any dependence)."""
+    iid normal noise, 1000 replicates. Each test alone is size alpha; they
+    share the pure-error denominator, so they are positively dependent and
+    'reject if either' runs at ~0.07 (measured 0.068-0.072 over 3 x 4000),
+    not 2 alpha. Holm across the two holds the family at alpha (Holm 1979,
+    any dependence; measured 0.032-0.037)."""
     from orchestrator.optimize.design import central_composite
     from orchestrator.optimize.effects import fit_effects
 
@@ -176,8 +178,8 @@ def test_the_adequacy_family_is_size_alpha_under_a_true_quadratic():
         tests = [("lack_of_fit", fit.lack_of_fit_p), ("validation_prediction", chk["p"])]
         either += any(p < 0.05 for _n, p in tests)
         fam += bool(adequacy.adequacy_family(tests)["rejected"])
-    assert either / n > 0.07
-    assert fam / n <= 0.065            # Binomial(1000, .05): sd .007
+    assert either / n > 0.06           # above alpha: fails the family claim
+    assert fam / n <= 0.05             # measured 0.032-0.037 at n = 4000
 
 
 def test_v_is_built_from_the_rows_actually_fitted():
