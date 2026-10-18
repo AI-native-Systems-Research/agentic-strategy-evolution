@@ -6263,7 +6263,12 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
 
     from orchestrator.optimize import allocate_seat as _alloc_seat
 
-    allocating = rnd > 1 and _alloc_seat.is_allocate_round(pol, work_dir)
+    # Seats are registered in the PREVIOUS round's confirmation.json (only
+    # when the branch is declared): the allocate round at the cap seats them,
+    # and so does every earlier registered round r > 1 (multi-objective: the
+    # gap-fill rounds), each already one of the charged looks.
+    allocating = rnd > 1 and bool(_alloc_seat.seats_declared(pol)) and bool(
+        ((_latest_confirmation(work_dir) or {}).get("allocation") or {}).get("seats"))
 
     def _seat_allocated() -> None:
         """The ALLOCATE branch's seats (policy.ALLOCATE_ACCOUNTING, WP-D D1):
@@ -6290,11 +6295,6 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
             _add((prev_.get("preference") or {}).get("chosen"),
                  "previous round's preferred point", measured=True)
             _seat_refill_pool()
-        if allocating:
-            prev_ = (_latest_confirmation(work_dir) or {}).get("pareto") or {}
-            _add((prev_.get("preference") or {}).get("chosen"),
-                 "previous round's preferred point", measured=True)
-            _seat_allocated()
         for lv, why, measured in pareto_stage.shortlist_plan(
                 pol, work_dir, rec, rnd,
                 _latest_confirmation(work_dir) if rnd > 1 else None):
@@ -7962,17 +7962,20 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         _refill_cands = _refill_candidates(work_dir, factors, _refill_warnings)
         if _refill_warnings:
             summary["warnings"] = list(_refill_warnings)
-    # WP-D D1 (opt-in): the allocate branch's seats for the NEXT round,
-    # registered here before the transition reads `allocate_available`.
-    # Computed only where the branch can fire (registered, unspent, at the
-    # round cap, uncertified); a decline is recorded with its named reason.
+    # WP-D D1 (opt-in): the allocate seats for the NEXT round, registered here
+    # before the transition reads `allocate_available`. Computed only while a
+    # next round can use them: the branch is registered and not yet spent, and
+    # the round did not certify -- or, multi-objective, it reported a large
+    # front gap below the cap (the gap-fill branch precedes `certified`).
+    # A decline is recorded with its named reason.
     from orchestrator.optimize import allocate_seat as _alloc_seat
 
     _alloc_k = _alloc_seat.seats_declared(pol)
-    _alloc_live = bool(_alloc_k) and not summary.get("certified") \
-        and not _alloc_seat.spent(pol, work_dir) \
-        and int(summary["round"]) >= int(
-            (pol["states"]["confirm"]["design"] or {}).get("max_rounds", 1))
+    _gap_next = bool((summary.get("pareto") or {}).get("front_gap_large")) and int(
+        summary["round"]) < int((pol["states"]["confirm"]["design"] or {}).get(
+            "max_rounds", 1))
+    _alloc_live = bool(_alloc_k) and (not summary.get("certified") or _gap_next) \
+        and not _alloc_seat.spent(pol, work_dir)
     if _alloc_live:
         summary["allocation"] = _alloc_seat.plan(
             pol, work_dir, factors, summary, _rec_for_bias)
@@ -8061,7 +8064,8 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         # registered (every other policy's observations are unchanged).
         # DERIVED, like refill_available.
         obs["allocate_available"] = bool(
-            _alloc_live and ((summary.get("allocation") or {}).get("seats")))
+            _alloc_live and not summary.get("certified")
+            and ((summary.get("allocation") or {}).get("seats")))
     if "pareto" in summary:
         # The PREFERENCE scalarisation's terminal pair (spec step 7), and the
         # gap-fill branch's own observation (step 6).

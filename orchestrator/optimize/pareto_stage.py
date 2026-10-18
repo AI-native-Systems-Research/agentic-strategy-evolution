@@ -453,6 +453,12 @@ def shortlist_plan(pol, work_dir, rec: dict, rnd: int, prev_conf: dict | None):
         chosen = (par.get("preference") or {}).get("chosen")
         nominate(chosen, "previous round's preferred point", True,
                  measured_values(chosen or {}))
+        # WP-D D1 (opt-in `design.confirm.allocate`): the seats the allocator
+        # registered in the previous round's confirmation.json (EHVI per run
+        # over the recombination pool, on an ADEQUATE model only; a decline
+        # seats nothing). Selected on predictions, measured freshly here.
+        for s_ in ((prev_conf.get("allocation") or {}).get("seats") or []):
+            nominate(s_.get("levels"), s_.get("why") or "allocate", False, None)
         front = par.get("front") or []
         if par.get("front_gap_large") and _FRONT_GAP_FILL:
             margin = _resolution_margin(pol, par, objs, eps)
