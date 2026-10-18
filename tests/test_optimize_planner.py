@@ -552,3 +552,15 @@ def test_feasible_but_unscorable_moves_stop_with_their_own_basis(boundary, monke
     d, _ = _decision(boundary)
     assert any(o["feasible"] for o in d["options"] if o["id"] != "stop")
     assert d["chosen"] == "stop" and d["decision_basis"] == "no_scored_feasible_move"
+
+
+def test_editing_the_registered_campaign_to_match_does_not_bypass_the_edit_check(tmp_path):
+    """Rewriting campaign.epoch-1.yaml so it agrees with an edited
+    campaign.yaml is itself a changed input: stale_decision."""
+    wd, cf = _planned(tmp_path)
+    edited = cf.read_text().replace("- 16\n", "- 15\n", 1)
+    cf.write_text(edited)
+    (wd / "campaign.epoch-1.yaml").write_text(edited)
+    with pytest.raises(planner.PlanError, match="stale_decision"):
+        planner.accept(wd, cf)
+    assert cf.read_text() == edited
