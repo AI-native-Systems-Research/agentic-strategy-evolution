@@ -103,37 +103,63 @@ under `nous-e2e/bin/heavy`):
   - A Nous campaign that crashes is charged the worst admissible regret, and
     its baselines get the runs it spent.
   - Each ablation arm and each multi-objective arm is compared at its OWN N.
-- **Candidate domain and truth (one for every method).** `surfaces.lattice_axis`
-  defines the domain per factor:
-  - a choice or `levels_only` numeric: its declared levels;
-  - a two-level numeric: its declared pair (Nous never interpolates one);
-  - a refinable numeric with `grid: g`: every multiple of g in [min, max],
-    plus the declared levels. `decode_coded` snaps any fitted or design value
-    onto that lattice, so Nous can recommend any of them;
-  - a refinable numeric with no grid: a dense grid of 201 points, to a
-    tolerance of half the spacing. No suite surface has one.
+- **Candidate domain and truth (one for every method).**
+  - **The rule.** The domain is the DECLARED candidate space plus the centre
+    configurations the campaign's designs actually run:
+    - the declared lattice (`surfaces.lattice_axis`):
+      - every level of a choice or `levels_only` numeric;
+      - the declared pair of a two-level numeric;
+      - every multiple of g in [min, max] for a refinable numeric with
+        `grid: g` (plus the declared levels). `decode_coded` snaps any fitted
+        or design value onto that lattice;
+      - a dense 201-point grid for a refinable numeric with no grid
+        (tolerance: half the spacing). No suite surface has one.
+    - the centre configurations (`surfaces.centre_configs`). These are read
+      off Nous's own design code (`stage_runner._build_design`, then
+      `matrix.expand`, which applies `matrix.centre_configurations` and the
+      diagonal cyclic choice assignment), never hand-coded. Examples:
+      - `fails_at_one_level` runs CPU = 24 with its two diagonal choice
+        configurations;
+      - `infeasible_corner_interior` runs the one joint centre {BS: 20,
+        CMP: 1, PF: 5}.
+  - **Why.** A certificate is a claim about the candidate space Nous ranks and
+    the configurations it actually measured. A truth outside that space is a
+    value Nous could never be asked to beat.
+  - **Same domain for every method.** Every baseline samples this domain:
+    - uniform over the lattice product plus the centres;
+    - LHS swaps a sample for a centre at the centres' share;
+    - GP-BO's pool always contains the centres.
 
-  The truth (the optimum, its value and the worst admissible value) is
-  enumerated over that lattice, and it is the same for every method. The
-  lattice is sized before it is enumerated and capped at 2,000,000 points.
-  The largest are the geometric knobs, at 1,032,256.
+    The truth (the optimum, its value and the worst admissible value) is
+    enumerated over it. It is sized before enumeration and capped at 2,000,000
+    points; the largest are the geometric knobs, at 1,032,256.
+    Tests check that:
+    - the truth lies in the domain on every surface;
+    - every committed Nous recommendation lies in it;
+    - `infeasible_corner_interior`'s truth is 14.4 at {BS: 32, CMP: 0, PF: 8}.
+  - **Change from the previous version (P7 review H3).** The truth and the
+    baselines used nine snapped points per gridded axis
+    (`synthetic.candidate_grid`), while Nous could recommend any lattice point.
+    An audit of every surface found:
 
-  **Change from the previous version (P7 review H3).** The truth and the
-  baselines used nine snapped points per gridded axis
-  (`synthetic.candidate_grid`), while Nous could recommend any lattice point.
-  An audit of every surface found:
+    | surface | old grid optimum | domain optimum | effect |
+    |---|---|---|---|
+    | `two_peaks` | 14.754 | (14, 3) = 15.653 | Nous's (15, 3) was scored 0.364 against the grid; its real regret is 1.263 |
+    | `sparse_knobs` 6/8/12 | X00 = 12, 25.07 | X00 = 13, 25.08 | +0.01 |
+    | `geometric_knob(_log)` | (8, 2048) = 100.0 | (8, 2048) = 100.0 | none. Nous's off-grid recommendations (for example INT 7, BUF 1869) were already scored by their own value: off-grid but correct |
+    | `fails_at_one_level` | 13.8 | 13.8 | none to the truth, but the baselines could not sample Nous's CPU = 24 |
+    | every other single-objective surface | | identical | none |
+    | the multi-objective surfaces except `pareto_three_discrete` | | | the lattice front has more points, so the true HV is higher (for example `pareto_convex` 0.745 → 0.763) |
 
-  | surface | old grid optimum | lattice optimum | effect |
-  |---|---|---|---|
-  | `two_peaks` | 14.754 | (14, 3) = 15.653 | Nous's (15, 3) was scored 0.364 against the grid; its real regret is 1.263 |
-  | `sparse_knobs` 6/8/12 | X00 = 12, 25.07 | X00 = 13, 25.08 | +0.01 |
-  | `geometric_knob(_log)` | (8, 2048) = 100.0 | (8, 2048) = 100.0 | none. Nous recommends off the old grid (for example INT 7, BUF 1869), and those points were already scored by their own value: off-grid but correct |
-  | every other single-objective surface | | identical | none |
-  | the multi-objective surfaces except `pareto_three_discrete` | | | the lattice front has more points, so the true HV is higher (for example `pareto_convex` 0.745 → 0.763) |
-
-  The baselines now sample the same lattice, so every method chooses from one
-  domain. That costs CPU: GP-BO on the 1,032,256-point geometric-knob lattice
-  takes about 200 s per campaign, against 0.1 s on the old 100-point grid.
+  - **One false start, recorded.** An intermediate version of this fix gave
+    each two-level numeric its centre independently. That over-stated the
+    domain: it made {BS: 20, CMP: 2, PF: 8} = 14.7 reachable on
+    `infeasible_corner_interior`, a point no design runs and no ranking scores.
+    It produced 6 spurious "false" certificates there, all of which certify
+    the declared-space optimum {32, 0, 8} = 14.4. Deriving the centres from
+    `matrix.expand` removed them.
+  - **CPU cost.** GP-BO on the 1,032,256-point geometric-knob lattice takes
+    about 216 s per campaign, against 0.1 s on the old 100-point grid.
 - **Metric.** TRUE regret of the recommendation on the NOISELESS surface,
   `f(true optimum) - f(recommendation)`. An infeasible recommendation (outside
   `X_valid`), or no recommendation at all, is charged the regret of the worst
