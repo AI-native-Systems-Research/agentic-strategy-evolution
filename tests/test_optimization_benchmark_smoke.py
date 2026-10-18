@@ -416,3 +416,17 @@ def test_the_drift_ablation_executes_in_design_order_and_restores_it():
     with R._arm_context("nous-order"):
         assert matrix.randomized_run_order(5, 3) == [0, 1, 2, 3, 4]
     assert matrix.randomized_run_order(5, 3) == before
+
+
+def test_mo_pooled_paired_differences_on_a_fixed_input():
+    from benchmarks.optimization import run as R
+
+    nous = [{"surface": "s", "seed": sd, "arm": a, "status": "ok", "budget": 10,
+             "hv_regret": v} for sd in (1, 2)
+            for a, v in (("nous", 0.2), ("nous+alloc", 0.1))]
+    base = [{"surface": "s", "seed": sd, "method": "RS", "budget": 10, "hv_regret": 0.5}
+            for sd in (1, 2)]
+    pl = R.mo_pooled(nous, base, ["RS"])
+    assert pl["arm_minus_default"]["nous+alloc"][0] == pytest.approx(-0.1)
+    assert pl["default_minus_baseline"]["RS"][0] == pytest.approx(-0.3)
+    assert pl["arm_mean"]["nous:runs"] == 10

@@ -236,6 +236,7 @@ def run_nous(name: str, mult: float, seed: int, scratch: str, arm: str = "nous")
             "epsilon": eps, "basis": r.basis, "path_tail": (r.path or [""])[-1],
             "false_cert": cert and (status != "ok" or (eps is not None and regret > eps + 1e-9)),
             "allocate_fired": any(a.startswith("allocate round") for a in transitions),
+            "withheld": list(rep.get("certification_withheld") or []),
             "anytime": anytime,
             "wall_s": wall, "cpu_s": cpu, "rec": r.recommendation}
 
@@ -623,9 +624,16 @@ def summarize(nous, base, methods):
                 w, t_, l = d[m][kind]
                 d[m][kind + "_wilson"] = {"better": ST.wilson_ci(w, w + t_ + l),
                                           "worse": ST.wilson_ci(l, w + t_ + l)}
+    withheld: dict = {}
+    for r in nous:
+        if r.get("certified") or "regret" not in r:
+            continue
+        fam_w = withheld.setdefault(S.FAMILY.get(r["surface"], "?"), {})
+        for w in r.get("withheld") or ["(none recorded)"]:
+            fam_w[w] = fam_w.get(w, 0) + 1
     return {"rows": rows, "head_to_head": h2h, "by_family": fam, "errors": errors,
             "code_digests": codes, "uncompared_cells": uncompared,
-            "dead_fallbacks": dead, "wilson": wilson,
+            "dead_fallbacks": dead, "wilson": wilson, "withheld": withheld,
             "primary": family_primary(nous, base, methods),
             "anytime": anytime_summary(nous, base, methods),
             "certificates": certificate_counts(nous)}
@@ -734,6 +742,22 @@ def summarize_ablations(default_rows, arm_rows, previous: dict | None = None) ->
         c["arm_false"] += bool(r["false_cert"])
         c["def_false"] += bool(d["false_cert"])
         c["fired"] += bool(r.get("allocate_fired"))
+    for arm, a in out.items():
+        pooled: dict = {}
+        for c in a["cells"].values():
+            for s, v in zip(c["seeds"], c["diff"]):
+                pooled.setdefault(c["family"], []).append((s, v))
+        a["pooled"] = {f: _per_seed_ci(v) for f, v in pooled.items()}
+        rows_ = [r for r in arm_rows if r.get("arm") == arm and "regret" in r]
+        dd = [base[(r["surface"], r["mult"], r["seed"])] for r in rows_
+              if (r["surface"], r["mult"], r["seed"]) in base]
+        a["runs"] = {"arm": statistics.fmean(r["budget"] for r in rows_) if rows_ else None,
+                     "default": statistics.fmean(r["budget"] for r in dd) if dd else None}
+        a["certified"] = {"arm": sum(bool(r["certified"]) for r in rows_),
+                          "default": sum(bool(r["certified"]) for r in dd),
+                          "arm_false": sum(bool(r["false_cert"]) for r in rows_),
+                          "default_false": sum(bool(r["false_cert"]) for r in dd),
+                          "n": len(rows_)}
     for a in out.values():
         for c in a["cells"].values():
             c["diff_ci"] = ST.bootstrap_mean_ci(c.pop("diff"))
@@ -787,7 +811,40 @@ def summarize_mo(nous, base, methods=MO_METHOD_NAMES) -> dict:
                                and dflt.get((b["surface"], b["seed"])) == b["budget"]])
     return {"rows": rows, "unavailable": unavailable,
             "anytime": {k: v for k, v in curves.items() if v},
+            "pooled": mo_pooled(nous, base, methods),
             "certificates": certificate_counts(nous)}
+
+
+def _per_seed_ci(pairs) -> tuple:
+    """``pairs``: ``(seed, value)``; the mean per seed, then the bootstrap."""
+    per: dict = {}
+    for s, v in pairs:
+        per.setdefault(s, []).append(v)
+    return ST.bootstrap_mean_ci([statistics.fmean(v) for _, v in sorted(per.items())])
+
+
+def mo_pooled(nous, base, methods=MO_METHOD_NAMES) -> dict:
+    """Pooled over surfaces, per seed then bootstrapped: each arm's mean HV
+    regret; each arm minus the default arm (paired); the default arm minus
+    each baseline at the default arm's budget (paired)."""
+    ok = [r for r in nous if r.get("status") != "unavailable" and "hv_regret" in r]
+    by = {(r["arm"], r["surface"], r["seed"]): r for r in ok}
+    bm = {(b["method"], b["surface"], b["seed"], b["budget"]): b for b in base}
+    out = {"arm_mean": {}, "arm_minus_default": {}, "default_minus_baseline": {}}
+    for arm in dict.fromkeys(r["arm"] for r in ok):
+        rs = [r for r in ok if r["arm"] == arm]
+        out["arm_mean"][arm] = _per_seed_ci((r["seed"], r["hv_regret"]) for r in rs)
+        out["arm_mean"][arm + ":runs"] = statistics.fmean(r["budget"] for r in rs)
+        if arm != "nous":
+            out["arm_minus_default"][arm] = _per_seed_ci(
+                (r["seed"], r["hv_regret"] - by[("nous", r["surface"], r["seed"])]["hv_regret"])
+                for r in rs if ("nous", r["surface"], r["seed"]) in by)
+    for m in methods:
+        pairs = [(r["seed"], r["hv_regret"] - bm[(m, r["surface"], r["seed"], r["budget"])]["hv_regret"])
+                 for r in ok if r["arm"] == "nous" and (m, r["surface"], r["seed"], r["budget"]) in bm]
+        if pairs:
+            out["default_minus_baseline"][m] = _per_seed_ci(pairs)
+    return out
 
 
 def _mo_curve(rows):
@@ -874,6 +931,13 @@ def render_markdown(summary, meta, methods) -> str:
     for r in summary["rows"]:
         out.append(f"| {r['surface']} | ×{r['mult']:g} | {_f(r['nous_cpu_s'], 2)} | "
                    + " | ".join(_f(r[f'{m}:cpu_s'], 2) for m in methods) + " |")
+    if summary.get("withheld"):
+        out += ["", "### Why uncertified campaigns were withheld (reasons per campaign; one "
+                    "campaign can carry several)", "",
+                "| family | reason | campaigns |", "|---|---|---|"]
+        for fam, d in summary["withheld"].items():
+            for w, n in sorted(d.items(), key=lambda kv: -kv[1]):
+                out.append(f"| {fam} | `{w}` | {n} |")
     if summary.get("uncompared_cells"):
         out += ["", "### Cells with no baseline (every seed crashed, no planned budget)", ""]
         out += [f"- {n} ×{m:g}" for n, m in summary["uncompared_cells"]]
@@ -959,6 +1023,13 @@ def render_ablations(ab: dict) -> str:
         if a.get("unavailable"):
             out += ["", f"_Unavailable on this checkout: {a['unavailable']}._", ""]
             continue
+        rn, ce = a.get("runs") or {}, a.get("certified") or {}
+        if rn.get("arm") is not None:
+            out += ["", f"Over its {ce['n']} campaigns: mean runs {rn['default']:.1f} (default) → "
+                        f"{rn['arm']:.1f} (arm); certified {ce['default']} → {ce['arm']}; false "
+                        f"certificates {ce['default_false']} → {ce['arm_false']}. Pooled Δ by "
+                        "family: " + "; ".join(f"{f} {_eci(v, 4)}"
+                                                for f, v in (a.get("pooled") or {}).items()) + "."]
         out += ["", "| surface | noise | n | regret default → arm | Δ [95%] | N default → arm "
                 "| cert/false default | cert/false arm | allocate fired |",
                 "|---|---|---|---|---|---|---|---|---|"]
@@ -1002,6 +1073,19 @@ def render_mo(mo: dict, meta: dict, methods=MO_METHOD_NAMES) -> str:
                 "|---|" + "---|" * len(FRACTIONS)]
         for k, v in mo["anytime"].items():
             out.append(f"| {k} | " + " | ".join(_eci(x) for x in v) + " |")
+    pl = mo.get("pooled") or {}
+    if pl:
+        out += ["", "### Pooled over surfaces (per seed, then bootstrap 95% over seeds)", "",
+                "| quantity | mean [95%] |", "|---|---|"]
+        for k, v in pl["arm_mean"].items():
+            if not k.endswith(":runs"):
+                out.append(f"| HV regret, {k} (mean runs {pl['arm_mean'][k + ':runs']:.1f}) "
+                           f"| {_eci(v, 4)} |")
+        for k, v in pl["arm_minus_default"].items():
+            out.append(f"| {k} minus nous (paired; negative favours the arm) | {_eci(v, 4)} |")
+        for k, v in pl["default_minus_baseline"].items():
+            out.append(f"| nous minus {k} at nous's N (paired; negative favours Nous) "
+                       f"| {_eci(v, 4)} |")
     certs = mo.get("certificates") or {}
     if certs:
         out += ["", "**Certification soundness (front certificates):** " + "; ".join(
