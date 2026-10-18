@@ -129,6 +129,7 @@
       "minimum": 0,
       "description": "Wall clock of the FINAL attempt only, in milliseconds; equals duration_ms when attempts == 1. This is the figure the per-invocation run_timeout_sec ceiling applies to, while duration_ms is the figure a schedule must budget. Both are recorded because a reader sizing a ceiling from a retried row needs the per-invocation one and cannot recover it from the total."
     },
+    "censored": {"type": "object", "description": "#321 P3 item 3 (A6): present on a row that TIMED OUT. The row is right-censored at run_timeout_sec (at_sec): its run time is at least that, and when the primary metric is the run's own wall-clock the response is >= at_sec. It is never imputed (imputed: false) and stays out of every fit and mean.", "required": ["censored", "at_sec", "implies", "imputed"], "properties": {"censored": {"const": "right"}, "at_sec": {"type": ["number", "null"]}, "implies": {"type": "string"}, "imputed": {"const": false}, "direction": {"type": "string"}}},
     "failure_kind": {
       "type": "string",
       "enum": [

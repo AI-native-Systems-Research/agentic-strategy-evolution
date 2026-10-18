@@ -468,6 +468,11 @@ def _check_constraints(response_spec: dict, observed: dict) -> list[str]:
     """Names of every violated ``response.constraints`` entry."""
     violations: list[str] = []
     for constraint in response_spec.get("constraints") or []:
+        # #321 P3: a `mean` or `chance:<a>` constraint is a property of the
+        # configuration's DISTRIBUTION, judged across replicates at confirm
+        # (noise.feasibility_shown), never by one row.
+        if (constraint or {}).get("semantics", "every_replicate") != "every_replicate":
+            continue
         verdict = evaluate(constraint, observed)
         if verdict.skipped:
             continue

@@ -408,3 +408,157 @@ def tost_ratio(pre, post, *, margin_frac: float, alpha: float = BASELINE_TOST_AL
                equivalent=bool(pu < alpha and pl < alpha),
                ratio_estimate=st.mean(post) / mp)
     return out
+
+
+# ── #321 P3 item 3 (A6): outliers, censoring ────────────────────────────────
+
+OUTLIER_ALPHA = 0.05
+
+
+def studentized_outliers(cols, ys, *, alpha: float = OUTLIER_ALPHA) -> dict:
+    """Externally studentized residuals of an OLS fit, Bonferroni-flagged.
+
+    ``t_i = e_i / (s_(i) sqrt(1 - h_ii))`` with ``s_(i)^2 = (SSE - e_i^2 /
+    (1 - h_ii)) / (n - p - 1)``; under the model with iid normal errors each
+    ``t_i ~ t_{n - p - 1}`` exactly (Belsley, Kuh & Welsch 1980, §2.1; Cook &
+    Weisberg 1982, §2.2). Row i is FLAGGED when ``|t_i| > t_{1 - alpha/(2n),
+    n-p-1}``: Bonferroni over the n rows, so under the model the probability
+    of flagging ANY row is <= alpha (the Bonferroni outlier test, Weisberg
+    2005 §9.1). Flagging only: the caller never deletes a row; it records a
+    sensitivity refit. ``None`` entries where a row's leverage is 1 (its
+    deleted residual does not exist). ``reason`` names why nothing was
+    computed (no residual df, singular design).
+    """
+    from scipy.stats import t as student_t
+
+    from orchestrator.optimize.adequacy import _invert, _xtx
+    from orchestrator.optimize.effects import _solve_normal_equations
+
+    n, p = len(ys), len(cols)
+    out = {"method": "externally_studentized_bonferroni", "alpha": alpha,
+           "n": n, "p": p, "df": n - p - 1, "threshold": None, "rows": [],
+           "flagged": [], "reason": None}
+    if n - p - 1 <= 0:
+        out["reason"] = "no_residual_df"
+        return out
+    try:
+        inv = _invert(_xtx(cols))
+    except ValueError:
+        out["reason"] = "singular_design"
+        return out
+    b = _solve_normal_equations(cols, ys)
+    hs, es = [], []
+    for r in range(n):
+        x = [cols[c][r] for c in range(p)]
+        hs.append(sum(x[i] * inv[i][j] * x[j] for i in range(p) for j in range(p)))
+        es.append(ys[r] - sum(b[c] * x[c] for c in range(p)))
+    sse = sum(e * e for e in es)
+    crit = float(student_t.ppf(1.0 - alpha / (2.0 * n), n - p - 1))
+    out["threshold"] = crit
+    scale = 1.0 + sum(abs(y) for y in ys) / n
+    for r in range(n):
+        h, e = hs[r], es[r]
+        if h >= 1.0 - 1e-9:
+            out["rows"].append(None)
+            continue
+        s2 = (sse - e * e / (1.0 - h)) / (n - p - 1)
+        if not s2 > (1e-24 * scale * scale):
+            out["rows"].append(None)
+            continue
+        t = e / math.sqrt(s2 * (1.0 - h))
+        out["rows"].append(t)
+        if abs(t) > crit:
+            out["flagged"].append(r)
+    return out
+
+
+def censored_bound(direction: str, run_timeout_sec: float | int | None) -> dict:
+    """What a run killed at ``run_timeout_sec`` says about its response: it is
+    RIGHT-CENSORED in run time, never a value. When the primary metric is the
+    run's own wall-clock (a minimisation of time), the run's response is at
+    least ``run_timeout_sec`` -- a lower bound, which can only make the
+    configuration worse. Any other metric is censored with no bound on its
+    value. The caller records the bound and never imputes it."""
+    return {"censored": "right", "at_sec": run_timeout_sec,
+            "implies": ("response >= run_timeout_sec when the metric is the run's "
+                        "own wall-clock; otherwise no bound on the metric"),
+            "imputed": False, "direction": direction}
+
+
+# ── #321 P3 item 3 (A6): constraint semantics ───────────────────────────────
+
+CONSTRAINT_SEMANTICS = ("every_replicate", "mean", "chance")
+
+
+def parse_semantics(constraint: dict) -> tuple[str, float | None]:
+    """``(kind, alpha)`` of ``constraints[].semantics``: ``every_replicate``
+    (default; every replicate must pass), ``mean`` (the configuration's MEAN
+    must satisfy the comparison), ``chance:<alpha>`` (the probability that one
+    replicate violates it must be at most alpha). Raises ``ValueError`` on
+    anything else."""
+    raw = (constraint or {}).get("semantics", "every_replicate")
+    if raw in ("every_replicate", "mean"):
+        return raw, None
+    if isinstance(raw, str) and raw.startswith("chance:"):
+        a = float(raw.split(":", 1)[1])
+        if not 0.0 < a < 1.0:
+            raise ValueError(f"chance alpha {a!r} is not in (0, 1)")
+        return "chance", a
+    raise ValueError(f"semantics {raw!r}: use every_replicate | mean | chance:<alpha>")
+
+
+def _violates(op: str, v: float, bound: float) -> bool:
+    return not {"<": v < bound, "<=": v <= bound, ">": v > bound,
+                ">=": v >= bound}[op]
+
+
+def feasibility_shown(constraint: dict, values, *, level: float) -> dict:
+    """Is a finalist SHOWN feasible under the constraint's semantics, at
+    one-sided ``level``?
+
+    * ``mean``: the one-sided ``1 - level`` t bound on the mean lies on the
+      feasible side of the threshold (Student 1908; normal mean errors, M2).
+    * ``chance:a``: the one-sided Clopper-Pearson (1934) ``1 - level`` upper
+      bound on the violation probability, from ``k`` violating replicates of
+      ``n``, ``Beta^-1(1 - level; k + 1, n - k)``, is at most ``a``. Exact
+      (binomial, no normality). Shown only when ``n >= log(level)/log(1 - a)``
+      even at k = 0 -- ``min_replicates`` says how many that is.
+
+    ``shown`` is ``None`` with a reason when not computable (fewer than 2
+    finite values, zero spread for ``mean``).
+    """
+    from scipy.stats import beta as beta_d
+    from scipy.stats import t as student_t
+
+    kind, a = parse_semantics(constraint)
+    op, thr = constraint.get("op"), float(constraint.get("value"))
+    vals = [float(v) for v in values if isinstance(v, (int, float)) and v == v]
+    out = {"semantics": constraint.get("semantics", "every_replicate"), "n": len(vals),
+           "level": level, "shown": None, "reason": None}
+    if kind == "mean":
+        if len(vals) < 2:
+            out["reason"] = "fewer_than_two_values"
+            return out
+        m = sum(vals) / len(vals)
+        sd = math.sqrt(sum((v - m) ** 2 for v in vals) / (len(vals) - 1))
+        if not sd > 0.0:
+            out.update(shown=not _violates(op, m, thr), mean=m, basis="zero_spread_exact")
+            return out
+        h = float(student_t.ppf(1.0 - level, len(vals) - 1)) * sd / math.sqrt(len(vals))
+        worst = m + h if op in ("<", "<=") else m - h
+        out.update(mean=m, bound=worst, method="one_sided_t_on_the_mean",
+                   shown=not _violates(op, worst, thr))
+        return out
+    if kind == "chance":
+        n = len(vals)
+        if n < 1:
+            out["reason"] = "no_values"
+            return out
+        k = sum(1 for v in vals if _violates(op, v, thr))
+        ub = 1.0 if k >= n else float(beta_d.ppf(1.0 - level, k + 1, n - k))
+        out.update(violations=k, upper=ub, alpha=a, method="clopper_pearson_one_sided",
+                   min_replicates=math.ceil(math.log(level) / math.log(1.0 - a)),
+                   shown=ub <= a)
+        return out
+    out["reason"] = "every_replicate_is_judged_per_row"
+    return out

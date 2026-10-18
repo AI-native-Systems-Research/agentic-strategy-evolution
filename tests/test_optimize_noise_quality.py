@@ -360,3 +360,174 @@ def test_a_pre_p3_build_record_keeps_the_old_rule(tmp_path, monkeypatch):
                                 make_synthetic_runner(s, seed=1))
     rec = json.loads((tmp_path / "baseline_equivalence.json").read_text())
     assert rec["ok"] is True and "tost" not in rec and "equivalence" not in rec
+
+
+# ── item 3 (A6): outliers, censoring, constraint semantics ──────────────────
+
+def _bowl_with_spike(spike_run: int, size: float):
+    """A planted outlier: the bowl, with run number `spike_run` shifted."""
+    import orchestrator.optimize.synthetic as S
+
+    orig = S._observe
+
+    def obs(surface, levels, *, rng, run_counter):
+        o = orig(surface, levels, rng=rng, run_counter=run_counter)
+        if run_counter == spike_run and isinstance(o.get("m"), float):
+            o["m"] += size
+        return o
+    return orig, obs
+
+
+def test_a_planted_outlier_is_flagged_never_deleted_with_a_sensitivity_refit(
+        tmp_path, monkeypatch):
+    """Before P3 effects.json carried no outlier flag at all: a 60-sd spike in
+    one refine row went into every coefficient unremarked. It is now flagged
+    by its externally studentized residual (Bonferroni), kept in the fit, and
+    a refit without it records whether the recommendation changes."""
+    import orchestrator.optimize.synthetic as S
+    from orchestrator.optimize.synthetic import SURFACES
+
+    _orig, spiked = _bowl_with_spike(17, 3.0)
+    monkeypatch.setattr(S, "_observe", spiked)
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
+    eff = [json.loads(p.read_text()) for p in r.work_dir.glob("runs/iter-*/effects.json")]
+    refine = next(e for e in eff if e["stage"] == "refine")
+    o = refine["outliers"]
+    assert o["flagged_rows"] and o["deleted"] is False
+    assert o["threshold"] > 3.0              # Bonferroni, not a per-row 1.96
+    flagged = o["flagged_rows"][0]
+    assert abs(o["studentized"][flagged]) > o["threshold"]
+    assert refine["n_runs"] == len(o["studentized"])     # nothing deleted
+    sens = o["sensitivity"]
+    assert sens["rows_dropped"] == o["flagged_rows"]
+    assert isinstance(sens["decision_changes"], bool)
+
+
+def test_no_flag_on_clean_rows_and_no_flag_on_misfit(tmp_path):
+    from orchestrator.optimize.synthetic import SURFACES
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
+    eff = {e["stage"]: e for e in (json.loads(p.read_text())
+                                   for p in r.work_dir.glob("runs/iter-*/effects.json"))}
+    assert eff["refine"]["outliers"]["flagged_rows"] == []
+    # The 2^2 screen of a bowl rejects its first-order model: the corner
+    # residuals ARE the curvature, so the test declines, named.
+    assert eff["screen"]["outliers"]["reason"] == "lack_of_fit_rejected"
+    assert eff["screen"]["outliers"]["flagged_rows"] == []
+
+
+def test_the_bonferroni_flag_holds_its_family_wise_level():
+    from orchestrator.optimize.noise import studentized_outliers
+
+    rng = random.Random(8)
+    n, trials, hits = 13, 2000, 0
+    xs = [(-1, -1), (1, -1), (-1, 1), (1, 1), (-1, 0), (1, 0), (0, -1), (0, 1)] + [(0, 0)] * 5
+    cols = [[1.0] * n, [float(a) for a, _ in xs], [float(b) for _, b in xs],
+            [float(a * b) for a, b in xs], [float(a * a) for a, _ in xs],
+            [float(b * b) for _, b in xs]]
+    for _ in range(trials):
+        ys = [rng.gauss(0, 1) for _ in range(n)]
+        hits += bool(studentized_outliers(cols, ys)["flagged"])
+    assert hits / trials <= 0.05 + 2 * (0.05 * 0.95 / trials) ** 0.5
+
+
+def test_a_timeout_is_right_censored_never_imputed(tmp_path, monkeypatch):
+    """Before P3 a timed-out row was 'failed' with nothing saying what it
+    implied. It now records right-censoring at run_timeout_sec and the bound,
+    is never imputed, and the finalist it hit still withholds."""
+    from orchestrator.optimize import runner as runner_mod
+    from orchestrator.optimize import synthetic as S
+    from orchestrator.optimize.synthetic import SURFACES
+
+    real = S.make_synthetic_runner
+
+    def timing_out(surface, **kw):
+        run = real(surface, **kw)
+
+        def r(row):
+            if getattr(row, "role", "") == "finalist" or (row.apply or {}).get("finalist") == 0:
+                if row.replicate == 1:
+                    raise runner_mod.ConfigRunFailure("killed at the ceiling", kind="timeout")
+            return run(row)
+        return r
+    monkeypatch.setattr("orchestrator.optimize.harness.make_synthetic_runner", timing_out)
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
+    rows = [json.loads(ln) for p in r.work_dir.glob("runs/iter-*/runs.jsonl")
+            for ln in p.read_text().splitlines() if ln.strip()]
+    cens = [x for x in rows if x.get("failure_kind") == "timeout"]
+    assert cens and all(x["censored"]["censored"] == "right" and x["censored"]["imputed"] is False
+                        and x["censored"]["at_sec"] for x in cens)
+    assert all(x["response"] == {} for x in cens)                 # no value imputed
+    c = _confirmations(r.work_dir)[0]
+    assert c["censored_replicates"] and "finalist_unmeasured" in c["certification_withheld"]
+
+
+def _stall_campaign(semantics: str | None, tmp_path, seed=1, value=10.0, **extra):
+    from orchestrator.optimize.synthetic import SURFACES
+
+    c = {"metric": "stall_ms", "op": "<=", "value": value}
+    if semantics:
+        c["semantics"] = semantics
+    ov = {"response": {"primary": {"metric": "m", "direction": "maximize"},
+                       "constraints": [c]},
+          "stages": ["verify", "screen", "confirm"], **extra}
+    return run_synthetic_campaign(SURFACES["stochastic_constraint_boundary"](), seed=seed,
+                                  parent_dir=tmp_path / f"{semantics}-{seed}-{value}",
+                                  campaign_overrides=ov, max_iterations=12)
+
+
+def test_mean_semantics_judges_the_configuration_not_one_run(tmp_path):
+    """Before P3 a constraint could only mean 'every replicate passes'. With
+    stall_ms ~ N(10.3, 1) in the high region and a threshold of 12.5, one of
+    seven replicates of a finalist lands above it and every_replicate strikes
+    the finalist off (withheld). Under `mean` the configuration's mean is
+    SHOWN below the threshold by a one-sided t bound at delta_feasibility /
+    (S C L), and the campaign certifies -- with the term in the stated budget."""
+    old = _stall_campaign(None, tmp_path, seed=1, value=12.5)
+    assert "finalist_measured_infeasible" in old.report["certification_withheld"]
+    r = _stall_campaign("mean", tmp_path, seed=1, value=12.5)
+    assert r.report["certified"], r.report["certification_withheld"]
+    c = _confirmations(r.work_dir)[0]
+    df = c["distributional_feasibility"]
+    assert df["delta_feasibility"] == r.report["delta_feasibility"] == 0.05
+    assert abs(df["per_test_level"] - 0.05 / (len(c["finalists"]) * df_looks(r))) < 1e-12
+    for k, v in df["finalists"].items():
+        assert v["shown_feasible"]
+        (cv,) = v["constraints"]
+        assert cv["method"] == "one_sided_t_on_the_mean" and cv["bound"] < 12.5
+    eb = r.report["error_budget"]["epochs"][-1]
+    assert abs(eb["spent"] - (r.report["delta_screen"] + r.report["delta_terminal"]
+                              + (r.report.get("delta_constraint") or 0.0) + 0.05)) < 1e-12
+    assert eb["delta_feasibility"] == 0.05
+
+
+def df_looks(r):
+    pol = json.loads((r.work_dir / "policy.json").read_text())
+    from orchestrator.optimize.policy import confirm_looks
+    return confirm_looks(pol)
+
+
+def test_chance_semantics_is_a_clopper_pearson_bound():
+    from orchestrator.optimize.noise import feasibility_shown
+
+    c = {"metric": "x", "op": "<=", "value": 1.0, "semantics": "chance:0.2"}
+    v = feasibility_shown(c, [0.0] * 6, level=0.05)
+    # 0 violations of 6: CP upper = 1 - 0.05^(1/6) = 0.393 > 0.2 -> not shown.
+    assert abs(v["upper"] - (1 - 0.05 ** (1 / 6))) < 1e-9 and v["shown"] is False
+    assert v["min_replicates"] == 14
+    v = feasibility_shown(c, [0.0] * 14, level=0.05)
+    assert v["shown"] is True and v["violations"] == 0
+    v = feasibility_shown(c, [0.0] * 13 + [2.0], level=0.05)
+    assert v["violations"] == 1 and v["shown"] is False
+
+
+def test_every_replicate_stays_the_default_and_is_unchanged(tmp_path):
+    from orchestrator.optimize.policy import compile_policy
+    from orchestrator.optimize.harness import synthetic_campaign
+    from orchestrator.optimize.synthetic import SURFACES
+
+    camp = synthetic_campaign(SURFACES["stochastic_constraint_boundary"](),
+                              response={"primary": {"metric": "m", "direction": "maximize"},
+                                        "constraints": [{"metric": "stall_ms", "op": "<=",
+                                                         "value": 10}]})
+    assert "delta_feasibility" not in compile_policy(camp)["objective"]

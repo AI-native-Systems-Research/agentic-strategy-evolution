@@ -2636,6 +2636,8 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
         "delta_terminal": pol["objective"]["delta_terminal"],
         **({"delta_constraint": pol["objective"]["delta_constraint"]}
            if "delta_constraint" in pol["objective"] else {}),
+        **({"delta_feasibility": pol["objective"]["delta_feasibility"]}
+           if "delta_feasibility" in pol["objective"] else {}),
         "certified": bool(conf and conf.get("certified")),
         # WHY `certified` is false, carried up from confirmation.json so the
         # report never states an unexplained boolean next to bounds that look
@@ -4105,8 +4107,18 @@ def _run_stage_body(
     # the same "rows already written stay" property contract drift relies on.
     # It fires on the first offending row rather than after the sweep, because
     # every further row would spend budget on an experiment nobody registered.
+    _timeout_sec = resolve_run_timeout(opt)
+
     def _record_row(outcome) -> None:
-        artifacts.append_run(iter_dir, _run_row(by_index[outcome.row_index], outcome))
+        _row = _run_row(by_index[outcome.row_index], outcome)
+        if _row.get("failure_kind") == "timeout":
+            # #321 P3 item 3 (A6): a timeout is RIGHT-CENSORED at the ceiling,
+            # never a value. Recorded with the bound it implies; the row stays
+            # excluded from every fit and mean (never imputed).
+            from orchestrator.optimize import noise as _noise
+            _row["censored"] = _noise.censored_bound(
+                _primary_of(response_spec).get("direction", "maximize"), _timeout_sec)
+        artifacts.append_run(iter_dir, _row)
         locked_mod.check_row(campaign, outcome.response,
                              row_index=outcome.row_index, stage=stage_name)
 
@@ -4984,6 +4996,24 @@ def _run_stage_body(
             f"them.",
         )
     rec = top[0]
+    # ── #321 P3 item 3 (A6): outlying rows, FLAGGED and never deleted ─────
+    # Externally studentized residuals of THIS fit, Bonferroni over the
+    # fitted rows (noise.studentized_outliers). A flagged row stays in every
+    # number the campaign reports; a SENSITIVITY refit without the flagged
+    # rows is recorded beside it, with whether the recommendation changes.
+    outlier_record = None
+    if pol["objective"].get("terminal_robustness") and not design_for_fit.groups \
+            and not blocks_for_fit:
+        outlier_record = _outlier_record(
+            design_for_fit, ys_for_fit, fit, fitted_ids, factors, direction,
+            held_now, excluded, cmods, delta_c, interactions_dropped,
+            omitted_terms, _fit_pos, rec)
+        # effects.json (written above with the coefficients) carries it too:
+        # the flags qualify the coefficients.
+        _eff_path = iter_dir / "effects.json"
+        _eff = json.loads(_eff_path.read_text())
+        _eff["outliers"] = outlier_record
+        _write_json(_eff_path, _eff)
     # ── MULTI-OBJECTIVE: fit every objective, predict the front ────────────
     #
     # Spec 2026-10-15-pareto-front-design.md steps 1-3. Every objective is
@@ -5225,6 +5255,7 @@ def _run_stage_body(
         **({"pure_error_cells": [list(g) for g in fit.pure_error_cells]}
            if fit.pure_error_cells
            and pol["objective"].get("heteroscedasticity") else {}),
+        **({"outliers": outlier_record} if outlier_record is not None else {}),
         "epsilon": epsilon,
         "alias_consequential": [list(p) for p in alias_pairs_consequential],
         # 2fi NOT fitted because their corner column lies in the span of kept
@@ -7172,6 +7203,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     mo_samples = ({f["key"]: {o.metric: [] for o in pareto_stage.objectives(pol)}
                    for f in fin} if pareto_stage.objectives(pol) else None)
     status: dict[str, str] = {f["key"]: "ok" for f in fin}
+    _censored: dict[str, int] = {}
     for o, y in zip(outcomes, ys):
         row = by_idx.get(o.row_index)
         if row is None:
@@ -7187,6 +7219,9 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                  and not isinstance((o.response or {}).get(_ob.metric), bool)
                  and math.isfinite((o.response or {}).get(_ob.metric)))
             for _ob in pareto_stage.objectives(pol))
+        if getattr(o, "failure_kind", "") == "timeout":
+            _censored.setdefault(key, 0)
+            _censored[key] += 1
         if o.status != "complete" or y != y or _mo_lacking:
             # WHY the finalist dropped out, not merely THAT it did. Collapsing
             # every non-complete status into one bucket reported a finalist that
@@ -7218,6 +7253,15 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                 if isinstance(_v, (int, float)) and not isinstance(_v, bool) \
                         and math.isfinite(_v):
                     mo_samples[key][_ob.metric].append(float(_v))
+    # #321 P3 item 3 (A6): DISTRIBUTIONAL constraints (`semantics: mean |
+    # chance:<a>`). The runner never judged them per row; each still-admissible
+    # finalist must now be SHOWN feasible from its replicates, per such
+    # constraint, at delta_feasibility / (S C L): Bonferroni over finalists,
+    # constraints and looks, so the data-chosen winner is covered and the
+    # term is in the stated union bound (policy.delta_stated). Not shown ->
+    # `infeasible` (the existing veto path; the configuration is struck off).
+    dist_feas = _distributional_feasibility(pol, campaign, fin, by_idx, outcomes,
+                                            status, looks)
     # Any non-"ok" status is out of the running, whatever its reason: the
     # terminal comparison needs fresh usable samples and neither an inadmissible
     # nor an unmeasured finalist has them. The reason survives for the REPORT.
@@ -7638,6 +7682,7 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
                     "delta_terminal / (confirm_max_rounds + 1 if the refill "
                     "branch is registered)"},
         **({"noise_diagnostics": noise_diag} if noise_diag is not None else {}),
+        **({"distributional_feasibility": dist_feas} if dist_feas else {}),
         **({"terminal_bound_measured_only": measured_only.as_dict()}
            if measured_only is not None else {}),
         **({"certification_caveats": ["finalist_measured_infeasible"]}
@@ -7655,6 +7700,13 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         "excluded_unmeasured": [
             f["levels"] for f in fin if status[f["key"]] == "unmeasured"
         ],
+        # #321 P3 item 3 (A6): replicates that TIMED OUT, right-censored at
+        # run_timeout_sec and never imputed. A censored finalist is
+        # `unmeasured` above, so the round withholds (finalist_unmeasured).
+        **({"censored_replicates": {
+            k: {"count": n_c, **noise_mod_censored(direction, resolve_run_timeout(
+                (campaign.get("optimization") or {})))}
+            for k, n_c in sorted(_censored.items())}} if _censored else {}),
         # Legacy fields, kept because readers of the single-point record exist
         # (the harness's recommendation fallback, the guide's worked output, and
         # `_close_iteration`'s recommendation_levels). `confirmed_at_levels` is
@@ -7908,6 +7960,65 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
         engine, campaign, work_dir, iter_dir, iteration, stage_name, pol, obs,
         recommendation_levels=dict(winner_levels) or None,
     )
+
+
+def _outlier_record(design_for_fit, ys, fit, fitted_ids, factors, direction,
+                    held_now, excluded, cmods, delta_c, interactions_dropped,
+                    omitted_terms, fit_pos, rec) -> dict:
+    """``effects.json["outliers"]`` (#321 P3 item 3): the flags, and the
+    sensitivity refit without the flagged rows."""
+    import dataclasses as _dc
+
+    from orchestrator.optimize import adequacy as adq
+    from orchestrator.optimize import noise as noise_mod
+
+    _l, _t, cols = adq.model_columns(
+        design_for_fit, tuple(fitted_ids),
+        include_interactions=not interactions_dropped, omit_terms=omitted_terms)
+    if (fit.lack_of_fit_p is not None and fit.lack_of_fit_p < 0.05) or \
+            fit.lof_exact == "rejected":
+        # The outlier test assumes the fitted model; when lack of fit rejects
+        # it, the large residuals are the misfit (curvature, a missing term),
+        # not outlying rows. Declined, named -- never a flag on misfit.
+        return {"method": "externally_studentized_bonferroni",
+                "alpha": noise_mod.OUTLIER_ALPHA, "df": None, "threshold": None,
+                "reason": "lack_of_fit_rejected", "studentized": [],
+                "flagged_rows": [], "deleted": False,
+                "policy": "not computed: the model the test assumes was rejected",
+                "sensitivity": None}
+    flags = noise_mod.studentized_outliers(cols, list(ys))
+    out = {k: flags[k] for k in ("method", "alpha", "df", "threshold", "reason")}
+    out["studentized"] = flags["rows"]
+    out["flagged_rows"] = [int(fit_pos[i]) for i in flags["flagged"]]
+    out["deleted"] = False
+    out["policy"] = ("flag only: every reported number keeps the flagged rows; "
+                     "the sensitivity refit below drops them")
+    if not flags["flagged"]:
+        out["sensitivity"] = None
+        return out
+    keep = [i for i in range(len(ys)) if i not in set(flags["flagged"])]
+    sens: dict = {"rows_dropped": out["flagged_rows"]}
+    try:
+        d2 = _dc.replace(design_for_fit,
+                         points=tuple(design_for_fit.points[i] for i in keep))
+        fit2 = fit_effects(d2, [ys[i] for i in keep], factor_ids=tuple(fitted_ids),
+                           include_interactions=not interactions_dropped,
+                           omit_terms=omitted_terms)
+        rec2 = decide.ranked(fit2, factors, direction=direction,
+                             fitted_ids=fitted_ids, held_fixed=held_now,
+                             exclude_levels=excluded, top=1,
+                             constraint_models=cmods, constraint_delta=delta_c)
+        lv2 = dict(rec2[0].levels) if rec2 else None
+        sens.update(recommendation=lv2,
+                    decision_changes=bool(lv2 is not None
+                                          and not _same_levels(lv2, dict(rec.levels))),
+                    lack_of_fit_p=fit2.lack_of_fit_p,
+                    pure_error_var=fit2.pure_error_var)
+    except (ValueError, ZeroDivisionError, OptimizationAborted) as exc:
+        sens.update(recommendation=None, decision_changes=None,
+                    reason=f"refit_not_computable: {exc}")
+    out["sensitivity"] = sens
+    return out
 
 
 def _front_model_half(pol, work_dir, rec: dict, par: dict, factors) -> dict | None:
@@ -8195,6 +8306,55 @@ def _carry_keys(summary: dict) -> set:
     if best:
         carry.add(best)
     return carry
+
+
+def _distributional_feasibility(pol, campaign, fin, by_idx, outcomes, status,
+                                looks) -> dict | None:
+    """Decide ``mean`` / ``chance`` constraints per finalist (#321 P3 item 3);
+    mutates ``status`` (``ok`` -> ``infeasible`` when not shown feasible)."""
+    from orchestrator.optimize import noise as noise_mod
+    from orchestrator.optimize.predicates import _resolve as _res
+
+    d_f = pol["objective"].get("delta_feasibility")
+    cons = [c for c in ((_opt_block(campaign) or {}).get("response") or {})
+            .get("constraints") or []
+            if isinstance(c, dict) and c.get("semantics", "every_replicate")
+            != "every_replicate"]
+    if not cons or d_f is None:
+        return None
+    level = float(d_f) / (max(1, len(fin)) * len(cons) * max(1, looks))
+    out = {"delta_feasibility": float(d_f), "per_test_level": level,
+           "rule": "each finalist shown feasible per distributional constraint "
+                   "at delta_feasibility / (finalists x constraints x looks)",
+           "finalists": {}}
+    vals: dict = {f["key"]: {i: [] for i in range(len(cons))} for f in fin}
+    for o in outcomes:
+        row = by_idx.get(o.row_index)
+        if row is None:
+            continue
+        key = f"f{(row.apply or {}).get('finalist', 0)}"
+        if key not in vals or o.status not in ("complete", "infeasible"):
+            continue
+        for i, c in enumerate(cons):
+            v = _res(str(c.get("metric") or c.get("observable")), o.response or {})
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                vals[key][i].append(float(v))
+    for f in fin:
+        k = f["key"]
+        verdicts = [dict(noise_mod.feasibility_shown(c, vals[k][i], level=level),
+                         metric=c.get("metric") or c.get("observable"))
+                    for i, c in enumerate(cons)]
+        shown = all(v["shown"] is True for v in verdicts)
+        out["finalists"][k] = {"shown_feasible": shown, "constraints": verdicts}
+        if not shown and status.get(k) == "ok":
+            status[k] = "infeasible"
+    return out
+
+
+def noise_mod_censored(direction: str, at_sec) -> dict:
+    from orchestrator.optimize import noise as _noise
+
+    return _noise.censored_bound(direction, at_sec)
 
 
 def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict | None:

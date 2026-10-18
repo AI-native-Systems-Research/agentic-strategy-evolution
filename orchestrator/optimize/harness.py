@@ -130,6 +130,15 @@ def synthetic_campaign(surface: Surface, **overrides) -> dict:
                    "confirm": {"replicates": 6}},
     }
     opt.update(overrides)
+    if "confirm" not in ((overrides.get("design") or {}) if "design" in overrides else {}):
+        # #321 P3: the confirm replicate count a real author would declare is
+        # the A5 floor of THIS campaign (6 at the defaults, 7 once a declared
+        # constraint registers the refill look).
+        from orchestrator.optimize.policy import replicate_floor
+
+        opt["design"] = {**(opt.get("design") or {}),
+                         "confirm": {**((opt.get("design") or {}).get("confirm") or {}),
+                                     "replicates": replicate_floor(opt)}}
     return {
         "kind": "optimization",
         "run_id": f"synthetic-{surface.name}",

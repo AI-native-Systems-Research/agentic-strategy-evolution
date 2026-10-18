@@ -39,6 +39,19 @@ $defs:
         description: "Restrict this check to only these level(s). Mutually exclusive with when_not."
       when_not:
         description: "Restrict this check to every level EXCEPT these. Mutually exclusive with when."
+      semantics:
+        type: string
+        pattern: "^(every_replicate|mean|chance:(0?\\.[0-9]*[1-9][0-9]*))$"
+        description: >
+          ``response.constraints`` only (#321 P3). ``every_replicate``
+          (default): a configuration is admissible only if every replicate
+          passes. ``mean``: its MEAN must satisfy the comparison, shown at
+          confirm by a one-sided t bound. ``chance:<alpha>``: the probability
+          that one run violates it must be at most alpha, shown by a one-sided
+          Clopper-Pearson bound -- which needs at least log(level)/log(1 -
+          alpha) replicates even with no violation. Either of the last two
+          registers ``policy.delta_feasibility`` (default delta_terminal) as a
+          term of the stated error budget.
 
 properties:
   kind:
@@ -1548,6 +1561,16 @@ properties:
                 anyOf:
                   - {type: string, enum: [geometric]}
                   - {type: array, minItems: 1, items: {type: number, exclusiveMinimum: 0}}
+          delta_feasibility:
+            type: number
+            exclusiveMinimum: 0
+            maximum: 0.5
+            description: >
+              #321 P3: the error budget for DISTRIBUTIONAL constraints
+              (``constraints[].semantics: mean | chance:<alpha>``), spent at
+              confirm over finalists x constraints x looks (Bonferroni). A
+              term of the stated budget, registered exactly when such a
+              constraint is declared. Default: ``delta_terminal``.
           delta_constraint:
             type: number
             exclusiveMinimum: 0

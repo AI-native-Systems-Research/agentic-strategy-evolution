@@ -310,6 +310,15 @@ def _constraint_exclusion_registered(opt: dict) -> bool:
     return False
 
 
+def _feasibility_registered(opt: dict) -> bool:
+    """Is a distributional constraint (``semantics: mean | chance:<a>``)
+    declared? Then confirm decides feasibility statistically and the
+    ``delta_feasibility`` union term is registered (#321 P3 item 3)."""
+    return any(isinstance(c, dict) and c.get("semantics", "every_replicate")
+               != "every_replicate"
+               for c in (opt.get("response") or {}).get("constraints") or ())
+
+
 def campaign_delta_share(spec: dict | None, epoch: int) -> float | None:
     """Epoch ``epoch``'s share of a declared campaign-wide budget (#321 item 7).
 
@@ -423,10 +432,12 @@ def terminal_robustness_rule(pol_cfg: dict, campaign: dict, *, looks: int) -> di
 
 def delta_stated(policy: dict) -> float:
     """The epoch's stated error budget: ``delta_screen + delta_terminal``,
-    plus ``delta_constraint`` when constraint exclusion is registered."""
+    plus ``delta_constraint`` when constraint exclusion is registered, plus
+    ``delta_feasibility`` when a distributional constraint is (#321 P3)."""
     o = policy["objective"]
     return (float(o["delta_screen"]) + float(o["delta_terminal"])
-            + float(o.get("delta_constraint") or 0.0))
+            + float(o.get("delta_constraint") or 0.0)
+            + float(o.get("delta_feasibility") or 0.0))
 
 
 #: Reanalysis of a policy compiled before #321 P3 (no ``terminal_robustness``
@@ -774,23 +785,26 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
     _dt = float(pol_cfg.get("delta_terminal", 0.05))
     _dc = (float(pol_cfg.get("delta_constraint", _ds))
            if _constraint_exclusion_registered(opt) else 0.0)
+    _df = (float(pol_cfg.get("delta_feasibility", _dt))
+           if _feasibility_registered(opt) else 0.0)
     cd_block = None
     if share is not None:
         # The epoch certifies at its SHARE, split over its union terms in the
         # declared proportions (delta_screen : delta_terminal [: delta_constraint]).
-        declared = _ds + _dt + _dc
+        declared = _ds + _dt + _dc + _df
         exhausted = not share > 0.0
         scale = (share / declared) if not exhausted else 1.0
         cd_block = {"total": float(cd_spec["total"]),
                     "schedule": cd_spec.get("schedule", "geometric"),
                     "epoch_share": float(share), "exhausted": bool(exhausted),
                     "declared_split": {"delta_screen": _ds, "delta_terminal": _dt,
-                                       **({"delta_constraint": _dc} if _dc else {})},
+                                       **({"delta_constraint": _dc} if _dc else {}),
+                                       **({"delta_feasibility": _df} if _df else {})},
                     "rule": "epoch e certifies at share_e of the campaign-wide "
                             "budget, split in the declared proportions; "
                             "sum_e share_e <= total (union bound over epochs)"}
         if not exhausted:
-            _ds, _dt, _dc = _ds * scale, _dt * scale, _dc * scale
+            _ds, _dt, _dc, _df = _ds * scale, _dt * scale, _dc * scale, _df * scale
 
     # ── #321 item 8: held-factor inertness checks (opt-in) ─────────────────
     inert_cfg = design.get("inertness") or {}
@@ -851,6 +865,13 @@ def compile_policy(campaign: dict, *, mechanism_patch_hash: str = "", epoch: int
             # Defaults to delta_screen, the level exclusion always used.
             **({"delta_constraint": _dc}
                if _constraint_exclusion_registered(opt) else {}),
+            # #321 P3 item 3: the FOURTH union term. A distributional constraint
+            # (semantics mean | chance:<a>) is decided at confirm: each finalist
+            # must be SHOWN feasible, per constraint, at delta_feasibility /
+            # (S C L) -- Bonferroni over finalists, constraints and looks, so
+            # the data-chosen winner is covered. Registered from the
+            # declaration only. Defaults to delta_terminal.
+            **({"delta_feasibility": _df} if _feasibility_registered(opt) else {}),
             # #321 item 7: the charged cross-epoch mode, when declared.
             **({"campaign_delta": cd_block} if cd_block is not None else {}),
             # #321 P3 item 1: the Brown-Forsythe check of M3 (pure error is

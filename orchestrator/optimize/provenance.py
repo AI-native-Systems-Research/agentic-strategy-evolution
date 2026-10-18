@@ -332,8 +332,9 @@ def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None 
     }
 
 
-def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[float, float, float] | None:
-    """``(delta_screen, delta_terminal)`` epoch ``epoch`` was compiled with.
+def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[float, ...] | None:
+    """``(delta_screen, delta_terminal, delta_constraint, delta_feasibility)``
+    epoch ``epoch`` was compiled with (absent terms are 0).
 
     The current epoch's come from its policy. An earlier epoch's policy.json
     has been overwritten by the recompile, so its deltas are recovered by
@@ -343,7 +344,8 @@ def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[flo
     if epoch == int(current_policy.get("epoch", 1)):
         o = current_policy["objective"]
         return (float(o["delta_screen"]), float(o["delta_terminal"]),
-                float(o.get("delta_constraint") or 0.0))
+                float(o.get("delta_constraint") or 0.0),
+                float(o.get("delta_feasibility") or 0.0))
     p = Path(work_dir) / f"campaign.epoch-{epoch}.yaml"
     if not p.exists():
         return None
@@ -355,7 +357,8 @@ def _epoch_deltas(work_dir: Path, epoch: int, current_policy: dict) -> tuple[flo
         pol = compile_policy(yaml.safe_load(p.read_text()), epoch=epoch)
         o = pol["objective"]
         return (float(o["delta_screen"]), float(o["delta_terminal"]),
-                float(o.get("delta_constraint") or 0.0))
+                float(o.get("delta_constraint") or 0.0),
+                float(o.get("delta_feasibility") or 0.0))
     except Exception as exc:  # noqa: BLE001 -- recorded, not hidden
         logger.warning("could not recover epoch %d's deltas from %s: %s", epoch, p.name, exc)
         return None
@@ -418,10 +421,11 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
             epochs.append({"epoch": e, "delta_screen": None, "delta_terminal": None,
                            "delta_constraint": None, "spent": None})
             continue
-        spent = d[0] + d[1] + d[2]
+        spent = d[0] + d[1] + d[2] + d[3]
         total += spent
         epochs.append({"epoch": e, "delta_screen": d[0], "delta_terminal": d[1],
                        "delta_constraint": d[2],
+                       **({"delta_feasibility": d[3]} if d[3] else {}),
                        "spent": spent,
                        "compiled_after_data": e > 1,
                        # An earlier epoch's policy.json was overwritten by the
@@ -470,7 +474,8 @@ def error_budget(work_dir: Path, pol: dict) -> dict:
         "unrecovered_epochs": unknown,
         "accounting": ("union (Bonferroni) bound over epochs: each epoch spends "
                        "delta_screen + delta_terminal (+ delta_constraint when "
-                       "constraint-model exclusion is registered), and epochs after the first "
+                       "constraint-model exclusion is registered, + delta_feasibility "
+                       "when a mean/chance constraint is), and epochs after the first "
                        "were compiled after earlier epochs' data were seen, so the "
                        "family-wise probability that ANY epoch's decision is wrong "
                        "is at most the sum. Certification is still judged per "

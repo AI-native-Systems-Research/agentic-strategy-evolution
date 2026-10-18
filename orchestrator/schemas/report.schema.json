@@ -166,6 +166,7 @@
       "type": "object",
       "description": "#321 item 2 (A3 remainder): present when design.validate is registered. The confirm winner and the known_valid_baseline re-measured on `replicates` FRESH paired blocks drawn after the winner was fixed, so `value` (the winner's fresh mean), `gain` (estimate and two-sided t interval at delta_terminal; paired t on CRN differences, Welch otherwise) and `epsilon_reference` rest on data the selection never saw -- unbiased, no winner's curse. `selection_estimate` / `selection_value` are confirm's selection-biased numbers, kept for comparison. `epsilon` is the width those fresh data imply; certification is NOT re-decided here (it is confirm's, at confirm's epsilon `epsilon_confirm`). `skipped` names why no block ran (no winner, winner == baseline, budget)."
     },
+    "delta_feasibility": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5, "description": "#321 P3 item 3: the stated budget term for distributional constraints (semantics mean | chance:<alpha>); present exactly when one is declared."},
     "delta_constraint": {
       "type": "number",
       "exclusiveMinimum": 0,
