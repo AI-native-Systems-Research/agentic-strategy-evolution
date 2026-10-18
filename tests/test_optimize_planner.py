@@ -564,3 +564,23 @@ def test_editing_the_registered_campaign_to_match_does_not_bypass_the_edit_check
     with pytest.raises(planner.PlanError, match="stale_decision"):
         planner.accept(wd, cf)
     assert cf.read_text() == edited
+
+
+def test_a_proposal_lifts_declared_replicates_to_the_next_epochs_floor(tmp_path):
+    """Final review M1: under a charged campaign_delta the floor rises with the
+    epoch. A proposal keeps its moves feasible by raising a declared
+    confirm.replicates to epoch e+1's floor, and says so in its changes."""
+    from orchestrator.optimize.policy import replicate_floor
+
+    res = run_synthetic_campaign(
+        SURFACES["bowl_out_of_hull"](), seed=3, parent_dir=tmp_path,
+        campaign_overrides={"policy": {"campaign_delta": {"total": 0.1}}})
+    d, _ = _decision(res)
+    w = next(o for o in d["options"] if o["id"] == "widen_edge")
+    assert w["feasible"], w
+    assert any("replicates" in ch and "floor" in ch for ch in w["changes"])
+    prop = yaml.safe_load(Path(d["options_dir"], "widen_edge.yaml").read_text()) \
+        if d.get("options_dir") else None
+    if prop is not None:
+        opt = prop["optimization"]
+        assert opt["design"]["confirm"]["replicates"] >= replicate_floor(opt, 2)
