@@ -1,0 +1,114 @@
+{
+ "what": "cProfile of one sparse_knobs_12 campaign (seed 1, noise x1)",
+ "nous_digest": "eca5f9dfd8fcbe5d",
+ "bench_digest": "659d385ed99dfafa",
+ "campaign_cpu_s_under_profiler": 97.79,
+ "budget": 568,
+ "top_cumulative": [
+  {
+   "function": "stage_runner.py:run_stage",
+   "line": 2975,
+   "calls": 4,
+   "tottime_s": 0.0,
+   "cumtime_s": 97.34
+  },
+  {
+   "function": "stage_runner.py:_run_stage_body",
+   "line": 3024,
+   "calls": 4,
+   "tottime_s": 0.03,
+   "cumtime_s": 97.33
+  },
+  {
+   "function": "certificate.py:region_bound",
+   "line": 296,
+   "calls": 2,
+   "tottime_s": 0.58,
+   "cumtime_s": 47.27
+  },
+  {
+   "function": "certificate.py:upper",
+   "line": 381,
+   "calls": 115130,
+   "tottime_s": 16.26,
+   "cumtime_s": 46.15
+  },
+  {
+   "function": "stage_runner.py:_validation_plan",
+   "line": 7245,
+   "calls": 5,
+   "tottime_s": 0.0,
+   "cumtime_s": 38.66
+  },
+  {
+   "function": "adequacy.py:validation_points",
+   "line": 129,
+   "calls": 6,
+   "tottime_s": 0.0,
+   "cumtime_s": 38.58
+  },
+  {
+   "function": "adequacy.py:_greedy_maximin",
+   "line": 93,
+   "calls": 9,
+   "tottime_s": 0.08,
+   "cumtime_s": 38.5
+  },
+  {
+   "function": "stage_runner.py:image",
+   "line": 7239,
+   "calls": 418608,
+   "tottime_s": 0.67,
+   "cumtime_s": 37.5
+  },
+  {
+   "function": "stage_runner.py:<genexpr>",
+   "line": 7240,
+   "calls": 5441904,
+   "tottime_s": 2.66,
+   "cumtime_s": 36.83
+  },
+  {
+   "function": "stage_runner.py:_build_design",
+   "line": 7321,
+   "calls": 5,
+   "tottime_s": 0.0,
+   "cumtime_s": 25.77
+  },
+  {
+   "function": "adequacy.py:<genexpr>",
+   "line": 119,
+   "calls": 356214,
+   "tottime_s": 0.11,
+   "cumtime_s": 24.06
+  },
+  {
+   "function": "certificate.py:term_iv",
+   "line": 371,
+   "calls": 9572736,
+   "tottime_s": 6.34,
+   "cumtime_s": 23.23
+  },
+  {
+   "function": "stage_runner.py:_adequacy_record",
+   "line": 9443,
+   "calls": 2,
+   "tottime_s": 0.0,
+   "cumtime_s": 9.67
+  },
+  {
+   "function": "certificate.py:imul",
+   "line": 362,
+   "calls": 19837998,
+   "tottime_s": 5.24,
+   "cumtime_s": 9.16
+  },
+  {
+   "function": "certificate.py:col_iv",
+   "line": 366,
+   "calls": 17171316,
+   "tottime_s": 5.39,
+   "cumtime_s": 8.59
+  }
+ ]
+}

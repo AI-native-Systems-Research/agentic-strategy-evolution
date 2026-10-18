@@ -1,15 +1,22 @@
 # Matched-budget benchmark: Nous vs random search, Latin hypercube, GP-BO
 
 Every number below was regenerated under the current code: Nous source digest
-`44d94bc5ee2a41b2` and benchmark digest `ac16583f62b3b384`, at checkout
-`3abcb38` (nousko 4ccc6b3 plus the benchmark changes). The full run was done
-twice: once at `bd97bf6`, and again after the last benchmark-code change. The
-second run reproduced every row exactly, apart from timing and one added field
-(`withheld`). That code includes
-WP-A, WP-B, P2, P3, P4 and P6b. Each generated block names the digests its
-rows were produced under, and every number in the prose traces to a row in
-one of the four JSON files beside this one.
+`eca5f9dfd8fcbe5d` and benchmark digest `659d385ed99dfafa`, at nousko 86cbec9
+plus the benchmark changes. That code includes WP-A, WP-B, P2, P3, P4, P6b,
+01eded8 (exact `(X'X)^-1` for every non-orthogonal fit), af81f6d and 86cbec9. Each generated block
+names the digests its rows were produced under.
 
+**Every number in the prose names its source**, as one of these files beside
+this one:
+
+| tag | file |
+|---|---|
+| [S] | `optimization-benchmark.json` (suite) |
+| [A] | `optimization-benchmark-audit-repro.json` |
+| [B] | `optimization-benchmark-ablations.json` |
+| [M] | `optimization-benchmark-mo.json` |
+| [P] | `optimization-benchmark-previous.json` (the previous run: `fd2e722`, Nous digest `10d74ceaa7add3b7`) |
+| [F] | `optimization-benchmark-profile.json` (one cProfile) |
 
 > **Pre-declared analysis (written and committed before the regenerated
 > results existed; #321 H2 / #320 D4).**
@@ -53,40 +60,42 @@ wrapper, with at most 3 workers:
 
 | invocation | what | JSON |
 |---|---|---|
-| `python -m benchmarks.optimization.run` | the suite | `optimization-benchmark.json` |
-| `... --audit-repro` | the stage-0 audit's setup | `optimization-benchmark-audit-repro.json` |
-| `... --ablations` | D4 ablations (the default arm is reused from the suite cache) | `optimization-benchmark-ablations.json` |
-| `... --mo` | multi-objective arm | `optimization-benchmark-mo.json` |
+| `python -m benchmarks.optimization.run` | the suite | [S] |
+| `... --audit-repro` | the stage-0 audit's setup | [A] |
+| `... --ablations` | D4 ablations (the default arm is reused from the suite cache) | [B] |
+| `... --mo` | the multi-objective arm | [M] |
 
-- **Caching.** Every invocation accepts `--cache-dir`, so a killed run resumes.
-  `--plan` prints the job counts before anything runs. `--render-only`
-  re-aggregates a section from its JSON.
-- **Digests.** The code digest is part of every cache key, so no row produced
-  by other code is reused.
-- **Previous run.** `optimization-benchmark-previous.json` keeps the previous
-  run's per-cell budgets, certificate counts, regrets and CPU times (Nous digest
-  `10d74ceaa7add3b7`, checkout `fd2e722`). The cost comparison below reads from
-  it.
+- **Caching and inspection.**
+  - Every invocation accepts `--cache-dir`, so a killed run resumes.
+  - `--plan` prints the job counts before anything runs.
+  - `--render-only` re-aggregates a section from its JSON.
+- **Digests.** The code digest is part of every cache key, so a row produced
+  by other code is never reused.
 
 **What "matched budget" means here.** The budget N is the number of runs Nous's
 own stopping rule chose. Every baseline is given exactly that N on the same
-(surface, noise, seed), so every head-to-head is a comparison at **Nous's
-chosen budget**. A method that would do better with fewer or more runs is not
-credited for it. The anytime curves show what happens BEFORE N:
+(surface, noise, seed) and the same candidate domain. Every head-to-head is
+therefore a comparison at **Nous's chosen budgets**. A method that would do
+better with fewer or more runs is not credited for it.
 
-- Nous's curve is where its run sequence stands after n runs. The campaign was
-  not stopped there, and it would not have certified there.
+The anytime curves show what happens BEFORE N:
+- Nous's curve is where its run sequence stands after n runs. The campaign
+  was not stopped there, and it would not have certified there.
 - A baseline's curve is its pick from the prefix of a run planned for N.
 
 **Run size and cost of this regeneration** (64 GB machine, `--workers 3`,
-under `nous-e2e/bin/heavy`):
+under `nous-e2e/bin/heavy`; wall time and peak RSS are each JSON's
+`meta.elapsed_s` and `meta.peak_rss`):
 
-| section | Nous campaigns | baseline runs | wall time | peak RSS (largest process) |
+| section | Nous campaigns | baseline runs | wall time | peak RSS, largest worker |
 |---|---|---|---|---|
-| suite | 336 | 1344 | 21.1 min | 0.93 GB |
-| audit repro | 360 | 1440 | 48 s | 0.14 GB |
-| ablations | 272 (+128 default arm, reused from the suite) | – | 25 s | 0.15 GB |
-| multi-objective | 216 | 648 | 64 s | 0.14 GB |
+| suite [S] | 336 | 1344 | 60.6 min | 0.88 GB |
+| audit repro [A] | 360 | 1440 | 51.4 min | 0.14 GB |
+| ablations [B] | 272 (+128 default arm, reused) | – | 25 s | 0.15 GB |
+| multi-objective [M] | 216 | 648 | 66 s | 0.15 GB |
+
+Most of the wall time is GP-BO on the 1,032,256-point geometric-knob lattice:
+a median of 217.6 s CPU per campaign [S].
 
 ## Protocol
 
@@ -158,8 +167,9 @@ under `nous-e2e/bin/heavy`):
     It produced 6 spurious "false" certificates there, all of which certify
     the declared-space optimum {32, 0, 8} = 14.4. Deriving the centres from
     `matrix.expand` removed them.
-  - **CPU cost.** GP-BO on the 1,032,256-point geometric-knob lattice takes
-    about 216 s per campaign, against 0.1 s on the old 100-point grid.
+  - **CPU cost.** GP-BO on the 1,032,256-point geometric-knob lattice takes a
+    median of 217.6 s per campaign [S], against 0.06 s on the old 100-point
+    grid [P].
 - **Metric.** TRUE regret of the recommendation on the NOISELESS surface,
   `f(true optimum) - f(recommendation)`. An infeasible recommendation (outside
   `X_valid`), or no recommendation at all, is charged the regret of the worst
@@ -297,141 +307,192 @@ N strata and permutes them independently.
 The audit reported Nous against its crude GP-BO over 360 head-to-heads as
 **better 42, tie 174, worse 144**. With the audit's setup (`--audit-repro`):
 
-| baseline | rule | now: better / tie / worse (exact) | now: within Nous's ε | previous run (`fd2e722`), exact | previous, within ε |
+| baseline | rule | now: better / tie / worse, exact [A] | now: within ε [A] | previous, exact [P] | previous, within ε [P] |
 |---|---|---|---|---|---|
-| GP-BO-crude (the audit's) | GP mean | **125 / 151 / 84** | 78 / 266 / 16 | 53 / 171 / 136 | 12 / 236 / 112 |
-| GP-BO (fitted) | GP mean | **83 / 166 / 111** | 56 / 264 / 40 | 21 / 186 / 153 | 4 / 235 / 121 |
-| GP-BO (fitted) | obs | 100 / 150 / 110 | 66 / 257 / 37 | 42 / 174 / 144 | 12 / 231 / 117 |
+| GP-BO-crude (the audit's) | GP mean | **154 / 136 / 70** | 79 / 258 / 23 | 53 / 171 / 136 | 12 / 236 / 112 |
+| GP-BO (fitted) | GP mean | **112 / 149 / 99** | 43 / 275 / 42 | 21 / 186 / 153 | 4 / 235 / 121 |
+| GP-BO (fitted) | obs | 133 / 136 / 91 | 50 / 271 / 39 | 42 / 174 / 144 | 12 / 231 / 117 |
 
-Most of the shift comes from Nous. GP-BO's rows moved too, because it also
-gets the larger N (for example geometric_knob ×8: 4.45 → 2.71; step_cliff ×8:
-0.29 → 0.215), but by less. Nous's regret fell on the surfaces where it used to
-lose:
+**What changed.** Both sides moved. Nous's regret fell on the surfaces where it
+used to lose:
 
-| surface | noise | previous | now |
+| surface | noise | previous [P] | now [A] |
 |---|---|---|---|
 | geometric_knob | ×1 / ×8 | 26.25 / 23.65 | 0.188 / 0.188 |
 | step_cliff | ×1 / ×8 | 0.90 / 0.94 | 0.40 / 0.555 |
 | ridge_cubic | ×1 / ×8 | 0.50 / 0.54 | 0.22 / 0.30 |
-| two_peaks | ×1 / ×8 | 1.75 / 1.78 | 0.364 / 0.364 |
 
-Every certificate on those four surfaces is gone: 0 of 160, against 54 of
-160 before, of which 53 were false. Against the fitted GP-BO Nous still loses
-more often than it wins: 111 losses against 83 wins (exact), and 40 against 56
-within ε. The audit-reproduction observation from the previous version still
-stands. The audit's exact triple 42/174/144 was what the fitted GP-BO scored
-under `obs` in the previous run, which may be chance or a label mix-up in the
-audit's table. That is noted, not resolved.
+GP-BO's rows moved for two reasons. It now gets Nous's larger N, and it now
+samples the shared lattice instead of the nine-point grid.
+- geometric_knob ×1: 2.56 → 0.71 [P → A].
+- two_peaks: 1.51 → 2.12 at ×1, because the truth moved to the narrow peak
+  that neither method finds [P → A].
+
+**Certificates.** Every certificate on the audit's four hard surfaces
+(geometric_knob, step_cliff, ridge_cubic, two_peaks) is gone: 0 of 160 now,
+against 54 of 160 before, 53 of them false [A, P].
+
+**Head-to-head.** Against the fitted GP-BO under GP mean, Nous now wins more
+than it loses: 112 wins against 99 losses exact, and 43 against 42 within ε,
+which is a tie [A].
+
+**Still unresolved from the previous version.** In the previous run, the
+fitted GP-BO under `obs` scored exactly the audit's triple 42/174/144 [P].
+That may be chance, or a label mix-up in the audit's table. It is noted, not
+resolved.
 
 ## Interpretation
 
-The **pre-declared primary** is the per-family mean normalised regret
-difference, Nous minus GP-BO (GP mean), with a bootstrap over 8 seeds. In the
-suite:
+### The pre-declared primary
 
-| family | Nous minus GP-BO [95%] | read |
-|---|---|---|
-| shipped (21 surfaces x 2 noise) | **-0.055 [-0.066, -0.037]** | favours Nous, but see below |
-| non-quadratic (3 x 2) | **-0.059 [-0.082, -0.021]** | favours Nous, but see below |
-| many-knob sparse (3 x 2) | +0.0002 [-0.0002, +0.0008] | a tie |
+The primary is the per-family mean normalised regret difference, Nous minus
+GP-BO (GP mean), bootstrap 95% over 8 seeds, in the suite [S]:
 
-**Both "favours Nous" results rest on one surface each.** A family mean of a
-bounded metric is dominated by any cell with a large normalised gap. The
-breakdown below is a POST-HOC reading, not part of the declared analysis:
+| family | Nous minus GP-BO, bootstrap [95%] | t 95% | read |
+|---|---|---|---|
+| shipped (21 surfaces × 2 noise) | **-0.057 [-0.066, -0.039]** | [-0.077, -0.037] | favours Nous; see the post-hoc split below |
+| non-quadratic (3 × 2) | **-0.020 [-0.063, +0.037]** | [-0.083, +0.043] | inconclusive |
+| many-knob sparse (3 × 2) | **+0.0012 [+0.0008, +0.0017]** | [+0.0007, +0.0017] | GP-BO slightly better: 0.1% of the range |
 
-- **Shipped.** The shipped family's mean rests on `stochastic_constraint_boundary`:
-  Nous 0.875, every baseline 7.0, a normalised gap of -0.875 per cell. Without
-  that surface, Nous minus GP-BO on the shipped family is **+0.004 [+0.0004,
-  +0.007]**, a small loss for Nous. Part of that gap is a design asymmetry, not
-  a better optimizer. Nous replicates its finalists. A baseline mostly measures
-  a configuration once, so its "feasible" pick is feasible by one lucky draw. A
-  baseline with replicated confirmation would narrow the gap.
-- **Non-quadratic.** The non-quadratic mean rests on `two_peaks`: Nous 0.364,
-  GP-BO 1.53. On `step_cliff` (0.40-0.46 against 0.225) and `ridge_cubic`
-  (0.22-0.23 against 0.003-0.017) GP-BO is clearly better. Without `two_peaks`
-  the family difference is **+0.043 [+0.032, +0.052]**.
+**Post-hoc split (not part of the declared analysis).** A family mean of a
+bounded metric is dominated by any cell with a large normalised gap, so here
+are the two family means with their dominant surface removed:
 
-**Where Nous wins or ties.**
+- **Shipped.** The shipped mean rests on `stochastic_constraint_boundary`:
+  Nous 0.875, every baseline 7.0, a normalised gap of -0.875 per cell [S].
+  - Without that surface, Nous minus GP-BO is **+0.0015 [+0.0002, +0.0028]**
+    under the bootstrap. That excludes 0 only under the bootstrap: the t
+    interval, [-0.0002, +0.0031], includes 0 [S].
+  - So without it, the shipped family is at most a small loss for Nous.
+  - Part of the `stochastic_constraint_boundary` gap is a design asymmetry,
+    not a better optimizer. Nous replicates its finalists. A baseline mostly
+    measures a configuration once, so its "feasible" pick is feasible by one
+    lucky draw.
+- **Non-quadratic.** The non-quadratic mean is pulled toward Nous by
+  `two_peaks`.
+  - On `two_peaks`: Nous 1.263, GP-BO 1.99-2.17. LHS is the best method there
+    at 0.883 [S]. No method finds the narrow peak.
+  - On `step_cliff` (0.40-0.46 against 0.112-0.225) and `ridge_cubic`
+    (0.22-0.23 against 0.000-0.014), GP-BO is clearly better [S].
+  - Without `two_peaks`, the family difference is **+0.046 [+0.033, +0.059]**,
+    a loss for Nous [S].
 
-- **Smooth, low-order surfaces.** These are additive, interaction_only, bowl,
-  bowl_centred, saddle, choice_x_numeric, drift and geometric_knob_log: 128
-  campaigns.
-  - Against GP-BO the exact counts are 21 better / 102 tied / 5 worse. Within
-    ε the result is 1 / 127 / 0.
-  - Nous is within ε of the best baseline in 128 of 128.
-  - So this is parity with GP-BO, not a win. Against RS and LHS Nous wins
-    clearly.
-- **Many knobs with effect sparsity** (`sparse_knobs` 6/8/12, 108-568 runs).
-  - Mean regret is at most 0.014 in every cell. Within ε Nous ties GP-BO in 48
-    of 48 and never loses to RS or LHS.
-  - It certified NONE of the 48; see the cost section.
-- **Drift** (`drift`, a trend of 0.05 per run). Nous scores 0 regret, RS
-  0.34-0.38, LHS 0.21-0.22 and GP-BO 0.013-0.05.
-  - The previous version attributed this to Nous's blocked, randomized run
-    order. **The ablation refutes that attribution for regret.** With run-order
-    randomization off (every block in design order), Nous's regret on `drift`
-    is still 0 on all 16 campaigns.
-  - What randomization does buy there is CERTIFICATES: 10 of 16 with it, 4 of
-    16 without, 0 false either way.
-  - Plausibly, the regret gap comes from the baselines' `obs` pick, which
-    favours whichever configuration happened to be measured late in a rising
-    trend, while Nous compares replicated finalists. That is not tested here.
+**Head-to-head proportions** (Wilson 95%, conditional on these surfaces). Over
+all 336 suite campaigns, against GP-BO [S]:
+- Nous is better in 0.20 [0.16, 0.25] and worse in 0.26 [0.22, 0.31] (exact).
+- Within ε: better in 0.09 [0.07, 0.13], worse in 0.08 [0.06, 0.11].
+
+### Where Nous wins or ties
+
+- **Smooth, low-order surfaces** (additive, interaction_only, bowl,
+  bowl_centred, saddle, choice_x_numeric, drift, geometric_knob_log; 128
+  campaigns) [S].
+  - Against GP-BO: 23 better / 100 tied / 5 worse (exact), and 0 / 128 / 0
+    within ε. Nous is within ε of the best baseline in 128 of 128.
+  - This is parity with GP-BO, not a win. Against RS (26 / 102 / 0 within ε)
+    and LHS (17 / 111 / 0), Nous never loses.
+- **Many knobs with effect sparsity** (`sparse_knobs` 6/8/12, 108-568 runs)
+  [S].
+  - Nous's mean regret is at most 0.024 in every cell. Within ε it ties GP-BO
+    in 48 of 48, and never loses to RS or LHS.
+  - It certified none of the 48 (see the cost section).
+- **Drift** (`drift`, a trend of 0.05 per run). Nous scores 0 regret on all 16
+  campaigns, and so does every baseline once they all share one domain [S].
+  - The previous version credited Nous's zero regret there to blocked,
+    randomized run order. **Randomization does not explain the regret
+    advantage.**
+    - With run-order randomization off, Nous's regret is still 0 on all 16
+      campaigns [B].
+    - The previous baseline regrets (RS 0.34-0.38) came from the old 9-point
+      domain: the baselines could not sample the design centre that Nous
+      measures.
+  - Certificates: 10 of 16 with randomization, 4 of 16 without (Fisher exact
+    p = 0.073). On `bowl` the difference goes the other way: 8 → 14 of 16,
+    p = 0.054 [B]. These differences are **not distinguishable from seed noise
+    at 8 seeds**.
 - **Geometric knob coded linearly** (`geometric_knob`, no `scale: log`). Nous
-  improved from 26.25 to 0.188. GP-BO scores 2.6-3.2 and RS 0.061, the best
-  method here. No certificate was issued, against 4 false ones before.
-- **Multi-objective, against RS and LHS.** Pooled HV regret, Nous minus RS, is
-  -0.022 [-0.027, -0.017]; minus LHS, -0.015 [-0.020, -0.009].
+  improved from 26.25 [P] to 0.188 [S], and is now the best method here: RS
+  1.45, GP-BO 0.78-3.13, LHS 2.0-2.6 [S]. No certificate issued, against 4
+  false ones before [P].
+- **Noisy constraints** (`stochastic_constraint_boundary`). Nous 0.875,
+  every baseline 7.0, with the design-asymmetry caveat above [S].
+- **Multi-objective, against RS and LHS.** Pooled HV regret, Nous minus RS:
+  -0.012 [-0.018, -0.007]. Minus LHS: -0.0085 [-0.011, -0.006] [M].
 - **What no baseline offers:**
   - a certificate with stated deltas, with **0 false certificates in every arm
     of every section** (table below);
   - a pre-registered policy and an audit trail;
   - provenance, `nous reanalyze`, and a cross-epoch error budget.
 
-**Where Nous loses.**
+**Certification soundness, every arm:**
 
-- **Non-quadratic surfaces other than two_peaks.** GP-BO's regret is 10-70
-  times lower on `ridge_cubic` and about half of Nous's on `step_cliff`. Nous no
-  longer certifies there (0 of 48, against 22 of 48 before, all of which were
-  false). Its answer is still the second-order model's, so it is still wrong in
-  the same way.
+| section | arm | campaigns | certified | false |
+|---|---|---|---|---|
+| suite [S] | nous | 336 | 50 | **0** |
+| audit repro [A] | nous | 360 | 60 | **0** |
+| ablations [B] | nous (default, the ablation surfaces) | 128 | 30 | **0** |
+| ablations [B] | nous+alloc | 112 | 12 | **0** |
+| ablations [B] | nous+alloc+bo | 112 | 13 | **0** |
+| ablations [B] | nous-order | 48 | 24 | **0** |
+| multi-objective [M] | nous | 72 | 36 | **0** |
+| multi-objective [M] | nous+alloc | 72 | 37 | **0** |
+| multi-objective [M] | nous+alloc+bo | 72 | 35 | **0** |
+
+### Where Nous loses
+
+- **Non-quadratic surfaces other than two_peaks.** GP-BO's regret is far below
+  Nous's on `ridge_cubic` (0.000-0.014 against 0.22-0.23) and half of it on
+  `step_cliff` [S].
+  - Nous no longer certifies there: 0 of 48, against 22 of 48 before, all
+    false [S, P].
+  - Its answer is still the second-order model's, so it is still wrong in the
+    same way.
 - **Deterministic constraint at the boundary** (`sla`). Nous 0.40 at ×1 and
-  0.275 at ×4; GP-BO 0.000.
-- **A level that fails to measure** (`fails_at_one_level`). Nous 0.32-0.36
-  (0.64 before); GP-BO 0.08.
+  0.275 at ×4; GP-BO 0.000 [S].
+- **A level that fails to measure** (`fails_at_one_level`). Nous 0.32-0.36,
+  tied with every baseline: all of them now reach CPU = 24 in the shared
+  domain, and score 0.32-0.36 [S].
+  - The previous version's 0.08 for GP-BO [P] came from the old domain, where
+    CPU = 24 was unreachable and its pick happened to score better.
 - **Multi-objective, against ParEGO.** Pooled HV regret, Nous minus ParEGO at
-  Nous's budget, is **+0.038 [+0.035, +0.040]**. ParEGO wins the majority of
-  seeds on all 9 surfaces.
-  - It wins 8 of 8 on `pareto_concave`, `pareto_three`, `pareto_choice_split`
-    and `pareto_three_noisy`.
-  - On `pareto_choice_split` and `pareto_three_noisy` Nous also loses to RS
-    and LHS.
-- **Anytime.** On the shipped family Nous's curve sits below every baseline's
-  from 10% of N onward: 0.194 at 10% against GP-BO's 0.293, and 0.018 at N
-  against GP-BO's 0.072.
-  - On non-quadratic surfaces it is flat at 0.25 until 40% of N, because the
-    screen's corners are all it has measured. It ends at 0.066, where RS
-    (0.099) and LHS (0.070) end too. GP-BO ends at 0.126, which is pulled up by
-    `two_peaks`.
-  - On many-knob surfaces Nous's best-so-far sits at 0.065 until the final
-    confirm. GP-BO reaches 0.004 by 20% of N, so GP-BO gets there with a fifth
-    of the runs.
-  - Stopped early, GP-BO is the better tool there. Nous's N is the price of
-    the certificate it then declines to issue (below).
+  Nous's budget: **+0.045 [+0.043, +0.048]** [M].
+  - ParEGO wins the majority of seeds on every one of the 9 surfaces.
+  - On `pareto_choice_split` and `pareto_three_noisy`, Nous also loses to RS
+    and LHS on every seed [M].
+- **Anytime, shipped family** [S]:
+  - At 10% of N, Nous is lower than GP-BO: 0.194 [0.178, 0.219] against 0.285
+    [0.267, 0.307].
+  - At 20%, the intervals overlap: 0.130 [0.113, 0.155] against 0.154 [0.135,
+    0.172].
+  - At 40%, GP-BO leads: 0.101 [0.087, 0.116] against Nous's 0.144 [0.119,
+    0.162].
+  - From 60% onward, Nous is lower: 0.040 against 0.081 at 60%, and 0.018
+    [0.009, 0.035] against 0.075 at N.
+- **Anytime, non-quadratic family** [S]:
+  - Nous sits at 0.282 at 10% and 20% of N, then 0.249 at 40%.
+  - Every baseline is lower than Nous from 20% of N.
+  - Nous ends at 0.116. That is above LHS (0.074) and RS (0.110), and below
+    GP-BO (0.137), which is pulled up by `two_peaks`.
+- **Anytime, many-knob family** [S]:
+  - Nous's best-so-far sits at 0.066 from 10% to 80% of N and drops only with
+    the final confirm, to 0.002.
+  - GP-BO reaches 0.004 by 20% of N.
+  - Stopped early, GP-BO is the better tool there. Nous's N buys a certificate
+    that it then declines to issue (below).
 
-**The cost of the P3/P4 conservatism, measured against the previous run.**
+### The cost of the P3/P4 conservatism, measured against the previous run
 
-| | previous (`fd2e722`, digest `10d74cea…`) | now (`44d94bc5…`) |
+| | previous (`fd2e722`) [P] | now [S, A] |
 |---|---|---|
 | suite: runs (sum of N) | 21,056 | 26,208 (+24%) |
 | suite: certified / false | 162 / **26** (136 sound) | 50 / **0** |
 | suite, smooth family (128 campaigns): certified / false | 89 / 0 | 44 / 0 |
-| suite, many-knob sparse (48): certified / false | 47 / 0 | 0 / 0 |
+| suite, many-knob sparse (48): certified / false | 37 / 0 | 0 / 0 |
 | audit repro: runs | 10,460 | 16,080 (+54%) |
 | audit repro: certified / false | 170 / **53** (117 sound) | 60 / **0** |
 
-- **Runs.** The replicate floor (P3: 6 or 7 confirm replicates, against 3)
-  and the outer validation ring (P4) cost runs. Some examples, previous N
-  against current N:
+- **Runs.** The replicate floor (P3: 6 or 7 confirm replicates, against 3) and
+  the outer validation ring (P4) cost runs. Previous N → current N [P, S]:
 
   | surface | previous N | current N |
   |---|---|---|
@@ -440,85 +501,93 @@ breakdown below is a POST-HOC reading, not part of the declared analysis:
   | sla | 38 | 68 |
   | sparse_knobs_12 | 553 | 568 |
 
-  Every baseline gets the larger N too, so the regret comparisons stay
-  matched.
-- **Certification power.** On the smooth family the code withheld 45 of the
-  89 previous certificates, and none of the 89 had been false. On the
-  many-knob family it withheld all 47, none of which had been false. That is
-  the price of the soundness fix: 26 + 53 false certificates removed, against
-  45 + 47 sound ones lost in those two families. On the many-knob family the
-  dominant reason is `model_bound_above_epsilon`, recorded in 42 of 48
-  campaigns: the Scheffé-band model bound (P2) over a 9^k searched space is
-  wider than ε at these designs. That is the H3 caveat, now measured. The reasons are tabulated per
-  family under the suite results (`Why uncertified campaigns were withheld`).
-- **CPU.** On `sparse_knobs_12` Nous's median analysis CPU rose from 2.8 s to
-  37.5 s per campaign. GP-BO takes 79.6 s, so Nous is still about half. On
-  `sparse_knobs_8` Nous now takes 10.4-13.0 s against GP-BO's 5.6 s. A cProfile
-  of one `sparse_knobs_12` campaign (seed 1; 98 s under the profiler) gives the
-  top cumulative functions below `run_stage`:
+  Every baseline gets the larger N too, so the comparisons stay matched.
+- **Certification power.**
+  - Smooth family: the current code withholds 45 of the 89 previous
+    certificates, none of which had been false.
+  - Many-knob family: it withholds all 37, none of which had been false.
+  - The trade: 26 + 53 false certificates removed, against 45 + 37 sound ones
+    lost in those two families.
+  - On the many-knob family the dominant recorded reason is
+    `model_bound_above_epsilon`, in 42 of 48 campaigns [S]: the model bound
+    over a 9^k searched space is wider than ε at these designs.
+  - The reasons are tabulated per family under the suite results.
+- **CPU.** Median Nous analysis CPU on `sparse_knobs_12` rose from 2.79 s [P]
+  to 37.6 s [S] per campaign. GP-BO takes 80.8 s there [S].
+  - On `sparse_knobs_8`, Nous now takes 10.4-13.0 s against GP-BO's 5.9 s [S].
+  - The profile of one `sparse_knobs_12` campaign [F] is below. This is
+    measured, not optimised here, and on a real target the runs, not the
+    analysis, dominate the cost.
 
-  | function | cumulative s | origin |
-  |---|---|---|
-  | `certificate.region_bound` (115,130 calls of the inner `upper`) | 47.7 | P2 branch-and-bound (`6093737`) |
-  | `stage_runner._validation_plan` → `adequacy._greedy_maximin` | 26.0 | P4 outer validation ring (`456494e`) |
-  | `stage_runner._build_design` | 13.0 | |
-  | `stage_runner._adequacy_record` (`design_efficiency` 8.1 s) | 9.8 | P4 G/I efficiency |
-  | `certificate.model_regret_bound` | 8.5 | |
+  | function (`optimization-benchmark-profile.json`) | calls | cumulative s | origin |
+  |---|---|---|---|
+  | `certificate.region_bound` (115,130 calls of the inner `upper`) | 2 | 47.3 | P2 branch-and-bound (`6093737`) |
+  | `stage_runner._validation_plan` → `adequacy._greedy_maximin` | 5 | 38.7 | P4 outer validation ring (`456494e`) |
+  | `stage_runner._build_design` | 5 | 25.8 | |
+  | `stage_runner._adequacy_record` | 2 | 9.7 | P4 G/I efficiency |
 
-  This is measured, not optimised here. On a real target the runs, not the
-  analysis, dominate the cost.
+  The profile wraps the whole benchmark call, which takes 97.8 s under the
+  profiler [F]. It therefore includes the benchmark's own one-off truth
+  derivation: `surfaces.centre_configs` calls `_build_design` for screen and
+  refine, which is 2 of the 5 `_build_design` and `_validation_plan` calls.
+  The campaign's recorded `cpu_s` excludes that derivation, because `truth`
+  runs before the timer starts.
 
-**Ablations (D4).** Each arm is compared on the same seeds against the
-default; tables are under the results.
+### Ablations (D4)
 
-- **Allocate** (`design.confirm.allocate: {seats: 2}`). On the
-  single-objective surfaces:
-  - Paired Δ normalised regret is -0.0012 [-0.0032, 0.0000] on the smooth
-    surfaces and +0.0001 [0.0000, +0.0004] on the non-quadratic ones.
-  - Mean runs rise 45.1 → 52.3 (+16%), and certificates fall 20 → 12.
-  - The cause is the extra registered look, which raises the replicate floor
-    from 6 to 7 and splits delta_terminal three ways, whether or not the
-    round fires.
-  - It fired in 22 of 112 campaigns: additive ×4, saddle ×1/×4 and
-    ridge_cubic ×4. It never fired on step_cliff or two_peaks, where the model
-    gate declines.
-  - On these surfaces allocate is a small regret gain at a real cost in runs
-    and certification power.
-- **Allocate, multi-objective.**
-  - Paired Δ HV regret is **-0.0063 [-0.0100, -0.0029]** at 68.4 → 72.2 mean
-    runs. On `pareto_with_constraint` it is -0.029 [-0.053, -0.006], and on
-    `pareto_noisy` -0.014 [-0.024, -0.005].
-  - Front certificates are 36 → 37 of 72, with 0 false.
+Each arm against the default, on the same seeds [B, M]. The tables are under
+the results.
+
+- **Allocate** (`design.confirm.allocate: {seats: 2}`), single objective:
+  - **No detectable regret change.** Paired Δ normalised regret is -0.0012
+    [-0.0032, 0.0000] on the smooth surfaces and +0.0001 [0.0000, +0.0004] on
+    the non-quadratic ones [B].
+  - Mean runs rise 45.1 → 52.3 (+16%), and certificates fall 20 → 12 of 112
+    [B].
+  - The cause is the extra registered look, which is charged whether or not
+    the round fires. It raises the replicate floor from 6 to 7. It splits
+    delta_terminal two ways on unconstrained surfaces (round + allocate), and
+    three ways on constrained ones (round + refill + allocate).
+  - The round fired in 22 of 112 campaigns: additive ×4, saddle ×1/×4,
+    ridge_cubic ×4 [B]. It never fired on step_cliff or two_peaks, where the
+    model gate declines.
+- **Allocate, multi-objective:**
+  - Paired Δ HV regret is **-0.0062 [-0.0098, -0.0029]**, at mean runs 68.4 →
+    72.2 [M].
+  - The gain comes from `pareto_with_constraint` (-0.028 [-0.052, -0.006]) and
+    `pareto_noisy` (-0.014 [-0.024, -0.005]) [M].
+  - Front certificates: 36 → 37 of 72, 0 false [M].
   - On `pareto_three_discrete`, the recombination oracle's surface, HV regret
-    is 0.006 → 0.003 (-0.0024 [-0.0048, -0.0005]). But the allocate TRANSITION
-    fired in 0 of 8 there. Allocator seats also enter the gap-fill rounds, and
-    this benchmark does not separate the two.
-- **BO proposer** (`planner.bo`, TPE, module defaults; proposals reach only
-  the allocate pool).
-  - Single-objective: identical to allocate alone on every cell, except bowl
-    ×4, where the proposals changed the seats in one campaign.
-  - Multi-objective: -0.0039 [-0.0080, +0.0002] against the default, which is
-    no better than allocate alone. On `pareto_with_constraint` it cost
-    certificates (2 → 0 of 8).
+    falls 0.0057 → 0.0033 (-0.0024 [-0.0048, -0.0005]) [M]. The allocate
+    TRANSITION fired in 0 of 8 there. Allocator seats also enter the gap-fill
+    rounds, and this benchmark does not separate the two.
+- **BO proposer** (`planner.bo`, TPE, module defaults). Its proposals reach
+  only the allocate pool.
+  - Single objective: regret and runs are identical to allocate alone on every
+    cell except bowl ×4, where the round fired once more (N 47.0 → 49.6).
+    Certificates are identical except saddle ×1, which certified 1 of 8 with
+    BO against 0 of 8 with allocate alone [B].
+  - Multi-objective: -0.0039 [-0.0078, +0.0002] against the default, no better
+    than allocate alone. On `pareto_with_constraint` it cost certificates (2 →
+    0 of 8) [M].
   - There is no measurable benefit here.
-- **Run order** (randomization off; `drift`, `bowl`, `additive`).
+- **Run order** (randomization off; `drift`, `bowl`, `additive`) [B]:
   - Regret is unchanged everywhere except additive ×4 (+0.0045 [0, +0.011])
     and bowl ×4 (-0.0038 [-0.0125, +0.0019]).
-  - Certificates on drift fall 10 → 4 of 16. On bowl and additive they RISE
-    (8 and 3 → 14 and 6 of 16).
-  - With zero drift a different order only reassigns noise draws, so those
-    rises show how variable a certificate count of 8 seeds is.
+  - Certificate counts move both ways (drift 10 → 4, bowl 8 → 14, additive
+    3 → 6, of 16). At 8 seeds these are not distinguishable from seed noise
+    (Fisher p = 0.073, 0.054, 0.43).
 
-**Practical guidance.**
+### Practical guidance
 
 | Situation | Use |
 |---|---|
-| Few knobs, smooth monotone or single-bump response, expensive runs, and an auditable answer is needed (a deploy decision, a paper) | **Nous**, declaring `scale: log` for geometric knobs. Expect parity with GP-BO on regret. The certificate, when issued, has been sound in every campaign here, but it is withheld far more often than before |
-| Many knobs, few of which matter | Nous and GP-BO tie on regret at Nous's budget. GP-BO gets there with a fifth of the runs. Nous did not certify any of these campaigns at the current code |
-| A drifting environment | Either. Randomized order buys certificates, not regret, on the one drift surface here |
+| Few knobs, smooth monotone or single-bump response, expensive runs, and an auditable answer is needed (a deploy decision, a paper) | **Nous**, declaring `scale: log` for geometric knobs. Expect parity with GP-BO on regret. A certificate, when issued, was sound in every campaign here, but it is withheld far more often than before |
+| Many knobs, few of which matter | Nous and GP-BO tie on regret at Nous's budget; GP-BO gets there with a fifth of the runs. Nous did not certify any of these campaigns at the current code |
+| A drifting environment | Either. On the one drift surface here, no method's regret depended on run order, and the certificate difference was within seed noise |
 | Noisy constraints | Nous, or any method that replicates its finalists |
 | Response suspected multimodal, cliff-like or strongly non-polynomial | **GP-BO.** Nous now declines to certify there instead of certifying a wrong answer, but its answer is still the quadratic model's |
-| Multiple objectives, front quality is what matters | **ParEGO** (or another model-based MO method). Nous's front is better than RS/LHS but worse than ParEGO at Nous's budget; Nous's advantage is the front certificate (0 false in 216) |
+| Multiple objectives, front quality is what matters | **ParEGO** (or another model-based MO method). Nous's front beats RS/LHS but loses to ParEGO at Nous's budget. Nous's advantage is the front certificate (0 false in 216) |
 | Pure exploration of an unknown surface, no certificate needed | GP-BO, or LHS as a cheap space-filling first pass |
 
 ## Results: suite (seeds 1-8, noise ×1/×4)
@@ -780,7 +849,7 @@ _GP-BO had to re-pick an only-failed configuration 0 time(s) (every candidate ha
 ## Results: audit reproduction (the audit's 9 surfaces, seeds 1-20, noise ×1/×8)
 
 <!-- BEGIN GENERATED audit-repro -->
-_Tables aggregated by `python -m benchmarks.optimization.run --audit-repro --workers 3 --cache-dir <cache-dir>` at checkout bf5a282dcc5fdee6432500207ff832059a42daaf (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], noise multipliers [1.0, 8.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) ff14a3afe6e0fdb1; benchmark code digest(s) 47bc42e50f66cb60. Wall 50.3 min; peak RSS: largest worker 0.141 GB, parent 0.112 GB._
+_Tables aggregated by `python -m benchmarks.optimization.run --audit-repro --workers 3 --cache-dir <cache-dir>` at checkout 4e01efc879ed8297f4d4a8d3d581a909f84a0f86 (Nous 0.5.0); seeds [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20], noise multipliers [1.0, 8.0]. Rows come from the resume cache and record the code they were produced under: Nous source digest(s) eca5f9dfd8fcbe5d; benchmark code digest(s) 659d385ed99dfafa. Wall 51.4 min; peak RSS: largest worker 0.141 GB, parent 0.111 GB._
 
 ### PRIMARY (pre-declared): mean normalised regret difference, Nous minus baseline, per family
 
@@ -901,23 +970,23 @@ Nous: the best-so-far always-admissible measured configuration after its first n
 
 | surface | noise | Nous | RS | LHS | GP-BO | GP-BO-crude |
 |---|---|---|---|---|---|---|
-| additive | ×1 | 0.21 | 0.01 | 0.01 | 0.13 | 0.02 |
-| additive | ×8 | 0.21 | 0.01 | 0.01 | 0.13 | 0.02 |
+| additive | ×1 | 0.20 | 0.01 | 0.01 | 0.14 | 0.02 |
+| additive | ×8 | 0.20 | 0.01 | 0.01 | 0.13 | 0.02 |
 | bowl | ×1 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
-| bowl | ×8 | 0.21 | 0.01 | 0.01 | 0.09 | 0.01 |
-| bowl_centred | ×1 | 0.21 | 0.01 | 0.01 | 0.15 | 0.02 |
-| bowl_centred | ×8 | 0.21 | 0.01 | 0.01 | 0.14 | 0.02 |
-| saddle | ×1 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
+| bowl | ×8 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
+| bowl_centred | ×1 | 0.20 | 0.01 | 0.01 | 0.15 | 0.02 |
+| bowl_centred | ×8 | 0.20 | 0.01 | 0.01 | 0.14 | 0.02 |
+| saddle | ×1 | 0.20 | 0.01 | 0.01 | 0.11 | 0.01 |
 | saddle | ×8 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
-| choice_x_numeric | ×1 | 0.20 | 0.01 | 0.01 | 0.06 | 0.00 |
-| choice_x_numeric | ×8 | 0.20 | 0.01 | 0.01 | 0.06 | 0.00 |
-| geometric_knob | ×1 | 0.20 | 0.04 | 0.04 | 216.19 | 5.78 |
-| geometric_knob | ×8 | 0.20 | 0.04 | 0.04 | 210.95 | 5.78 |
-| step_cliff | ×1 | 0.21 | 0.01 | 0.01 | 0.10 | 0.01 |
-| step_cliff | ×8 | 0.21 | 0.01 | 0.01 | 0.09 | 0.01 |
-| ridge_cubic | ×1 | 0.21 | 0.01 | 0.01 | 0.15 | 0.01 |
-| ridge_cubic | ×8 | 0.21 | 0.01 | 0.01 | 0.13 | 0.02 |
-| two_peaks | ×1 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
+| choice_x_numeric | ×1 | 0.19 | 0.01 | 0.01 | 0.06 | 0.00 |
+| choice_x_numeric | ×8 | 0.19 | 0.01 | 0.01 | 0.06 | 0.00 |
+| geometric_knob | ×1 | 0.20 | 0.04 | 0.04 | 217.56 | 5.96 |
+| geometric_knob | ×8 | 0.20 | 0.04 | 0.04 | 217.75 | 5.96 |
+| step_cliff | ×1 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
+| step_cliff | ×8 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
+| ridge_cubic | ×1 | 0.20 | 0.01 | 0.02 | 0.14 | 0.02 |
+| ridge_cubic | ×8 | 0.20 | 0.01 | 0.01 | 0.13 | 0.02 |
+| two_peaks | ×1 | 0.20 | 0.01 | 0.01 | 0.10 | 0.01 |
 | two_peaks | ×8 | 0.20 | 0.01 | 0.01 | 0.09 | 0.01 |
 
 ### Why uncertified campaigns were withheld (reasons per campaign; one campaign can carry several)
@@ -940,7 +1009,7 @@ _GP-BO had to re-pick an only-failed configuration 0 time(s) (every candidate ha
 ## Results: ablations (D4; seeds 1-8, noise ×1/×4)
 
 <!-- BEGIN GENERATED ablations -->
-_Generated by `python -m benchmarks.optimization.run --ablations --workers 3 --cache-dir <cache-dir>` at checkout bf5a282dcc5fdee6432500207ff832059a42daaf; seeds [1, 2, 3, 4, 5, 6, 7, 8], noise [1.0, 4.0]; Nous digest(s) ff14a3afe6e0fdb1, benchmark digest 47bc42e50f66cb60. Wall 0.4 min; peak RSS: largest worker 0.145 GB, parent 0.105 GB._
+_Generated by `python -m benchmarks.optimization.run --ablations --workers 3 --cache-dir <cache-dir>` at checkout 4e01efc879ed8297f4d4a8d3d581a909f84a0f86; seeds [1, 2, 3, 4, 5, 6, 7, 8], noise [1.0, 4.0]; Nous digest(s) eca5f9dfd8fcbe5d. Wall 0.4 min; peak RSS: largest worker 0.145 GB, parent 0.105 GB._
 
 ### Ablations: each arm against the default on the same seeds
 
@@ -1009,7 +1078,7 @@ Over its 48 campaigns: mean runs 39.3 (default) → 39.3 (arm); certified 21 →
 ## Results: multi-objective (seeds 1-8)
 
 <!-- BEGIN GENERATED mo -->
-_Generated by `python -m benchmarks.optimization.run --mo --workers 3 --cache-dir <cache-dir>` at checkout bf5a282dcc5fdee6432500207ff832059a42daaf; seeds [1, 2, 3, 4, 5, 6, 7, 8]; Nous digest(s) ff14a3afe6e0fdb1, benchmark digest(s) 47bc42e50f66cb60. Wall 1.1 min; peak RSS: largest worker 0.145 GB, parent 0.105 GB._
+_Generated by `python -m benchmarks.optimization.run --mo --workers 3 --cache-dir <cache-dir>` at checkout 4e01efc879ed8297f4d4a8d3d581a909f84a0f86; seeds [1, 2, 3, 4, 5, 6, 7, 8]; Nous digest(s) eca5f9dfd8fcbe5d, benchmark digest(s) 659d385ed99dfafa. Wall 1.1 min; peak RSS: largest worker 0.146 GB, parent 0.105 GB._
 
 ### Hypervolume regret at the matched budget (mean [bootstrap 95%]; lower is better)
 
