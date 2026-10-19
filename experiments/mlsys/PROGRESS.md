@@ -55,3 +55,4 @@ Times are local (EDT).
   opus-4-6, and included in cost. One HTTP 400 per arm at CLI startup (CLI probe), then normal 200s.
 - 19:47 tick: pilot (dbg x 3 arms) running, all in session/iteration 1, no crashes, $3.57 total.
 - 19:52 tick: pilot running, all arms in iteration 1 (Nous still in DESIGN), $6.67 total, no crashes.
+- 19:57 tick: pilot still in iteration 1 for all arms, $10.51 total, no crashes.
