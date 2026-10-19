@@ -110,8 +110,7 @@ def main(task, arm, rep, slot):
     sb.write_text(sandbox.profile(str(run_dir)))
     t0 = time.time()
     meta = dict(task=task, arm=arm, rep=rep, slot=slot, max_iterations=n_max, ceiling=ceiling,
-                nous_commit=subprocess.run(["git", "-C", str(NOUS), "rev-parse", "HEAD"], capture_output=True,
-                                           text=True).stdout.strip(),
+                nous_commit=(NOUS_RT / "NOUS_COMMIT").read_text().strip(),
                 claude_cli=subprocess.run([CLAUDE, "--version"], capture_output=True, text=True).stdout.strip(),
                 started=time.strftime("%Y-%m-%d %H:%M:%S"))
     try:

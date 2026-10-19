@@ -49,3 +49,7 @@ Times are local (EDT).
   - Nous executes in throwaway worktrees, so after the campaign one short packaging session (counted in Nous's cost)
     applies the campaign's own patches and writes final/answer.json from its report. It may not run new
     experiments or change conclusions.
+- 20:43 Pilot launched: debugging task, one run per arm (nous_prompt on key 1, l2 on key 2, nous on key 3).
+  Audit after 5 min: all three arms on claude-opus-4-6 (Nous design phase; execute will be Sonnet 4.6 by default),
+  same CLI 2.1.301, tools working inside the sandbox; subagent (Explore) transcripts are captured and also on
+  opus-4-6, and included in cost. One HTTP 400 per arm at CLI startup (CLI probe), then normal 200s.
