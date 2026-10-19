@@ -15,7 +15,7 @@ from pathlib import Path
 
 F = Path(__file__).resolve().parent.parent
 TASKS = ["225", "44", "0", "5", "26", "58", "181"]
-REPEATS = ["r1", "r2", "r3"]
+REPEATS = ["r1"]  # stage 1; add "r2", "r3" for repeats after the stage-1 decision
 KEYS = [("NOUS_LITELLM_URL", "NOUS_LITELLM_KEY1"), ("NOUS_LITELLM_URL", "NOUS_LITELLM_KEY2"),
         ("NOUS_LITELLM_URL", "NOUS_LITELLM_KEY3"), ("NOUS_LITELLM_URL", "FCS_VPC_KEY"),
         ("NOUS_VPCINT_URL", "NOUS_VPCINT_KEY1"), ("NOUS_VPCINT_URL", "NOUS_VPCINT_KEY2")]
