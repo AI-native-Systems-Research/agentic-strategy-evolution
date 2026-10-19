@@ -26,7 +26,9 @@ Design decisions worth knowing:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -49,6 +51,81 @@ _UNBOUNDED_RETRY_SAFETY_CAP = 1000
 
 class SDKTransientError(RuntimeError):
     """Runner raises this for retryable transport-level failures."""
+
+
+class SDKWallClockError(SDKTransientError):
+    """One SDK turn exceeded its phase wall-clock ceiling (#303).
+
+    A subclass of :class:`SDKTransientError` so the bounded retry loop counts
+    it like any other transient failure; ``call_sdk_with_retry`` logs it to
+    ``retry_log.jsonl`` as ``failure_type: "wall_clock"`` so a hang is a
+    counted, named failure rather than a run that looks "still running".
+    """
+
+
+# #303: default per-attempt wall-clock ceiling for one SDK turn. Real turns
+# measured up to ~3,600s (execute_analyze) and ~3,000s (design, build) across
+# the local campaign corpus, so 7,200s leaves 2x headroom over the slowest
+# observed turn while capping the 3h28m hang #303 reported. 0 disables.
+DEFAULT_PHASE_WALL_CLOCK_SECONDS = 7200.0
+# A reflective execute_analyze turn runs the whole experiment matrix inside
+# one session (arms x simulator runs), so its legitimate length scales with
+# the matrix, not with model thinking. It gets 3x the default; a longer
+# matrix sets ``phase_wall_clock_seconds.execute_analyze`` (or 0 to disable).
+DEFAULT_EXECUTE_ANALYZE_WALL_CLOCK_SECONDS = 21600.0
+
+# #304: turn budget for the campaign-end report (read artifacts, write one doc).
+REPORT_MAX_TURNS = 10
+
+# Grace periods for reaping a turn's child processes after it ends (#303).
+_CHILD_TERM_GRACE_SECONDS = 5.0
+_CHILD_KILL_GRACE_SECONDS = 5.0
+
+
+# Exception class-name substrings that mark a retryable/transient SDK failure.
+# Matched by *name* so we don't import SDK/transport error types here.
+_TRANSIENT_SIGNALS = (
+    "ConnectionError",
+    "ReadTimeout",
+    "WriteTimeout",
+    "RemoteProtocolError",
+    "ServerDisconnectedError",
+    "TimeoutError",
+)
+
+# Exit code the Agent SDK's ``claude`` child reports when the SDK SIGTERMs it
+# after the gateway drops the streaming response (128 + SIGTERM(15)). This is a
+# transient infra fault; every OTHER non-zero exit (bad request, usage error,
+# config/auth) is a real failure that must surface immediately, not be retried.
+_SIGTERM_EXIT_CODE = 143
+
+# Message fragments for the same 143 fault when the exception is wrapped (e.g.
+# the ProcessError inside an anyio ExceptionGroup) so its structured
+# ``exit_code`` is unreachable. Kept exit-code-143-specific on purpose: a bare
+# "message reader" banner is not exit-code-specific and would wrongly retry a
+# wrapped NON-143 failure, so it is deliberately excluded.
+_TRANSIENT_MESSAGE_FRAGMENTS = (
+    "exit code 143",
+    "exit code: 143",
+)
+
+
+def _is_transient_sdk_error(exc: BaseException) -> bool:
+    """True if ``exc`` escaping the SDK runner is a retryable transport fault.
+
+    ``ProcessError`` is the Agent SDK's base class for *any* non-zero ``claude``
+    exit, so it is classified by its structured ``exit_code``: only 143 (the SDK
+    killing its child on a gateway stream-drop) is transient; other exit codes
+    are genuine failures and must surface. Transport errors are matched by class
+    name, and a message-text fallback catches the wrapped-ProcessError case.
+    """
+    cls_name = type(exc).__name__
+    if "ProcessError" in cls_name:
+        return getattr(exc, "exit_code", None) == _SIGTERM_EXIT_CODE
+    if any(sig in cls_name for sig in _TRANSIENT_SIGNALS):
+        return True
+    msg = str(exc)
+    return any(frag in msg for frag in _TRANSIENT_MESSAGE_FRAGMENTS)
 
 
 def _load_methodology_preamble(methodology_dir: Path) -> str | None:
@@ -339,6 +416,16 @@ class SDKResult:
     num_turns: int = 1
     is_error: bool = False
     error_message: str = ""
+    # The session's final answer: ``ResultMessage.result`` when the SDK gives
+    # it, else the assistant text after the last tool use. ``text`` joins
+    # every assistant block of a multi-turn session (narration included), so
+    # a phase whose output IS the reply (report.md) reads this instead (#304).
+    final_text: str = ""
+    #: The model ID the SDK reported SERVING the turn (``AssistantMessage.model``,
+    #: else the ``ResultMessage.model_usage`` keys), as opposed to the ID that
+    #: was REQUESTED. Empty when the producer did not report one. Recorded so an
+    #: alias such as ``claude-opus-5`` can be tied to what actually ran.
+    resolved_model: str = ""
 
     def __post_init__(self) -> None:
         if self.is_error and not self.error_message.strip():
@@ -373,6 +460,7 @@ class SDKRunner(Protocol):
         permission_mode: Literal["bypassPermissions"] | None = None,
         turn_silence_threshold: float | None = None,
         effort: str | None = None,
+        wall_clock_seconds: float | None = None,
     ) -> SDKResult:
         """One SDK turn.
 
@@ -390,6 +478,9 @@ class SDKRunner(Protocol):
         or ``<= 0`` disables the watchdog. Different from
         ``campaign.sdk_timeouts.silence_threshold_seconds`` (which is
         post-mortem; this one is live).
+
+        ``wall_clock_seconds``: ceiling on the whole turn (#303). Past it,
+        raise :class:`SDKWallClockError`. ``None`` or ``<= 0`` disables it.
         """
         ...
 
@@ -413,6 +504,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
         permission_mode: Literal["bypassPermissions"] | None = "bypassPermissions",
         turn_silence_threshold: float | None = None,
         effort: str | None = None,
+        wall_clock_seconds: float | None = None,
     ) -> SDKResult:
         try:
             import anyio
@@ -467,6 +559,8 @@ def _default_sdk_runner_factory() -> SDKRunner:
                     **({"cli_path": _cli_path} if _cli_path else {}),
                 )
             text_chunks: list[str] = []
+            tail_chunks: list[str] = []  # assistant text since the last tool use
+            final_text = ""
             usage: dict = {}
             cost_usd = 0.0
             duration_ms = 0
@@ -476,6 +570,7 @@ def _default_sdk_runner_factory() -> SDKRunner:
             # path can synthesize a useful diagnostic when result text is
             # missing (instead of recording the literal string "None").
             message_class_counts: dict[str, int] = {}
+            served: list[str] = []
             if event_log_path is not None:
                 Path(event_log_path).parent.mkdir(parents=True, exist_ok=True)
             # #205: per-message live watchdog. When a positive
@@ -513,14 +608,29 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 # `nous status --watch` can render live progress.
                 _tee_event(event_log_path, message, cls)
                 if cls == "AssistantMessage":
+                    _m = getattr(message, "model", None)
+                    if isinstance(_m, str) and _m and _m not in served:
+                        served.append(_m)
                     for block in getattr(message, "content", []):
                         if hasattr(block, "text"):
                             text_chunks.append(block.text)
+                            tail_chunks.append(block.text)
+                        elif type(block).__name__ == "ToolUseBlock":
+                            tail_chunks = []
                 elif cls == "ResultMessage":
+                    result_text = getattr(message, "result", None)
+                    final_text = (
+                        result_text if isinstance(result_text, str) and result_text.strip()
+                        else "".join(tail_chunks)
+                    )
                     usage = getattr(message, "usage", {}) or {}
                     cost_usd = float(getattr(message, "total_cost_usd", 0.0) or 0.0)
                     duration_ms = int(getattr(message, "duration_ms", 0) or 0)
                     num_turns = int(getattr(message, "num_turns", 0) or 0)
+                    _mu = getattr(message, "model_usage", None)
+                    if isinstance(_mu, dict):
+                        served.extend(k for k in _mu if isinstance(k, str)
+                                      and k and k not in served)
                     if getattr(message, "is_error", False):
                         return SDKResult(
                             text="".join(text_chunks),
@@ -542,9 +652,11 @@ def _default_sdk_runner_factory() -> SDKRunner:
                             cost_usd=cost_usd,
                             duration_ms=duration_ms,
                             num_turns=num_turns,
+                            resolved_model=",".join(served),
                         )
             return SDKResult(
                 text="".join(text_chunks),
+                final_text=final_text or "".join(tail_chunks),
                 input_tokens=int(usage.get("input_tokens", 0) or 0),
                 output_tokens=int(usage.get("output_tokens", 0) or 0),
                 cache_read_input_tokens=int(
@@ -556,25 +668,362 @@ def _default_sdk_runner_factory() -> SDKRunner:
                 cost_usd=cost_usd,
                 duration_ms=duration_ms or int((time.time() - t0) * 1000),
                 num_turns=num_turns or 1,
+                resolved_model=",".join(served),
             )
 
         try:
-            return anyio.run(_run)
-        except Exception as exc:
-            cls_name = type(exc).__name__
-            transient_signals = (
-                "ConnectionError",
-                "ReadTimeout",
-                "WriteTimeout",
-                "RemoteProtocolError",
-                "ServerDisconnectedError",
-                "TimeoutError",
+            return run_turn_reaping_children(
+                _run, wall_clock_seconds=wall_clock_seconds,
             )
-            if any(sig in cls_name for sig in transient_signals):
-                raise SDKTransientError(f"{cls_name}: {exc}") from exc
+        except SDKTransientError:
+            raise
+        except Exception as exc:
+            if _is_transient_sdk_error(exc):
+                raise SDKTransientError(f"{type(exc).__name__}: {exc}") from exc
             raise
 
     return _runner
+
+
+_WALL_CLOCK_PHASES = ("design", "execute_analyze", "report", "plan", "build")
+
+
+def resolve_phase_wall_clock(campaign: dict, phase: str) -> float | None:
+    """Wall-clock ceiling (seconds) for one SDK turn of ``phase`` (#303).
+
+    Reads ``campaign.sdk_timeouts.phase_wall_clock_seconds``: a scalar applies
+    to every phase; a map is looked up by ``phase`` and an unlisted phase gets
+    :data:`DEFAULT_PHASE_WALL_CLOCK_SECONDS`. Unset uses that default. ``0``
+    disables the ceiling (returns ``None``).
+    """
+    timeouts = campaign.get("sdk_timeouts") or {}
+    raw = timeouts.get("phase_wall_clock_seconds")
+    label = "campaign.sdk_timeouts.phase_wall_clock_seconds"
+    if isinstance(raw, dict):
+        unknown = sorted(set(raw) - set(_WALL_CLOCK_PHASES))
+        if unknown:
+            raise ValueError(
+                f"{label} has unknown phase key(s) {unknown}; "
+                f"allowed: {list(_WALL_CLOCK_PHASES)}"
+            )
+        raw = raw.get(phase)
+        label += f".{phase}"
+    if raw is None:
+        raw = (DEFAULT_EXECUTE_ANALYZE_WALL_CLOCK_SECONDS
+               if phase == "execute_analyze" else DEFAULT_PHASE_WALL_CLOCK_SECONDS)
+    if isinstance(raw, bool):
+        raise ValueError(f"{label} must be a non-negative number, got {raw!r}")
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{label} must be a non-negative number, got {raw!r}"
+        ) from exc
+    if value < 0:
+        raise ValueError(f"{label} must be >= 0, got {value}")
+    return value or None
+
+
+def _tracking_loop_factory(spawned: list) -> Callable[[], asyncio.AbstractEventLoop]:
+    """A loop factory whose loops record every subprocess transport they spawn.
+
+    ``anyio.open_process`` and ``asyncio.create_subprocess_exec`` both go
+    through ``loop.subprocess_exec``, so wrapping it on the instance sees every
+    ``claude`` child the SDK starts without importing SDK internals.
+    """
+
+    def _factory() -> asyncio.AbstractEventLoop:
+        loop = asyncio.new_event_loop()
+        original = loop.subprocess_exec
+
+        async def subprocess_exec(*args, **kwargs):
+            # Own process group per child, so reaping reaches the tools the
+            # ``claude`` CLI started (a hung simulator, test_command), not only
+            # the CLI itself; otherwise they outlive the turn and pile up
+            # beside each retry (#303).
+            # anyio.open_process passes start_new_session=False explicitly,
+            # so this overrides rather than defaults. Ctrl-C still ends the
+            # child: it cancels the turn, and the reap below runs shielded.
+            if os.name == "posix" and kwargs.get("process_group") is None:
+                kwargs["start_new_session"] = True
+            transport, protocol = await original(*args, **kwargs)
+            spawned.append(transport)
+            return transport, protocol
+
+        loop.subprocess_exec = subprocess_exec  # type: ignore[method-assign]
+        return loop
+
+    return _factory
+
+
+async def _reap_group(pgid: int) -> None:
+    """SIGTERM, then SIGKILL, every process left in group ``pgid``."""
+    import signal
+
+    import anyio
+
+    def _alive() -> bool:
+        try:
+            os.killpg(pgid, 0)
+            return True
+        except (ProcessLookupError, PermissionError):
+            return False
+
+    if not _alive():
+        return
+    for sig, grace in ((signal.SIGTERM, _CHILD_TERM_GRACE_SECONDS),
+                       (signal.SIGKILL, _CHILD_KILL_GRACE_SECONDS)):
+        try:
+            os.killpg(pgid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        with anyio.move_on_after(grace):
+            while _alive():
+                await anyio.sleep(0.02)
+        if not _alive():
+            logger.info("Reaped process group %s left by an SDK turn.", pgid)
+            return
+    logger.error("Process group %s survived SIGKILL; it may be orphaned.", pgid)
+
+
+async def _reap_children(spawned: list) -> None:
+    """Terminate, then kill, every still-running child; wait for each to exit.
+
+    Runs while the turn's event loop is still open, so the child watcher's
+    exit callback lands on a live loop. Without this, an aborted turn whose
+    SDK cleanup did not finish (the watchdog's ``aclose`` is bounded at 5s)
+    leaves the ``claude`` child running; when it later exits, the watcher
+    calls back into a closed loop ("Loop ... that handles pid N is closed")
+    and the orphan keeps the worktree as its cwd (#303).
+    """
+    import anyio
+
+    async def _wait_exit(transport, seconds: float) -> bool:
+        with anyio.move_on_after(seconds):
+            while transport.get_returncode() is None:
+                await anyio.sleep(0.02)
+        return transport.get_returncode() is not None
+
+    for transport in spawned:
+        pid = transport.get_pid()
+        if transport.get_returncode() is None:
+            try:
+                transport.terminate()
+            except ProcessLookupError:
+                pass
+            if not await _wait_exit(transport, _CHILD_TERM_GRACE_SECONDS):
+                try:
+                    transport.kill()
+                except ProcessLookupError:
+                    pass
+                if not await _wait_exit(transport, _CHILD_KILL_GRACE_SECONDS):
+                    logger.error(
+                        "SDK child pid %s did not exit after SIGKILL; it may be "
+                        "orphaned.", pid,
+                    )
+            logger.info("Reaped SDK child pid %s left running by the turn.", pid)
+        # The child led its own process group (start_new_session above), so
+        # its pid is the group id. Whatever it started and left behind -- even
+        # after it exited cleanly -- is still in that group: end it too.
+        if pid is not None and os.name == "posix":
+            await _reap_group(pid)
+        transport.close()
+
+
+def run_turn_reaping_children(
+    turn: Callable[[], "object"], *, wall_clock_seconds: float | None = None,
+):
+    """Run one async SDK turn in a private event loop; leave no child behind.
+
+    * ``turn`` is an async callable (the SDK turn). Its result is returned.
+    * Every subprocess the turn spawned is terminated (SIGTERM, then SIGKILL)
+      and reaped BEFORE the loop closes, on every exit path -- success,
+      watchdog abort, wall-clock abort, or error -- so repeated retries
+      cannot accumulate orphaned children or closed-loop watchers (#303).
+    * ``wall_clock_seconds`` > 0 bounds the turn; past it the turn is
+      cancelled and :class:`SDKWallClockError` raised. ``None``/``<= 0``
+      disables the ceiling.
+    """
+    import anyio
+
+    spawned: list = []
+    ceiling = (
+        float(wall_clock_seconds)
+        if wall_clock_seconds is not None and wall_clock_seconds > 0 else None
+    )
+
+    async def _main():
+        try:
+            if ceiling is None:
+                return await turn()
+            # move_on_after, not fail_after: a TimeoutError raised INSIDE the
+            # turn (a transport timeout) must keep its own classification and
+            # not be relabelled as this ceiling.
+            with anyio.move_on_after(ceiling) as scope:
+                return await turn()
+            if scope.cancelled_caught:
+                raise SDKWallClockError(
+                    f"SDK turn exceeded its {ceiling:.0f}s wall-clock ceiling "
+                    f"(sdk_timeouts.phase_wall_clock_seconds); aborting so the "
+                    f"dispatcher can count and retry it."
+                )
+            raise RuntimeError("SDK turn returned no result")  # unreachable
+        finally:
+            with anyio.CancelScope(shield=True):
+                await _reap_children(spawned)
+
+    with asyncio.Runner(loop_factory=_tracking_loop_factory(spawned)) as runner:
+        return runner.run(_main())
+
+
+def resume_hint(prompt: str, original_prompt: str, kind: str) -> str:
+    """Annotate ``original_prompt`` (once) with a continue-don't-restart note.
+
+    Mirrors CLIDispatcher: tells the agent that the prior attempt was
+    interrupted so it picks up from existing artifacts rather than
+    starting fresh. Idempotent — a prompt already carrying the note is
+    returned unchanged.
+    """
+    marker = "\nNote: Your previous attempt was interrupted"
+    if marker in prompt:
+        return prompt
+    return (
+        f"{original_prompt}\n\n---\n"
+        f"Note: Your previous attempt was interrupted ({kind}). "
+        f"Check the working directory for artifacts from your prior "
+        f"attempt and continue from where you left off."
+    )
+
+
+def retries_exhausted(failure_count: int, max_retries: int | None) -> bool:
+    """True once ``failure_count`` failures exceed the retry budget.
+
+    ``max_retries=None`` is "unbounded", which still honours an absolute
+    safety cap so a permanent error can't loop forever (#279 review).
+    """
+    if max_retries is None:
+        return failure_count > _UNBOUNDED_RETRY_SAFETY_CAP
+    return failure_count > max_retries
+
+
+class SDKCallFailed(RuntimeError):
+    """:func:`call_sdk_with_retry` gave up.
+
+    ``attempts`` is how many runner calls were made; ``retryable`` is False
+    when the last failure was classified as not worth retrying (so the
+    caller can word its own error accordingly). Subclasses RuntimeError so
+    callers that caught the pre-extraction RuntimeError are unaffected.
+    """
+
+    def __init__(self, message: str, *, attempts: int, retryable: bool,
+                 last_error: str) -> None:
+        super().__init__(message)
+        self.attempts = attempts
+        self.retryable = retryable
+        self.last_error = last_error
+
+
+def _always_retryable(_result: "SDKResult") -> bool:
+    return True
+
+
+def call_sdk_with_retry(
+    runner: Callable,
+    *,
+    prompt: str,
+    runner_kwargs: dict,
+    max_retries: int | None,
+    metrics_path: Path,
+    retry_context: dict,
+    on_result: Callable[["SDKResult"], None],
+    is_retryable_error: Callable[["SDKResult"], bool] = _always_retryable,
+    sleep: Callable[[float], None] | None = None,
+) -> "SDKResult":
+    """Run one SDK turn with bounded retry. Return the first non-error result.
+
+    The single retry loop behind ``SDKDispatcher._call_claude`` and the
+    ``kind: optimization`` plan/build calls, so both behave identically:
+
+    * :class:`SDKTransientError` from the runner (network blip, live
+      silence-watchdog trip) is retried.
+    * ``result.is_error`` is retried when ``is_retryable_error(result)``
+      (default: always); otherwise it fails fast.
+    * ``on_result`` is called for EVERY completed attempt, error or not,
+      so the cost axis sees tokens spent on failed attempts.
+    * every failure appends a ``retry_log.jsonl`` row (``retry_context``
+      merged with ``failure_type`` / ``attempt`` / ``error``).
+    * retries re-send the original prompt with a one-time resume hint, so
+      an agent that edits a repo continues rather than restarts.
+    * ``max_retries`` retries (``max_retries + 1`` attempts); ``None``
+      means unbounded up to ``_UNBOUNDED_RETRY_SAFETY_CAP``.
+    * ``sleep`` (default ``time.sleep``, looked up per call) receives the
+      ``_backoff_for`` delay — injectable so tests never sleep.
+
+    Raises :class:`SDKCallFailed` on exhaustion or a non-retryable error.
+    """
+    do_sleep = sleep if sleep is not None else time.sleep
+
+    def _log(kind: str, attempt: int, err: str) -> None:
+        log_retry_event(metrics_path, {
+            **retry_context,
+            "failure_type": kind,
+            "attempt": attempt,
+            "error": err[:500],
+        })
+
+    failure_count = 0
+    original_prompt = prompt
+    while True:
+        try:
+            result = runner(prompt=prompt, **runner_kwargs)
+        except SDKTransientError as exc:
+            failure_count += 1
+            _log(
+                "wall_clock" if isinstance(exc, SDKWallClockError) else "transient",
+                failure_count, str(exc),
+            )
+            if retries_exhausted(failure_count, max_retries):
+                raise SDKCallFailed(
+                    f"SDK still failing after {failure_count} attempt(s): {exc}",
+                    attempts=failure_count, retryable=True, last_error=str(exc),
+                ) from exc
+            delay = _backoff_for(failure_count)
+            logger.warning(
+                "SDK transient failure (attempt %d): %s — retrying in %.0fs",
+                failure_count, exc, delay,
+            )
+            do_sleep(delay)
+            prompt = resume_hint(prompt, original_prompt, "transient")
+            continue
+
+        on_result(result)
+
+        if result.is_error:
+            failure_count += 1
+            msg = result.error_message
+            if not is_retryable_error(result):
+                _log("api_error_fatal", failure_count, msg)
+                raise SDKCallFailed(
+                    f"SDK returned a non-retryable error on attempt "
+                    f"{failure_count}: {msg}",
+                    attempts=failure_count, retryable=False, last_error=msg,
+                )
+            _log("api_error", failure_count, msg)
+            if retries_exhausted(failure_count, max_retries):
+                raise SDKCallFailed(
+                    f"SDK returned error after {failure_count} attempt(s): {msg}",
+                    attempts=failure_count, retryable=True, last_error=msg,
+                )
+            delay = _backoff_for(failure_count)
+            logger.warning(
+                "SDK error result (attempt %d): %s — retrying in %.0fs",
+                failure_count, msg[:200], delay,
+            )
+            do_sleep(delay)
+            prompt = resume_hint(prompt, original_prompt, "api_error")
+            continue
+
+        return result
 
 
 class SDKDispatcher(CLIDispatcher):
@@ -715,6 +1164,13 @@ class SDKDispatcher(CLIDispatcher):
                 k: self._turn_silence_threshold
                 for k in self._phase_silence_thresholds
             }
+        # #303: per-attempt wall-clock ceiling, resolved per phase at dispatch.
+        # Validate the campaign value now so a bad one fails before any work.
+        for _phase in ("design", "execute_analyze", "report"):
+            resolve_phase_wall_clock(campaign, _phase)
+        self._wall_clock_seconds: float | None = resolve_phase_wall_clock(
+            campaign, "design",
+        )
         # #127 Phase B: event log path is recomputed per-dispatch (it depends
         # on the iteration), so we don't store it on the dispatcher.
         self._event_log_path: Path | None = None
@@ -766,19 +1222,38 @@ class SDKDispatcher(CLIDispatcher):
         self, role: str, phase: str, *, output_path, iteration: int,
         perspective=None, h_main_result="CONFIRMED",
     ) -> None:
-        inputs_dir = self.work_dir / "runs" / f"iter-{iteration}" / "inputs"
+        # The campaign-end report (iteration 0) is not an iteration: keep its
+        # event log out of runs/iter-*, which ledger/lineage walkers scan. Four
+        # levels below work_dir either way, so STOP_IMMEDIATE still resolves.
+        iter_name = f"iter-{iteration}" if iteration > 0 else "campaign"
+        inputs_dir = self.work_dir / "runs" / iter_name / "inputs"
         inputs_dir.mkdir(parents=True, exist_ok=True)
         self._event_log_path = inputs_dir / "executor_log.jsonl"
         phase_key = self._normalize_phase(phase)
         original_threshold = self._turn_silence_threshold
         self._turn_silence_threshold = self._resolve_turn_silence_threshold(phase_key)
+        original_wall_clock = self._wall_clock_seconds
+        self._wall_clock_seconds = resolve_phase_wall_clock(self.campaign, phase_key)
+        # #304: the campaign-end report reads campaign artifacts and writes
+        # one document. It runs in work_dir (where those artifacts live), not
+        # the target repo, with a small turn budget.
+        report_scope = (
+            self.override_cwd(self.work_dir) if phase_key == "report"
+            else contextlib.nullcontext()
+        )
+        original_max_turns = self.max_turns
+        if phase_key == "report":
+            self.max_turns = min(self.max_turns, REPORT_MAX_TURNS)
         try:
-            super().dispatch(
-                role, phase,
-                output_path=output_path, iteration=iteration,
-                perspective=perspective, h_main_result=h_main_result,
-            )
+            with report_scope:
+                super().dispatch(
+                    role, phase,
+                    output_path=output_path, iteration=iteration,
+                    perspective=perspective, h_main_result=h_main_result,
+                )
         finally:
+            self.max_turns = original_max_turns
+            self._wall_clock_seconds = original_wall_clock
             self._turn_silence_threshold = original_threshold
             try:
                 self._maybe_log_silence(iteration=iteration, phase=phase)
@@ -841,73 +1316,45 @@ class SDKDispatcher(CLIDispatcher):
             )
         turns = max_turns or self.max_turns
         logger.info(
-            "SDK turn (model=%s, cwd=%s, max_turns=%d)", self.model, cwd, turns,
+            "SDK turn (model=%s, cwd=%s, max_turns=%d, wall_clock=%s)",
+            self.model, cwd, turns,
+            f"{self._wall_clock_seconds:.0f}s" if self._wall_clock_seconds else "none",
         )
 
-        failure_count = 0
-        original_prompt = prompt
-        while True:
-            try:
-                result = self._sdk_runner(
-                    prompt=prompt,
-                    model=self.model,
-                    cwd=cwd,
-                    max_turns=turns,
-                    system_prompt=self._system_prompt,
-                    settings_path=self._settings_path,
-                    event_log_path=self._event_log_path,
-                    permission_mode=self._permission_mode,
-                    turn_silence_threshold=self._turn_silence_threshold,
-                    effort=self._effort,
-                )
-            except SDKTransientError as exc:
-                failure_count += 1
-                self._log_retry("transient", failure_count, exc)
-                if self._exhausted(failure_count):
-                    raise RuntimeError(
-                        f"SDK still failing after {failure_count} attempt(s): {exc}"
-                    ) from exc
-                time.sleep(_backoff_for(failure_count))
-                prompt = self._maybe_resume_hint(prompt, original_prompt, "transient")
-                continue
-
-            self._log_metrics_row(result)
-
-            if result.is_error:
-                failure_count += 1
-                self._log_retry(
-                    "api_error", failure_count, RuntimeError(result.error_message),
-                )
-                if self._exhausted(failure_count):
-                    raise RuntimeError(
-                        f"SDK returned error after {failure_count} attempt(s): "
-                        f"{result.error_message}"
-                    )
-                time.sleep(_backoff_for(failure_count))
-                prompt = self._maybe_resume_hint(prompt, original_prompt, "api_error")
-                continue
-
-            return result.text
+        result = call_sdk_with_retry(
+            self._sdk_runner,
+            prompt=prompt,
+            runner_kwargs=dict(
+                model=self.model,
+                cwd=cwd,
+                max_turns=turns,
+                system_prompt=self._system_prompt,
+                settings_path=self._settings_path,
+                event_log_path=self._event_log_path,
+                permission_mode=self._permission_mode,
+                turn_silence_threshold=self._turn_silence_threshold,
+                effort=self._effort,
+                wall_clock_seconds=self._wall_clock_seconds,
+            ),
+            max_retries=self.max_retries,
+            metrics_path=self._metrics_path,
+            retry_context={
+                "role": self._current_role, "phase": self._current_phase,
+            },
+            on_result=self._log_metrics_row,
+        )
+        if self._normalize_phase(self._current_phase or "") == "report":
+            # #304: report.md is the session's final answer, not every
+            # narration block the agent emitted while reading files.
+            return result.final_text or result.text
+        return result.text
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
     def _exhausted(self, failure_count: int) -> bool:
-        if self.max_retries is None:
-            # Unbounded mode still honours an absolute safety cap so a
-            # permanent error can't loop forever (#279 review).
-            return failure_count > _UNBOUNDED_RETRY_SAFETY_CAP
-        return failure_count > self.max_retries
-
-    def _log_retry(self, kind: str, attempt: int, exc: BaseException) -> None:
-        log_retry_event(self._metrics_path, {
-            "role": self._current_role,
-            "phase": self._current_phase,
-            "failure_type": kind,
-            "attempt": attempt,
-            "error": str(exc)[:500],
-        })
+        return retries_exhausted(failure_count, self.max_retries)
 
     def _log_metrics_row(self, result: SDKResult) -> None:
         log_metrics(self._metrics_path, {
@@ -915,6 +1362,7 @@ class SDKDispatcher(CLIDispatcher):
             "role": self._current_role,
             "phase": self._current_phase,
             "model": self.model,
+            "model_resolved": getattr(result, "resolved_model", "") or None,
             "input_tokens": result.input_tokens,
             "output_tokens": result.output_tokens,
             "cache_creation_input_tokens": result.cache_creation_input_tokens,
@@ -932,12 +1380,4 @@ class SDKDispatcher(CLIDispatcher):
         interrupted so it picks up from existing artifacts rather than
         starting fresh.
         """
-        marker = "\nNote: Your previous attempt was interrupted"
-        if marker in prompt:
-            return prompt
-        return (
-            f"{original_prompt}\n\n---\n"
-            f"Note: Your previous attempt was interrupted ({kind}). "
-            f"Check the working directory for artifacts from your prior "
-            f"attempt and continue from where you left off."
-        )
+        return resume_hint(prompt, original_prompt, kind)

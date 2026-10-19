@@ -36,3 +36,11 @@ fi
 
 - A `STUCK` marker fires when the most recent `executor_log.jsonl` event is more than 5 minutes old.
 - This skill is a pure read — no LLM calls — so it's free to call repeatedly.
+- **From a Claude session, never use `--watch`**: it redraws forever and the
+  tool call never returns. Poll with `--line` (one line) instead.
+- For a `kind: optimization` campaign, `nous progress "$TARGET" --line` adds
+  the stage, rows done/planned and an ETA; `--json` gives the full snapshot
+  for a tool. Both accept the campaign YAML from any shell — Nous records
+  where each work_dir went. When it finishes, read `report.md` in the work_dir
+  (and `halt.json` if a gate stopped it); the `nous-optimize` skill explains
+  how to read and act on it.

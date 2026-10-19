@@ -173,6 +173,11 @@ def make_deployment_recommendation(
     caveats) when there's nothing to recommend — never raises.
     """
     work_dir = Path(work_dir)
+    from orchestrator.validate import campaign_kind
+
+    if campaign_kind(campaign or {}) == "optimization":
+        return _from_optimization_report(work_dir)
+
     best_found_path = work_dir / "best_found.json"
     best_found = _read_json(best_found_path)
 
@@ -279,6 +284,80 @@ def make_deployment_recommendation(
         verdict=verdict,
         top_candidate_id=candidate_id or None,
         score=best_score,
+        citations=citations,
+        caveats=caveats,
+    )
+
+
+#: ``report.json`` ``recommendation.basis`` -> verdict, strongest rung first.
+_OPTIMIZATION_VERDICT = {
+    "certified": "deploy",
+    "terminal_best": "deploy_with_caveats",
+    "model": "deploy_with_caveats",
+    "measured": "deploy_with_caveats",
+    "baseline": "fall_back_to_baseline",
+    "none": "fall_back_to_baseline",
+}
+
+
+def _from_optimization_report(work_dir: Path) -> DeploymentRecommendation:
+    """The verdict for ``kind: optimization``, read off ``report.json``'s ladder.
+
+    That kind already decides what to ship, deterministically and with a
+    certificate (spec 3.6): ``report.json.recommendation.basis`` names the rung
+    the answer rests on. Re-deriving a verdict from ``best_found.json`` -- the
+    reflective kind's composite-score ranking, which this kind does not populate
+    meaningfully -- produced ``deploy`` for an UNCERTIFIED report on the first
+    end-to-end run. So the verdict is a pure function of the rung, and every
+    caveat cites the rung and the reasons certification was withheld.
+    """
+    path = work_dir / "report.json"
+    report = _read_json(path)
+    if not isinstance(report, dict) or not isinstance(report.get("recommendation"), dict):
+        return DeploymentRecommendation(
+            verdict="fall_back_to_baseline",
+            caveats=[
+                f"report.json not present at {path}: the campaign stopped "
+                f"before its report stage, so it names no recommendation. "
+                f"See progress.json and transitions.jsonl for where it stopped."
+            ],
+        )
+    rec = report["recommendation"]
+    basis = str(rec.get("basis") or "none")
+    verdict = _OPTIMIZATION_VERDICT.get(basis, "fall_back_to_baseline")
+    iteration = int(report.get("iteration") or 0)
+    levels = rec.get("levels") or {}
+    value = rec.get("value")
+    citations = [{
+        "iteration": iteration,
+        "arm_id": "recommendation",
+        "evidence_snippet": (
+            f"report.json iter-{iteration}: basis={basis} "
+            f"certified={bool(report.get('certified'))} "
+            f"residual_regret_terminal={report.get('residual_regret_terminal')} "
+            f"epsilon={report.get('epsilon')}"
+        ),
+    }]
+    caveats: list[str] = []
+    if verdict != "deploy":
+        withheld = report.get("certification_withheld") or []
+        caveats.append(
+            f"report.json iter-{iteration}: recommendation basis={basis}, "
+            f"certified=false"
+            + (f"; certification withheld: {', '.join(map(str, withheld))}"
+               if withheld else "")
+        )
+        if report.get("epoch_ended"):
+            caveats.append(
+                f"report.json iter-{iteration}: epoch_ended="
+                f"{report['epoch_ended']} -- a semantic exception ended the epoch"
+            )
+    return DeploymentRecommendation(
+        verdict=verdict,
+        top_candidate_id=(
+            ",".join(f"{k}={levels[k]}" for k in sorted(levels)) or None
+        ),
+        score=float(value) if isinstance(value, (int, float)) else None,
         citations=citations,
         caveats=caveats,
     )

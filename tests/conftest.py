@@ -30,6 +30,12 @@ class LiveLLMCallBlocked(RuntimeError):
 
 
 @pytest.fixture(autouse=True)
+def isolated_nous_state_home(tmp_path_factory, monkeypatch):
+    """Keep every test's work_dir registry out of the real ~/.nous."""
+    monkeypatch.setenv("NOUS_STATE_HOME", str(tmp_path_factory.mktemp("nous-state")))
+
+
+@pytest.fixture(autouse=True)
 def block_live_llm_calls(monkeypatch):
     """Auto-applied to every test: strip LLM API keys from env and refuse
     real network calls to known LLM hosts.
@@ -38,7 +44,8 @@ def block_live_llm_calls(monkeypatch):
     api_key= explicitly (existing tests already do this). Tests that need
     to dispatch an agent should inject a fake — see tests/CLAUDE.md.
     """
-    for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY"):
+    for var in ("OPENAI_API_KEY", "OPENAI_BASE_URL", "ANTHROPIC_API_KEY",
+                "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN"):
         monkeypatch.delenv(var, raising=False)
 
     # #239: NOUS_CAMPAIGN_PARENT relocates campaign work_dirs. Strip it

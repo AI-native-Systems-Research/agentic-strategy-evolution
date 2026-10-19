@@ -1060,3 +1060,400 @@ class TestClaudeCliPathEnvVar:
         monkeypatch.setenv("CLAUDE_CLI_PATH", "")
         kwargs = self._run_default_runner(monkeypatch, tmp_path)
         assert "cli_path" not in kwargs
+
+
+# ─── Transient-vs-permanent classification of raw SDK exceptions (#315) ─────
+class _FakeProcessError(Exception):
+    """Mimics claude_agent_sdk ProcessError: a non-zero CLI exit carrying a
+    structured ``exit_code``. Named *ProcessError* so the classifier's
+    name-substring check sees it, without importing the SDK."""
+
+    def __init__(self, message: str, exit_code: int | None = None):
+        super().__init__(message)
+        self.exit_code = exit_code
+
+
+class TestSDKTransientClassification:
+    """`_is_transient_sdk_error` decides whether a raw exception escaping the
+    SDK runner is a retryable/transient infra fault (-> SDKTransientError) or a
+    genuine permanent error (-> re-raised).
+
+    A gateway drop of the streaming response makes the Agent SDK SIGTERM its
+    `claude` child, surfacing as `ProcessError(exit_code=143)` / "Fatal error in
+    message reader". That is transient and must be retried. Every OTHER non-zero
+    `ProcessError` exit (bad request, usage, config) is permanent and must
+    surface immediately rather than burn retries. (#315)
+    """
+
+    def test_existing_network_signals_are_transient(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        assert _is_transient_sdk_error(ConnectionError("conn reset"))
+        assert _is_transient_sdk_error(TimeoutError("read timed out"))
+
+    def test_processerror_143_is_transient(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        assert _is_transient_sdk_error(_FakeProcessError("killed", exit_code=143))
+
+    def test_processerror_non_143_is_permanent(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        # The regression surface: ProcessError is the base class for EVERY
+        # non-zero exit, so non-143 exits must NOT be retried.
+        assert not _is_transient_sdk_error(_FakeProcessError("bad request", exit_code=1))
+        assert not _is_transient_sdk_error(_FakeProcessError("usage error", exit_code=2))
+        assert not _is_transient_sdk_error(_FakeProcessError("no code", exit_code=None))
+
+    def test_real_sdk_processerror_classified_by_exit_code(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        ProcessError = pytest.importorskip("claude_agent_sdk._errors").ProcessError
+        assert _is_transient_sdk_error(ProcessError("Command failed", exit_code=143))
+        assert not _is_transient_sdk_error(ProcessError("Command failed", exit_code=1))
+
+    def test_message_fallback_catches_wrapped_143(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        # If anyio wraps the ProcessError in an ExceptionGroup, neither the
+        # class name nor exit_code is reachable, but the exit-code-143 text does.
+        assert _is_transient_sdk_error(RuntimeError("unhandled errors: exit code 143"))
+
+    def test_message_fallback_does_not_overmatch_non_143(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        # A wrapped NON-143 failure that merely mentions the message-reader
+        # banner must stay permanent — the fallback is exit-code-143-specific.
+        assert not _is_transient_sdk_error(
+            RuntimeError("Fatal error in message reader: exit code 1")
+        )
+
+    def test_genuine_error_is_not_transient(self):
+        from orchestrator.sdk_dispatch import _is_transient_sdk_error
+        assert not _is_transient_sdk_error(ValueError("bad bundle schema"))
+        assert not _is_transient_sdk_error(KeyError("missing field"))
+
+
+# ─── #303: aborted turns reap their children; a hang becomes a counted failure ─
+
+
+def _pid_alive(pid: int) -> bool:
+    import os
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+class TestAbortedTurnsReapChildren:
+    """#303 parts 2-3, through the REAL default runner.
+
+    ``claude_agent_sdk`` is replaced with a fake whose ``query`` spawns a real
+    short-lived child (``sleep``) -- standing in for the ``claude`` CLI -- and
+    then stalls. No LLM is involved. The fake deliberately never closes its
+    child, which is what an SDK cleanup that did not finish looks like.
+    """
+
+    @staticmethod
+    def _install_fake_sdk(monkeypatch, pids: list, *, mode: str):
+        import subprocess
+        import sys
+        import types
+
+        import anyio
+
+        class _Options:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        class _Assistant:
+            content = []
+
+        async def _query(*, prompt, options):  # noqa: ARG001
+            proc = await anyio.open_process(
+                ["sleep", "30"], stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            )
+            pids.append(proc.pid)
+            if mode == "silent":
+                await anyio.sleep(60)  # no events: the silence watchdog trips
+            while True:  # "chatty": events keep coming, the turn never ends
+                await anyio.sleep(0.05)
+                yield _Assistant()
+
+        module = types.ModuleType("claude_agent_sdk")
+        module.ClaudeAgentOptions = _Options
+        module.query = _query
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
+
+    @pytest.fixture
+    def pids(self):
+        spawned: list[int] = []
+        yield spawned
+        import os
+        import signal
+        for pid in spawned:  # never leave a sleep behind, even on failure
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+
+    def _dispatcher(self, tmp_path, campaign, max_retries):
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+        return SDKDispatcher(
+            work_dir=tmp_path, campaign=campaign,
+            sdk_runner=_default_sdk_runner_factory(), max_retries=max_retries,
+        )
+
+    def test_repeated_silence_aborts_leave_no_child_and_no_closed_loop_watcher(
+            self, tmp_path, monkeypatch, pids, caplog):
+        import logging
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        self._install_fake_sdk(monkeypatch, pids, mode="silent")
+        campaign = _make_campaign(tmp_path)
+        campaign["sdk_timeouts"] = {"turn_silence_threshold_seconds": 0.3}
+        d = self._dispatcher(tmp_path, campaign, max_retries=3)
+
+        with caplog.at_level(logging.WARNING, logger="asyncio"):
+            with pytest.raises(RuntimeError, match="still failing after 4"):
+                d.dispatch("planner", "design",
+                           output_path=tmp_path / "runs/iter-1/design_log.md",
+                           iteration=1)
+
+        rows = _read_jsonl(tmp_path / "retry_log.jsonl")
+        assert [r["failure_type"] for r in rows] == ["transient"] * 4
+        assert len(pids) == 4
+        assert [p for p in pids if _pid_alive(p)] == [], "aborted turns left children running"
+        assert "that handles pid" not in caplog.text
+
+    def test_a_turn_past_its_wall_clock_is_a_counted_logged_failure(
+            self, tmp_path, monkeypatch, pids):
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        self._install_fake_sdk(monkeypatch, pids, mode="chatty")
+        campaign = _make_campaign(tmp_path)
+        campaign["sdk_timeouts"] = {
+            "turn_silence_threshold_seconds": 30,  # events keep it from tripping
+            "phase_wall_clock_seconds": {"design": 0.5},
+        }
+        d = self._dispatcher(tmp_path, campaign, max_retries=1)
+
+        import time as _t
+        t0 = _t.monotonic()
+        with pytest.raises(RuntimeError, match="wall-clock ceiling"):
+            d.dispatch("planner", "design",
+                       output_path=tmp_path / "runs/iter-1/design_log.md",
+                       iteration=1)
+        assert _t.monotonic() - t0 < 20, "the ceiling must end the hang"
+
+        rows = _read_jsonl(tmp_path / "retry_log.jsonl")
+        assert [r["failure_type"] for r in rows] == ["wall_clock", "wall_clock"]
+        assert all(r["phase"] == "design" for r in rows)
+        assert [p for p in pids if _pid_alive(p)] == []
+
+
+class TestPhaseWallClockResolution:
+    """#303(b): ``sdk_timeouts.phase_wall_clock_seconds`` shape and defaults."""
+
+    def test_default_applies_when_unset(self):
+        from orchestrator.sdk_dispatch import (
+            DEFAULT_PHASE_WALL_CLOCK_SECONDS, resolve_phase_wall_clock,
+        )
+        assert resolve_phase_wall_clock({}, "design") == DEFAULT_PHASE_WALL_CLOCK_SECONDS
+
+    def test_scalar_applies_to_every_phase_and_zero_disables(self):
+        from orchestrator.sdk_dispatch import resolve_phase_wall_clock
+        c = {"sdk_timeouts": {"phase_wall_clock_seconds": 900}}
+        assert {resolve_phase_wall_clock(c, p) for p in ("design", "report")} == {900.0}
+        off = {"sdk_timeouts": {"phase_wall_clock_seconds": 0}}
+        assert resolve_phase_wall_clock(off, "design") is None
+
+    def test_map_is_per_phase_and_bad_values_fail_at_init(self, tmp_path):
+        from orchestrator.sdk_dispatch import (
+            DEFAULT_PHASE_WALL_CLOCK_SECONDS, resolve_phase_wall_clock,
+        )
+        c = {"sdk_timeouts": {"phase_wall_clock_seconds": {"report": 60}}}
+        assert resolve_phase_wall_clock(c, "report") == 60.0
+        assert resolve_phase_wall_clock(c, "design") == DEFAULT_PHASE_WALL_CLOCK_SECONDS
+        bad = _make_campaign(tmp_path)
+        bad["sdk_timeouts"] = {"phase_wall_clock_seconds": -1}
+        with pytest.raises(ValueError, match="phase_wall_clock_seconds"):
+            SDKDispatcher(work_dir=tmp_path, campaign=bad, sdk_runner=_ScriptedRunner([]))
+
+    def test_schema_accepts_scalar_and_map(self):
+        schema = _load_schema("campaign.schema.yaml")
+        sub = schema["properties"]["sdk_timeouts"]
+        for v in (600, {"design": 600, "build": 9000}):
+            jsonschema.validate({"phase_wall_clock_seconds": v}, sub)
+        with pytest.raises(jsonschema.ValidationError):
+            jsonschema.validate({"phase_wall_clock_seconds": {"desgin": 1}}, sub)
+
+
+class TestTurnRunnerClassification:
+    """#303 audit: the per-turn runner must not relabel or swallow errors."""
+
+    def test_a_timeout_inside_the_turn_is_not_reported_as_the_ceiling(self):
+        from orchestrator.sdk_dispatch import (
+            SDKWallClockError, run_turn_reaping_children,
+        )
+
+        async def turn():
+            raise TimeoutError("ReadTimeout from the transport")
+
+        with pytest.raises(TimeoutError) as exc:
+            run_turn_reaping_children(turn, wall_clock_seconds=60)
+        assert not isinstance(exc.value, SDKWallClockError)
+
+    def test_a_permanent_error_escapes_unretried(self, tmp_path, monkeypatch):
+        """A non-143 ProcessError from the real runner path fails on attempt 1."""
+        import sys
+        import types
+
+        class ProcessError(Exception):
+            exit_code = 1
+
+        async def _query(*, prompt, options):  # noqa: ARG001
+            raise ProcessError("bad request")
+            yield  # pragma: no cover
+
+        module = types.ModuleType("claude_agent_sdk")
+        module.ClaudeAgentOptions = lambda **kw: kw
+        module.query = _query
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+
+        d = SDKDispatcher(work_dir=tmp_path, campaign=_make_campaign(tmp_path),
+                          sdk_runner=_default_sdk_runner_factory(), max_retries=5)
+        with pytest.raises(ProcessError):
+            d.dispatch("planner", "design",
+                       output_path=tmp_path / "runs/iter-1/design_log.md",
+                       iteration=1)
+        assert _read_jsonl(tmp_path / "retry_log.jsonl") == []
+
+    def test_a_successful_turn_returns_its_result(self):
+        from orchestrator.sdk_dispatch import run_turn_reaping_children
+
+        async def turn():
+            return "done"
+
+        assert run_turn_reaping_children(turn, wall_clock_seconds=5) == "done"
+        assert run_turn_reaping_children(turn, wall_clock_seconds=None) == "done"
+
+
+class TestP1ReviewFixes:
+    """Fix round for the P1 review: grandchild reaping (#303) and the
+    campaign-end report reading the session's final answer (#304)."""
+
+    @staticmethod
+    def _fake_sdk(monkeypatch, query):
+        import sys
+        import types
+
+        class _Options:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+
+        module = types.ModuleType("claude_agent_sdk")
+        module.ClaudeAgentOptions = _Options
+        module.query = query
+        monkeypatch.setitem(sys.modules, "claude_agent_sdk", module)
+
+    def test_a_tool_process_the_child_started_is_reaped_with_it(
+            self, tmp_path, monkeypatch):
+        """The child ``claude`` starts a tool (here a ``sleep``) and the turn
+        hangs. Past the ceiling, both the child and its tool must be gone --
+        a surviving tool would run beside the retry (#303)."""
+        import os
+        import signal
+        import subprocess
+
+        import anyio
+
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+
+        pidfile = tmp_path / "grandchild.pid"
+        child_pids: list[int] = []
+
+        class _Assistant:
+            content = []
+
+        async def _query(*, prompt, options):  # noqa: ARG001
+            proc = await anyio.open_process(
+                ["/bin/sh", "-c", f"sleep 30 & echo $! > {pidfile}; wait"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            child_pids.append(proc.pid)
+            while True:
+                await anyio.sleep(0.05)
+                yield _Assistant()
+
+        self._fake_sdk(monkeypatch, _query)
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        campaign = _make_campaign(tmp_path)
+        campaign["sdk_timeouts"] = {
+            "turn_silence_threshold_seconds": 30,
+            "phase_wall_clock_seconds": {"design": 0.5},
+        }
+        d = SDKDispatcher(work_dir=tmp_path, campaign=campaign,
+                          sdk_runner=_default_sdk_runner_factory(), max_retries=0)
+        grandchild = None
+        try:
+            with pytest.raises(RuntimeError, match="wall-clock ceiling"):
+                d.dispatch("planner", "design",
+                           output_path=tmp_path / "runs/iter-1/design_log.md",
+                           iteration=1)
+            grandchild = int(pidfile.read_text().strip())
+            assert child_pids and not _pid_alive(child_pids[0])
+            assert not _pid_alive(grandchild), "the tool outlived its turn"
+        finally:
+            for pid in child_pids + ([grandchild] if grandchild else []):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+
+    def test_report_md_is_the_final_answer_and_runs_in_work_dir(
+            self, tmp_path, monkeypatch):
+        """A report session narrates, calls tools, then answers. report.md
+        must hold the answer only, and the session runs in work_dir (where
+        the artifacts are), never in the target repo."""
+        seen: dict = {}
+
+        class _Text:
+            def __init__(self, text):
+                self.text = text
+
+        class ToolUseBlock:
+            name = "Read"
+
+        class AssistantMessage:
+            def __init__(self, content):
+                self.content = content
+
+        class ResultMessage:
+            usage = {}
+            total_cost_usd = 0.0
+            duration_ms = 1
+            num_turns = 3
+            is_error = False
+
+            def __init__(self, result):
+                self.result = result
+
+        async def _query(*, prompt, options):  # noqa: ARG001
+            seen.update(options.kwargs)
+            yield AssistantMessage([_Text("I'll read the ledger first."), ToolUseBlock()])
+            yield AssistantMessage([_Text("Now iter-2."), ToolUseBlock()])
+            yield AssistantMessage([_Text("# Research Report\n\nBody.\n")])
+            yield ResultMessage(None)
+
+        from orchestrator.sdk_dispatch import _default_sdk_runner_factory
+
+        self._fake_sdk(monkeypatch, _query)
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        work = tmp_path / "work"
+        work.mkdir()
+        d = SDKDispatcher(work_dir=work, campaign=_make_campaign(repo),
+                          sdk_runner=_default_sdk_runner_factory())
+        d.dispatch("extractor", "report", output_path=work / "report.md",
+                   iteration=0)
+
+        assert (work / "report.md").read_text() == "# Research Report\n\nBody.\n"
+        assert seen["cwd"] == str(work)
+        assert seen["max_turns"] <= 10

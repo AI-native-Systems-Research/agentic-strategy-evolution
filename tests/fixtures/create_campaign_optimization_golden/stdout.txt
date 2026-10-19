@@ -1,0 +1,10 @@
+Wrote FILE  (kind: optimization)
+
+Read first: `nous docs quickstart`
+
+Next steps:
+  1. Fill every TODO- value in FILE.
+  2. nous validate campaign FILE            # lists every TODO- left, by field path
+  3. nous validate campaign FILE --smoke
+  4. nous validate campaign FILE --liveness # + design preview
+  5. NOUS_CAMPAIGN_PARENT=~/nous-campaigns nous run FILE

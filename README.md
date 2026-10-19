@@ -45,7 +45,7 @@ INIT → DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → HUMAN_FINDINGS_GAT
    DONE → DESIGN       Next iteration (increments counter, merges principles)
 ```
 
-See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, and [docs/architecture.md](docs/architecture.md) for system internals.
+See [docs/protocol.md](docs/protocol.md) for the full methodology, [docs/data-model.md](docs/data-model.md) for a plain-English guide to every data structure, [docs/architecture.md](docs/architecture.md) for system internals, and [docs/optimization-campaign-guide.md](docs/optimization-campaign-guide.md) for the factorial/response-surface `kind: optimization` campaign type.
 
 ## Hypothesis Bundle Arms
 
@@ -58,6 +58,75 @@ Every experiment is structured as a bundle of falsifiable predictions:
 | **H-super-additivity** | Do components interact? | Tests whether compound effect exceeds sum of parts |
 | **H-control-negative** | Where should it NOT work? | Confirms mechanism specificity |
 | **H-robustness** | Does it generalize? | Tests across workloads, resources, scale |
+
+## Optimization Campaigns (`kind: optimization`)
+
+Alongside the default `reflective` loop above, Nous has a second campaign
+type for a different question: not "why does this system behave this way"
+but "which configuration is best, and how sure are we." `kind: optimization`
+runs a factorial / response-surface design instead of an agent-driven
+hypothesis loop:
+
+```
+verify → screen → [refine] → [confirm] → report
+```
+
+The campaign author (human, or an AI writing the YAML) declares factors and
+an objective; `verify` certifies the apparatus and **compiles an experimental
+policy** — a schema-validated, content-hashed `policy.json` — from that
+declaration. From there, **pure Python interprets the compiled policy**
+through the run: `screen` fits a factorial design, `refine` explores
+curvature where a factor survives screening, `confirm` takes the leading
+candidates and measures them fresh, and `report` writes the recommendation
+with a residual-regret certificate. Every intermediate decision is a lookup
+in `policy.json`, not a model call.
+
+**Model calls per campaign: 0 by default** — only the opt-in `plan` and
+`build` stages call a model (to design and author a mechanism that doesn't
+exist in the target yet); `report.md` and gate summaries are rendered with
+zero tokens. Measured on a real campaign: 115 configurations certified for
+about $0.38.
+
+This is not the `reflective` loop with a factorial front end — it is a
+different guarantee. The reflective loop's two human gates are the safety
+mechanism; the optimization loop's safety mechanism is that **every branch
+the run can take was fixed in `policy.json` before the first measurement**,
+so "the winner was pre-registered" is a checkable fact about the artifact,
+not a claim about the process.
+
+Use it when:
+- the research question is "which configuration/knob-setting wins," not
+  "why does the system behave this way"
+- the factors and their ranges are already known (no exploration needed to
+  find them)
+- you want a certificate — a quantified bound on how far the recommendation
+  could be from the true optimum — rather than a narrative finding
+
+Use `reflective` (the default) instead when the mechanism itself is what's
+under investigation, or the space of plausible interventions isn't known
+up front.
+
+```bash
+nous create-campaign --kind optimization --to optimization-campaign.yaml  # scaffold
+nous validate campaign optimization-campaign.yaml --liveness   # do this before every run
+NOUS_CAMPAIGN_PARENT=~/nous-campaigns nous run optimization-campaign.yaml --auto-approve
+```
+
+Start with [docs/optimization-authoring-quickstart.md](docs/optimization-authoring-quickstart.md):
+the authoring loop and the traps checklist, written for humans and for Claude.
+
+`--smoke` runs the test command and one real configuration against the
+target before spending the full budget — catching declared-but-unresolvable
+test identifiers, a `run_command` that doesn't emit parseable JSON, a missing
+objective metric, or a manipulation predicate that doesn't actually hold, all
+of which otherwise cost a full campaign to discover.
+
+See [docs/optimization-campaign-guide.md](docs/optimization-campaign-guide.md)
+for the field-by-field authoring guide (four worked examples), and
+[docs/superpowers/specs/2026-08-16-compiled-policy-design.md](docs/superpowers/specs/2026-08-16-compiled-policy-design.md)
+for the design authority behind the compiled policy — what `step()` does,
+the closed observation/operator vocabularies, and the residual-regret
+certificate's two separately-reported error bounds.
 
 ## Quick Start
 
@@ -123,6 +192,28 @@ The Claude Agent SDK (`claude-agent-sdk`) is a required dependency and
 lands automatically — no separate install step. The legacy `--agent api`
 (claude -p subprocess) backend was removed in #183; `--agent sdk` is the
 default and only user-facing code-access path.
+
+### 1b. Use Nous from Claude Code (recommended)
+
+Most campaigns are authored, run and monitored from a Claude session. The
+`nous` plugin gives Claude the workflows as skills (`nous-optimize`,
+`nous-create-campaign`, `nous-run`, `nous-status`, `nous-resume`, …). With the
+`nous` CLI installed (step 1), add the plugin once:
+
+```
+/plugin install nous --marketplace AI-native-Systems-Research/agentic-strategy-evolution
+```
+
+or from a shell:
+
+```bash
+claude plugin marketplace add AI-native-Systems-Research/agentic-strategy-evolution
+claude plugin install nous@nous
+```
+
+Then ask Claude, for example, "tune the cache settings of this service with a
+Nous optimization campaign". `nous docs quickstart` prints the authoring
+quickstart from any install.
 
 ### 2. Configure models
 
@@ -426,6 +517,8 @@ orchestrator/            Python orchestrator (deterministic, not an LLM)
   ledger.py                Deterministic ledger append (no LLM)
   worktree.py              Git worktree isolation for experiments
   util.py                  Shared utilities (atomic_write)
+  optimize/                kind: optimization — compiled experimental policy,
+                           factorial/response-surface design, zero-token epoch
 prompts/methodology/     Methodology prompt templates
 examples/                Example campaigns
 docs/                    Quickstart, protocol, data model, architecture

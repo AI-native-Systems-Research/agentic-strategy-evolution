@@ -1,0 +1,452 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/recommendation.schema.json",
+  "title": "Optimization Fitting-Stage Recommendation",
+  "description": "runs/iter-N/recommendation.json (design spec 3.4, 3.5) -- what a FITTING state of the compiled epoch concluded from its fit: the argmax over X_valid, the runners-up that seed the terminal shortlist, the model-side residual regret R_delta(x) at delta_screen, and whether the design's aliasing is CONSEQUENTIAL. Written from exactly ONE call site in orchestrator.optimize.stage_runner (the fitting branch of run_stage), shared by every fitting state -- screen, the registered foldover, and refine -- so the shape is identical at all three and `stage` is the only field that tells them apart. This is the model-dependent half of the two-bound obligation: residual_regret_model lives here and residual_regret_terminal lives in confirmation.json, and no artifact carries a combined number.",
+  "type": "object",
+  "required": [
+    "stage",
+    "iteration",
+    "levels",
+    "coded",
+    "predicted",
+    "fitted_ids",
+    "held_fixed",
+    "top_candidates",
+    "stationary_point",
+    "model_adequate",
+    "excluded_measured_infeasible",
+    "constraint_models",
+    "recommendation_constraint_uncertain",
+    "residual_regret_model",
+    "epsilon",
+    "alias_consequential",
+    "aliases"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": ["screen", "foldover", "refine"],
+      "description": "Which fitting state of the compiled epoch produced this. The terminal state writes confirmation.json instead, never this file, because it fits no model."
+    },
+    "iteration": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "The iteration index this fitting state ran at. Each state is a separate run_iteration call, which is why facts the terminal state needs are PERSISTED here rather than recomputed (the Fit is gone by then)."
+    },
+    "levels": {
+      "type": "object",
+      "minProperties": 1,
+      "description": "The recommended factor levels: the argmax of the fitted surface over the enumerated valid candidate space -- or, when candidate_space is present, over the evaluated set of the search that replaced the enumeration above decide.CANDIDATE_CAP. Real levels, never coded coordinates."
+    },
+    "coded": {
+      "type": "object",
+      "description": "The same point in coded coordinates, as the fit sees it. Recorded alongside `levels` so a reader can check the decode rather than trust it."
+    },
+    "predicted": {
+      "type": "number",
+      "description": "The fitted surface's PREDICTION at `levels` -- not a measurement. Report ladder rung 3 (`model`) is the only rung that hands this back as an answer, and it is the rung a semantic exception suppresses."
+    },
+    "fitted_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "The factor ids actually carried in the fit, which can be narrower than the campaign's declared factors when rows were excluded or a factor was held fixed."
+    },
+    "screen_selection": {"type": "object", "description": "#321 P4 item 1: the screen's survivor rule as ONE registered family (effects.screening_family): method (holm | per_test), alpha (family-wise for holm), family_size m, per-factor p / Holm-adjusted p / rejected, kept, dropped, unknown (no pure error: kept, outside the family). Routing only: a dropped factor is NOT held -- refine spans every refinable factor."}, "held_fixed": {
+      "type": "object",
+      "description": "Factors pinned to one level for this stage rather than varied, and the level each was pinned at. Empty when every declared factor varied."
+    },
+    "top_candidates": {
+      "type": "array",
+      "description": "The runners-up, best first, including the argmax itself -- the near misses whose intervals still reach above x-hat. This is the pool the terminal shortlist is seated from, so a wider shortlist_size needs a wider pool here.",
+      "items": {
+        "type": "object",
+        "required": ["levels", "coded", "predicted"],
+        "additionalProperties": false,
+        "properties": {
+          "levels": { "type": "object" },
+          "coded": { "type": "object" },
+          "predicted": { "type": "number" }
+        }
+      }
+    },
+    "stationary_point": {
+      "type": ["object", "null"],
+      "description": "Coded-space stationary point of the fitted quadratic, or null when the fit has no curvature terms (a plane has no interior optimum). When it lies OUTSIDE the declared level hull the policy's registered stationary_in_hull guard routes to a semantic exception, and epoch_end-<epoch>.json points a reader back at this field to learn which axis to widen."
+    },
+    "model_adequate": {
+      "type": ["boolean", "null"],
+      "description": "null (UNKNOWN) when lack of fit did not reject but some choice level was never measured at the centre (curvature_untested_levels). False when the lack-of-fit test rejected the registered response class, i.e. the argmax above is an artefact of a model the measurements rejected. PERSISTED rather than recomputed at the terminal state, which reads it to build its shortlist from MEASURED valid rows instead of anchoring on the model's pick (design spec 3.6 rung 3). The policy still routes to the terminal state on lack of fit -- fresh measurement IS the registered augmentation for model inadequacy. WP-B (spec 2026-10-17): this is the STICKY EPOCH verdict (model_adequacy.epoch), not only this stage's lack of fit: a stage's verdict is superseded only by a later stage of at least its model class, and at refine a rejected validation prediction check makes it false."
+    },
+    "curvature_untested_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Choice-factor levels with NO fitted centre row: the lack-of-fit curvature check never looked under them, so model adequacy is unknown there (stage-1 M8). Raise center_points to 2 x the largest choice level count to cover every level twice."},
+    "model_adequate_basis": {"enum": ["lack_of_fit_not_computable", "curvature_untested", "curvature_not_isolated", "screen_rejection_unresolved"], "description": "Present exactly when model_adequate is null (UNKNOWN): why. lack_of_fit_not_computable -- no pure error, or no residual df beyond it; curvature_untested -- a choice level no fitted centre row ran; curvature_not_isolated -- a mixed fit with centre rows whose corner model was not of full rank, so its coefficients could not be estimated from the corners alone (stage-1b N1/N3/N5). screen_rejection_unresolved -- an earlier fitting stage of the epoch rejected the model and this refine did not complete a validation prediction check, so its lack-of-fit test alone (about alpha power against one-dimensional misspecification on a 3-level design) cannot overturn that rejection (WP-B, spec 2026-10-17)."},
+    "model_adequacy": {"type": "object", "additionalProperties": false, "required": ["lack_of_fit", "press", "design_efficiency", "this_stage", "epoch"], "description": "HOW model adequacy was determined (WP-B, spec 2026-10-17-model-adequacy-design.md): the lack-of-fit test with its df, the held-out validation prediction check (refine), PRESS / R^2_prediction (Allen 1974; a diagnostic, not a gate), the D-efficiency and centred VIFs of the fitted design AS RUN (Atkinson, Donev & Tobias 2007), this stage's verdict and the sticky epoch verdict model_adequate reports.", "properties": {"lack_of_fit": {"type": "object", "additionalProperties": false, "required": ["f", "p", "df", "exact", "rejected"], "properties": {"f": {"type": ["number", "null"]}, "p": {"type": ["number", "null"]}, "df": {"type": "array", "items": {"type": "integer"}, "description": "[lack-of-fit df, pure-error df]"}, "exact": {"enum": ["exact_fit", "rejected", null]}, "rejected": {"type": "boolean"}}}, "validation": {"type": "object", "additionalProperties": false, "required": ["alpha", "method", "points_measured", "rejected"], "properties": {"v_from": {"enum": ["fit_covariance", "fitted_rows"], "description": "#321 P4: V = I + X_v (X'X)^-1 X_v' with (X'X)^-1 over the rows ACTUALLY FITTED: the fit's own exact covariance (model + nuisance columns, leading block), or the fitted rows' matrix."}, "declined_reason": {"type": "string"}, "rejected_at_alpha": {"type": "boolean", "description": "#321 P4: the check alone at alpha (rejected is the adequacy family's Holm decision)."}, "points_snapped": {"type": "array", "description": "#321 P4: per registered point, the coded point planned and as run after grid / levels_only snapping."}, "points_declined": {"type": "array", "description": "#321 P4: candidates declined because their snapped image fell on a design point or on another validation point."}, "ring": {"type": "object", "description": "#321 P4: points per ring (inner +-0.5, outer +-validation_outer_offset)."}, "alpha": {"type": "number"}, "method": {"const": "joint_predictive_F_chow_1960"}, "points_measured": {"type": "integer", "minimum": 0}, "points_registered": {"type": "integer", "minimum": 0}, "rejected": {"type": ["boolean", "null"], "description": "True: the held-out validation observations disagree with the fitted model (joint predictive F, Chow 1960, p < alpha). null: not computable (reason)."}, "reason": {"enum": ["no_validation_point_measured", "no_pure_error", "singular_model", "no_validation_point_runnable"]}, "df": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}, "f": {"type": ["number", "null"]}, "p": {"type": ["number", "null"]}, "bonferroni_t": {"type": ["number", "null"]}, "points": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["coded", "observed", "predicted", "pi_half_width", "outside_bonferroni_pi"], "properties": {"coded": {"type": "object"}, "observed": {"type": "number"}, "predicted": {"type": "number"}, "pi_half_width": {"type": "number"}, "outside_bonferroni_pi": {"type": "boolean"}}}}}}, "validation_objectives": {"type": "object", "additionalProperties": {"type": "object", "additionalProperties": false, "required": ["alpha", "method", "points_measured", "rejected"], "properties": {"v_from": {"enum": ["fit_covariance", "fitted_rows"], "description": "#321 P4: V = I + X_v (X'X)^-1 X_v' with (X'X)^-1 over the rows ACTUALLY FITTED: the fit's own exact covariance (model + nuisance columns, leading block), or the fitted rows' matrix."}, "rejected_at_alpha": {"type": "boolean"}, "alpha": {"type": "number"}, "method": {"const": "joint_predictive_F_chow_1960"}, "points_measured": {"type": "integer", "minimum": 0}, "points_registered": {"type": "integer", "minimum": 0}, "rejected": {"type": ["boolean", "null"], "description": "True: the held-out validation observations disagree with the fitted model (joint predictive F, Chow 1960, p < alpha). null: not computable (reason)."}, "reason": {"enum": ["no_validation_point_measured", "no_pure_error", "singular_model", "no_validation_point_runnable"]}, "df": {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}, "f": {"type": ["number", "null"]}, "p": {"type": ["number", "null"]}, "bonferroni_t": {"type": ["number", "null"]}, "points": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["coded", "observed", "predicted", "pi_half_width", "outside_bonferroni_pi"], "properties": {"coded": {"type": "object"}, "observed": {"type": "number"}, "predicted": {"type": "number"}, "pi_half_width": {"type": "number"}, "outside_bonferroni_pi": {"type": "boolean"}}}}}}}, "family": {"type": "object", "description": "#321 P4 item 2: Holm (1979) across this stage's adequacy TESTS (lack of fit and the validation check, for the primary and every objective model) at family-wise alpha: method, alpha, family_size, tests [{name, p, p_adjusted, rejected}], rejected [names]. Vetoes (an exact rejection on zero pure error, an objective model not estimable) reject outside the family."}, "screen_validation": {"type": "object", "description": "#321 P4 item 2: the screen / foldover validation check (design.screen.validation_points): the same joint predictive F against the first-order + 2fi fit."}, "press": {"type": ["object", "null"], "additionalProperties": false, "properties": {"press": {"type": "number"}, "r2_prediction": {"type": ["number", "null"]}}}, "design_efficiency": {"type": ["object", "null"], "additionalProperties": false, "description": "D-efficiency and centred VIFs (WP-B), and the G-efficiency and exact I-criterion over the coded region from the same (X'X)^-1 (#321 P4 item 3; adequacy.prediction_variance). g_exact false: the max SPV was taken over the recorded evaluation set, so g_efficiency is an upper bound. g_i_declined: multi-level categorical contrasts (the region is not a cube).", "properties": {"d_efficiency": {"type": "number"}, "n": {"type": "integer"}, "p": {"type": "integer"}, "max_vif": {"type": ["number", "null"]}, "vif": {"type": "object", "additionalProperties": {"type": ["number", "null"]}}, "i_average_variance": {"type": "number"}, "i_average_spv": {"type": "number"}, "i_method": {"const": "exact_region_moments"}, "region": {"type": "object", "additionalProperties": {"type": "string"}}, "g_max_spv": {"type": "number"}, "g_efficiency": {"type": ["number", "null"]}, "g_exact": {"type": "boolean"}, "g_evaluated": {"type": "string"}, "g_points": {"type": "integer"}, "g_seed": {"type": "integer"}, "g_note": {"type": "string"}, "g_i_declined": {"type": "string"}}}, "reuse": {"type": "object"}, "this_stage": {"type": "object", "additionalProperties": false, "required": ["verdict", "basis", "rejected_by"], "properties": {"verdict": {"type": ["boolean", "null"]}, "basis": {"type": ["string", "null"]}, "rejected_by": {"type": "array", "items": {"type": "string"}}}}, "epoch": {"type": "object", "additionalProperties": false, "required": ["verdict", "basis", "decided_by", "stages", "rule"], "properties": {"verdict": {"type": ["boolean", "null"]}, "basis": {"type": ["string", "null"]}, "decided_by": {"type": "array", "items": {"type": "string"}}, "stages": {"type": "array", "items": {"type": "object", "additionalProperties": false, "properties": {"stage": {"type": "string"}, "model_class": {"type": "integer"}, "verdict": {"type": ["boolean", "null"]}}}}, "rule": {"type": "string"}}}}},
+    "all_levels_inadmissible": {"type": "array", "items": {"type": "string"}, "description": "Categoricals whose lost and inadmissible levels together cover EVERY level: only the lost levels are excluded, the inadmissible ones (measured) stay candidates -- excluding them would leave none. A rejected row counts as inadmissible (stage-1b N8, stage-1d Q2)."},
+    "aliases_not_assessed": {"type": "array", "items": {"type": "string"}, "description": "Mixed-level fits only: two-factor interactions not fitted because their corner column lies in the span of several kept columns (effects.json aliased_in_span). alias_consequential re-attributes one coefficient to one alternative, so it cannot assess them; in a resolution-III mixed screen they are the 2fi~main aliases validator rule 30 guards against (stage-1b N13)."},
+    "lost_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Multi-level categorical levels with NO retained row in this fit or in ANY earlier fitting stage of the epoch (the union is carried forward, stage-1d Q1): the factor is fitted on its remaining levels and these are never recommended (stage-1 M5)."},
+    "inadmissible_levels": {"type": "object", "additionalProperties": {"type": "array"}, "description": "Multi-level categorical levels every measured row of which was infeasible or rejected this epoch -- inadmissible wherever measured, not proven inadmissible everywhere; excluded from the recommendation (stage-1 M5)."},
+    "excluded_measured_infeasible": {
+      "type": "array",
+      "items": { "type": "object" },
+      "description": "Configurations excluded from the candidate space because the campaign has already MEASURED them inadmissible. Recorded so the exclusion is auditable rather than invisible; _run_report repeats the check at the point of use, because this recommendation may be read later than the run that invalidated it."
+    },
+    "constraint_models": {
+      "type": "array",
+      "description": "One entry per declared response.constraints entry, in declaration order: whether the fitting stage could MODEL that constraint's metric (same design and model family as the primary, fitted on the complete AND infeasible rows) and what the model did to the candidate ranking. A candidate is removed from the argmax and from top_candidates only when a modelled constraint's one-sided bound at `delta` lies entirely on the violating side -- never on a point prediction. An unmodelled constraint (== / != op, a when/when_not guard, no pure error, singular, lack of fit, a missing metric) excludes nothing and `reason` says why. Empty when the campaign declares no constraints.",
+      "items": {
+        "type": "object",
+        "required": [
+          "metric",
+          "op",
+          "value",
+          "modelled",
+          "reason",
+          "n_rows",
+          "excluded_confidently_infeasible",
+          "delta",
+          "applied",
+          "at_recommendation"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "metric": {
+            "type": "string"
+          },
+          "op": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {},
+          "modelled": {
+            "type": "boolean",
+            "description": "True when a constraint model was fitted and is usable for exclusion."
+          },
+          "reason": {
+            "type": "string",
+            "description": "'modelled', or why the constraint fell back to measurement only."
+          },
+          "n_rows": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Measured rows the constraint model was fitted on (0 when it was never attempted)."
+          },
+          "excluded_confidently_infeasible": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Candidates this constraint's model removed as confidently infeasible. A candidate removed by two constraints counts under each."
+          },
+          "delta": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "description": "The per-constraint one-sided level: delta_screen divided by the number of constraints modelled (Bonferroni over constraints)."
+          },
+          "applied": {
+            "type": "boolean",
+            "description": "False when the model was fitted but NOT used, because it would have excluded every candidate (always act, spec 3.6)."
+          },
+          "at_recommendation": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "description": "The model's verdict at the recommended levels: predicted value, its SE, the lower and upper one-sided 1-delta bounds, and verdict feasible / uncertain / infeasible. Null when unmodelled.",
+            "required": [
+              "predicted",
+              "se",
+              "lower",
+              "upper",
+              "verdict"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "predicted": {
+                "type": "number"
+              },
+              "se": {
+                "type": "number",
+                "minimum": 0
+              },
+              "lower": {
+                "type": "number",
+                "description": "One-sided lower 1-delta bound on the constraint metric."
+              },
+              "upper": {
+                "type": "number",
+                "description": "One-sided upper 1-delta bound on the constraint metric."
+              },
+              "verdict": {
+                "type": "string",
+                "enum": [
+                  "feasible",
+                  "uncertain",
+                  "infeasible"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "recommendation_constraint_uncertain": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Metrics of every modelled constraint on which the RECOMMENDATION itself is uncertain (its confidence band straddles the threshold): the model cannot say it is admissible and only a measurement can. Empty when every modelled constraint is confidently satisfied there, or nothing was modelled."
+    },
+    "supported_feasible_candidate": {
+      "type": "object",
+      "description": "OPTIONAL; present only when response.constraints are declared (INV-STAT16). The best-predicted valid candidate whose feasibility the EVIDENCE supports: every modelled constraint's satisfying-side one-sided bound at delta_screen (Bonferroni, as exclusion) lies inside its threshold, and -- when any constraint is unmodelled -- every level lies inside `admissible_region`, the per-factor span of the configurations measured admissible (a conservative interpolation heuristic, not a guarantee). Confirm reserves a seat for it (round 1) and tops up from `pool` (round r). `levels` is null and `reason` says why when no candidate qualifies; confirm then keeps its previous shortlist.",
+      "required": ["levels", "coded", "predicted", "rank", "constraint_verdicts", "admissible_region", "n_admissible_configurations", "pool", "reason"],
+      "additionalProperties": false,
+      "properties": {
+        "levels": {"type": ["object", "null"]},
+        "coded": {"type": ["object", "null"]},
+        "predicted": {"type": ["number", "null"]},
+        "rank": {"type": ["integer", "null"], "minimum": 0, "description": "0-based position in the ranked valid space; 0 means the recommendation itself is supported."},
+        "constraint_verdicts": {
+          "type": "array",
+          "description": "One per declared constraint: a modelled one carries its bound (predicted, se, lower, upper) and verdict `feasible`; an unmodelled one carries verdict `inside_admissible_region`.",
+          "items": {
+            "type": "object",
+            "required": ["metric", "op", "value", "modelled", "verdict"],
+            "properties": {
+              "metric": {"type": "string"},
+              "op": {"type": ["string", "null"]},
+              "value": {},
+              "modelled": {"type": "boolean"},
+              "verdict": {"type": "string", "enum": ["feasible", "inside_admissible_region"]},
+              "predicted": {"type": "number"},
+              "se": {"type": "number"},
+              "lower": {"type": "number"},
+              "upper": {"type": "number"}
+            }
+          }
+        },
+        "admissible_region": {
+          "type": ["object", "null"],
+          "description": "Per factor: {kind: range, min, max} for a numeric (the admissible levels' span, the same box in any monotone scale) or {kind: levels, levels} for a choice. Null when every constraint is modelled, so no region was needed.",
+          "additionalProperties": {"type": "object", "required": ["kind"]}
+        },
+        "n_admissible_configurations": {"type": "integer", "minimum": 0},
+        "pool": {
+          "type": "array",
+          "description": "Every qualifying candidate, best first, capped like top_candidates; pool[0] is `levels`.",
+          "items": {
+            "type": "object",
+            "required": ["levels", "coded", "predicted"],
+            "additionalProperties": false,
+            "properties": {"levels": {"type": "object"}, "coded": {"type": "object"}, "predicted": {"type": "number"}}
+          }
+        },
+        "reason": {"type": "string", "minLength": 1}
+      }
+    },
+"outliers": {"type": "object", "description": "#321 P3 item 3 (A6): externally studentized residuals of the fitted rows (Belsley, Kuh & Welsch 1980), flagged when |t_i| exceeds the Bonferroni threshold t_{1-alpha/(2n), n-p-1} (Pr(any false flag) <= alpha under the model). FLAG ONLY (deleted: false): every reported number keeps the flagged rows. sensitivity is a refit without them: its recommendation and whether the decision changes (decision_changes).", "properties": {"method": {"type": "string"}, "alpha": {"type": "number"}, "df": {"type": ["integer", "null"]}, "threshold": {"type": ["number", "null"]}, "reason": {"type": ["string", "null"]}, "studentized": {"type": "array", "items": {"type": ["number", "null"]}}, "flagged_rows": {"type": "array", "items": {"type": "integer"}}, "deleted": {"const": false}, "policy": {"type": "string"}, "sensitivity": {"type": ["object", "null"]}}},
+    "pure_error_cells": {"type": "array", "description": "#321 P3 item 1: the replicate cells the fitting stage pooled its pure error from (one array of fitted responses per centre configuration, per block on a blocked fit, each with at least two rows). Confirm compares their spread with the finalists' replicates (Brown-Forsythe) to test M3, the assumption that pure error is the error variance at every configuration.", "items": {"type": "array", "items": {"type": "number"}, "minItems": 2}},
+    "residual_regret_model_profile": {"type": "object", "additionalProperties": false, "required": ["top", "rest", "challengers"], "description": "WP-A A1 (spec 2026-10-17-certification-soundness.md): the largest per-challenger members of the SIMULTANEOUS model family behind residual_regret_model (levels and one-sided bound against levels), and the max over every other challenger. Confirm takes the max over the challengers OUTSIDE its measured shortlist (certificate.model_bound_outside): the family holds jointly, so reading a data-chosen subset keeps its level.", "properties": {"top": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["levels", "bound"], "properties": {"levels": {"type": "object"}, "bound": {"type": "number"}}}}, "rest": {"type": ["number", "null"]}, "challengers": {"type": "integer", "minimum": 1}}},
+    "residual_regret_model": {
+      "type": "object",
+      "required": ["value", "challenger", "delta", "method", "detail"],
+      "additionalProperties": false,
+      "description": "The MODEL-side residual regret R_delta(x) (design spec 3.5), taken over the WHOLE valid space rather than over top_candidates -- eq. (2)'s max over z in X_valid. (When candidate_space is present the space was searched, and the max ran over the search's evaluated set; detail says so.) This is the bound that rests on the registered response class. The terminal bound is a different number computed from disjoint inputs and lives in confirmation.json; the two are never collapsed, and neither artifact carries a combined value.",
+      "properties": {
+        "value": {
+          "type": ["number", "null"],
+          "description": "The bound itself, at level `delta`. Null when no bound was computable -- no challenger at all, or pure error exactly zero."
+        },
+        "challenger": {
+          "type": ["object", "string", "null"],
+          "description": "Which rival attains the bound: a levels dict here (a finalist key at the terminal stage). Named even when `value` floored at 0.0, because `which rival is closest` is what the next experiment should be directed at. Null when there was no challenger."
+        },
+        "delta": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "maximum": 0.5,
+          "description": "The risk level this bound holds at -- delta_screen from the compiled policy's objective. A bound without its delta is not a bound."
+        },
+        "method": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Which arithmetic actually ran (e.g. bonferroni_one_sided_t), so the recorded method can never silently disagree with the number."
+        },
+        "detail": {
+          "type": "string",
+          "description": "Human-readable provenance: challenger count M, degrees of freedom, the t multiplier."
+        },
+        "critical": {
+          "type": "object",
+          "description": "#321 H3 (certificate.simultaneous_critical): the simultaneous critical value used -- used (bonferroni | scheffe), value, both candidates (bonferroni = t_{1-delta/m,df} over the DECLARED grid m, scheffe = sqrt(q F_{q,df,1-delta}) over the q non-intercept model terms), m, q, df, rule -- chosen as their minimum from (delta, m, q, df) only. `unevaluated` is present when the space was SEARCHED: certificate.region_bound's branch-and-bound bound over the grid points the search never evaluated (value, converged, nodes, grid_size), already folded into value and into residual_regret_model_profile.rest."
+        }
+      }
+    },
+    "epsilon": {
+      "type": "number",
+      "description": "The resolved epsilon-optimality tolerance this stage's bound is compared against, from the policy's objective (an absolute value, or a percentage resolved against `predicted`)."
+    },
+    "alias_consequential": {
+      "type": "array",
+      "description": "Aliased pairs whose resolution could change the recommended winner (design spec 3.4). Non-empty means resolving the alias can change the ANSWER, which is what makes the registered foldover a resource decision rather than a reflex; empty means every plausible resolution names the same epsilon-optimal winner and a foldover would buy a cleaner model and a worse campaign. Computed at EVERY fitting state, not only at screen, so `the foldover resolved it` is verifiable rather than assumed.",
+      "items": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "exclusion_balance": {
+      "type": "object",
+      "description": "GENUINELY OPTIONAL, not nullable: present ONLY when rows were excluded from the fit behind this recommendation. Same object as effects.json's exclusion_balance (orchestrator.optimize.exclusions.ExclusionBalance.as_dict), recorded HERE so it sits next to residual_regret_model -- the bound whose guarantee is conditional on the registered response class describing the measurements. A level-correlated exclusion is evidence that the fitted surface is biased in a NAMED direction rather than merely estimated from fewer rows, which is a different fact from a wider interval. It is also PERSISTED (rather than recomputed at the terminal state) for the reason model_adequate is: confirm is a separate run_iteration call and the Fit is gone by then, and confirm reads level_correlated to withhold GLOBAL certification -- the same delta_screen premise, broken the same way, as an inadmissible finalist.",
+      "additionalProperties": true,
+      "required": ["n_rows", "n_excluded", "n_bias_excluded", "level_correlated", "flagged_factors"],
+      "properties": {
+        "n_rows": { "type": "integer", "minimum": 0 },
+        "n_excluded": { "type": "integer", "minimum": 1 },
+        "n_bias_excluded": { "type": "integer", "minimum": 0 },
+        "level_correlated": { "type": "boolean" },
+        "flagged_factors": { "type": "array", "items": { "type": "string" } },
+        "factors": { "type": "array", "items": { "type": "object" } },
+        "cells": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "objectives": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "string"
+      },
+      "description": "Multi-objective campaigns only (spec 2026-10-15-pareto-front-design.md): the objective metrics, in declaration order. Present iff the campaign declares response.objectives; `levels`/`coded`/`predicted` are then the PREFERRED point of the predicted front (`predicted` is the first objective's prediction)."
+    },
+    "objective_models": {
+      "type": "object",
+      "description": "Per objective: was its model adequate (estimable, pure error, lack of fit not rejected), and if not, why. A rejected model's predictions are ranking hints only.",
+      "additionalProperties": {
+        "type": "object",
+        "required": [
+          "modelled",
+          "reason",
+          "lack_of_fit_p"
+        ],
+        "properties": {
+          "modelled": {
+            "type": "boolean"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "lack_of_fit_p": {
+            "type": [
+              "number",
+              "null"
+            ]
+          },
+          "n_rows": {
+            "type": "integer"
+          },
+          "pure_error_df": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        }
+      }
+    },
+    "objective_fits": {
+      "type": "object",
+      "description": "Multi-objective campaigns only (#321 item 4): each estimable objective model's coefficients, per-term SEs, exact (X'X)^-1 when kept, and pure error (certificate.fit_to_record), so confirm can compute the front certificate's model half -- whether a configuration nobody measured could epsilon-dominate the chosen front point -- after the Fit is gone.",
+      "additionalProperties": {"type": "object"}
+    },
+    "predicted_front": {
+      "type": "array",
+      "description": "Every point-nondominated candidate (`nondominated`), then up to 64 further candidates no other candidate CONFIDENTLY dominates (`possibly_nondominated`, nearest the point front first). Each objective's bound is one-sided at delta_screen / K. `stage` names the fitting stage that predicted it: entries an earlier stage predicted at another level of a factor this stage holds fixed are carried, so a front split by a choice factor stays whole.",
+      "items": {
+        "type": "object",
+        "required": [
+          "levels",
+          "predicted",
+          "se",
+          "status"
+        ],
+        "properties": {
+          "levels": {
+            "type": "object"
+          },
+          "predicted": {
+            "type": "object"
+          },
+          "se": {
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "nondominated",
+              "possibly_nondominated"
+            ]
+          },
+          "stage": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "preferred_basis": {
+      "type": "object",
+      "required": [
+        "basis",
+        "reason"
+      ],
+      "description": "Multi-objective only: what the top-level levels/predicted ARE. `predicted_front_preference` = the preference's point of the predicted front; `primary_argmax_fallback` = no predicted front existed (an objective model could not be estimated), so they are the first objective's argmax and confirm labels the seat accordingly.",
+      "properties": {
+        "basis": {
+          "enum": [
+            "predicted_front_preference",
+            "primary_argmax_fallback"
+          ]
+        },
+        "method": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    "front_size_predicted": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many candidates are point-nondominated under the objective models."
+    },
+    "aliases": {
+      "type": "array",
+      "description": "Every alias pair the design confounds, consequential or not. One fitted coefficient per ALIAS CLASS is what keeps X^T X non-singular under a resolution-IV screen, so recording the classes is how a reader checks which effects share an estimate.",
+      "items": {
+        "type": "array",
+        "items": { "type": "string" },
+        "minItems": 2,
+        "maxItems": 2
+      }
+    },
+    "candidate_space": {
+      "type": "object",
+      "required": ["exhaustive", "size", "evaluated", "method", "seed", "constraint_models_applied"],
+      "additionalProperties": false,
+      "description": "How the candidate set behind levels, top_candidates, residual_regret_model and predicted_front was obtained. PRESENT ONLY WHEN THE SPACE WAS SEARCHED rather than enumerated: the product of the fitted factors' axis sizes exceeded decide.CANDIDATE_CAP, so the recommendation is the best EVALUATED candidate of a deterministic seeded search (multi-start coordinate ascent from the best-predicted points of a pool of every measured configuration plus a seeded uniform sample), not a proven argmax over X_valid, and the regret bound's max ran over the evaluated set only. Absent means the whole valid space was enumerated exactly.",
+      "properties": {
+        "exhaustive": {"const": false, "description": "Always false when present: the evaluated set is a subset of the space."},
+        "size": {"type": "integer", "minimum": 1, "description": "The product of the fitted factors' axis sizes: the full candidate space, before exclusions."},
+        "evaluated": {"type": "integer", "minimum": 1, "description": "Distinct configurations the search scored (before measured-inadmissible and confidently-infeasible exclusions)."},
+        "method": {"const": "sampled_coordinate_ascent"},
+        "seed": {"type": "integer", "description": "The search seed (decide.SEARCH_SEED): the same fit and exclusions always reproduce the same evaluated set."},
+        "constraint_models_applied": {"type": ["boolean", "null"], "description": "Whether confidently-infeasible candidates were excluded. null: no constraint was modelled. true: applied at every evaluated point. false: dropped because neither the search nor a feasibility-seeking descent (on the total constraint violation, the hinge sum of the per-constraint margins) found an admissible point -- the searched analogue of the enumerated rule 'drop only when the whole space is confidently infeasible'. constraint_models[].applied agrees with it, and constraint_models[].excluded_confidently_infeasible counts over the evaluated set."},
+        "seeds_dropped": {"type": "integer", "minimum": 0, "description": "Measured configurations offered as search seeds that could not be placed on the candidate axes (a fitted factor missing, a choice level off the axis, an uncodable level) and so seeded nothing -- counted, not dropped silently."}
+      }
+    },
+    "alias_assessment": {"type": "object", "required": ["readings", "assessed", "method", "unassessed"], "additionalProperties": false, "description": "Present exactly when candidate_space is. alias_consequential above the cap assesses each alternative reading of an aliased coefficient by a LOCAL search (no uniform sample; pool = the stage's winner, its best evaluated points and the measured configurations), and at most decide.ALIAS_READINGS_CAP readings, largest |coefficient| first. readings = assessed + len(unassessed); an unassessed reading was NOT tested, so an empty alias_consequential says nothing about it.", "properties": {"readings": {"type": "integer", "minimum": 0}, "assessed": {"type": "integer", "minimum": 0}, "method": {"const": "local_coordinate_ascent"}, "unassessed": {"type": "array", "items": {"type": "array", "items": {"type": "string"}, "minItems": 2, "maxItems": 2}}}},
+    "alias_consequential_basis": {"const": "searched", "description": "Present only with candidate_space. alias_consequential was computed from searches: each alias resolution's optimal set is over what ITS search evaluated, so an empty list means no consequential alias was FOUND, not that none exists. The baseline is the primary search's argmax."},
+    "predicted_front_basis": {"const": "evaluated_points", "description": "Present only with candidate_space and a predicted_front. Each predicted_front status ('nondominated', 'possibly_nondominated') and front_size_predicted are relative to the evaluated points of the search, not to the whole valid space."}
+  }
+}

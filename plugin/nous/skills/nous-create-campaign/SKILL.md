@@ -7,6 +7,12 @@ description: Create a Nous campaign.yaml with all the right fields filled in. Us
 
 Author a new Nous `campaign.yaml` with all the domain context the LLM agents actually need to do their job — and avoid the silent-failure trap from issue #89.
 
+> **Optimization question** ("which setting of these knobs is best?")? This
+> skill covers the reflective kind. Use the `nous-optimize` skill instead: it
+> drives `nous create-campaign --kind optimization`, the validate → `--smoke` →
+> `--liveness` loop, the background run, monitoring and the report.
+> `nous docs quickstart` prints the authoring quickstart from any install.
+
 ## When to use
 
 - The user wants to start a new investigation and asks for help writing the campaign config.

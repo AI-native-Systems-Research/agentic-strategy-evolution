@@ -1,0 +1,188 @@
+# ─────────────────────────────────────────────────────────────────────────
+# Nous kind: optimization campaign — scaffolded by
+# `nous create-campaign --kind optimization`.
+#
+# Read first: `nous docs quickstart`
+#
+# Every value starting with TODO- is a placeholder only you can fill.
+# `nous validate campaign THIS_FILE` lists every one still present, by
+# field path, and `nous run` refuses this file until none remain.
+#
+# THE LOOP (iterate until each step is clean, then move on):
+#   1. fill every TODO-                 (this file + your adapter script)
+#   2. nous validate campaign FILE              # static, 0 runs
+#   3. nous validate campaign FILE --smoke      # tests + 1 config
+#   4. nous validate campaign FILE --liveness   # every level once + noise
+#                                               # floor + DESIGN PREVIEW
+#   5. NOUS_CAMPAIGN_PARENT=~/nous-campaigns nous run FILE
+#   6. monitor from any shell: nous progress FILE   (--json for tools,
+#      --line for one line); results: report.md / report.json in the
+#      work_dir, halt.json if a gate stopped it
+#
+# Model calls: ZERO unless you enable the opt-in `plan`/`build` stages
+# (bottom of file). Factors are declared HERE by you; no model proposes them.
+# report.md and gate summaries are rendered from artifacts, zero tokens.
+# ─────────────────────────────────────────────────────────────────────────
+
+kind: optimization
+
+run_id: TODO-run-id
+
+research_question: >
+  TODO-which configuration of the declared knobs maximizes the primary metric, subject to the constraints?
+
+prompts:
+  methodology_layer: "prompts/methodology/"
+  domain_adapter_layer: null
+
+target_system:
+  name: TODO-target-name
+  # Read by NO stage unless plan/build are enabled. Describe the target and
+  # what the adapter measures, for human readers and for build.
+  description: >
+    TODO-describe the target and what one run of the adapter measures.
+  # Absolute path. run_command/test_command run with cwd = this directory.
+  # Keep campaign artifacts OUT of it: export NOUS_CAMPAIGN_PARENT.
+  repo_path: /GOLDEN_REPO
+
+# Knobs that must NOT change across rows (workload size, model, dataset...).
+# A lock is only ENFORCED when optimization.locked_observables says where the
+# adapter reports the value it actually used (validate warns otherwise).
+locked_parameters:
+  TODO-locked-knob: TODO-locked-value
+
+optimization:
+  # argv, NOT a shell line: split with shlex, run with cwd=repo_path. No `cd`,
+  # `&&`, pipes, redirects, globs, or leading VAR=value (use `env VAR=v ...`).
+  # The interpreter you name must have your dependencies installed — use the
+  # target's own venv path, e.g. ".venv/bin/python".
+  # Each factor's rendered `apply` argument is APPENDED to this command.
+  # Contract (`nous docs targets`): print ONE JSON object last on stdout, echo the
+  # EFFECTIVE value of every factor under cfg.* on EVERY row (never omit a
+  # field at some corners), read NOUS_WORKLOAD_SEED, write files only under
+  # NOUS_RUN_DIR, exit non-zero on any failed measurement.
+  # `nous create-campaign --kind optimization --adapter-stub PATH` writes one.
+  run_command: "TODO-python TODO-path/to/adapter.py"
+
+  # Runs every declared native_test once at verify. Must print PER-TEST
+  # results (pytest -v / go test -v). Paths RELATIVE to repo_path. The target's
+  # own pytest config (addopts like `-n auto --cov --cov-fail-under=...`)
+  # applies here too: install its test deps in this interpreter, or override
+  # (`-p no:cacheprovider --no-cov -n 0`), and watch --smoke for
+  # "unrecognized arguments". Prefer the target's own FAST relation tests.
+  test_command: "TODO-python -m pytest -v TODO-tests/test_relations.py"
+
+  # Ceilings, seconds. Size run_timeout_sec from the SLOWEST corner (>= 2x
+  # its measured wall clock; --liveness measures per-level times for you).
+  test_timeout_sec: 900
+  run_timeout_sec: 600
+
+  # Optional cap on total wall clock; --liveness compares its preview to it.
+  # max_wall_clock_hours: 8
+
+  # Where the adapter reports each locked value (dotted path into its JSON).
+  locked_observables:
+    TODO-locked-knob: TODO-cfg.locked_knob
+
+  # A configuration you KNOW runs. Every factor, each at one of its DECLARED
+  # levels. --liveness varies one factor at a time around it.
+  known_valid_baseline: {A: 4, B: "off"}
+
+  # Declare when the target is stochastic: replicate i of every finalist then
+  # shares one seed, so confirm's comparison is PAIRED (much tighter). The
+  # adapter must actually read this variable (`nous docs targets` §3).
+  workload:
+    seed_env: NOUS_WORKLOAD_SEED
+
+  policy:
+    # Indifference width: "we would not reship for less than this". Must be
+    # ABOVE the screen's minimum detectable effect (--liveness prints it), or
+    # certification rests on confirm's paired replicates alone.
+    epsilon: {pct: 2.0}         # or {abs: 0.5} in the metric's units
+    delta_screen: 0.05
+    delta_terminal: 0.05
+
+  response:
+    primary: {metric: TODO-primary-metric, direction: maximize}
+    # SLA / budget limits: a row violating one is INFEASIBLE (kept as data,
+    # never the winner). Delete the list if you have none.
+    constraints:
+      - {metric: TODO-constraint-metric, op: "<=", value: 0}
+    # Invariants of the MEASUREMENT ITSELF (the run completed, nothing was
+    # censored) — a violation means the row measured something else.
+    self_check:
+      - {metric: TODO-completed-flag, op: "==", value: true}
+    # Recorded on every row and summarised in report.json; NEVER optimized,
+    # fitted or ranked on -- the generalization check. Delete if none.
+    held_out: [TODO-held-out-metric]
+    # Run-to-run noise of the primary metric, percent (measure it:
+    # --liveness prints the CV of repeated baseline runs).
+    noise_estimate_pct: 2.0
+
+  factors:
+    # Numeric factor. Integer-valued levels NEED `grid: 1`, or refine/centre
+    # points may ask for 2.5. Levels must bracket the baseline (4 here).
+    # `scale: log` for a GEOMETRIC knob (a size, batch, interval spanning
+    # orders of magnitude): the centre point is then the geometric mean.
+    # Delete it for an additive knob (a ratio, a threshold).
+    # A knob that runs ONLY at listed values (powers of two, a menu of sizes)
+    # takes `levels_only: true` INSTEAD of `grid`: every point refine runs and
+    # every recommendation is then one of the declared levels.
+    - id: A
+      name: TODO-numeric-knob-name
+      type: numeric
+      levels: [1, 2, 4, 8]
+      grid: 1
+      scale: log
+      apply: "--TODO-numeric-flag={level}"
+      # What the adapter ECHOES (a number, not "4"). Never trivially true.
+      manipulation: {observable: TODO-cfg.numeric_knob, op: "==", value: "{level}"}
+      relations:
+        - id: R_A
+          kind: correctness
+          statement: "TODO: what must stay correct at every level of this knob"
+          # The id EXACTLY as the test runner prints it, relative to repo_path.
+          native_test: "TODO-tests/test_relations.py::test_numeric_knob"
+    # Choice factor: levels are exact strings the adapter echoes back.
+    - id: B
+      name: TODO-choice-knob-name
+      type: choice
+      levels: ["off", "on"]
+      apply: "--TODO-choice-flag={level}"
+      manipulation: {observable: TODO-cfg.choice_knob, op: "==", value: "{level}"}
+      relations:
+        - id: R_B
+          kind: correctness
+          statement: "TODO: what must stay correct with this choice on and off"
+          native_test: "TODO-tests/test_relations.py::test_choice_knob"
+
+  design:
+    # Resolution 5: no main effect or 2-factor interaction is aliased with
+    # another. Centre points buy the pure-error df the screen's tests use.
+    # They cycle each choice factor through its levels (so curvature is
+    # checked under every level), each centre configuration replicated at
+    # least twice: df = center_points - #configurations. With the one
+    # two-level choice factor below, 4 centres -> 2 configurations -> df=2
+    # (t=4.30, a coarse screen); `nous validate` warns if a level gets none.
+    screen: {resolution: 5, center_points: 4}
+    # refine fits curvature and NEEDS >= 2 numeric factors with > 2 levels;
+    # this scaffold has one, so it is off. Enable by adding a second such
+    # factor, uncommenting this, and adding `refine` to stages.
+    # refine: {center_points: 4}
+    # Terminal discrimination: shortlist finalists, each re-measured.
+    confirm: {replicates: 3, shortlist_size: 3}
+    max_runs: 60
+
+  stages: [verify, screen, confirm]
+  # OPT-IN MODEL STAGES — only when the mechanism under study does NOT exist
+  # in the target yet: `plan` designs it, `build` authors it plus the native
+  # tests your relations declare. Each is one agent call. Enable with:
+  # stages: [plan, build, verify, screen, confirm]
+  # guidance:
+  #   factor_nomination: >
+  #     Read ONLY by plan/build: what the authoring agent must know.
+
+  # Literal repo-relative paths of the mechanism's code (not globs); the drift
+  # oracle watches them.
+  # build_checks:
+  #   mechanism_paths: ["src/TODO-mechanism.py"]

@@ -192,7 +192,9 @@ class TestWorktreeExtras:
         # No experiment dirs left behind.
         experiments = temp_git_repo / ".nous-experiments"
         if experiments.exists():
-            assert list(experiments.iterdir()) == [], (
+            # `.gitignore` is the directory's self-ignore marker, not a worktree.
+            leaked = [p for p in experiments.iterdir() if p.name != ".gitignore"]
+            assert leaked == [], (
                 "create_experiment_worktree leaked a worktree on extras failure"
             )
         # No nous-exp-* branches left behind.

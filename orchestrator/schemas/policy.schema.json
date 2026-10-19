@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nous compiled experimental policy",
+  "type": "object",
+  "required": ["policy_version", "epoch", "compiled_from", "objective", "budget", "initial", "states", "transitions"],
+  "additionalProperties": false,
+  "properties": {
+    "policy_version": {"const": 1},
+    "epoch": {"type": "integer", "minimum": 1},
+    "compiled_from": {
+      "type": "object", "required": ["campaign_hash", "mechanism_patch_hash", "factor_ids", "pre_epoch"],
+      "properties": {
+        "campaign_hash": {"type": "string"},
+        "mechanism_patch_hash": {"type": "string"},
+        "factor_ids": {"type": "array", "items": {"type": "string"}},
+        "pre_epoch": {"type": "array", "items": {"enum": ["plan", "build", "verify"]}}
+      }
+    },
+    "objective": {
+      "type": "object", "required": ["metric", "direction", "epsilon", "delta_screen", "delta_terminal"],
+      "properties": {
+        "metric": {"type": "string"},
+        "direction": {"enum": ["maximize", "minimize"]},
+        "epsilon": {"type": "object", "oneOf": [
+          {"required": ["abs"], "properties": {"abs": {"type": "number", "minimum": 0}}, "additionalProperties": false},
+          {"required": ["pct"], "properties": {"pct": {"type": "number", "minimum": 0}}, "additionalProperties": false}]},
+        "delta_screen": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
+        "delta_terminal": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5},
+        "delta_constraint": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5,
+          "description": "#321 P2 item 3: the third union term of the stated budget -- the level at which constraint models exclude candidates (Bonferroni over the modelled constraints). Present exactly when a declared constraint has a violating side and no when-guard; defaults to delta_screen."},
+        "terminal_robustness": {"type": "object", "additionalProperties": false, "required": ["floor", "skew_alpha", "level_for_floor", "method"], "description": "#321 P3 item 2 (A5): the registered robust terminal family. floor = the smallest replicate count at which the exact sign-flip bound exists at the per-look, per-challenger level (level_for_floor); skew_alpha = the studentized-third-moment pretest level. Both vetoes; absent in policies compiled before P3, which keep the t family alone.", "properties": {"floor": {"type": "integer", "minimum": 1}, "skew_alpha": {"type": "number", "minimum": 0, "maximum": 1}, "level_for_floor": {"type": "number"}, "method": {"type": "string"}}},
+        "delta_feasibility": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5, "description": "#321 P3 item 3: the union term for distributional constraints (semantics mean | chance:<alpha>), present exactly when one is declared; defaults to delta_terminal. Confirm spends it over finalists x constraints x looks."},
+        "heteroscedasticity": {"type": "object", "additionalProperties": false, "required": ["alpha", "method", "groups", "role"], "description": "#321 P3 item 1: the registered Brown-Forsythe check of M3 at confirm (single-objective). A veto on the model half, so it spends no delta; absent in policies compiled before P3, which then skip it.", "properties": {"alpha": {"type": "number", "exclusiveMinimum": 0, "maximum": 0.5}, "method": {"type": "string"}, "groups": {"type": "string"}, "role": {"type": "string"}}},
+        "campaign_delta": {"type": "object",
+          "description": "#321 item 7: the charged cross-epoch mode (optimization.policy.campaign_delta). epoch_share is this epoch's share of the campaign-wide total (geometric: total/2^e; or a declared schedule); the epoch's delta_screen/delta_terminal(/delta_constraint) are that share split in the declared proportions (declared_split). exhausted: no share remains, so this epoch certifies nothing."},
+        "objectives": {
+          "description": "Multi-objective campaigns only: every objective with its own indifference width. metric/direction above are the FIRST objective's.",
+          "type": "array", "minItems": 2,
+          "items": {"type": "object", "required": ["metric", "direction", "epsilon"],
+                    "properties": {"metric": {"type": "string"},
+                                   "direction": {"enum": ["maximize", "minimize"]},
+                                   "epsilon": {"type": "object"}}}
+        },
+        "preference": {
+          "type": "object", "required": ["method"],
+          "properties": {"method": {"enum": ["knee", "weights", "lexicographic"]},
+                         "weights": {"type": "object"},
+                         "order": {"type": "array", "items": {"type": "string"}}}
+        }
+      }
+    },
+    "budget": {"type": "object", "required": ["max_runs"], "properties": {"max_runs": {"type": ["integer", "null"]}}},
+    "known_valid_baseline": {"type": ["object", "null"]},
+    "planner": {
+      "type": "object", "additionalProperties": false,
+      "description": "WP-D (#320): optional planning-tool configuration compiled from optimization.planner and hashed with the policy. It proposes candidates only (allocate.py pool, plan-next bo_block); it is never used for inference or certification.",
+      "properties": {
+        "bo": {"type": "object", "additionalProperties": false,
+               "required": ["sampler", "n_startup", "seed"],
+               "properties": {"sampler": {"type": "string", "enum": ["tpe"]},
+                              "n_startup": {"type": "integer", "minimum": 0},
+                              "seed": {"type": "integer", "minimum": 0}}},
+        "stop_value_per_run": {"type": "number", "minimum": 0},
+        "campaign_max_runs": {"type": "integer", "minimum": 1}
+      }
+    },
+    "workload": {"type": ["object", "null"]},
+    "run_order": {
+      "description": "Run-order concealment (#321): derivation 2 draws every iteration's run-order seed from sha256(policy hash, iteration); the policy hash covers this random salt, recorded at compile in run_order.epoch-<e>.json. Absent = derivation 1 (the seed is the iteration index).",
+      "type": "object", "required": ["derivation", "salt"], "additionalProperties": false,
+      "properties": {"derivation": {"const": 2}, "salt": {"type": "string", "pattern": "^[0-9a-f]{32}$"}}
+    },
+    "initial": {"type": "string"},
+    "states": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object", "required": ["spends"],
+        "properties": {
+          "spends": {"type": "boolean"},
+          "terminal": {"type": "boolean"},
+          "ends_epoch": {"type": "boolean"},
+          "design": {"type": "object"},
+          "estimator": {"type": "string"},
+          "accounting": {"type": "string"}
+        }
+      }
+    },
+    "transitions": {
+      "type": "array",
+      "items": {
+        "type": "object", "required": ["from"],
+        "properties": {
+          "from": {"type": "string"},
+          "to": {"type": "string"},
+          "default": {"type": "string"},
+          "when": {"type": "object"},
+          "accounting": {"type": "string"}
+        },
+        "oneOf": [{"required": ["when", "to"]}, {"required": ["default"]}]
+      }
+    }
+  }
+}

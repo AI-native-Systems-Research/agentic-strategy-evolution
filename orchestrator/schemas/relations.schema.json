@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/AI-native-Systems-Research/agentic-strategy-evolution/schemas/relations.schema.json",
+  "title": "Optimization Relation Verdicts",
+  "description": "relations.json (design spec 5.5): per-relation verdicts from the native property-test run, with the target-native test identifier and its exit status. Written by orchestrator.optimize.artifacts.write_relations from a list of orchestrator.optimize.relations.RelationVerdict. A relation declared but never executed (native_test not found in the target's results) is recorded as passed=false -- a typo'd identifier must never silently disable a correctness gate.",
+  "type": "object",
+  "required": ["verdicts", "correctness_failures", "behavioral_failures"],
+  "additionalProperties": false,
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/verdict" },
+      "description": "One entry per declared (factor, relation) pair, in factor-then-relation declaration order."
+    },
+    "correctness_failures": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "relation_ids of failed kind=correctness verdicts. Non-empty here means the campaign must hard-fail (design spec 6.4): the apparatus is broken and measurements are meaningless."
+    },
+    "behavioral_failures": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "description": "relation_ids of failed kind=behavioral verdicts. These are recorded findings, never a hard-fail -- a monotonicity violation is a discovery (e.g. the L5 batching sign-flip), not a bug."
+    }
+  },
+  "$defs": {
+    "verdict": {
+      "type": "object",
+      "required": ["relation_id", "factor_id", "kind", "native_test", "passed", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "relation_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The relation's declared id, from factor.relations[].id."
+        },
+        "factor_id": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The factor this relation was declared on."
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["correctness", "behavioral"],
+          "description": "correctness relations hard-fail the campaign when broken (conservation laws, no-op-at-baseline). behavioral relations (monotonicity) become findings and never fail the campaign."
+        },
+        "native_test": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Target-native property-test identifier (a pytest nodeid, a JUnit classname.name, etc.) that this relation delegates to. Nous never generates or interprets this test's code -- it only checks that this identifier ran and passed."
+        },
+        "passed": {
+          "type": "boolean",
+          "description": "False both for a test that ran and failed, and for a declared native_test that never appears in the results at all (declared-but-not-executed is a failure, never a silent pass)."
+        },
+        "detail": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable detail: \"passed\", \"native_test '...' failed\", or \"...declared native_test '...' but it was not executed...\"."
+        }
+      }
+    }
+  }
+}

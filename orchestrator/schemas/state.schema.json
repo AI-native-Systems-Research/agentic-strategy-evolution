@@ -50,6 +50,11 @@
       "type": "object",
       "additionalProperties": true,
       "description": "Auto-captured reproducibility metadata (#262 / F17). Populated by setup_work_dir at INIT (target repo HEAD sha, hardware-config sha, language versions, latency-config file paths, gpu_memory_utilization, captured_at). First-capture-wins: re-running INIT on an existing campaign preserves the original block, which is what reviewers want (the state at campaign start, not at iter-3 resume time). See orchestrator/reproducibility.py for the capture logic and orchestrator/schemas/campaign.schema.yaml for the per-field documentation."
+    },
+    "max_iterations": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Effective max_iterations for this campaign, persisted at run start (#197) so a later `nous resume` invocation that doesn't pass --max-iterations recovers the original cap rather than silently re-using a CLI default. Written by orchestrator.campaign._persist_max_iterations and read back by read_persisted_max_iterations. Optional: pre-#197 state.json files lack this field, in which case resume falls back to the CLI-supplied or default value."
     }
   }
 }
