@@ -225,6 +225,13 @@ campaign instead of measuring a different system.
   the work_dir went.
 - **Watch it from anywhere** with `nous progress FILE`: `--line` for one line,
   `--json` for a tool (same shape as `progress.json`), `--watch` to redraw.
+  The ETA is an estimate, with a confidence (`eta_confidence`: `low` until
+  enough fresh rows are measured or while row durations vary widely). When row
+  cost depends on a factor's level it prices pending rows at their own level,
+  never-seen levels at the slowest seen. `eta_upper_bound_seconds` (pending rows
+  x `run_timeout_sec` / slots) is a hard bound that early rows cannot fool.
+  `wall_clock_hours` is the campaign's total across every run and resume, the
+  measure `max_wall_clock_hours` is checked against.
   `nous status FILE` gives the phase; `nous stop FILE` halts cleanly at the
   next boundary.
 - **When it ends, read three files** in the work_dir: `report.md` (the

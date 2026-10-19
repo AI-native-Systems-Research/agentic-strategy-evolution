@@ -521,6 +521,10 @@ class ProgressSnapshot:
     eta_seconds: float | None = None
     eta_basis: str = "unavailable"
     mean_row_seconds: float | None = None
+    # #325: how much to trust eta_seconds, and a bound that does not depend on
+    # the durations seen so far (pending rows x run_timeout_sec / slots).
+    eta_confidence: str = "none"
+    eta_upper_bound_seconds: float | None = None
     budget_hours: float | None = None
     wall_clock_hours: float | None = None
     invocations: int = 0
@@ -549,6 +553,8 @@ class ProgressSnapshot:
             "elapsed_seconds": self.elapsed_seconds,
             "eta_seconds": self.eta_seconds,
             "eta_basis": self.eta_basis,
+            "eta_confidence": self.eta_confidence,
+            "eta_upper_bound_seconds": self.eta_upper_bound_seconds,
             "mean_row_seconds": self.mean_row_seconds,
             "budget_hours": self.budget_hours,
             # #323: wall clock across every run/resume (the budget's measure)
@@ -599,6 +605,64 @@ def _estimate_eta(*, pending: int, durations: list[int],
         + (f" over {width} parallel slot(s)" if width > 1 else "")
     )
     return eta, basis, mean_s
+
+
+#: #325: fewer fresh durations than this (or than 2 per parallel slot) and the
+#: point ETA is low-confidence: early rows are a biased sample when row cost
+#: varies by level (a 262-row screen read 93 s at 1 row; it took 6.5 h).
+ETA_MIN_ROWS = 5
+#: Duration coefficient of variation above which a single mean is not trusted.
+ETA_MAX_CV = 1.0
+
+
+def _level_aware_eta(planned_rows: list[dict], done: dict[int, float],
+                     pending_idx: list[int]) -> tuple[float | None, str | None]:
+    """Seconds for the PENDING rows, estimating each from the completed rows
+    at its own level of the factor that best explains the duration spread.
+
+    Row cost often depends on a level (a batch size, a model size): a mean
+    over whatever finished first under-counts the expensive levels, which
+    finish last. For each factor, the between-level share of the duration
+    variance is computed over the completed rows; the factor with the largest
+    share is used, and a pending row at a level with no completed row yet is
+    priced at that factor's SLOWEST observed level mean (never optimistic).
+    ``(None, None)`` when no factor separates the durations."""
+    if not done or not pending_idx:
+        return None, None
+    by_idx = {i: r for i, r in enumerate(planned_rows)}
+    vals = list(done.values())
+    grand = sum(vals) / len(vals)
+    tot = sum((v - grand) ** 2 for v in vals)
+    if tot <= 0:
+        return None, None
+    factors = set()
+    for i in done:
+        factors |= set(((by_idx.get(i) or {}).get("levels") or {}).keys())
+    best = None
+    for f in sorted(factors):
+        groups: dict = {}
+        for i, v in done.items():
+            lv = ((by_idx.get(i) or {}).get("levels") or {}).get(f)
+            groups.setdefault(json.dumps(lv, sort_keys=True), []).append(v)
+        if len(groups) < 2 or len(groups) > len(done) / 2:
+            # Fewer than two levels separate nothing; a factor with (nearly)
+            # one row per level cannot show that cost depends on its level --
+            # any spread would "explain" itself perfectly.
+            continue
+        between = sum(len(g) * ((sum(g) / len(g)) - grand) ** 2 for g in groups.values())
+        share = between / tot
+        if best is None or share > best[0]:
+            best = (share, f, {k: sum(g) / len(g) for k, g in groups.items()})
+    if best is None or best[0] < 0.5:
+        return None, None
+    share, f, means = best
+    worst = max(means.values())
+    secs = 0.0
+    for i in pending_idx:
+        lv = json.dumps(((by_idx.get(i) or {}).get("levels") or {}).get(f), sort_keys=True)
+        secs += means.get(lv, worst)
+    return secs, (f"per level of {f} (explains {share:.0%} of the duration "
+                  f"variance; unseen levels priced at the slowest seen)")
 
 
 def read_progress_snapshot(work_dir: Path) -> ProgressSnapshot:
@@ -669,12 +733,20 @@ def read_progress_snapshot(work_dir: Path) -> ProgressSnapshot:
             max_parallel = 1
 
     durations: list[int] = []
+    fresh_by_idx: dict[int, float] = {}
+    seen_idx: set = set()
     try:
         from orchestrator.optimize import artifacts
         run_rows = artifacts.read_runs(iter_dir)
     except Exception:  # pragma: no cover - defensive
         run_rows = []
     for row in run_rows:
+        if isinstance(row, dict) and isinstance(row.get("row_index"), int):
+            seen_idx.add(row["row_index"])
+            if (not row.get("reused_from")
+                    and isinstance(row.get("duration_ms"), (int, float))
+                    and row["duration_ms"] > 0):
+                fresh_by_idx[row["row_index"]] = row["duration_ms"] / 1000.0
         if not isinstance(row, dict):
             continue
         status = str(row.get("status") or "")
@@ -697,6 +769,37 @@ def read_progress_snapshot(work_dir: Path) -> ProgressSnapshot:
         pending=snap.rows_pending, durations=durations, max_parallel=max_parallel,
         planned=snap.rows_planned,
     )
+    # #325: refine the point estimate per level where cost depends on one, say
+    # how far to trust it, and give a bound that cannot be fooled by the order
+    # rows happened to finish in.
+    if snap.eta_seconds and isinstance(planned_rows, list):
+        pend_idx = [i for i in range(len(planned_rows)) if i not in seen_idx]
+        lv_secs, lv_basis = _level_aware_eta(planned_rows, fresh_by_idx, pend_idx)
+        if lv_secs is not None:
+            snap.eta_seconds = lv_secs / max(1, max_parallel)
+            snap.eta_basis = lv_basis + (f" over {max_parallel} parallel slot(s)"
+                                         if max_parallel > 1 else "")
+    usable = [d for d in durations if d > 0]
+    if snap.eta_seconds is None:
+        snap.eta_confidence = "none"
+    elif snap.rows_pending == 0:
+        snap.eta_confidence = "exact"
+    else:
+        m = sum(usable) / len(usable)
+        sd = (sum((d - m) ** 2 for d in usable) / (len(usable) - 1)) ** 0.5 \
+            if len(usable) > 1 else 0.0
+        cv = sd / m if m > 0 else 0.0
+        few = len(usable) < max(ETA_MIN_ROWS, 2 * max_parallel)
+        snap.eta_confidence = "low" if (few or cv > ETA_MAX_CV) else "moderate"
+        if few:
+            snap.eta_basis += f"; LOW confidence: only {len(usable)} fresh row(s) measured"
+        elif cv > ETA_MAX_CV:
+            snap.eta_basis += (f"; LOW confidence: row durations vary widely "
+                               f"(CV {cv:.1f})")
+    timeout = matrix.get("run_timeout_sec") if isinstance(matrix, dict) else None
+    if isinstance(timeout, (int, float)) and timeout > 0 and snap.rows_pending:
+        snap.eta_upper_bound_seconds = (
+            snap.rows_pending * float(timeout) / max(1, max_parallel))
 
     started = _campaign_started_at(work_dir)
     if started is not None:
@@ -813,7 +916,10 @@ def format_progress(snap: ProgressSnapshot) -> str:
         lines.append(f"eta        unavailable ({snap.eta_basis})")
     else:
         lines.append(
-            f"eta        ~{_fmt_duration(snap.eta_seconds)} ({snap.eta_basis})",
+            f"eta        ~{_fmt_duration(snap.eta_seconds)} [{snap.eta_confidence}] "
+            f"({snap.eta_basis})"
+            + (f"; at most {_fmt_duration(snap.eta_upper_bound_seconds)} "
+               f"(pending x run_timeout_sec)" if snap.eta_upper_bound_seconds else ""),
         )
     if snap.budget_hours:
         lines.append(f"budget     {snap.budget_hours:g}h wall clock")
@@ -834,6 +940,8 @@ def format_progress(snap: ProgressSnapshot) -> str:
 def format_progress_line(snap: ProgressSnapshot) -> str:
     """One line, for a shell prompt or a log."""
     eta = "eta ?" if snap.eta_seconds is None else f"eta ~{_fmt_duration(snap.eta_seconds)}"
+    if snap.eta_seconds is not None and snap.eta_confidence == "low":
+        eta += " (low confidence)"
     stage = snap.stage or "?"
     return (
         f"[{snap.run_id or '?'}] iter {snap.iteration} {stage} — "

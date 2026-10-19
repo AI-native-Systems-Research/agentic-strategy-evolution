@@ -1529,3 +1529,74 @@ def test_progress_and_report_show_the_cumulative_wall_clock(tmp_path):
     assert prov["wall_clock"]["invocations"] >= 1 and prov["wall_clock"]["resumes"] >= 0
     snap = p.read_progress_snapshot(r.work_dir)
     assert snap.wall_clock_hours is not None and snap.invocations >= 1
+
+
+# ── #325: an ETA that row-cost variation across levels cannot fool ──────────
+
+def _cost_by_level_matrix(rows: int):
+    """Row cost depends on level A: A=0 is cheap (60 s), A=1 expensive (3600 s).
+    Rows are listed cheap first, as a run order often happens to finish them."""
+    p = _matrix(rows=rows)
+    for i, r in enumerate(p["rows"]):
+        r["levels"] = {"A": 0.0 if i < rows // 2 else 1.0, "B": 1.0}
+    p["run_timeout_sec"] = 4000
+    p["max_parallel"] = 1
+    return p
+
+
+def _state(tmp_path):
+    (tmp_path / "state.json").write_text(json.dumps({
+        "run_id": "z", "iteration": 1, "last_entered_phase": "EXECUTE_ANALYZE",
+        "family": None, "timestamp": "x"}))
+
+
+def test_an_early_eta_is_marked_low_confidence_and_bounded(tmp_path):
+    """The field case: 1 cheap row done of a mostly-expensive stage. Pre-fix the
+    ETA read as a confident 'a few minutes'. Now it is LOW confidence and the
+    hard bound (pending x run_timeout_sec) shows how long it really could be."""
+    payload = _cost_by_level_matrix(10)
+    _seed_iteration(tmp_path, 1, payload, [_run_row(payload, 0, duration_ms=60_000)])
+    _state(tmp_path)
+    snap = progress.read_progress_snapshot(tmp_path)
+    assert snap.eta_confidence == "low"
+    assert snap.eta_upper_bound_seconds == pytest.approx(9 * 4000)
+    text = progress.format_progress(snap)
+    assert "low" in text and "at most" in text
+    assert "low confidence" in progress.format_progress_line(snap)
+
+
+def test_the_eta_prices_pending_rows_at_their_own_level(tmp_path):
+    """4 cheap and 2 expensive rows done; 4 expensive rows pending. A plain mean
+    (1240 s/row) predicts 4960 s; the pending rows are all at the expensive
+    level, so the level-aware estimate is 4 x 3600 = 14400 s."""
+    payload = _cost_by_level_matrix(10)
+    rows = [_run_row(payload, i, duration_ms=60_000) for i in range(4)]
+    rows += [_run_row(payload, i, duration_ms=3_600_000) for i in (5, 6)]
+    _seed_iteration(tmp_path, 1, payload, rows)
+    _state(tmp_path)
+    snap = progress.read_progress_snapshot(tmp_path)
+    pend = [i for i in range(10) if i not in {0, 1, 2, 3, 5, 6}]
+    expected = sum(60.0 if i < 5 else 3600.0 for i in pend)
+    assert snap.eta_seconds == pytest.approx(expected)
+    assert "per level of A" in snap.eta_basis
+
+
+def test_an_unseen_expensive_level_is_never_priced_optimistically(tmp_path):
+    """Only cheap rows done so far, at two levels of B that explain the spread;
+    a pending row at a level never seen is priced at the slowest seen level."""
+    from orchestrator.optimize.progress import _level_aware_eta
+
+    planned = [{"levels": {"B": b}} for b in (1, 1, 2, 2, 3)]
+    done = {0: 10.0, 1: 12.0, 2: 100.0, 3: 110.0}
+    secs, basis = _level_aware_eta(planned, done, [4])
+    assert secs == pytest.approx(105.0) and "slowest" in basis
+
+
+def test_a_steady_stage_reports_moderate_confidence(tmp_path):
+    payload = _matrix(rows=12)
+    payload["run_timeout_sec"] = 600
+    rows = [_run_row(payload, i, duration_ms=100_000 + 1000 * i) for i in range(8)]
+    _seed_iteration(tmp_path, 1, payload, rows)
+    _state(tmp_path)
+    snap = progress.read_progress_snapshot(tmp_path)
+    assert snap.eta_confidence == "moderate"
