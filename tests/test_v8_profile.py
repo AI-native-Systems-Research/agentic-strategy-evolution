@@ -1580,3 +1580,59 @@ class TestActFirst:
         from orchestrator.v8_execute import ACT_FIRST_NOTE
         assert "--" not in ACT_FIRST_NOTE and "--" not in cut_resume_prompt("x", "/p")
 
+
+class _CapCutRunner:
+    """Scripted runner: attempt 1 is cut at the output limit and crosses the cap; later attempts as given."""
+
+    def __init__(self, later_cut=False):
+        self.calls, self.later_cut = [], later_cut
+
+    def __call__(self, **kw):
+        self.calls.append(kw)
+        if len(self.calls) == 1 or self.later_cut:
+            return SDKResult(text="", is_error=True, subtype="error_max_budget_usd", session_id="s1",
+                             error_message="session cost $5.13 reached the $4.00 cap", cost_usd=5.13,
+                             output_tokens=64_000, output_limit_hits=1, cut_reasoning="plan: greedy rows")
+        return SDKResult(text="wrote the solution", session_id="s1", output_tokens=2_000)
+
+
+class TestCutOnCap:
+    def _run(self, tmp_path, monkeypatch, runner, label="evaluator"):
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=runner, max_retries=1)
+        with d.session_budget(4.0, label=label):
+            return d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+
+    def test_a_cap_that_trips_on_a_cut_reply_gets_one_resume_built_on_its_reasoning(self, tmp_path, monkeypatch):
+        r = _CapCutRunner()
+        self._run(tmp_path, monkeypatch, r)
+        assert len(r.calls) == 2
+        resume = r.calls[1]
+        assert resume["resume"] == "s1" and "plan: greedy rows" in resume["prompt"]
+        assert "Do not re-derive" in resume["prompt"]
+        assert resume["effort"] == "low"  # evaluator medium, one level down after the cut
+        assert resume["max_cost_usd"] == pytest.approx(2.0)
+        assert "cut_reasoning_resume" in (tmp_path / "retry_log.jsonl").read_text()
+        assert (tmp_path / "cut_reasoning" / "evaluator-1.md").read_text() == "plan: greedy rows"
+
+    def test_only_one_such_resume_per_session(self, tmp_path, monkeypatch):
+        r = _CapCutRunner(later_cut=True)
+        self._run(tmp_path, monkeypatch, r)
+        assert len(r.calls) == 2  # the resume was cut too: stop, no second resume, no wrap-up
+        assert "max_budget_stop" in (tmp_path / "retry_log.jsonl").read_text()
+
+    def test_a_cap_without_a_cut_reply_keeps_the_old_behaviour(self, tmp_path, monkeypatch):
+        class _PlainCap:
+            calls = []
+
+            def __call__(self, **kw):
+                self.calls.append(kw)
+                return SDKResult(text="", is_error=True, subtype="error_max_budget_usd", session_id="s1",
+                                 error_message="session cost $4.10 reached the $4.00 cap", cost_usd=4.1)
+        r = _PlainCap()
+        r.calls = []
+        self._run(tmp_path, monkeypatch, r, label="h-main")
+        assert len(r.calls) == 1 and not (tmp_path / "cut_reasoning").exists()
+

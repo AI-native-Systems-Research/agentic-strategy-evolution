@@ -275,6 +275,9 @@ def _load_methodology_preamble(methodology_dir: Path) -> str | None:
     return "\n\n---\n\n".join(blocks)
 
 
+CUT_RESUME_USD = 2.0  # allowance for the one resume after a cap that tripped on a cut reply
+
+
 def _is_output_limit(result) -> bool:
     """True when the CLI ended because a reply exceeded its output-token maximum."""
     text = f"{getattr(result, 'error_message', '') or ''} {getattr(result, 'text', '') or ''}"
@@ -1480,6 +1483,7 @@ class SDKDispatcher(CLIDispatcher):
         limit, spent = cap, 0.0
         next_budget: float | None = None  # smaller per-attempt cap for a wrap-up turn
         budget_wrap_up_done = False
+        cut_resume_done = False  # v8: one resume after a cap that tripped on a cut reply
         last_text = ""
         budget: float | None = None
         while True:
@@ -1553,6 +1557,17 @@ class SDKDispatcher(CLIDispatcher):
             # wrap-up sized from the last turn so the session writes its artifacts, then stop.
             if result.is_error and (result.subtype == "error_max_budget_usd"
                                     or "error_max_budget_usd" in result.error_message):
+                # v8: the reply that crossed the cap was cut at the output limit, so the session paid for
+                # reasoning it never acted on. One short resume turns the saved reasoning into code.
+                if (v8 and result.session_id and result.output_limit_hits > 0 and result.cut_reasoning
+                        and not cut_resume_done and cap is not None):
+                    cut_resume_done = True
+                    self._log_retry("cut_reasoning_resume", failure_count + 1,
+                                    RuntimeError(result.error_message))
+                    resume_id, prompt = result.session_id, limit_prompt
+                    next_budget = CUT_RESUME_USD
+                    limit = max(limit, spent + next_budget)
+                    continue
                 if result.session_id and not budget_wrap_up_done and cap_wrap_up:
                     budget_wrap_up_done = True
                     self._log_retry("max_budget_wrap_up", failure_count + 1,
