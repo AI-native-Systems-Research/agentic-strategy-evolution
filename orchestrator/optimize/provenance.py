@@ -413,6 +413,20 @@ def build_provenance(work_dir: Path, policy_hash: str, *, campaign: dict | None 
     planned = _planner_provenance(work_dir)
     if planned is not None:
         out["planner"] = planned
+    # #323: the campaign's wall clock across every run/resume, so a report can
+    # be read against max_wall_clock_hours. Absent for a work_dir written
+    # before the ledger existed (never guessed).
+    from orchestrator.optimize import progress as _prog
+
+    _inv = _prog._read_wall_clock(work_dir)
+    if _inv:
+        _wc = _prog.cumulative_wall_clock(work_dir, current=len(_inv) - 1)
+        out["wall_clock"] = {"hours": round(_wc["hours"], 4),
+                             "invocations": _wc["invocations"],
+                             "resumes": max(0, _wc["invocations"] - 1),
+                             "measures": "sum over every nous run / nous resume of "
+                                         "this work_dir; time between them is not "
+                                         "charged"}
     return out
 
 

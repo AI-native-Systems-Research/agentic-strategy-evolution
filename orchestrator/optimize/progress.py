@@ -387,8 +387,68 @@ class BudgetVerdict:
         }
 
 
+#: #323: the campaign's wall-clock ledger. One entry per `nous run` /
+#: `nous resume` invocation: ``{started_at, last_seen}`` (epoch seconds).
+#: ``max_wall_clock_hours`` counts the SUM of every invocation's span, so a
+#: resume continues the budget instead of getting a fresh one.
+WALL_CLOCK_FILE = "wall_clock.json"
+
+
+def _read_wall_clock(work_dir: Path) -> list[dict]:
+    doc = _read_json(Path(work_dir) / WALL_CLOCK_FILE)
+    inv = (doc or {}).get("invocations") if isinstance(doc, dict) else None
+    return [x for x in (inv or []) if isinstance(x, dict)
+            and isinstance(x.get("started_at"), (int, float))
+            and isinstance(x.get("last_seen"), (int, float))]
+
+
+def start_invocation(work_dir: Path, *, now: float | None = None) -> int:
+    """Register this invocation in the wall-clock ledger; returns its index."""
+    now = time.time() if now is None else float(now)
+    inv = _read_wall_clock(work_dir)
+    inv.append({"started_at": now, "last_seen": now})
+    _write_wall_clock(work_dir, inv)
+    return len(inv) - 1
+
+
+def touch_invocation(work_dir: Path, index: int, *, now: float | None = None) -> None:
+    """Advance this invocation's ``last_seen`` (called between iterations)."""
+    now = time.time() if now is None else float(now)
+    inv = _read_wall_clock(work_dir)
+    if 0 <= index < len(inv):
+        inv[index]["last_seen"] = max(inv[index]["last_seen"], now)
+        _write_wall_clock(work_dir, inv)
+
+
+def _write_wall_clock(work_dir: Path, inv: list[dict]) -> None:
+    p = Path(work_dir) / WALL_CLOCK_FILE
+    tmp = p.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps({"invocations": inv}, indent=2, sort_keys=True) + "\n")
+    tmp.replace(p)
+
+
+def cumulative_wall_clock(work_dir: Path, *, now: float | None = None,
+                          current: int | None = None) -> dict:
+    """``{hours, invocations, prior_hours}`` over the ledger. The CURRENT
+    invocation (``current``) counts up to ``now``; earlier ones up to their
+    last recorded ``last_seen`` (time between invocations, while nothing ran,
+    is not charged)."""
+    now = time.time() if now is None else float(now)
+    inv = _read_wall_clock(work_dir)
+    total = prior = 0.0
+    for i, x in enumerate(inv):
+        end = now if i == current else x["last_seen"]
+        span = max(0.0, end - x["started_at"])
+        total += span
+        if i != current:
+            prior += span
+    return {"hours": total / 3600.0, "prior_hours": prior / 3600.0,
+            "invocations": len(inv)}
+
+
 def check_budget(*, budget_hours: float | None, started_at: float,
-                 now: float | None = None) -> BudgetVerdict:
+                 now: float | None = None,
+                 prior_hours: float = 0.0) -> BudgetVerdict:
     """Is the declared wall-clock budget spent?
 
     ``None`` (undeclared) is unbounded — the behaviour every campaign authored
@@ -412,14 +472,17 @@ def check_budget(*, budget_hours: float | None, started_at: float,
         return BudgetVerdict(False, budget_hours=budget)
 
     now = time.time() if now is None else float(now)
-    elapsed_h = max(0.0, (now - float(started_at))) / 3600.0
+    # #323: the budget is campaign-wide -- earlier invocations' wall clock
+    # (``prior_hours``, from the wall-clock ledger) counts too.
+    elapsed_h = float(prior_hours) + max(0.0, (now - float(started_at))) / 3600.0
     if elapsed_h < budget:
         return BudgetVerdict(False, budget_hours=budget, elapsed_hours=elapsed_h)
     return BudgetVerdict(
         True, budget_hours=budget, elapsed_hours=elapsed_h,
         reason=(
             f"the campaign's declared wall-clock budget of {budget:g} hour(s) "
-            f"is spent ({elapsed_h:.2f}h elapsed), so no further iteration is "
+            f"is spent ({elapsed_h:.2f}h elapsed across every run/resume of this "
+            f"campaign), so no further iteration is "
             f"started. The epoch ends through its normal terminal path, so a "
             f"recommendation is still produced from what was measured — read "
             f"report.json's recommendation.basis to see which rung of the "
@@ -459,6 +522,8 @@ class ProgressSnapshot:
     eta_basis: str = "unavailable"
     mean_row_seconds: float | None = None
     budget_hours: float | None = None
+    wall_clock_hours: float | None = None
+    invocations: int = 0
     halted: dict | None = None
     recent_failures: list[dict] = field(default_factory=list)
     updated_at: str = ""
@@ -486,6 +551,9 @@ class ProgressSnapshot:
             "eta_basis": self.eta_basis,
             "mean_row_seconds": self.mean_row_seconds,
             "budget_hours": self.budget_hours,
+            # #323: wall clock across every run/resume (the budget's measure)
+            "wall_clock_hours": self.wall_clock_hours,
+            "invocations": self.invocations,
             "halted": self.halted,
             "recent_failures": self.recent_failures,
             "updated_at": self.updated_at,
@@ -633,12 +701,34 @@ def read_progress_snapshot(work_dir: Path) -> ProgressSnapshot:
     started = _campaign_started_at(work_dir)
     if started is not None:
         snap.elapsed_seconds = max(0.0, time.time() - started)
+    wc = cumulative_wall_clock(work_dir, current=len(_read_wall_clock(work_dir)) - 1)
+    if wc["invocations"]:
+        snap.wall_clock_hours = round(wc["hours"], 4)
+        snap.invocations = wc["invocations"]
+    snap.budget_hours = _declared_budget(work_dir)
 
     halt = _read_json(work_dir / HALT_FILE)
     if isinstance(halt, dict):
         snap.halted = halt
 
     return snap
+
+
+def _declared_budget(work_dir: Path) -> float | None:
+    """``max_wall_clock_hours`` from the campaign this work_dir registered
+    (#323: progress showed null after a halt because nothing read it)."""
+    for name in sorted(Path(work_dir).glob("campaign.epoch-*.yaml"), reverse=True)[:1] + [
+            Path(work_dir) / "campaign.yaml"]:
+        try:
+            import yaml
+
+            c = yaml.safe_load(Path(name).read_text()) or {}
+        except Exception:  # noqa: BLE001 -- progress is best-effort, read-only
+            continue
+        v = ((c.get("optimization") or {}).get("max_wall_clock_hours"))
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+    return None
 
 
 def _campaign_started_at(work_dir: Path) -> float | None:

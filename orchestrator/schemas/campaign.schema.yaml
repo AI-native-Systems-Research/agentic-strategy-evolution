@@ -1955,7 +1955,13 @@ properties:
         exclusiveMinimum: 0
         description: >
           Optional ceiling, in HOURS, on the campaign's total wall clock.
-          Absent means unbounded, which is what every campaign authored before
+          CAMPAIGN-wide, not per invocation (#323): every ``nous run`` and
+          ``nous resume`` of the work_dir is recorded in ``wall_clock.json``,
+          and the budget is the SUM of their spans (time between them, while
+          nothing ran, is not charged), so a resume continues the budget
+          rather than getting a fresh one. ``progress.json`` shows it as
+          ``wall_clock_hours`` and ``report.json`` as
+          ``provenance.wall_clock``. Absent means unbounded, which is what every campaign authored before
           this field existed runs at -- the field is opt-in precisely so that
           adding it cannot shorten an existing campaign.
 

@@ -65,7 +65,7 @@ NOT_DERIVED = frozenset({
     "mechanism_plan.json", "reanalysis.json", "clean_tree.json",
     "mechanism.clean.patch", "gate_records.seal", "build_isolation.json",
     "clean_tree.manifest.json", "clean_tree.extras.json", "clean_tree.probe.json",
-    "anchors.json", "anchor_failure.json",
+    "anchors.json", "anchor_failure.json", "wall_clock.json",
     "planner_decision.json", "proposed_campaign.yaml", "proposed_campaign.diff",
     "accepted_stop.json", "planner_decision.json.seal",
 })
@@ -195,6 +195,9 @@ def _load(path: Path, roots: list[str]):
             # Checked against the ORIGINAL work_dir by anchor.verify, below:
             # the scratch dir has no external anchor of its own.
             (doc.get("provenance") or {}).pop("anchor", None)
+            # Wall clock (#323) is a fact about how long the ORIGINAL ran, not
+            # a derived quantity; a replay takes seconds.
+            (doc.get("provenance") or {}).pop("wall_clock", None)
         return doc
     text = path.read_text()
     for r in roots:

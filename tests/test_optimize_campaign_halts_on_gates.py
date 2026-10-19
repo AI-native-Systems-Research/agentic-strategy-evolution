@@ -138,3 +138,25 @@ def test_a_campaign_halted_mid_epoch_resumes_and_reuses_its_rows(tmp_path, monke
     assert not read_progress_snapshot(wd).halted
     history = [json.loads(l) for l in (wd / "halt_history.jsonl").read_text().splitlines()]
     assert [h["kind"] for h in history] == ["gate_failed"]
+
+
+def test_a_resume_continues_the_wall_clock_budget_instead_of_resetting_it(
+        tmp_path, monkeypatch):
+    """#323, through the real run_campaign. A first invocation is recorded as
+    having run 2 h; the resume declares max_wall_clock_hours: 1. Pre-fix the
+    resume started a fresh 1 h budget and ran; now the campaign has already
+    spent 2 h, so the resume halts as wall_clock_budget before any iteration."""
+    from orchestrator.optimize import progress
+
+    monkeypatch.setenv("NOUS_CAMPAIGN_PARENT", str(tmp_path / "runs"))
+    repo = _target(tmp_path, relation_passes=True)
+    campaign = _campaign(repo)
+    campaign["optimization"]["max_wall_clock_hours"] = 1
+    wd = Path(setup_work_dir("halt-gate", repo_path=str(repo), campaign=campaign))
+    i = progress.start_invocation(wd, now=1_000_000.0)
+    progress.touch_invocation(wd, i, now=1_000_000.0 + 2 * 3600)   # a prior 2 h run
+    run_campaign(campaign, wd, max_iterations=6, auto_approve=True)   # = nous resume
+    halt = json.loads((wd / progress.HALT_FILE).read_text())
+    assert halt["kind"] == "wall_clock_budget"
+    assert halt["budget"]["elapsed_hours"] >= 2.0
+    assert not (wd / "runs" / "iter-1" / "runs.jsonl").exists()

@@ -565,6 +565,15 @@ def run_campaign(
         or _progress.DEFAULT_MAX_IDENTICAL_FAILURES,
     )
     _campaign_started = time.time()
+    _wall_index = None
+    _prior_hours = 0.0
+    if _is_optimization:
+        # #323: the wall-clock budget is CAMPAIGN-wide. Each run/resume is one
+        # entry in wall_clock.json; the budget counts the sum, so a resume
+        # continues the budget rather than starting a fresh one.
+        _wall_index = _progress.start_invocation(work_dir, now=_campaign_started)
+        _prior_hours = _progress.cumulative_wall_clock(
+            work_dir, now=_campaign_started, current=_wall_index)["prior_hours"]
     if _is_optimization:
         # A previous halt is history once the campaign runs again: left in
         # place, every progress line of the resumed run read "HALTED
@@ -587,8 +596,10 @@ def run_campaign(
             # declines to START another iteration and lets the terminal
             # machinery below produce the recommendation from what was
             # measured.
+            _progress.touch_invocation(work_dir, _wall_index)
             _bud = _progress.check_budget(
                 budget_hours=_budget_hours, started_at=_campaign_started,
+                prior_hours=_prior_hours,
             )
             if _bud.exhausted:
                 logger.warning("wall-clock budget exhausted: %s", _bud.reason)

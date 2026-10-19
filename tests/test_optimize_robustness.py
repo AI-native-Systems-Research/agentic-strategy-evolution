@@ -1490,3 +1490,42 @@ def test_reuse_is_not_planned_on_an_iteration_already_past_its_design_phase(tmp_
         "registered and partly written, so re-appending them would be a "
         "duplicate-row_index fidelity violation"
     )
+
+
+# ── #323: the wall-clock budget is campaign-wide across resumes ────────────
+
+def test_the_wall_clock_budget_continues_across_a_resume(tmp_path):
+    """Pre-fix, max_wall_clock_hours counted from the CURRENT process start,
+    so every resume got a fresh full budget. Now each run/resume is one ledger
+    entry and the budget is their sum."""
+    from orchestrator.optimize import progress as p
+
+    t0 = 1_000_000.0
+    i0 = p.start_invocation(tmp_path, now=t0)
+    p.touch_invocation(tmp_path, i0, now=t0 + 3 * 3600)        # ran 3 h, halted
+    t1 = t0 + 10 * 3600                                          # resumed 7 h later
+    i1 = p.start_invocation(tmp_path, now=t1)
+    prior = p.cumulative_wall_clock(tmp_path, now=t1, current=i1)["prior_hours"]
+    assert abs(prior - 3.0) < 1e-9
+    # Budget 4 h: 1 h into the resume the campaign has spent 4 h in total.
+    v = p.check_budget(budget_hours=4, started_at=t1, now=t1 + 3600, prior_hours=prior)
+    assert v.exhausted and abs(v.elapsed_hours - 4.0) < 1e-9
+    # Pre-fix arithmetic (no prior) would have said 1 h of 4 spent.
+    assert not p.check_budget(budget_hours=4, started_at=t1, now=t1 + 3600).exhausted
+    wc = p.cumulative_wall_clock(tmp_path, now=t1 + 3600, current=i1)
+    assert wc["invocations"] == 2 and abs(wc["hours"] - 4.0) < 1e-9
+
+
+def test_progress_and_report_show_the_cumulative_wall_clock(tmp_path):
+    from orchestrator.optimize.harness import run_synthetic_campaign
+    from orchestrator.optimize import progress as p
+    from orchestrator.optimize.provenance import build_provenance
+    from orchestrator.optimize.synthetic import SURFACES
+
+    r = run_synthetic_campaign(SURFACES["bowl"](), seed=1, parent_dir=tmp_path)
+    i = p.start_invocation(r.work_dir, now=1.0)
+    p.touch_invocation(r.work_dir, i, now=1.0 + 1800)
+    prov = build_provenance(r.work_dir, "h")
+    assert prov["wall_clock"]["invocations"] >= 1 and prov["wall_clock"]["resumes"] >= 0
+    snap = p.read_progress_snapshot(r.work_dir)
+    assert snap.wall_clock_hours is not None and snap.invocations >= 1

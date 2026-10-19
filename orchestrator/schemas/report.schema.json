@@ -108,6 +108,11 @@
             "reanchored": {"type": "array", "items": {"type": "integer"}, "description": "Epochs anchored with more than one policy hash (recompiled before any benchmark run); the latest anchor is the one checked."}
           }
         },
+        "wall_clock": {
+          "type": "object",
+          "description": "#323: the campaign's wall clock summed over every nous run / nous resume of this work_dir (the measure max_wall_clock_hours is checked against); time between invocations is not charged. Absent for a work_dir written before the ledger existed.",
+          "properties": {"hours": {"type": "number"}, "invocations": {"type": "integer"}, "resumes": {"type": "integer"}, "measures": {"type": "string"}}
+        },
         "planner": {
           "type": "object",
           "description": "WP-D D2 (#320): present when this epoch was started by an accepted `nous plan-next` decision (epoch_end.planned-<e-1>.json): the chosen option, the scored choice, the decision basis, and an override with its reason when one was made. compiled_matches_accepted says whether the campaign this epoch compiled is the accepted proposal.",
