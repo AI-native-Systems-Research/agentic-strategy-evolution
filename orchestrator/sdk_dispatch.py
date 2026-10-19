@@ -288,7 +288,8 @@ def _load_methodology_preamble(methodology_dir: Path) -> str | None:
 # v8: Claude Code cuts replies at 64k by default; opus-4-6/5/5-5 allow 128k. Live p58: thinking replies
 # ran to 64k and were lost at every effort level, while 51k-63k replies that finished went on to act.
 V8_MAX_OUTPUT_TOKENS = 128_000
-CUT_RESUME_USD = 2.0  # allowance for the one resume after a cap that tripped on a cut reply
+CUT_RESUME_USD = 2.0
+V8_WRAP_UP_USD = 1.5  # allowance for a v8 session's wrap-up after its cap (screening reserves cover it)  # allowance for the one resume after a cap that tripped on a cut reply
 
 
 def _is_output_limit(result) -> bool:
@@ -1490,9 +1491,12 @@ class SDKDispatcher(CLIDispatcher):
             output_limit_resumes_left = 3
             limit_prompt = V8_OUTPUT_LIMIT_PROMPT
         self._last_effort = effort
-        # v8: after a dollar cap the orchestrator writes the artifacts from disk; only the design
-        # session (whose bundle nothing else can write) keeps its wrap-up.
-        cap_wrap_up = not (v8 and self._session_label != "design")
+        # Every session gets one wrap-up after its dollar cap: stopping right after an expensive reply throws
+        # that reply away (live p26 smoke s6: an $6.70 thought crossed the $4 evaluator cap, the session was
+        # stopped at its first tool call, and only the stub was measured).
+        cap_wrap_up = True
+        from orchestrator.design_profile import V8_BUDGET_WRAP_UP_PROMPT
+        cap_prompt = V8_BUDGET_WRAP_UP_PROMPT if v8 and self._session_label != "design" else WRAP_UP_PROMPT
         resume_id: str | None = self._initial_resume
         self._initial_resume = None
         # Dollar cap (v7): ``limit`` is what this whole dispatch may spend on the token ruler, across
@@ -1589,14 +1593,16 @@ class SDKDispatcher(CLIDispatcher):
                     next_budget = CUT_RESUME_USD
                     limit = max(limit, spent + next_budget)
                     continue
-                if result.session_id and not budget_wrap_up_done and cap_wrap_up:
+                if result.session_id and not budget_wrap_up_done and cap_wrap_up and not cut_resume_done:
                     budget_wrap_up_done = True
                     self._log_retry("max_budget_wrap_up", failure_count + 1,
                                     RuntimeError(result.error_message))
-                    resume_id, prompt = result.session_id, WRAP_UP_PROMPT
+                    resume_id, prompt = result.session_id, cap_prompt
                     turns = wrap_up_max_turns(self.campaign)
                     if cap is not None:
                         next_budget = budget_wrap_up_usd(cap, result.last_turn_cost_usd)
+                        if v8 and self._session_label != "design":
+                            next_budget = min(next_budget, V8_WRAP_UP_USD)  # write and measure, no new work
                         limit = max(limit, spent + next_budget)
                     continue
                 self._log_retry("max_budget_stop", failure_count + 1, RuntimeError(result.error_message))

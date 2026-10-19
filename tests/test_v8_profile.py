@@ -242,10 +242,10 @@ class TestTranscriptCaps:
         d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=runner, max_retries=1)
         with d.session_budget(2.0, label="h-main"):
             d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
-        row = _metrics(tmp_path)[-1]
+        row = _metrics(tmp_path)[0]  # the capped session (its wrap-up is the next row)
         assert row["output_tokens"] == 30_000 and row["session_label"] == "h-main"
-        assert iteration_spent(c, tmp_path, it) == pytest.approx(2.25)
-        assert "max_budget_stop" in (tmp_path / "retry_log.jsonl").read_text()  # and no wrap-up turn
+        assert iteration_spent(c, tmp_path, it) >= 2.25
+        assert "max_budget_wrap_up" in (tmp_path / "retry_log.jsonl").read_text()
 
     def test_metrics_row_records_the_largest_single_reply(self, monkeypatch, tmp_path, spawned):
         runner, _ = _transcript_runner(monkeypatch, tmp_path, spawned, replies=2)
@@ -290,13 +290,17 @@ class TestNoWrapUpAfterCap:
         (tmp_path / "runs" / "iter-1").mkdir(parents=True, exist_ok=True)
         return SDKDispatcher(work_dir=tmp_path, campaign=campaign, sdk_runner=runner, max_retries=2)
 
-    def test_arm_cap_stop_has_no_wrap_up_turn(self, tmp_path, monkeypatch):
-        runner = _Runner([SDKResult(**self.BUDGET_ERR), SDKResult(text="never")])
+    def test_arm_cap_stop_gets_one_short_wrap_up_that_writes_and_measures(self, tmp_path, monkeypatch):
+        # live p26 smoke s6: a $6.70 thought crossed the cap and the session was killed before writing code
+        from orchestrator.sdk_dispatch import V8_WRAP_UP_USD
+        runner = _Runner([SDKResult(**self.BUDGET_ERR), SDKResult(text="wrapped")])
         d = self._sdk(tmp_path, monkeypatch, _v8(), runner)
         with d.session_budget(4.0, label="h-main"):
             d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
-        assert len(runner.calls) == 1 and runner.calls[0]["transcript_caps"] is True
-        assert "max_budget_wrap_up" not in (tmp_path / "retry_log.jsonl").read_text()
+        assert len(runner.calls) == 2 and runner.calls[0]["transcript_caps"] is True
+        wrap = runner.calls[1]
+        assert wrap["resume"] == "s-1" and "measure it once" in wrap["prompt"]
+        assert wrap["max_cost_usd"] <= V8_WRAP_UP_USD + 1e-9
 
     def test_design_cap_stop_keeps_its_wrap_up(self, tmp_path, monkeypatch):
         runner = _Runner([SDKResult(**self.BUDGET_ERR), SDKResult(text="wrapped")])
@@ -1117,7 +1121,7 @@ class TestOfficialFirstEvaluator:
         prompt = dict(fake.calls)["evaluator"]["prompt"]
         assert "Do not write `instrument.json`" in prompt and "{{" not in prompt
         assert "simplest correct solution" in prompt and "toolchain" in prompt
-        assert dict(fake.calls)["evaluator"]["max_cost_usd"] == pytest.approx(4.0)  # $2 target, 2x hard
+        assert dict(fake.calls)["evaluator"]["max_cost_usd"] >= 4.0  # $2 target; hard stop is the spare room
         inst = json.loads((it / "instrument.json").read_text())
         assert not validate_instrument(inst)
         assert inst["noise"]["runs"] == [5.0, 5.5, 4.75] and inst["noise"]["spread"] == pytest.approx(0.75)
@@ -1621,10 +1625,10 @@ class TestCutOnCap:
     def test_only_one_such_resume_per_session(self, tmp_path, monkeypatch):
         r = _CapCutRunner(later_cut=True)
         self._run(tmp_path, monkeypatch, r)
-        assert len(r.calls) == 2  # the resume was cut too: stop, no second resume, no wrap-up
+        assert len(r.calls) == 2  # the resume was cut too: stop, no second resume, no wrap-up on top
         assert "max_budget_stop" in (tmp_path / "retry_log.jsonl").read_text()
 
-    def test_a_cap_without_a_cut_reply_keeps_the_old_behaviour(self, tmp_path, monkeypatch):
+    def test_a_cap_without_a_cut_reply_gets_the_wrap_up_not_the_cut_resume(self, tmp_path, monkeypatch):
         class _PlainCap:
             calls = []
 
@@ -1635,7 +1639,8 @@ class TestCutOnCap:
         r = _PlainCap()
         r.calls = []
         self._run(tmp_path, monkeypatch, r, label="h-main")
-        assert len(r.calls) == 1 and not (tmp_path / "cut_reasoning").exists()
+        assert len(r.calls) == 2 and not (tmp_path / "cut_reasoning").exists()
+        assert "measure it once" in r.calls[1]["prompt"]
 
 
 class TestResumeAccounting:
@@ -1824,7 +1829,7 @@ class TestLongSessions:
         s, s8 = v7_settings(_v8()), v8_settings(_v8())
         remaining = 24.0  # live p5 s1 before iteration 1 h-main ($22 + evaluator credit)
         hard = screening_hard_cap(s, s8, 4.0, remaining, waiting=1)
-        assert hard > 8.0  # was 2x the $4 target
+        assert hard > 6.0  # the old rule stopped it at its $6 target share; the wrap-up is reserved on top
         left = remaining - hard - CAP_OVERSHOOT_USD * 0.9 - s8.repair_budget_usd - CAP_OVERSHOOT_USD * 0.9
         assert arm_funded(s, s8, left)  # the waiting family still gets its floor
         last = screening_hard_cap(s, s8, 4.0, remaining, waiting=0)

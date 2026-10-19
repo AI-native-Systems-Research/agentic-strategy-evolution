@@ -47,6 +47,12 @@ WRAP_UP_PROMPT = (
     "the phase's `nous validate` command, and fix only what the validator reports."
 )
 
+V8_BUDGET_WRAP_UP_PROMPT = (
+    "This session reached its budget. Do not start new reasoning or new experiments. In the next few "
+    "steps: write what you have to the solution file, measure it once with the official measure command, "
+    "save the patch, and write or update the result file. Then stop."
+)
+
 OUTPUT_LIMIT_PROMPT = (
     "Your last reply went over the output limit and was lost. Do not redo that reasoning in one reply. "
     "Write what you have now to this phase's files, then continue in short steps: a few paragraphs of "

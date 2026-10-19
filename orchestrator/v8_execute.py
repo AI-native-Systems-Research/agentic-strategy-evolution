@@ -85,8 +85,10 @@ def screening_hard_cap(s: V7Settings, s8: V8Settings, cap: float, remaining: flo
     waiting. A cap trips after the reply that crosses it, so a margin covers that overshoot
     (live p5: $0.30 over left $3.86, under the $4 floor, and the second family was skipped). The arm's own
     repair turn is set aside too (live p26/p0/p58: a $1.11 repair left $0.26 too little for the second family)."""
+    from orchestrator.sdk_dispatch import V8_WRAP_UP_USD
     room = (remaining - winner_reserve(s, s8) - waiting * (s8.arm_floor_usd + CAP_OVERSHOOT_USD)
-            - (s8.repair_budget_usd + CAP_OVERSHOOT_USD if s8.repair_budget_usd > 0 else 0.0))
+            - (s8.repair_budget_usd + CAP_OVERSHOOT_USD if s8.repair_budget_usd > 0 else 0.0)
+            - V8_WRAP_UP_USD)  # the arm's wrap-up after its cap spends on top of the hard stop
     # The target stays the arm's share; the hard stop is everything the reserves do not need. Live p5 s1:
     # arms stopped at 2x a $4 target ran 2-7 turns and never got past a first version; v7 arms (whose caps
     # undercounted) ran 15+ turns.
@@ -534,7 +536,13 @@ def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, st
         spent_before = iteration_spent(campaign, work_dir, iter_dir)
         _start_session(repo, iteration, state, EVALUATOR_KEY, cap, extras)
         _save_state(adir, state)
-        hard = round(cap * 2.0, 2)
+        # The evaluator is credited back to the iteration, so its hard stop can be what the screening floors
+        # and the winner reserve do not need (live p26 smoke s6: one $6.70 thought crossed a $4 cap).
+        s, s8 = v7_settings(campaign), v8_settings(campaign)
+        from orchestrator.sdk_dispatch import V8_WRAP_UP_USD
+        room = (s.iteration_budget_usd - winner_reserve(s, s8) - (s8.arm_floor_usd + CAP_OVERSHOOT_USD)
+                - V8_WRAP_UP_USD)
+        hard = round(max(cap * 2.0, room), 2)
         print(f"  v8 build-evaluator (target ${cap:.2f}, hard cap ${hard:.2f})")
         outcome = _dispatch(dispatcher, campaign, work_dir, iter_dir, iteration, repo, state, EVALUATOR_KEY,
                             "build-evaluator-v8", label=EVALUATOR_KEY, target=cap, hard=hard, resume=None,
