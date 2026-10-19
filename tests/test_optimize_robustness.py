@@ -1559,7 +1559,9 @@ def test_an_early_eta_is_marked_low_confidence_and_bounded(tmp_path):
     _state(tmp_path)
     snap = progress.read_progress_snapshot(tmp_path)
     assert snap.eta_confidence == "low"
-    assert snap.eta_upper_bound_seconds == pytest.approx(9 * 4000)
+    from orchestrator.optimize.runner import ROW_ATTEMPTS_MAX
+
+    assert snap.eta_upper_bound_seconds == pytest.approx(9 * ROW_ATTEMPTS_MAX * 4000)
     text = progress.format_progress(snap)
     assert "low" in text and "at most" in text
     assert "low confidence" in progress.format_progress_line(snap)

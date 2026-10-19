@@ -587,6 +587,13 @@ def _elapsed_ms(started: float) -> int:
     return max(1, int((time.monotonic() - started) * 1000))
 
 
+#: The most attempts a row can take (#325): ``execute_design``'s default
+#: ``max_retries`` is 1, so a manipulation transient can run a row twice; a
+#: timeout or crash is never retried. ``progress.eta_upper_bound_seconds``
+#: charges every pending row this many ``run_timeout_sec`` ceilings.
+ROW_ATTEMPTS_MAX = 2
+
+
 def execute_design(
     rows: list[ConfigRow],
     *,
@@ -596,7 +603,7 @@ def execute_design(
     factors: list[Factor],
     on_row: Callable[[RunOutcome], None] | None = None,
     integrity_check: "IntegrityCheck | None" = None,
-    max_retries: int = 1,
+    max_retries: int = ROW_ATTEMPTS_MAX - 1,
     max_parallel: int = 1,
     adapter_guard: "AdapterGuard | None" = None,
 ) -> list[RunOutcome]:

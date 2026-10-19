@@ -229,7 +229,8 @@ campaign instead of measuring a different system.
   enough fresh rows are measured or while row durations vary widely). When row
   cost depends on a factor's level it prices pending rows at their own level,
   never-seen levels at the slowest seen. `eta_upper_bound_seconds` (pending rows
-  x `run_timeout_sec` / slots) is a hard bound that early rows cannot fool.
+  x the most attempts a row can take x `run_timeout_sec` / slots) is a hard
+  bound that early rows cannot fool.
   `wall_clock_hours` is the campaign's total across every run and resume, the
   measure `max_wall_clock_hours` is checked against.
   `nous status FILE` gives the phase; `nous stop FILE` halts cleanly at the

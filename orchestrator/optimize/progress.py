@@ -798,8 +798,14 @@ def read_progress_snapshot(work_dir: Path) -> ProgressSnapshot:
                                f"(CV {cv:.1f})")
     timeout = matrix.get("run_timeout_sec") if isinstance(matrix, dict) else None
     if isinstance(timeout, (int, float)) and timeout > 0 and snap.rows_pending:
+        # A row runs at most ATTEMPTS times (runner.execute_design's
+        # manipulation retry; a timed-out run is never retried), each capped at
+        # run_timeout_sec, so this is a bound, not an estimate. Rows already
+        # running are counted as pending from zero: conservative.
+        from orchestrator.optimize.runner import ROW_ATTEMPTS_MAX
+
         snap.eta_upper_bound_seconds = (
-            snap.rows_pending * float(timeout) / max(1, max_parallel))
+            snap.rows_pending * ROW_ATTEMPTS_MAX * float(timeout) / max(1, max_parallel))
 
     started = _campaign_started_at(work_dir)
     if started is not None:
