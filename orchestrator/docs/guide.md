@@ -1998,6 +1998,23 @@ campaign that is missing any of these:
     interrupt alike. A pid whose start time no longer matches the one recorded
     when it was first seen has been reused by an unrelated process; it is
     recorded and never killed.
+  - **A process still exiting is not a survivor (#322).** A timed-out run's
+    group is SIGKILLed, and a multi-GB process can take seconds to tear down
+    under load. Before counting, the check waits up to
+    `reaper.SETTLE_SECONDS` (10 s; it returns at once for a clean command) for
+    the group and every tracked descendant to finish exiting. A process that
+    can no longer be resolved (`getpgid` raises ESRCH) is gone, not escaped,
+    and a group whose remaining members are all zombies is not a survivor.
+  - **What `nous resume` does after a survivor (or any gate) halt.** The
+    halted iteration recorded no transition, so resume re-enters the same
+    stage and carries that attempt's registered design forward, seeds
+    included. Every row already in its `runs.jsonl` with status `complete`,
+    `infeasible` or `rejected` is REUSED, not re-measured
+    (`reused_from` on the row). Rows with status `failed` -- timeouts
+    included -- ARE re-run, with the same configuration and seed, so a row
+    that timed out at `run_timeout_sec` will time out again unless you raise
+    it. Confirm rounds are never reused (fresh replicates are the claim). See
+    `orchestrator/optimize/resume.py` for the six reuse guards.
 - **A run dir is copied back safely.** Each attempt's copy goes to a fresh
   `row-K.attempt-N` directory, regular files only, under a size and file-count
   cap that counts the bytes actually read. A symlink or other special file is

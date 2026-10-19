@@ -63,6 +63,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -369,14 +370,15 @@ def _reap_leftover_group(pgid: int, cmd, seen=None) -> None:
         started = {}
     else:
         descendants, errors, started = seen
+    # #322: a process just SIGKILLed (a timed-out run's group) can take
+    # measurable time to tear down -- seconds for a multi-GB process under
+    # load. In that window kill(pid, 0) and killpg(pgid, 0) still succeed while
+    # getpgid already raises ESRCH, so an immediate check would count a dying
+    # process as a survivor and fail the whole stage. The group gets a bounded
+    # settle period first; only what is STILL alive after it counts.
+    _settle(pgid, descendants)
     reused: list[int] = []
-    alive_group = True
-    try:
-        os.killpg(pgid, 0)
-    except ProcessLookupError:
-        alive_group = False
-    except PermissionError:
-        pass
+    alive_group = _group_alive(pgid)
     # EVERY descendant seen while the command ran that is still alive is a
     # survivor -- whatever group it was in when first seen. Its group is
     # RE-READ now: a child that called setsid() after the first poll has a new
@@ -391,15 +393,25 @@ def _reap_leftover_group(pgid: int, cmd, seen=None) -> None:
         # do NOT kill: SIGKILLing an unrelated group is worse than a miss.
         st_then = started.get(p)
         if st_then is None or start_time(p) != st_then:
+            if start_time(p) is None:
+                continue            # gone between the two reads: not a survivor
             reused.append(p)
             continue
         try:
             current[p] = os.getpgid(p)
-        except (ProcessLookupError, PermissionError):
+        except ProcessLookupError:
+            # #322: no process to resolve -- it exited (or is exiting) between
+            # _alive and getpgid. Gone, not escaped.
+            continue
+        except PermissionError:
             current[p] = None
         if current[p] != pgid:
             escaped.append(p)
     if not alive_group and not escaped and not errors and not reused:
+        return
+    if alive_group and not escaped and not reused and not _group_has_live_member(pgid):
+        # The group id still answers killpg(…, 0) only because its last members
+        # are zombies / mid-teardown: nothing in it can still act.
         return
     if alive_group:
         try:
@@ -421,6 +433,72 @@ def _reap_leftover_group(pgid: int, cmd, seen=None) -> None:
                           else str(cmd), "pgid": pgid, "escaped_session": escaped,
                           "pid_not_verified": reused,
                           "observation_errors": errors[:3]})
+
+
+#: #322: how long a just-killed group may take to finish exiting before a
+#: remaining member counts as a survivor. Multi-GB processes under heavy load
+#: were measured needing well over the 0.1 s the old immediate check allowed.
+SETTLE_SECONDS = 10.0
+_SETTLE_POLL = 0.05
+
+
+def _group_alive(pgid: int) -> bool:
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+def _group_members(pgid: int) -> list[int] | None:
+    """Non-zombie pids whose process group is ``pgid``, read from ``ps``;
+    None when the table cannot be read (unknown, not empty)."""
+    try:
+        r = subprocess.run(["ps", "-A", "-o", "pid=,pgid=,stat="], capture_output=True,
+                           text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    out = r.stdout
+    members = []
+    for ln in out.splitlines():
+        parts = ln.split()
+        if len(parts) >= 3 and parts[1] == str(pgid) and not parts[2].startswith("Z"):
+            try:
+                members.append(int(parts[0]))
+            except ValueError:
+                continue
+    return members
+
+
+def _group_has_live_member(pgid: int) -> bool:
+    """True when a non-zombie process is still in group ``pgid``. Unknown
+    (the table cannot be read) is True: unknown is not dead (C1)."""
+    if not _group_alive(pgid):
+        return False
+    members = _group_members(pgid)
+    if members is None:
+        return True
+    return bool(members)
+
+
+def _settle(pgid: int, descendants, *, seconds: float | None = None) -> None:
+    """Wait (bounded) until group ``pgid`` has no live member and no tracked
+    descendant is alive, or until ``seconds`` pass. Returns at once when both
+    are already true, so a clean command pays nothing."""
+    from orchestrator.optimize import isolation
+
+    limit = SETTLE_SECONDS if seconds is None else seconds
+    deadline = time.monotonic() + limit
+    while True:
+        busy = _group_has_live_member(pgid) or any(
+            isolation._alive(p) for p in (descendants or {}))
+        if not busy or time.monotonic() >= deadline:
+            return
+        time.sleep(_SETTLE_POLL)
 
 
 def take_survivors() -> list[dict]:
