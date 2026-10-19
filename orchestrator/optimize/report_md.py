@@ -715,6 +715,20 @@ def render_report_markdown(work_dir: Path) -> str:
                      f"registered confirm looks -- the round reported is the one the "
                      f"campaign stopped at; from that round's fresh replicates; point "
                      f"estimate {_fmt(g.get('estimate'))}, biased upward by selection)")
+    fvb = report.get("front_vs_baseline") or {}
+    if fvb:
+        lines.append(f"- **Front vs the baseline** {_fmt_levels(fvb.get('baseline'))} "
+                     f"(#324; a separate claim from the front certificate, intervals "
+                     f"simultaneous over every finalist x objective at "
+                     f"{_fmt(fvb.get('delta'))}):")
+        if fvb.get("declined"):
+            lines.append(f"  - not compared: `{fvb['declined']}`")
+        for pt in fvb.get("points") or []:
+            gains = "; ".join(
+                f"{m} {_fmt(g.get('estimate'))} [{_fmt(g.get('low'))}, {_fmt(g.get('high'))}]"
+                for m, g in (pt.get("gain") or {}).items())
+            lines.append(f"  - {_fmt_levels(pt.get('levels'))}: **{pt.get('verdict')}** "
+                         f"(gain, positive = better: {gains})")
     scope = report.get("certificate_scope") or {}
     if scope.get("region") == "slice":
         lines.append("- **Certificate scope:** a slice -- "

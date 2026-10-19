@@ -2419,15 +2419,27 @@ It does four jobs:
   correctness gates.
 - It is the control that build oracle 2(c) measures before and after a
   `build`.
-- In a single-objective campaign, confirm seats it in **every round** as a
-  reference finalist. That seat sits outside `shortlist_size` and costs
-  `replicates` runs per round, which the preview counts. It competes like any
-  finalist, so if it wins it is the answer.
+- Confirm seats it in **every round** as a reference finalist, single- and
+  multi-objective alike (#324). That seat sits outside `shortlist_size` and
+  costs `replicates` runs per round, which the preview counts. Its replicates
+  share the round's workload seeds, so the comparison is CRN-paired. In a
+  single-objective campaign it competes like any finalist, so if it wins it is
+  the answer. In a multi-objective campaign it is measured like any front
+  point (it can be on the front if nothing dominates it).
 - `report.json` `gain_over_baseline` gives the winner's gain over it, with an
   interval from the same fresh confirm replicates. The interval is
   simultaneous (Bonferroni over every finalist against the baseline), so it
   stays valid although the winner was chosen from those replicates. The point
   `estimate` is biased upward by that selection; the interval is the claim.
+- Multi-objective: `confirmation.json` `front_vs_baseline` gives, for every
+  admissible finalist, the gain over the baseline on each objective (positive
+  = better), with two-sided intervals simultaneous over every (finalist,
+  objective) pair at `delta_terminal` (Bonferroni). Each point gets a verdict:
+  `dominates_baseline`, `dominated_by_baseline`, `trade_off` or `undecided`;
+  `report.md` prints it. This is a SEPARATE claim from the front certificate:
+  it does not change the front's statuses or certificate, and is not in its
+  union bound. If the baseline was measured inadmissible or produced no
+  measurement, the block says so (`declined`).
 
 It is **required** whenever `build` is declared.
 

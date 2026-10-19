@@ -2747,6 +2747,9 @@ def _run_report(engine, campaign, work_dir, iteration, pol, *,
             else None, selection=_screen_selection_record(work_dir)),
         **({"gain_over_baseline": dict(conf["gain_over_baseline"])}
            if conf and conf.get("gain_over_baseline") else {}),
+        # #324: the front against the deployed configuration.
+        **({"front_vs_baseline": dict(conf["front_vs_baseline"])}
+           if conf and conf.get("front_vs_baseline") else {}),
         # #321 item 2: the post-selection validation block, when registered.
         **({"post_selection_validation": {
                 k: v for k, v in (_latest_validation(work_dir) or {}).items()
@@ -6653,8 +6656,13 @@ def _confirm_rows(pol: dict, work_dir: Path, factors, primary: str,
     # soundness.md section 5). It competes like any finalist: if it wins, it is
     # the answer. Exempt from the lost/inadmissible bar like every other
     # baseline seat.
+    # #324: multi-objective too. The deployed configuration is what every front
+    # point is judged against ("how does the front compare with what runs
+    # today?"), so it gets the same permanent, CRN-paired seat; the comparison
+    # is reported (``front_vs_baseline``), and the front's statuses and
+    # certificate are computed exactly as before.
     _base = pol.get("known_valid_baseline")
-    if (_base and finalists and not pareto_stage.objectives(pol)
+    if (_base and finalists
             and not any(_same_levels(dict(f), dict(_base)) for f in finalists)):
         finalists.append(dict(_base))
         provenance.append("known_valid_baseline (permanent reference seat)")
@@ -8099,6 +8107,9 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
             adequacy_unknown=(adequacy_reason if adequacy_unknown else None),
             factors=factors,
         )
+        _fvb = _front_vs_baseline(pol, fin, status, mo_samples, paired=paired)
+        if _fvb is not None:
+            summary["front_vs_baseline"] = _fvb
 
     # Did the winning finalist actually beat everything the campaign measured?
     #
@@ -8335,7 +8346,8 @@ def _finish_confirm(engine, campaign, stage_name, iteration, iter_dir,
     carry = (
         # A multi-objective round re-seats up to the whole shortlist (front
         # points, gap fills, spread), so the full shortlist is the upper bound.
-        max(1, int(_cfg.get("shortlist_size", 3))) if "pareto" in summary
+        max(1, int(_cfg.get("shortlist_size", 3)))
+        + (1 if pol.get("known_valid_baseline") else 0) if "pareto" in summary
         else _next_round_finalists(
             summary, shortlist_size=_cfg.get("shortlist_size", 3),
             baseline_seat=_baseline_seat_extra(
@@ -8820,6 +8832,79 @@ def _gain_over_baseline(pol, fin, ok, best, *, delta, paired, direction) -> dict
                        "delta/(2M), so the interval for the data-selected winner "
                        "covers at >= 1 - delta; the estimate is the winner's mean "
                        "difference on the selecting replicates (biased upward).")}
+
+
+def _front_vs_baseline(pol, fin, status, mo_samples, *, paired) -> dict | None:
+    """``confirmation.json["front_vs_baseline"]`` (#324): every admissible
+    finalist of a multi-objective round against the ``known_valid_baseline``
+    seated beside it, per objective.
+
+    A SEPARATE claim from the front certificate, like the single-objective
+    ``gain_over_baseline``: the intervals are two-sided, simultaneous over
+    every (finalist, objective) pair by Bonferroni at ``delta_terminal``
+    (``certificate.simultaneous_gain_interval`` per objective, at
+    ``delta_terminal / K`` so the K objectives share it), on this round's
+    fresh replicates, CRN-paired when the workload seed is shared. They do
+    not enter the front's statuses or certificate, and are not in its union
+    bound. Each gain is signed so that positive = better than the baseline.
+
+    Per finalist, a verdict from the intervals: ``dominates_baseline`` (no
+    objective worse, at least one better), ``dominated_by_baseline`` (the
+    reverse), ``trade_off`` (better on one, worse on another), or
+    ``undecided`` (an interval straddles 0 on every objective that is not
+    clearly better or worse)."""
+    base = pol.get("known_valid_baseline")
+    objs = pareto_stage.objectives(pol)
+    if not base or not objs or mo_samples is None:
+        return None
+    bkey = next((f["key"] for f in fin if _same_levels(dict(f["levels"]), dict(base))),
+                None)
+    delta = float(pol["objective"]["delta_terminal"])
+    out = {"baseline": dict(base), "delta": delta, "points": [],
+           "claim": ("separate from the front certificate: two-sided intervals "
+                     "simultaneous over every (finalist, objective) at "
+                     "delta_terminal (Bonferroni), on this round's fresh "
+                     "replicates; not in the certificate's union bound")}
+    if bkey is None or status.get(bkey) != "ok":
+        out["declined"] = ("baseline_measured_inadmissible"
+                           if bkey is not None and status.get(bkey) == "infeasible"
+                           else "baseline_unmeasured")
+        return out
+    out["baseline_key"] = bkey
+    others = [f for f in fin if f["key"] != bkey and status.get(f["key"]) == "ok"]
+    k = len(objs)
+    for f in others:
+        gains, signs = {}, []
+        for o in objs:
+            samples = {g["key"]: mo_samples[g["key"]][o.metric]
+                       for g in [*others, {"key": bkey}]}
+            iv = certificate.simultaneous_gain_interval(
+                samples, f["key"], bkey, delta=delta / k, paired=paired)
+            if iv is None:
+                gains[o.metric] = {"estimate": None, "low": None, "high": None,
+                                   "detail": "not estimable (fewer than two "
+                                             "replicates, or zero spread)"}
+                signs.append(None)
+                continue
+            sgn = 1.0 if o.direction != "minimize" else -1.0
+            lo, hi = sorted((sgn * iv["low"], sgn * iv["high"]))
+            gains[o.metric] = {"estimate": sgn * iv["estimate"], "low": lo, "high": hi,
+                               "method": iv["method"],
+                               "simultaneous_over": iv["simultaneous_over"] * k}
+            signs.append(1 if lo > 0 else (-1 if hi < 0 else 0))
+        if any(x is None for x in signs):
+            verdict = "not_computable"
+        elif all(x >= 0 for x in signs) and any(x > 0 for x in signs):
+            verdict = "dominates_baseline"
+        elif all(x <= 0 for x in signs) and any(x < 0 for x in signs):
+            verdict = "dominated_by_baseline"
+        elif any(x > 0 for x in signs) and any(x < 0 for x in signs):
+            verdict = "trade_off"
+        else:
+            verdict = "undecided"
+        out["points"].append({"key": f["key"], "levels": dict(f["levels"]),
+                              "gain": gains, "verdict": verdict})
+    return out
 
 
 def _certificate_scope(rec: dict, boundary: dict | None,

@@ -277,10 +277,10 @@ def build_preview(
     base_seat = 0
     if "confirm" in states:
         d = states["confirm"]["design"]
-        # WP-A A3: a declared known_valid_baseline is seated in every
-        # single-objective round as a reference finalist outside the cap.
-        base_seat = int(bool(opt.get("known_valid_baseline"))
-                        and not (opt.get("response") or {}).get("objectives"))
+        # WP-A A3 / #324: a declared known_valid_baseline is seated in every
+        # confirm round, single- AND multi-objective, as a reference finalist
+        # outside the cap.
+        base_seat = int(bool(opt.get("known_valid_baseline")))
         per_round = (int(d["shortlist_size"]) + base_seat) * int(d["replicates"])
         rounds = int(d["max_rounds"])
         # WP-D D1: the opt-in allocate round is one more round at most.
