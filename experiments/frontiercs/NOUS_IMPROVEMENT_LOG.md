@@ -395,3 +395,25 @@ regime; (4) with $5-10 single thoughts, a $22 iteration funds only one family pl
 score-vs-spend curves, and the decision on the main table (stock 64k vs both at 128k). Optional: cant_be_late
 (research track, never run here) as one Nous/Claude pair after its evaluator is checked in our sandbox. Repeats
 r2/r3 only if the stage-1 decision needs them (`REPEATS` in gen/main_queue.py).
+
+## 14. Stage-1 outcome and why Nous did not beat Claude at 128k (2026-10-19)
+
+Finals (re-judged): p0 Nous 81.84 vs Claude 74.41; p44 76.40 vs 77.87; p225 38.93 vs 39.02; p26 30.0 vs 79.05;
+p5 45.0 vs 59.0; p58 Nous 4.56, Claude still running. p181 skipped (queue stopped by decision). No repeats.
+Decision: Frontier-CS is dropped as a main evaluation; effort moves to case studies with oracle checks.
+
+Evidence (scripts `gen/why_lose_spend.py`, `gen/why_lose_timeline.py`, read-only over metrics and official logs):
+1. The setup (evaluator) session found most of each final score: p0 79.7 of 81.8, p5 45 of 45, p44 74.8 of 78.9,
+   p26 30 of 30. The hypothesis iterations after it added +2.1, 0, +4.1, 0.
+2. Budget is split into capped sessions, and nearly every session hit its cap (5-7 wrap-ups per run). Each arm
+   gets about one big thought ($4-10) and a wrap-up. p26 and p225 never funded a second family (h-alternative
+   skipped). Claude's single session kept its context and climbed steadily (p5 28 -> 59 between $2 and $16;
+   p26 39 -> 69 between $12 and $35).
+3. Re-planning cost: design sessions took 33% of p225 and 25% of p26 spend.
+4. Fewer official measures where it mattered: p26 Nous 7 vs Claude 14; p58 6; p225 18 with one non-zero.
+5. Arms stayed near the incumbent: p5 iter-2 tried six local variants of greedy+repair, all <= 45, and concluded
+   "hard ceiling of 45"; Claude reached 59 with a different construction.
+6. Compounding never started: 2-3 iterations per $50; predictions mostly wrong (0/1, 0/2); 0-1 principles per run.
+7. Bug found: iter-1 findings.json failed schema validation on p0 and p5 ("'score' was unexpected"), so those
+   iterations' learning was not recorded in the ledger. Score impact small (later iterations ran), but it is a defect.
+8. p58: arm passed a validity check on tiny inputs but overflowed 64-bit counts on large ones.
