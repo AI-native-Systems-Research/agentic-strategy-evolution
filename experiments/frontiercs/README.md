@@ -126,7 +126,8 @@ Best judged score by $50; v8 repeats in brackets. Preds `artifacts/preds/p*.nous
 | p58 inverse counting path | 0 (0, 0 stopped) | 59.71 | 0 |
 
 p58 (and part of p26) is decided by replies that think past Claude Code's 64k output limit and are lost; v7's
-single scoring p58 arm finished thinking just under it. The fix in progress is effort control (log section 12).
+single scoring p58 arm finished thinking just under it. Fix: the v8 effort rule (dcba58b), see
+`docs/design-profile-v8.md`. Smoke runs (tag `s1`) on p58, p26, p5 started 2026-10-19 10:02.
 
 ## Focus set at $50: Nous v7 vs Claude Code (2026-10-14, opus-4-6, final)
 

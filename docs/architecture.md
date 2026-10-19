@@ -138,6 +138,8 @@ This is preferred over a probabilistic Haiku evaluator anywhere the success crit
 
 ## SDK Dispatch
 
+Design profile v8 (dollar caps from transcripts, hang watchdog, effort rule): see `docs/design-profile-v8.md`.
+
 `SDKDispatcher` (`--agent sdk`, the default) invokes the Claude Agent SDK for both agent roles. The legacy `--agent api` (claude -p subprocess) backend was removed in #183; only the SDK path is reachable from the CLI.
 
 ### Retry and Resilience

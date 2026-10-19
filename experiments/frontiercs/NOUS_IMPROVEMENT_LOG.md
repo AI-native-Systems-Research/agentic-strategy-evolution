@@ -344,3 +344,14 @@ any run, and report which sessions it changes. `/tmp/replay.py` did this for the
 one level only after a real cut-off. Replay result expected: p0, p5, p181 unchanged except the evaluator; p26,
 p58 change after their first cut-off. Then run p58, p26, p5 (2 runs each before judging), then the freeze and
 held-out plan in section 11.
+
+**2026-10-19 update.** Built the decided rule as dcba58b (plan, plan review, tests, code review, replay):
+evaluator at medium, other sessions at the model default, one level down per real cut-off (floor medium for
+new sessions, low as a last resort inside a repeatedly cut session). Code review found that cuts after the
+resumes ran out were not counted; fixed with a test. Live check: a session resumed with a different `--effort`
+keeps its context. Replay on both v8 runs of every task: p0, p5, p181 change only their evaluator; p26 and p58
+go to medium after their first cut-off. Design sessions are cut only on p58 (2 and 1) and are covered by the
+step-down. Smoke runs `s1` (p58 vpc k1, p26 vpc k3, p5 vpc-int k1) started 10:02. Pass: p58 and p26 > 0, p5
+near 58. Then freeze as `nous-algo-v1`; held-out tasks stay unseen until then. User doc:
+`docs/design-profile-v8.md`.
+
