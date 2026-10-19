@@ -1,0 +1,8 @@
+{
+ "derived_from": "our exhaustive sweeps space_main.json (qwen3-14b, rate 100), space_heldout_llama.json, space_heldout_qwen_r50.json; BLIS 4e88b20; 1800 configs each",
+ "T1_block_size_32_dominates_front": "block_size_in_tokens=32 is in >= 90% of Pareto configs (main 116/124 = 93.5%; llama 92.5%; qwen r50 100%). Pass if the answer states block size 32 dominates / is near-always optimal.",
+ "T2_scheduler_barely_matters": "scheduler (fcfs vs sjf) has the smallest main effect on throughput (range 0.09 rps vs 14.5 for tp) and both values appear ~equally on the front. Pass if the answer identifies scheduler as (near-)irrelevant, or ranks it least important.",
+ "T3_gpu_tradeoff_direction": "more GPUs (tp*instances) buy throughput (front corr gpus-rps +0.84) and lower tail TTFT (corr -0.51); the trade-off is throughput/latency vs GPU (and KV) cost. Pass if the answer states the direction correctly.",
+ "T4_small_kv_on_front": "the smallest KV budget (2000 blocks) is the most common value on the front (53%); no config with >5000 blocks is Pareto-optimal. Pass if the answer states small KV budgets suffice / large KV budgets are never Pareto-optimal.",
+ "matching": "checked against final/answer.json 'answer' text and 'claims'; numeric claims re-checked against the sweep. Phrase lists in oracle/search.py, fixed before any run."
+}

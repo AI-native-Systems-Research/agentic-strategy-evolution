@@ -1,0 +1,203 @@
+{
+ "main": {
+  "front_size": 124,
+  "front_share": {
+   "tp": {
+    "1": 54,
+    "2": 38,
+    "4": 22,
+    "8": 10
+   },
+   "num_instances": {
+    "1": 49,
+    "2": 29,
+    "3": 14,
+    "4": 16,
+    "5": 16
+   },
+   "scheduler": {
+    "fcfs": 65,
+    "sjf": 59
+   },
+   "max_num_running_reqs": {
+    "128": 32,
+    "256": 40,
+    "512": 40,
+    "64": 12
+   },
+   "total_kv_blocks": {
+    "2000": 66,
+    "3000": 30,
+    "4000": 16,
+    "5000": 12
+   },
+   "block_size_in_tokens": {
+    "32": 116,
+    "16": 8
+   }
+  },
+  "main_effects": {
+   "tp": {
+    "rps_range": 14.521,
+    "ttft_range_ms": 828.5
+   },
+   "num_instances": {
+    "rps_range": 4.16,
+    "ttft_range_ms": 11419.0
+   },
+   "scheduler": {
+    "rps_range": 0.093,
+    "ttft_range_ms": 360.4
+   },
+   "max_num_running_reqs": {
+    "rps_range": 3.574,
+    "ttft_range_ms": 8194.7
+   },
+   "total_kv_blocks": {
+    "rps_range": 1.737,
+    "ttft_range_ms": 4139.8
+   },
+   "block_size_in_tokens": {
+    "rps_range": 0.695,
+    "ttft_range_ms": 1591.0
+   }
+  },
+  "corr_gpus_rps_front": 0.835,
+  "corr_gpus_ttft_front": -0.509,
+  "max_rps": 32.00923914678733,
+  "min_ttft": 27.54302
+ },
+ "heldout_llama": {
+  "front_size": 106,
+  "front_share": {
+   "tp": {
+    "1": 56,
+    "2": 30,
+    "4": 14,
+    "8": 6
+   },
+   "num_instances": {
+    "1": 42,
+    "2": 24,
+    "3": 16,
+    "4": 8,
+    "5": 16
+   },
+   "scheduler": {
+    "fcfs": 57,
+    "sjf": 49
+   },
+   "max_num_running_reqs": {
+    "128": 28,
+    "256": 34,
+    "512": 34,
+    "64": 10
+   },
+   "total_kv_blocks": {
+    "2000": 58,
+    "3000": 24,
+    "4000": 16,
+    "5000": 8
+   },
+   "block_size_in_tokens": {
+    "32": 98,
+    "16": 8
+   }
+  },
+  "main_effects": {
+   "tp": {
+    "rps_range": 16.812,
+    "ttft_range_ms": 357.4
+   },
+   "num_instances": {
+    "rps_range": 4.516,
+    "ttft_range_ms": 7207.0
+   },
+   "scheduler": {
+    "rps_range": 0.098,
+    "ttft_range_ms": 336.2
+   },
+   "max_num_running_reqs": {
+    "rps_range": 4.42,
+    "ttft_range_ms": 4942.6
+   },
+   "total_kv_blocks": {
+    "rps_range": 2.046,
+    "ttft_range_ms": 2491.2
+   },
+   "block_size_in_tokens": {
+    "rps_range": 0.828,
+    "ttft_range_ms": 976.4
+   }
+  },
+  "corr_gpus_rps_front": 0.887,
+  "corr_gpus_ttft_front": -0.511,
+  "max_rps": 40.703668743774884,
+  "min_ttft": 23.71558
+ },
+ "heldout_qwen_r50": {
+  "front_size": 81,
+  "front_share": {
+   "tp": {
+    "1": 28,
+    "2": 23,
+    "4": 18,
+    "8": 12
+   },
+   "num_instances": {
+    "1": 46,
+    "2": 21,
+    "3": 14
+   },
+   "scheduler": {
+    "fcfs": 45,
+    "sjf": 36
+   },
+   "max_num_running_reqs": {
+    "128": 25,
+    "256": 27,
+    "512": 27,
+    "64": 2
+   },
+   "total_kv_blocks": {
+    "2000": 47,
+    "3000": 18,
+    "4000": 12,
+    "5000": 4
+   },
+   "block_size_in_tokens": {
+    "32": 81
+   }
+  },
+  "main_effects": {
+   "tp": {
+    "rps_range": 12.74,
+    "ttft_range_ms": 1439.9
+   },
+   "num_instances": {
+    "rps_range": 3.521,
+    "ttft_range_ms": 10341.0
+   },
+   "scheduler": {
+    "rps_range": 0.055,
+    "ttft_range_ms": 627.8
+   },
+   "max_num_running_reqs": {
+    "rps_range": 2.768,
+    "ttft_range_ms": 7673.8
+   },
+   "total_kv_blocks": {
+    "rps_range": 1.226,
+    "ttft_range_ms": 3630.5
+   },
+   "block_size_in_tokens": {
+    "rps_range": 0.508,
+    "ttft_range_ms": 1448.1
+   }
+  },
+  "corr_gpus_rps_front": 0.947,
+  "corr_gpus_ttft_front": -0.442,
+  "max_rps": 26.281958368589486,
+  "min_ttft": 25.456909999999997
+ }
+}
