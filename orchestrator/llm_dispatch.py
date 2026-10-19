@@ -427,6 +427,9 @@ def _format_theory_references(refs) -> str:
     return "\n".join(lines)
 
 
+LLM_TIMEOUT_S = 120.0
+
+
 class LLMDispatcher:
     """Dispatch agent roles to an LLM and produce schema-conformant artifacts."""
 
@@ -459,8 +462,10 @@ class LLMDispatcher:
             resolved_key = api_key or os.environ.get("OPENAI_API_KEY")
             resolved_base = api_base or os.environ.get("OPENAI_BASE_URL")
             if resolved_key:
+                # A gateway that never answers must not freeze the campaign (live p5: a gate summary
+                # waited 10 min); the callers already fall back when a call fails.
                 client = openai.OpenAI(
-                    api_key=resolved_key, base_url=resolved_base,
+                    api_key=resolved_key, base_url=resolved_base, timeout=LLM_TIMEOUT_S, max_retries=1,
                 )
                 self._completion = client.chat.completions.create
             else:

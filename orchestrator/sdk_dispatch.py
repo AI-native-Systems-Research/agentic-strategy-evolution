@@ -285,6 +285,9 @@ def _load_methodology_preamble(methodology_dir: Path) -> str | None:
     return "\n\n---\n\n".join(blocks)
 
 
+# v8: Claude Code cuts replies at 64k by default; opus-4-6/5/5-5 allow 128k. Live p58: thinking replies
+# ran to 64k and were lost at every effort level, while 51k-63k replies that finished went on to act.
+V8_MAX_OUTPUT_TOKENS = 128_000
 CUT_RESUME_USD = 2.0  # allowance for the one resume after a cap that tripped on a cut reply
 
 
@@ -950,6 +953,8 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
                     disallowed_tools=_disallowed,
                     **({"cli_path": _cli_path} if _cli_path else {}),
                     **({"resume": resume} if resume else {}),
+                    **({"env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(V8_MAX_OUTPUT_TOKENS)}}
+                       if stop_on_output_limit else {}),
                 )
             else:
                 options = ClaudeAgentOptions(
@@ -962,6 +967,8 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
                     disallowed_tools=_disallowed,
                     **({"cli_path": _cli_path} if _cli_path else {}),
                     **({"resume": resume} if resume else {}),
+                    **({"env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(V8_MAX_OUTPUT_TOKENS)}}
+                       if stop_on_output_limit else {}),
                 )
             text_chunks: list[str] = []
             usage: dict = {}

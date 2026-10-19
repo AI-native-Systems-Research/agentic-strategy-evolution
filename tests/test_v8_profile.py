@@ -1791,3 +1791,58 @@ class TestRecordedTranscripts:
         d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
         assert seen["turn_silence_threshold"] is None
 
+
+class TestLongSessions:
+    def test_v8_sessions_get_the_models_full_output_limit(self, monkeypatch, tmp_path, spawned):
+        seen = {}
+        runner, _ = _transcript_runner(monkeypatch, tmp_path, spawned, replies=1)
+        sdk = sys.modules["claude_agent_sdk"]
+        real = sdk.ClaudeAgentOptions
+
+        def opts(**kw):
+            seen.update(kw)
+            return real(**kw)
+        monkeypatch.setattr(sdk, "ClaudeAgentOptions", opts)
+        runner(prompt="p", model="m", cwd=tmp_path, max_turns=5, stop_on_output_limit=True)
+        assert seen["env"]["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
+
+    def test_non_v8_sessions_keep_the_cli_default_output_limit(self, monkeypatch, tmp_path, spawned):
+        seen = {}
+        runner, _ = _transcript_runner(monkeypatch, tmp_path, spawned, replies=1)
+        sdk = sys.modules["claude_agent_sdk"]
+        real = sdk.ClaudeAgentOptions
+
+        def opts(**kw):
+            seen.update(kw)
+            return real(**kw)
+        monkeypatch.setattr(sdk, "ClaudeAgentOptions", opts)
+        runner(prompt="p", model="m", cwd=tmp_path, max_turns=5)
+        assert "env" not in seen
+
+    def test_a_screening_arm_may_run_past_twice_its_target_but_never_into_the_reserves(self):
+        from orchestrator.v8_execute import CAP_OVERSHOOT_USD, arm_funded, screening_hard_cap, winner_reserve
+        s, s8 = v7_settings(_v8()), v8_settings(_v8())
+        remaining = 24.0  # live p5 s1 before iteration 1 h-main ($22 + evaluator credit)
+        hard = screening_hard_cap(s, s8, 4.0, remaining, waiting=1)
+        assert hard > 8.0  # was 2x the $4 target
+        left = remaining - hard - CAP_OVERSHOOT_USD * 0.9 - s8.repair_budget_usd - CAP_OVERSHOOT_USD * 0.9
+        assert arm_funded(s, s8, left)  # the waiting family still gets its floor
+        last = screening_hard_cap(s, s8, 4.0, remaining, waiting=0)
+        assert remaining - last >= winner_reserve(s, s8)  # the winner keeps its reserve
+
+
+class TestLLMTimeout:
+    def test_the_llm_client_has_a_timeout(self, monkeypatch, tmp_path):
+        import openai
+
+        from orchestrator.llm_dispatch import LLM_TIMEOUT_S, LLMDispatcher
+        seen = {}
+
+        class _Client:
+            def __init__(self, **kw):
+                seen.update(kw)
+                self.chat = types.SimpleNamespace(completions=types.SimpleNamespace(create=lambda **k: None))
+        monkeypatch.setattr(openai, "OpenAI", _Client)
+        LLMDispatcher(work_dir=tmp_path, campaign=_v8(), api_key="test-key")
+        assert seen["timeout"] == LLM_TIMEOUT_S and LLM_TIMEOUT_S <= 300
+

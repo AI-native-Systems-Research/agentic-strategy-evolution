@@ -81,13 +81,16 @@ def v8_screening_cap(s: V7Settings, s8: V8Settings, remaining: float, sessions_l
 
 
 def screening_hard_cap(s: V7Settings, s8: V8Settings, cap: float, remaining: float, waiting: int) -> float:
-    """Hard stop for a screening arm: up to 2x its target, never into the winner's reserve or the floor of
-    an arm still waiting. A cap trips after the reply that crosses it, so a margin covers that overshoot
+    """Hard stop for a screening arm: whatever is above the winner's reserve and the floor of each arm still
+    waiting. A cap trips after the reply that crosses it, so a margin covers that overshoot
     (live p5: $0.30 over left $3.86, under the $4 floor, and the second family was skipped). The arm's own
     repair turn is set aside too (live p26/p0/p58: a $1.11 repair left $0.26 too little for the second family)."""
     room = (remaining - winner_reserve(s, s8) - waiting * (s8.arm_floor_usd + CAP_OVERSHOOT_USD)
             - (s8.repair_budget_usd + CAP_OVERSHOOT_USD if s8.repair_budget_usd > 0 else 0.0))
-    return round(max(min(cap, s8.arm_floor_usd), min(cap * 2.0, room)), 2)
+    # The target stays the arm's share; the hard stop is everything the reserves do not need. Live p5 s1:
+    # arms stopped at 2x a $4 target ran 2-7 turns and never got past a first version; v7 arms (whose caps
+    # undercounted) ran 15+ turns.
+    return round(max(min(cap, s8.arm_floor_usd), room), 2)
 
 
 def repair_funded(s: V7Settings, s8: V8Settings, remaining: float, waiting: int) -> bool:
