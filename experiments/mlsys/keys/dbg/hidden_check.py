@@ -4,6 +4,7 @@ Ground truth: the fixed upstream build (d8271ee) and an invariant that holds for
 total_output_tokens must not depend on how often requests were preempted, for the same request set.
 """
 import json, subprocess, sys, tempfile, os
+GO_ENV = dict(os.environ, PATH="/opt/homebrew/bin:" + os.environ.get("PATH", ""), GOTOOLCHAIN="local")
 
 CASES = [  # (name, extra args) — each compared preemption-heavy vs no-pressure on the same workload/seed
     ("rate20_kv600_s42", ["--rate", "20", "--num-requests", "200", "--seed", "42"], 600),
@@ -25,7 +26,7 @@ def run(blis, cwd, args, kv):
 
 def check(repo):
     blis = os.path.join(repo, "blis")
-    b = subprocess.run(["go", "build", "-o", "blis", "main.go"], cwd=repo, capture_output=True, text=True, timeout=600)
+    b = subprocess.run(["go", "build", "-o", "blis", "main.go"], cwd=repo, capture_output=True, text=True, timeout=600, env=GO_ENV)
     if b.returncode != 0: return {"build": False, "error": b.stderr[-500:]}
     res = {"build": True, "cases": {}}
     for name, args, kv in CASES:

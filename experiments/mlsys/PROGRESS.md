@@ -21,3 +21,16 @@ Times are local (EDT).
   and reference point as the original campaign). Reference: random search with 200 evals reaches 0.944 mean HV
   ratio (min 0.855) on the main config. Trade-off facts T1-T4 locked in `keys/search/facts.json`.
 - 19:20 Task prompts and shared output contract written (`tasks/`). Keys + prompts committed before any run.
+- 19:55 Oracle written (`oracle/`): common checks (contract, C1 evidence, R1/R2 repro in a fresh copy, V4 forbidden
+  access from transcripts, S1-S3 stopping, E1 cost), per-task oracles, and the color grid renderer.
+  Self-tests, all before any arm run:
+  - dbg: upstream fix -> D1-D6 all pass, O1 true; empty patch -> all fail; fake test-only patch -> hidden checks and
+    upstream test fail. Two oracle bugs found and fixed: (1) `bash -lc` picked up an old Go 1.20 at /usr/local/go,
+    which made every suite fail; now pinned to /opt/homebrew go 1.24 with GOTOOLCHAIN=local; (2) diff parsing for
+    D5/D6 split on the wrong marker.
+  - pd: a correct answer -> O1 true, and a deliberately wrong claimed ITL (25.0 at rate 120; truth 19.17) is caught as
+    a false claim by re-measurement in a clean BLIS; "formula holds everywhere" -> O1 false; wrong sign
+    (underpredicts) -> K2 false.
+  - search: a 200-eval random search scored through the oracle -> HV 0.941 (our offline reference 0.944), 200
+    evaluations counted by the wrapper, 21 s. Config lookups score against our exhaustive sweep, not the arm's
+    reported metrics.
