@@ -268,6 +268,7 @@ def _cmd_run(args):
         max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
         pre_authored_bundle=pre_authored_bundle,
         pre_authored_problem_md=pre_authored_problem_md,
+        gate_mode=getattr(args, "gate_mode", "human"),
         pre_authored_handoff_md=pre_authored_handoff_md,
     )
 
@@ -1067,6 +1068,11 @@ def main():
         "--run-id",
         help="Working directory name under <repo>/.nous/. Defaults to "
              "campaign.run_id or a value derived from the file path.",
+    )
+    p_run.add_argument(
+        "--gate-mode", choices=["human", "agent"], default="human",
+        help="Continue gate: 'human' (default) or 'agent' (stop when the continue-gate summary recommends stop; "
+             "requires --auto-approve).",
     )
     p_run.add_argument(
         "--auto-approve", action="store_true",

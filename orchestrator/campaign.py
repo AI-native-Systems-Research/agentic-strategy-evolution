@@ -309,6 +309,17 @@ def _resume_completed_campaign(work_dir: Path, max_iterations: int) -> int:
     return completed + 1
 
 
+def _agent_continue_decision(summary_path) -> str:
+    """Continue unless the continue-gate summary explicitly recommends stopping."""
+    if not summary_path:
+        return "approve"
+    try:
+        rec = json.loads(Path(summary_path).read_text()).get("recommendation")
+    except (OSError, json.JSONDecodeError):
+        return "approve"
+    return "reject" if rec == "stop" else "approve"
+
+
 def run_campaign(
     campaign: dict,
     work_dir: Path,
@@ -322,6 +333,7 @@ def run_campaign(
     pre_authored_bundle: Path | None = None,
     pre_authored_problem_md: Path | None = None,
     pre_authored_handoff_md: Path | None = None,
+    gate_mode: str = "human",
 ) -> None:
     """Run a multi-iteration Nous campaign.
 
@@ -339,7 +351,13 @@ def run_campaign(
         agent: Dispatch backend — "inline" emits prompts to stdout,
             "api" uses the OpenAI-compatible LLM API.
         max_cli_retries: Max retries for transient claude -p failures (None = unbounded).
+        gate_mode: "human" (default) uses the continue gate as configured; "agent" follows the continue-gate
+            summary's own "recommendation" (stop/continue). Requires auto_approve for the other gates.
     """
+    if gate_mode not in ("human", "agent"):
+        raise ValueError(f"gate_mode must be 'human' or 'agent', got {gate_mode!r}")
+    if gate_mode == "agent" and not auto_approve:
+        raise ValueError("gate_mode='agent' requires auto_approve=True for the design/findings gates")
     continue_gate = (
         HumanGate(auto_response="approve") if auto_approve else HumanGate()
     )
@@ -520,6 +538,9 @@ def run_campaign(
             f"Continue to iteration {i + 1}?",
             summary_path=str(gate_summary_path) if gate_summary_path else None,
         )
+        if gate_mode == "agent":
+            decision = _agent_continue_decision(gate_summary_path)
+            print(f"  Agent gate decision: {decision}")
         if decision != "approve":
             engine = Engine(work_dir)
             engine.transition("DONE")

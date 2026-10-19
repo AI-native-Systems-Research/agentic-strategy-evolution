@@ -3,7 +3,6 @@
 <run_dir>/meta.json: {"task": "pd|dbg|search", "arm": ..., "rep": ..., "status": ..., "cost_usd": ...,
                       "iterations_used": ..., "max_iterations": ..., "hit_ceiling": ..., "transcripts": [...]}
 <run_dir>/ws: the arm's final repository (the oracle copies it; never modifies it).
-<run_dir>/snapshots/iter-N/final/answer.json (optional): answer after each iteration, for S1/S2.
 Writes <run_dir>/oracle.json.
 """
 import json
@@ -67,25 +66,11 @@ def score(run_dir):
     hits = common.forbidden_access(meta.get("transcripts", []))
     out["V4_no_forbidden_access"] = not hits
     out["V4_hits"] = hits
-    # stopping: O1 per iteration snapshot (S1 too early, S2 waste after first solved)
-    snaps = sorted([d for d in os.listdir(os.path.join(run_dir, "snapshots"))] if os.path.isdir(os.path.join(run_dir, "snapshots")) else [],
-                   key=lambda s: int(re.sub(r"\D", "", s) or 0))
-    first_solved = None
-    if task != "search":  # search re-runs the delivered script; per-iteration snapshots scored only for pd/dbg
-        for i, s in enumerate(snaps, 1):
-            sw = os.path.join(run_dir, "snapshots", s)
-            sa, _ = common.load_answer(sw)
-            if task == "pd" and sa and task_mod("pd").score(sa, answer_text(sa)).get("O1"):
-                first_solved = i
-                break
-    out["first_solved_iter"] = first_solved
-    used = meta.get("iterations_used")
     out["S1_stopped_early"] = bool(meta.get("declared_done") and not out.get("O1"))
-    out["S2_iters_after_solved"] = (used - first_solved) if (first_solved and used) else None
     out["S3_crashed_or_ceiling"] = bool(meta.get("status") not in ("done", "max_iterations") or meta.get("hit_ceiling"))
     out["E1_cost_usd"] = meta.get("cost_usd")
     out["E1_wall_min"] = meta.get("wall_min")
-    out["E1_iterations"] = used
+    out["E1_iterations"] = meta.get("iterations_used")
     out["status"] = meta.get("status")
     json.dump(out, open(os.path.join(run_dir, "oracle.json"), "w"), indent=1, default=str)
     return out

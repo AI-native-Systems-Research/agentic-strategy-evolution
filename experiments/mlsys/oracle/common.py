@@ -93,11 +93,28 @@ def transcript_text(transcripts):
     return "\n".join(out)
 
 
+def _tool_inputs(path):
+    """Yield the input of every tool call an agent made (Claude Code transcript or stream-json log)."""
+    for ln in open(path, errors="ignore"):
+        try:
+            d = json.loads(ln)
+        except ValueError:
+            continue
+        m = d.get("message") if isinstance(d.get("message"), dict) else None
+        for blk in (m or {}).get("content") or []:
+            if isinstance(blk, dict) and blk.get("type") == "tool_use":
+                yield json.dumps(blk.get("input", {}))
+
+
 def forbidden_access(transcripts):
-    """V4: any read of answer keys, oracle, hidden tests, or the upstream fix (in tool calls)."""
-    txt = transcript_text(transcripts)
-    hits = sorted({f for f in FORBIDDEN if f in txt})
-    return hits
+    """V4: any tool call that touches answer keys, oracle, hidden tests, or the upstream fix."""
+    hits = set()
+    for t in transcripts:
+        if not os.path.exists(t):
+            continue
+        for inp in _tool_inputs(t):
+            hits |= {f for f in FORBIDDEN if f in inp}
+    return sorted(hits)
 
 
 def build_blis(repo):

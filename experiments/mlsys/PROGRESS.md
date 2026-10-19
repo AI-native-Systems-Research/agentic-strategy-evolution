@@ -34,3 +34,18 @@ Times are local (EDT).
   - search: a 200-eval random search scored through the oracle -> HV 0.941 (our offline reference 0.944), 200
     evaluations counted by the wrapper, 21 s. Config lookups score against our exhaustive sweep, not the arm's
     reported metrics.
+- 20:20 Harness (`harness/`), identical for every arm:
+  - isolation: fresh single-commit repo copy per run; macOS `sandbox-exec` profile with no internet (only the localhost
+    LLM proxy), no reads of keys/oracle/other runs/original checkouts/Desktop/Downloads/~/.claude, writes only in
+    the run dir + build caches. Tested: reading keys, the fixed checkout, ~/.claude and Desktop all fail; `curl
+    github.com` and `git clone` of the public repo fail; writing outside the run dir fails; BLIS builds and runs.
+  - each run has its own CLAUDE_CONFIG_DIR (own transcripts; no user settings or memory) and own pass-through proxy
+    (request bodies unchanged; no thinking stripping).
+  - cost: one ruler over the run's transcripts. Self-review caught a pricing bug (opus-4-6 is $5/$25 per M, not
+    $15/$75); fixed, and the meter now equals the CLI's own total_cost_usd exactly on opus-4-6 and sonnet-4-6.
+  - Nous: `main` + one opt-in change, `--gate-mode agent`: the continue gate follows the continue-gate summary's
+    `recommendation` (stop/continue). Default behavior unchanged. 6 new tests, 310 existing related tests pass, no
+    live LLM calls. Nous runs from a pinned copy at ~/mlsys_runs/nous (outside the denied folders).
+  - Nous executes in throwaway worktrees, so after the campaign one short packaging session (counted in Nous's cost)
+    applies the campaign's own patches and writes final/answer.json from its report. It may not run new
+    experiments or change conclusions.

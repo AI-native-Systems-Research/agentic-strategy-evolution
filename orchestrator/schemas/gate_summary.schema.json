@@ -22,6 +22,11 @@
       "items": { "type": "string", "minLength": 1 },
       "minItems": 1,
       "description": "Bullet points highlighting what matters for the decision."
+    },
+    "recommendation": {
+      "type": "string",
+      "enum": ["continue", "stop"],
+      "description": "Continue gate only: the agent's recommendation. Followed automatically under --gate-mode agent."
     }
   }
 }

@@ -31,6 +31,8 @@ Write a summary that helps a human make an approve/reject/abort decision. Be spe
 - What we've learned across iterations
 - What's still unknown
 - What the next iteration would investigate
+- Add `"recommendation": "stop"` if the research question is fully answered and another iteration would not change
+  the answer; otherwise `"recommendation": "continue"`.
 
 ### For an **end_of_campaign** gate:
 - Narrative of what was tried, found, failed
