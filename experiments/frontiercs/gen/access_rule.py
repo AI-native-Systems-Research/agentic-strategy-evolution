@@ -51,7 +51,10 @@ def prompt_rules(pid):
             f"{pd}/resources/ -- explore them freely. The evaluator, test datasets ({pd}/resources/datasets/), "
             f"reference solutions, and any other runs' files are hidden; do not try to access them. "
             f"Solve legitimately: do NOT use import hooks / sys.meta_path, do NOT read test/label data, and do "
-            f"NOT tamper with what the evaluator measures; such solutions are rejected and score 0.")
+            f"NOT tamper with what the evaluator measures; such solutions are rejected and score 0."
+            + (" Decide only from the documented inputs (has_spot, last_cluster_type, elapsed time, work done, "
+               "deadline, overhead); do NOT read the trace file or the env's trace (future availability)."
+               if str(pid).startswith("cant_be_late") else ""))
 
 
 JUDGE_TMP_ROOTS = ["/tmp/fcs_judge", "/tmp/fcs_rjudge2", "/tmp/fcs_rjudge_csdk"]

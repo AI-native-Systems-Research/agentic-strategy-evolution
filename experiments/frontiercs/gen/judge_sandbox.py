@@ -12,6 +12,8 @@ from pathlib import Path
 def evaluate(evalpy, problem_dir, solution_code, timeout=600):
     """Return the evaluator's JSON dict (or {} on failure)."""
     priv = Path(tempfile.mkdtemp(prefix="fcsj_"))
+    # cant_be_late: evaluator resolves ../common from its real path, prints JSON to stdout, has no --out
+    cbl = "cant_be_late" in str(problem_dir)
     try:
         sol = priv / "solution.py"; sol.write_text(solution_code)
         # private working copy of the problem dir: small files copied, dirs symlinked (read-only via sandbox),
@@ -19,7 +21,7 @@ def evaluate(evalpy, problem_dir, solution_code, timeout=600):
         work = priv / "problem"; work.mkdir()
         for e in Path(problem_dir).iterdir():
             if e.name in (".evalvenv", "__pycache__") or e.name.startswith(".coverage"): continue
-            if e.is_dir(): (work / e.name).symlink_to(e.resolve())
+            if e.is_dir() or cbl: (work / e.name).symlink_to(e.resolve())
             else: shutil.copy2(e, work / e.name)
         out = priv / "out.json"
         prof = priv / "judge.sb"
@@ -29,11 +31,16 @@ def evaluate(evalpy, problem_dir, solution_code, timeout=600):
                         '(allow file-write* (literal "/dev/null") (literal "/dev/stdout") (literal "/dev/stderr") (regex #"^/dev/tty"))\n')
         env = dict(os.environ, TMPDIR=rp, HOME=rp, PYTHONDONTWRITEBYTECODE="1", MPLCONFIGDIR=rp)
         cmd = (f"sandbox-exec -f {shlex.quote(str(prof))} {shlex.quote(str(evalpy))} "
-               f"{shlex.quote(str(work/'evaluator.py'))} --solution {shlex.quote(str(sol))} --out {shlex.quote(str(out))}")
+               f"{shlex.quote(str(work/'evaluator.py'))} --solution {shlex.quote(str(sol))}")
+        if not cbl: cmd += f" --out {shlex.quote(str(out))}"
         try:
-            subprocess.run(cmd, shell=True, cwd=str(work), env=env, capture_output=True, text=True, timeout=timeout)
+            r = subprocess.run(cmd, shell=True, cwd=str(work), env=env, capture_output=True, text=True, timeout=timeout)
+            if cbl:
+                d = json.loads(r.stdout.strip().splitlines()[-1])
+                if "error" not in d: d["runs_successfully"] = 1.0
+                return d
             return json.loads(out.read_text())
-        except (subprocess.TimeoutExpired, OSError, ValueError):
+        except (subprocess.TimeoutExpired, OSError, ValueError, IndexError):
             return {}
     finally:
         shutil.rmtree(priv, ignore_errors=True)

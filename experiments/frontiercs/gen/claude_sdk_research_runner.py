@@ -75,7 +75,7 @@ def main():
         "continue_on_crash": a.continue_on_crash, "max_output_tokens": a.max_output_tokens}))
 
     home = os.path.expanduser("~"); rr = os.path.realpath
-    paper = rr(HERE.parents[3])
+    paper = rr(next((p for p in HERE.parents if p.name == "_nous_paper"), HERE.parents[3]))
     deny = [f"{home}/frontier", paper, f"{home}/engram_repo", f"{home}/.claude/projects"]
     allow = [rr(run), rr(Path(PY).parents[1])]
     sb = run / "sandbox.sb"
