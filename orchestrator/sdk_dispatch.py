@@ -154,6 +154,7 @@ class TranscriptMeter:
         self.last_api_error_ts: float | None = None
         self.api_errors_since_reply = 0
         self._truncated: set[str] = set()  # ids of replies that stopped at the output-token limit
+        self.cut_reasoning: list[str] = []  # thinking text of each cut reply, in order
         self._lock = threading.Lock()
         self._paths: list = []
         self._located: tuple[frozenset, float] | None = None
@@ -211,7 +212,15 @@ class TranscriptMeter:
             self.last_assistant_ts = max(self.last_assistant_ts or 0.0, now)
             self.api_errors_since_reply = 0
             if msg and msg.get("stop_reason") == "max_tokens":
-                self._truncated.add(str(msg.get("id") or d.get("uuid")))
+                rid = str(msg.get("id") or d.get("uuid"))
+                if rid not in self._truncated:
+                    self._truncated.add(rid)
+                    self.cut_reasoning.append("")
+                blocks = msg.get("content") if isinstance(msg.get("content"), list) else []
+                text = "\n".join(str(b.get("thinking") or b.get("text") or "") for b in blocks
+                                 if isinstance(b, dict) and b.get("type") in ("thinking", "text"))
+                if len(text) > len(self.cut_reasoning[-1]):
+                    self.cut_reasoning[-1] = text
         usage = msg.get("usage") if msg else None
         if not isinstance(usage, dict):
             return
@@ -653,6 +662,8 @@ class SDKResult:
     max_reply_usd: float = 0.0
     # v8: replies in this session that stopped at the output-token limit (from its transcript).
     output_limit_hits: int = 0
+    # v8: thinking text of the session's last cut reply (empty when none or not readable).
+    cut_reasoning: str = ""
 
     def __post_init__(self) -> None:
         if self.is_error and not self.error_message.strip():
@@ -833,7 +844,9 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
             import dataclasses as _dc
             meter.poll()
             res = _dc.replace(res, max_reply_usd=max(res.max_reply_usd, meter.max_reply_cost()),
-                              output_limit_hits=max(res.output_limit_hits, meter.output_limit_hits))
+                              output_limit_hits=max(res.output_limit_hits, meter.output_limit_hits),
+                              cut_reasoning=res.cut_reasoning or (meter.cut_reasoning[-1]
+                                                                  if meter.cut_reasoning else ""))
             if not transcript_caps:
                 return res
             best = _best_usage(_usage_of(res))
@@ -870,6 +883,7 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
                                  duration_ms=int((time.time() - t0) * 1000), num_turns=n, session_id=session_id,
                                  max_reply_usd=meter.max_reply_cost() if meter is not None else 0.0,
                                  output_limit_hits=meter.output_limit_hits if meter is not None else 0,
+                                 cut_reasoning=(meter.cut_reasoning[-1] if meter is not None and meter.cut_reasoning else ""),
                                  **{k: int(totals.get(k, 0) or 0) for k in _USAGE_KEYS})
             if stop.get("why") == "hang":
                 err = SDKHangError(f"no assistant reply for over {hang_after_s:.0f}s while only API errors "
@@ -882,6 +896,7 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
                              duration_ms=int((time.time() - t0) * 1000), num_turns=n, session_id=session_id,
                              max_reply_usd=meter.max_reply_cost() if meter is not None else 0.0,
                              output_limit_hits=meter.output_limit_hits if meter is not None else 0,
+                             cut_reasoning=(meter.cut_reasoning[-1] if meter is not None and meter.cut_reasoning else ""),
                              **{k: int(totals.get(k, 0) or 0) for k in _USAGE_KEYS})
 
         async def _session() -> SDKResult:
@@ -1528,6 +1543,8 @@ class SDKDispatcher(CLIDispatcher):
                     record_output_limit(self.work_dir)
                 effort = lower(effort or "high")
                 self._last_effort = effort
+                if result.cut_reasoning:
+                    limit_prompt = self._save_cut_reasoning(result.cut_reasoning)
             if cap is not None:
                 spent += usage_cost(_usage_of(result), self._cost_rates())
                 last_text = result.text or last_text
@@ -1619,6 +1636,17 @@ class SDKDispatcher(CLIDispatcher):
             "attempt": attempt,
             "error": str(exc)[:500],
         })
+
+    def _save_cut_reasoning(self, text: str) -> str:
+        """Keep a cut reply's reasoning on disk and return the resume prompt that builds on its ending."""
+        from orchestrator.design_profile import CUT_REASONING_TAIL_CHARS, cut_resume_prompt
+        from orchestrator.util import atomic_write
+        d = Path(self.work_dir) / "cut_reasoning"
+        d.mkdir(parents=True, exist_ok=True)
+        stem = self._session_label or "session"
+        path = d / f"{stem}-{len(list(d.glob(stem + '-*.md'))) + 1}.md"
+        atomic_write(path, text)
+        return cut_resume_prompt(text[-CUT_REASONING_TAIL_CHARS:], path)
 
     def _charge_partial(self, exc: BaseException, budget: float | None) -> float:
         """Log the usage a transient abort had already streamed (capped sessions); return its cost."""

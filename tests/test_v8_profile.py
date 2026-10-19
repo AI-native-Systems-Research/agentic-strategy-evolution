@@ -1518,3 +1518,65 @@ class TestEffortLadder:
             d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
         assert not (tmp_path / "effort_state.json").exists()
 
+
+class _CutRunner:
+    """First attempt is cut at the output limit with known reasoning; the resume succeeds."""
+
+    def __init__(self, reasoning):
+        self.reasoning, self.prompts = reasoning, []
+
+    def __call__(self, **kw):
+        self.prompts.append(kw["prompt"])
+        if len(self.prompts) == 1:
+            return SDKResult(text="", is_error=True, subtype="error_output_limit", session_id="s1",
+                             error_message="a reply hit the CLI's max_output_tokens limit; session stopped",
+                             output_limit_hits=1, cut_reasoning=self.reasoning)
+        return SDKResult(text="done", session_id="s1")
+
+
+class TestCutReasoning:
+    def test_cut_reasoning_is_saved_and_its_ending_feeds_the_resume(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        reasoning = "early idea that was dropped. " * 400 + "FINAL: use the binary gadget chain"
+        r = _CutRunner(reasoning)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=r, max_retries=1)
+        with d.session_budget(9.0, label="h-main"):
+            d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        saved = tmp_path / "cut_reasoning" / "h-main-1.md"
+        assert saved.read_text() == reasoning
+        resume = r.prompts[1]
+        assert "FINAL: use the binary gadget chain" in resume and str(saved) in resume
+        assert "Do not re-derive" in resume and len(resume) < 4000  # only the ending, not all 12k chars
+
+    def test_meter_keeps_the_thinking_of_a_cut_reply(self, monkeypatch, tmp_path, spawned):
+        runner, transcript = _transcript_runner(monkeypatch, tmp_path, spawned, replies=0, silent_s=0.0)
+        from orchestrator.sdk_dispatch import TranscriptMeter
+        lines = [{"type": "assistant", "timestamp": _iso(), "message": {
+                     "id": "m1", "stop_reason": "max_tokens", "usage": {"output_tokens": 64000},
+                     "content": [{"type": "thinking", "thinking": "part one"}]}},
+                 {"type": "assistant", "timestamp": _iso(), "message": {
+                     "id": "m1", "stop_reason": "max_tokens", "usage": {"output_tokens": 64000},
+                     "content": [{"type": "thinking", "thinking": "part one, then the whole idea"}]}}]
+        transcript.write_text("".join(json.dumps(x) + "\n" for x in lines))
+        m = TranscriptMeter(lambda cwd, ids: [transcript], tmp_path, since=0.0)
+        m.poll()
+        assert m.output_limit_hits == 1 and m.cut_reasoning == ["part one, then the whole idea"]
+
+
+class TestActFirst:
+    def test_unscored_sessions_are_told_to_act_before_analysing(self, tmp_path, monkeypatch):
+        repo, work, it, campaign, fake, d = _setup(tmp_path, monkeypatch, SCORES)
+        from orchestrator.v8_execute import ACT_FIRST_NOTE, v8_session_context
+        assert ACT_FIRST_NOTE in v8_session_context(campaign, work, 1, "h-main", "execute-arm-v8")["session_note"]
+        assert ACT_FIRST_NOTE in v8_session_context(campaign, work, 1, None, "build-evaluator-v8")["session_note"]
+        (work / "official_measures.jsonl").write_text(json.dumps({"ts": 1.0, "sha256": "x", "score": 12.5}) + "\n")
+        assert ACT_FIRST_NOTE not in v8_session_context(campaign, work, 1, "h-main", "execute-arm-v8")["session_note"]
+        assert ACT_FIRST_NOTE not in v8_session_context(campaign, work, 1, "h-main", "continue-arm")["session_note"]
+
+    def test_act_first_text_has_no_double_dash(self):
+        from orchestrator.design_profile import cut_resume_prompt
+        from orchestrator.v8_execute import ACT_FIRST_NOTE
+        assert "--" not in ACT_FIRST_NOTE and "--" not in cut_resume_prompt("x", "/p")
+

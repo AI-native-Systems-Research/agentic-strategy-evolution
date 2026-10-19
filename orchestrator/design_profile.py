@@ -60,6 +60,20 @@ V8_OUTPUT_LIMIT_PROMPT = OUTPUT_LIMIT_PROMPT + (
 )
 
 
+CUT_REASONING_TAIL_CHARS = 3000
+
+
+def cut_resume_prompt(tail: str, path) -> str:
+    """Resume after a reply was cut at the output limit, building on how its reasoning ended."""
+    return (
+        "Your last reply hit the output limit and was cut, so you never acted on it. Its reasoning is saved "
+        f"in `{path}`; it ended like this:\n\n<cut_reasoning_end>\n{tail}\n</cut_reasoning_end>\n\n"
+        "Do not re-derive it. In this reply, write that approach (or the simplest correct solution if it was "
+        "not settled) to the solution file and run or measure it. Then continue in short steps: a few "
+        "paragraphs of reasoning, then write or run something."
+    )
+
+
 V4_DESIGN_EXTRA = (
     "- **Target the largest measured gap:** from the second iteration on, read the gap analysis in the "
     "executor update. `h-main` must attack the largest remaining loss it reports with a change that "

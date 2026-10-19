@@ -56,6 +56,13 @@ MAX_HANG_RESTARTS = 1
 NOISE_RUNS = 3  # official measures of the baseline that the orchestrator takes for instrument.json
 MAX_NOISE_ATTEMPTS = NOISE_RUNS + 2
 SKIPPED = "skipped"
+# Live p58: with no scored solution, sessions tried to prove a construction correct in their thinking
+# until the 64k output limit cut the reply; replies that ended in writing something did not get cut.
+ACT_FIRST_NOTE = (
+    "No solution has an official score above 0 yet. Act before analysing: first write the simplest "
+    "correct solution (and, if it is cheap, a brute-force checker for small cases), run it, and measure "
+    "it officially. Check ideas by running code, not by tracing cases in your head. Improve after that."
+)
 WINNER_LABEL = "winner"
 EXPLOIT, EXPLORE = "exploit", "explore"
 
@@ -270,6 +277,8 @@ def v8_session_context(campaign: dict, work_dir: Path, iteration: int, key: str 
     iter_dir = _iter_dir(work_dir, iteration).resolve()
     state = _state(iter_dir)
     note = _notes(state).get(EVALUATOR_KEY if is_eval else str(key)) or ""
+    if (best_official(campaign, work_dir) or 0.0) <= 0 and phase in ("build-evaluator-v8", "execute-arm-v8"):
+        note = (note + "\n" if note else "") + ACT_FIRST_NOTE
     ctx.update({
         "judge_profile": judge_summary(campaign, work_dir),
         "judge_profile_path": str(work_dir.resolve() / SUMMARY_FILE),
