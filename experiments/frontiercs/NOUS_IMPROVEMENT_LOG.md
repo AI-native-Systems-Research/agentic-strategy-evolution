@@ -355,3 +355,43 @@ step-down. Smoke runs `s1` (p58 vpc k1, p26 vpc k3, p5 vpc-int k1) started 10:02
 near 58. Then freeze as `nous-algo-v1`; held-out tasks stay unseen until then. User doc:
 `docs/design-profile-v8.md`.
 
+
+## 13. 2026-10-19: from the effort rule to nous-algo-v1 and the stage-1 main runs
+
+**What the smoke runs found, in order (each fixed, tested, then re-run):** cut-off not counted when a cap tripped
+on the same reply (656c067); act-first note + saved-reasoning resume (29b48ff); one funded resume after a cap on a
+cut reply (f0cd57b); resume double-counted the reply it resumed from, capped evaluator lost its code (7be9d7c);
+old 600 s silence guard killed long thoughts, hang restart pointed at saved reasoning (f30139e); 128k output,
+loose arm hard stops, 120 s LLM timeout (1a7d66f); soft session caps with a reserved write-and-measure wrap-up
+(a090341). Replay tests on real p58 transcripts (tests/fixtures/transcripts) fail when each fix is removed.
+
+**Root cause of p58/p26 zeros:** single thinking replies of 65k-128k tokens. No prompt or effort level stopped
+them (medium and low both ran to 64k); only 128k output let them finish, and only soft caps let the session act
+afterwards. Smoke s7: p26 evaluator 30.0 (first time > 10), p58 0.9967 (first nonzero) after a 128k reply plus a
+funded resume.
+
+**Frozen:** `nous-algo-v1` = a090341 (tag pushed). Claude baseline for the main runs also at 128k
+(`--max-output-tokens`, 2e95962): with it Claude p0 rose from 26.43 to 74.41, p5 57 -> 59, so earlier Nous wins
+were partly due to Claude losing 64k-cut thoughts.
+
+**Stage 1 (1 run per agent per task, gen/main_queue.py, be07daf), in progress 15:25:**
+
+| task | Nous r1 | Claude r1 (128k) | Nous v7 (64k era) | Claude (64k) |
+|---|---|---|---|---|
+| p0 | 79.69 at $11 (running) | 74.41 | 68.24 | 26.43 |
+| p44 (held-out) | 74.80 at $11 (running) | 77.87 | - | 78.56 (Oct 1 pilot, $10) |
+| p5 | 45.0 at $6 (running) | 59.0 | 43.0 | 57.0 |
+| p26 | 30.0 (final) | queued | 7.09 | 0 |
+| p58 | 4.56 (final) | queued | 59.71 | 0 |
+| p225 (held-out) | 0 at $17 (running) | 39.02 | - | - |
+| p181 | queued | queued | 49.55 | 56.0 |
+
+**Findings for the paper:** (1) the CLI's 64k output default silently decides results for both agents;
+(2) on p0/p44 Nous reached Claude's $50 score at 5-15% of the spend; (3) p58's arm passed a validity check on tiny
+x but overflowed 64-bit path counts for large x (5/100 tests correct): tiny-case validity checks miss the hard
+regime; (4) with $5-10 single thoughts, a $22 iteration funds only one family plus the winner.
+
+**Next (agreed):** finish stage 1 only (no repeats unless a gap is within noise); then a 3x re-judge of finals,
+score-vs-spend curves, and the decision on the main table (stock 64k vs both at 128k). Optional: cant_be_late
+(research track, never run here) as one Nous/Claude pair after its evaluator is checked in our sandbox. Repeats
+r2/r3 only if the stage-1 decision needs them (`REPEATS` in gen/main_queue.py).

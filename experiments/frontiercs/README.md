@@ -112,6 +112,12 @@ judge load.
 **Claude $5 pilot (2026-10-14, `gen/pilot_c5.sh`):** p181, p26, p58 all scored 0 at $5. p26 and p58 never
 submitted a solution (each $5 went into one or two long reasoning turns). Taken as evidence these are hard.
 
+## Main runs, stage 1: nous-algo-v1 vs Claude Code, both at 128k output (2026-10-19, in progress)
+
+Frozen Nous `nous-algo-v1` (= a090341). Claude runs with `--max-output-tokens 128000`. One run per agent per
+task (`gen/main_queue.py`). Live table and findings: `NOUS_IMPROVEMENT_LOG.md` section 13. Preds:
+`artifacts/preds/*.nous_v8.c50mr1.json`, `*.nous_v8.c50s7.json` (Nous r1 of p58/p26), `*.claude_sdk.c50m_r1.json`.
+
 ## Focus set at $50: Nous v8 vs v7 vs Claude Code (2026-10-15/16, opus-4-6)
 
 Best judged score by $50; v8 repeats in brackets. Preds `artifacts/preds/p*.nous_v8.c50*.json`. Details and the

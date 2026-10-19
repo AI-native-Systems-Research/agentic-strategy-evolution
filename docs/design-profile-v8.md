@@ -35,6 +35,12 @@ Frontier-CS launcher: `experiments/frontiercs/gen/nous_v8_c50.sh <pid> <URL env 
 | at most one `h-alternative`; $4 arm floor; 40% winner reserve; first arm reserves its repair | arms were starved or skipped by small overshoots (p5, p26, p0, p58) |
 | repair turn, hang watchdog, fallback design when a design is capped | crashed arms and gateway hangs dropped work |
 | effort rule (`orchestrator/effort.py`, below) | replies ran to the 64k output limit and were lost (p58, p26) |
+| 128k output (`CLAUDE_CODE_MAX_OUTPUT_TOKENS=128000` for every v8 session) | thinking replies of 65k-128k tokens on p58/p26 (and Claude's own p0/p225) were cut at the CLI's 64k default at every effort level |
+| soft session caps: a session over its cap gets one write-and-measure wrap-up ($1.50, reserved up front), never a kill | a single $6-10 thought crossed the cap and the session was killed before writing code (p26, p58 smoke) |
+| a cut reply's reasoning is saved (`<work_dir>/cut_reasoning/`) and one funded resume asks for code from its ending | after a cut the CLI's own retry re-derived from scratch |
+| the old per-message 600 s silence guard is off for v8 (the hang watchdog covers real stalls) | it killed 16-30 min thinking replies before they ended |
+| resumed sessions do not re-count the reply they resume from; a capped evaluator keeps its code | live double count; evaluator code lost when its worktree was removed |
+| 120 s timeout on LLM gateway calls (gate summaries) | a gate summary waited 10 min on the gateway |
 
 ## Effort rule
 
@@ -56,6 +62,15 @@ Each `llm_metrics.jsonl` row records the `effort` used and the session's `max_re
 Check a change before running it: `python experiments/frontiercs/gen/replay_effort_ladder.py [slug suffix]`
 replays the rule over finished runs and prints each session's effort and cut-offs. On the v8 focus runs only the
 evaluator changes on p0, p5, p181 (no cut-offs); p26 and p58 drop to `medium` after their first cut-off.
+
+## Frozen version and fairness
+
+`nous-algo-v1` (git tag) = commit `a090341`: the profile used for the Frontier-CS main runs; no Nous code or
+prompt changed after it. The Claude Code baseline runs with the same model, sandbox, judge and cost ruler, and
+`--max-output-tokens 128000` (`experiments/frontiercs/gen/claude_c50_main.sh`), because the 128k setting is not
+the CLI default and changes Claude's scores a lot (p0: 26.43 at 64k, 74.41 at 128k).
+
+Main runs: `python3 experiments/frontiercs/gen/main_queue.py` (one run per gateway key; `REPEATS` sets how many).
 
 ## Reproduce the probes
 

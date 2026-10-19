@@ -1,0 +1,52 @@
+{
+  "problem_id": "58",
+  "track": "algorithmic",
+  "agent": "nous",
+  "label": "p58_v8c50s7",
+  "model": "claude-opus-4-6",
+  "final_score": 4.56,
+  "cost_usd": 46.18,
+  "n_clean_candidates": 6,
+  "n_rejected_exploits": 0,
+  "best_source": "~/frontier/gen_logs/research_p58_v8c50s7_measured_20261019_133307/m0005_150912_score4.56.cpp",
+  "isolation": "sandbox-exec deny ~/frontier/{research,datasets} + out-of-sandbox judge daemon; measure only via fmeasure; post-harvest exploit audit",
+  "rejected_exploit_candidates": [],
+  "clean_evidence": [
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p58-v8c50s7/runs/iter-1/patches/baseline.patch",
+      "score": 0.9967
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p58-v8c50s7/runs/iter-1/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/nous_runs/research-p58-v8c50s7/runs/iter-2/patches/h-main.patch",
+      "score": 0.0
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p58_v8c50s7_measured_20261019_133307/m0005_150912_score4.56.cpp",
+      "score": 4.5600000000000005
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p58_v8c50s7_measured_20261019_133307/m0004_145023_score4.56.cpp",
+      "score": 4.5600000000000005
+    },
+    {
+      "src": "~/frontier/gen_logs/research_p58_v8c50s7_measured_20261019_133307/m0003_142712_score1.00.cpp",
+      "score": 0.9967
+    }
+  ],
+  "elapsed_s": 6804.5,
+  "cost_usd_tokenbased": 58.13,
+  "cost_rates_per_mtok": {
+    "in": 15.0,
+    "out": 75.0,
+    "cache_write": 18.75,
+    "cache_read": 1.5
+  },
+  "cost_capped": true,
+  "stop_rule": "finish the iteration in progress at $50.0 (ceiling $57.0)",
+  "best_at_budget": 4.56,
+  "budget_reached_at": 1792437491.36735
+}

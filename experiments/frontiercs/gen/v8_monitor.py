@@ -27,6 +27,19 @@ def claude_cc(p):
     return f"claude-cc p{p} ${m[0]} best={m[1]} measured={m[2]} crashes={cr}" + ("" if alive(f"claude_sdk_research_runner.py {p} ") else " DEAD")
 
 
+def claude_main(p, tag):
+    L = F / f"runs/p{p}/claude_sdk_c50m_{tag}.log"
+    t = L.read_text(errors="ignore") if L.exists() else ""
+    d = re.search(r"final_clean=([0-9.]+) cost=\$([0-9.]+)", t)
+    if d:
+        return f"claude p{p} {tag} DONE final={d.group(1)} ${d.group(2)}"
+    m = (re.findall(r"cost=\$([0-9.]+) best=([-0-9.]+) measured=(\d+)", t) or [("?", "?", "?")])[-1]
+    run = F / f"runs/p{p}/claude_sdk_c50m_{tag}"
+    live = C.transcript_cost(run) if run.exists() else 0.0
+    return (f"claude p{p} {tag} ${m[0]} (transcripts ${live:.2f}) best={m[1]} measured={m[2]}"
+            + ("" if alive(f"slug p{p}_cs50m{tag}") else " DEAD"))
+
+
 def v8row(p, key):
     p, tag = re.match(r"(\d+)(.*)", p).groups()
     slug = f"p{p}_v8c50{tag}"; W = G / f"nous_runs/research-p{p}-v8c50{tag}"
@@ -88,10 +101,26 @@ while True:
     except Exception:
         pass
     out = [time.strftime("%H:%M") + " REPORT"]
+    try:  # follow the main queue: every run with a log (or currently assigned), newest work first
+        sys.path.insert(0, str(F / "gen"))
+        import importlib
+        import main_queue as Q
+        importlib.reload(Q)
+        started = [j for j in Q.jobs() if Q.log_of(*j).exists()]
+        CL = [(p, r) for a, p, r in started if a == "claude"]
+        V8 = {p + Q.NOUS_ALIAS.get((p, r), "m" + r): "queue" for a, p, r in started if a == "nous"}
+    except Exception as e:
+        out.append(f"  queue read error {e}")
+        CL = []
+    for p, tag in CL:
+        try:
+            out.append("  " + claude_main(p, tag))
+        except Exception as e:
+            out.append(f"  claude p{p} {tag} monitor error {e}")
     for p, key in V8.items():
         try:
             out.append("  " + v8row(p, key))
         except Exception as e:
             out.append(f"  nous-v8 p{p} monitor error {e}")
     print("\n".join(out), flush=True)
-    time.sleep(600)
+    time.sleep(180)
