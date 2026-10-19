@@ -399,7 +399,7 @@ r2/r3 only if the stage-1 decision needs them (`REPEATS` in gen/main_queue.py).
 ## 14. Stage-1 outcome and why Nous did not beat Claude at 128k (2026-10-19)
 
 Finals (re-judged): p0 Nous 81.84 vs Claude 74.41; p44 76.40 vs 77.87; p225 38.93 vs 39.02; p26 30.0 vs 79.05;
-p5 45.0 vs 59.0; p58 Nous 4.56, Claude still running. p181 skipped (queue stopped by decision). No repeats.
+p5 45.0 vs 59.0; p58 4.56 vs 66.13. Tally: Nous 1 (p0), Claude 3 (p26, p5, p58), ties 2 (p44, p225). p181 skipped (queue stopped by decision). No repeats.
 Decision: Frontier-CS is dropped as a main evaluation; effort moves to case studies with oracle checks.
 
 Evidence (scripts `gen/why_lose_spend.py`, `gen/why_lose_timeline.py`, read-only over metrics and official logs):
