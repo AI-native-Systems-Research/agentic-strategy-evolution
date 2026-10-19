@@ -1636,3 +1636,33 @@ class TestCutOnCap:
         self._run(tmp_path, monkeypatch, r, label="h-main")
         assert len(r.calls) == 1 and not (tmp_path / "cut_reasoning").exists()
 
+
+class TestResumeAccounting:
+    def test_a_resumed_session_does_not_count_the_reply_it_resumes_from(self, monkeypatch, tmp_path, spawned):
+        # live p58 smoke s4: the cut 64k reply ended 1 s before the resume and was charged to both sessions
+        runner, transcript = _transcript_runner(monkeypatch, tmp_path, spawned, replies=1)
+        transcript.write_text(json.dumps({"type": "assistant", "timestamp": _iso(),
+                                          "message": {"id": "cut", "stop_reason": "max_tokens",
+                                                      "usage": {"output_tokens": 64_000}}}) + "\n")
+        res = runner(prompt="p", model="m", cwd=tmp_path, max_turns=5, max_cost_usd=9.0, transcript_caps=True,
+                     resume="sess-t")
+        assert res.output_tokens == 10_000 and res.output_limit_hits == 0
+
+
+class TestEvaluatorKeepsCappedWork:
+    def test_a_capped_evaluator_that_wrote_code_without_a_patch_keeps_it(self, tmp_path, monkeypatch):
+        # live p26 smoke s4: the solution was written, the session hit its cap before `git diff`, the
+        # worktree was removed and only the stub was measured
+        repo, work, it, campaign, fake, d = _setup(tmp_path, monkeypatch, SCORES)
+
+        def capped_evaluator(name, prompt, cwd):
+            (work / "evaluator").mkdir(exist_ok=True)
+            (cwd / "solution.py").write_text("v = 7\n")  # written, no patch saved
+            return SDKResult(text="", is_error=True, subtype="error_max_budget_usd", session_id="sess-evaluator",
+                             error_message="session cost $4.10 reached the $2.00 cap", cost_usd=4.1)
+        fake._evaluator = capped_evaluator
+        _execute(repo, work, it, campaign, d)
+        patch = it / "patches" / "baseline.patch"
+        assert patch.is_file() and "v = 7" in patch.read_text()
+        assert "v = 7" in (repo / "solution.py").read_text()  # committed so the arms start from it
+

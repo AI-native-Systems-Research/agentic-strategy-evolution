@@ -534,6 +534,9 @@ def _run_evaluator(dispatcher, campaign, work_dir, iter_dir, iteration, repo, st
                             "build-evaluator-v8", label=EVALUATOR_KEY, target=cap, hard=hard, resume=None,
                             extras=extras, patch=patch)
         rec = state["sessions"][EVALUATOR_KEY]
+        # A session stopped at its cap may leave a written solution without saving its patch (live p26
+        # smoke s4: the code was written, the worktree removed, and only the stub was measured).
+        _ensure_patch(_worktree(repo, rec), patch, rec.get("base") or "HEAD", extras)
         _baseline_from_official(campaign, work_dir, repo, rec, patch, extras)
         remove_experiment_worktree(repo, rec["experiment_id"])
         commit_baseline(repo, patch, state)

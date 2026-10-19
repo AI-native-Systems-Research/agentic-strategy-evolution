@@ -161,6 +161,16 @@ class TranscriptMeter:
 
     _RELOCATE_S = 5.0  # known files are read on every poll; new ones (subagents) are looked for this often
 
+    def skip_existing(self) -> None:
+        """Start reading every transcript the session already has at its current end (resumed sessions):
+        replies written before the resume are never counted again, however close their timestamps."""
+        with self._lock:
+            for path in self._locate():
+                try:
+                    self._offsets[str(path)] = Path(path).stat().st_size
+                except OSError:
+                    pass
+
     def _locate(self) -> list:
         ids = frozenset(self.session_ids)
         last = self._located
@@ -786,6 +796,8 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
                  if transcript_caps or hang_after_s or stop_on_output_limit else None)
         if meter is not None and resume:
             meter.session_ids.add(resume)
+            # Live p58 smoke s4: the cut reply ended 1 s before the resume and was charged twice.
+            meter.skip_existing()
         live = {"reply": time.time(), "api_error": 0.0, "stream_usd": 0.0}
         stop: dict = {}  # {"why": "cap" | "hang"} once the watcher decided to end the session
         watcher_done = threading.Event()
