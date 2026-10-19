@@ -1,196 +1,164 @@
 # MLSys controlled experiments: design
 
-Status: draft for discussion. Nothing here has been run yet.
+Status: draft. Nothing has been run yet.
 
 ## Goal
 
-The case studies (self-tuning-admission, cluster-debug, flink-torchserve, ...) stay as they are and
-show real-world impact. This study adds the controlled evidence that ICSE reviewers asked for:
+The case studies stay as they are and show real-world impact. This study adds controlled evidence
+for the questions ICSE reviewers raised:
 
-- the same task given to several agents under identical conditions,
-- repeated runs (variance),
-- more than one model (does the gain come from the model or from Nous),
-- grading by an objective oracle instead of an LLM judge.
+- the same task, two agents, identical conditions;
+- repeated runs (variance);
+- grading by a deterministic, objective oracle instead of an LLM judge.
 
-## Nous version
+Framing: investigation, not score maximization. Each task asks a question about a system's
+behavior. The oracle grades whether the answer is correct, backed by evidence, and reproducible.
+Where a task has a metric, it is one check, not the goal.
 
-`main` at `decbde7` (v0.5.0, Claude Agent SDK dispatcher). This is the reflective release
-(`3659548`, v0.4.0) plus five small fixes. It is the version people install.
-Every run records the Nous commit in its result file. Nous is re-run for every cell; no imported
-campaigns.
-
-## Arms
+## Comparison
 
 | Arm | What it is |
 |---|---|
-| `claude` | Plain Claude Code (`claude -p`), research question + output contract, resumed with "Continue." until budget or it stops. |
-| `engram` | Engram-style iterative hypothesis prompting. Open: real Engram (mit-nms `agentic_handoff`, already wired for Frontier-CS in `aiopslab:experiments/frontiercs/gen/engram_research_cap.py`) vs the L2 loop from `bench-framework` (`claude_methodology_loop`). |
-| `nous` | Nous `main` as-is. |
+| `l2` | Claude Code with a scientific-method prompt, run as N sequential sessions. Each session gets the prior sessions' final answers pasted in (Engram-style iterative prompting). Reuses `claude_methodology_loop` from the `bench-framework` branch (PR #291). |
+| `nous` | Nous `main` at `decbde7` (v0.5.0, Claude Agent SDK dispatcher), re-run for every cell. |
 
-Ablation arm (open question): `nous_prompt`, the Nous methodology delivered as a prompt without the
-orchestrator (`bench-framework:bench/variants/claude_arm_structured_loop.py`), on a subset.
+L2 vs Nous is the matched pair: same model, same iteration count, both iterate. It isolates the
+method. L0 (plain Claude) and L1 (single session + prompt) can be added later; they are cheap.
 
-Fairness rules, identical across arms:
-- same model, same Claude Code version, same tools, no web tools;
-- same target repo commit and the same locked parameters;
-- same dollar budget per run, measured by one token-based ruler from the CLI/SDK transcripts
-  (not each tool's self-report);
-- same output contract appended to every arm's prompt (see Oracle section);
-- full stream-json transcripts kept for every arm (needed for the ordering checks).
+Same for both arms:
+- model `claude-opus-4-6`, same `claude` CLI version, no web tools;
+- same target repo commit and locked parameters;
+- same task prompt and the same output contract (below);
+- full transcripts kept;
+- cost measured by one token-based ruler over the Claude transcripts (not each tool's self-report).
+  Crashed sessions are still counted.
 
-## Campaign selection
+## Iterations, stopping, cost
 
-Criteria: runs on a CPU laptop, deterministic or seeded, cheap per evaluation, an oracle a script
-can compute, ground truth that does not come from Nous's own run, low contamination, and a spread
-of use cases.
+- Upper bound: N iterations for Nous, N sessions for L2. N is fixed per task.
+- Early stop: each arm decides when it is done. Neither arm sees the oracle.
+  - Nous: the continue gate follows the agent's own continue/stop recommendation, instead of
+    always approving. Small change: an "agent decides" gate mode next to `--auto-approve`.
+  - L2: each session ends by writing `{"done": true|false, "why": "..."}`; the loop stops on `done`.
+- No dollar cap. A safety ceiling of 3x the original Nous campaign cost kills runaway runs; any run
+  that hits it is reported.
+- Cost is reported, not equalized: dollars, wall time, iterations used.
 
-Survey of `succesful_campaigns_jun16/` (fit = how well it suits a controlled, oracle-graded rerun):
+## Tasks
 
-| Campaign | Use case | Infra | Oracle | Fit |
-|---|---|---|---|---|
-| blis-search-algo2 | config search | CPU, BLIS (~100 ms/eval) | HV ratio vs exhaustive front (1800 configs) | good |
-| flow-control-reflective-v2 | policy evolution | CPU, BLIS | critical P99 TTFT reduction under throughput-loss cap | good |
-| pd-disagg-validation | model verification | CPU, BLIS | answer key, computed by our own BLIS sweep | good |
-| Graph-Coloring | algorithm discovery, non-systems | CPU, Python | `evaluator.py` combined_score, known chromatic numbers | good, but contaminated (DSatur/TabuCol public) |
-| scaling-with-optimal-concurrency | sample-efficient search | CPU, Go + Python | calls, gap_M, gap_f vs exhaustive truth | good, repo is on another machine |
-| paper-memorytime-vector | methodology validation | CPU, BLIS fork, 75 runs | rho_dom + pre-registered pass conditions | ok, heavy |
-| self-tuning-admission | policy evolution | CPU, BLIS | E2E/TTFT vs GAIE baseline | ok, no metrics archived |
-| cluster-debug | infra debugging | k8s, H100, RoCE | answer key | poor to rerun (hardware) |
-| flink-torchserve, iter5_streaming_gnn, gnn-streaming | pipeline analysis | Flink/JVM/TorchServe, GPU-free but noisy, 2.6 GB data | answer key | poor (noise, setup) |
-| certus SSD-to-GPU, debug-flow-control | datapath / live router | NVMe+GPU / live cluster | scalar, noisy | poor |
-| adaptive-*, absorption-test, epp-* | smoke / null results | BLIS | none or circular | poor |
+| Use case | Task | Ground truth | N |
+|---|---|---|---|
+| Verification | `pd-disagg-validation`: does the ITL formula for prefill/decode disaggregation hold, and where does it break? | Answer key from our own BLIS sweep over rates 2 to 150, computed before any run | 5 |
+| Debugging | BLIS bug `d8271ee` reverted at its parent commit: TotalOutputTokens double-counted after preemption. Agent gets only the symptom. | The merged upstream fix and its test | 3 |
+| Optimization | `blis-search-algo2`: design a multi-objective config search for BLIS | Our own exhaustive sweep of the full config space | 10 |
 
-Proposed set (4, optional 5th):
+All three are CPU-only on BLIS (inference-sim), seeded, and cheap to evaluate. Contamination is
+low: niche repo, 2026 commits.
 
-1. **blis-search-algo2**: search.
-2. **flow-control-reflective-v2**: evolution.
-3. **pd-disagg-validation**: verification (closest CPU-only stand-in for an investigation task).
-4. **Graph-Coloring**: algorithm discovery outside systems. Kept on purpose: the earlier L2 baseline
-   reached 0.9874 here vs Nous 0.969, so it guards against a cherry-picked set.
-5. Optional: **scaling-with-optimal-concurrency** if the repo can be recovered.
+Repetition: 3 runs per arm per task. 3 tasks x 2 arms x 3 runs = 18 runs, roughly $550 based on the
+earlier ablation costs.
 
-Gap: no CPU-only debugging/investigation campaign with an independent ground truth. Options:
-answer-key-only use of cluster-debug (no rerun), or a new seeded-bug task in BLIS. Open question.
-
-Prior controlled data on these tasks (Opus 4.6, LLM judge, `~/Downloads/Ablations/nous-experiment-artifact/`)
-can be re-scored by the oracle as a free dry run.
-
-## Repetition and model scaling
-
-- Repetition: 3 runs per arm on every selected campaign, main model claude-opus-4-6.
-  4 campaigns x 3 arms x 3 runs = 36 runs.
-- Model scaling: 2 campaigns (blis-search-algo2, pd-disagg-validation), all 3 arms re-run on a
-  second and third model (proposal: claude-sonnet-4-6 weaker, claude-opus-4-7 stronger), 1 run each
-  = 12 runs. Nous is re-run on each model (the ICSE version only re-ran the baselines).
-- Report mean, min-max, and per-run values; no claim from a single run.
-- Rough cost at ~$25/run: ~$900 + ~$300.
-
-## Oracle judge
-
-Principles:
-- Every question is answered by a script, or by comparison with an answer key written before any
-  arm runs. No LLM grades quality.
-- Format-neutral: no credit for Nous's file layout (bundles, principles.json). A question can only
-  ask for things every arm was asked to produce through the shared output contract.
-- The oracle, the answer keys, and the tolerances are committed before the first run.
-- The oracle runs on a fresh copy of the final workspace, so it cannot be gamed by editing results.
-
-### Output contract (appended verbatim to every arm's prompt)
+## Output contract (same text appended to both arms' prompts)
 
 At the end, write `final/answer.json`:
 
 ```json
 {
   "answer": "short prose answer to the research question",
-  "deliverable": "path to the delivered artifact (policy file, search script, solver, or none)",
+  "deliverable": "path to the delivered artifact (patch, search script, or none)",
   "repro": "one shell command that regenerates the headline numbers from a clean checkout",
   "claims": [
-    {"id": "c1", "metric": "critical_p99_ttft_ms", "value": 412.0,
-     "condition": "workload=balanced_mid, policy=X, seeds=1-5", "evidence": "path/to/results.json"}
+    {"id": "c1", "metric": "itl_ms", "value": 17.4,
+     "condition": "rate=120, mode=AD, seeds=1-3", "evidence": "path/to/results.json"}
   ]
 }
 ```
 
-A missing or malformed contract is recorded, not repaired. The answers to Q-O* still use the
-deliverable if it exists.
+A missing or malformed contract is recorded, not repaired.
 
-### Generic poll (asked for every campaign)
+## Oracle
+
+Rules:
+- Every question is answered by a script or by an answer key committed before the first run.
+  No LLM grades anything.
+- Format-neutral: it only asks for what both arms were asked to produce through the contract.
+  No credit for Nous's file layout.
+- The oracle runs on a fresh copy of the final workspace.
+- It also scores per-iteration snapshots, so it can tell when the task was first solved.
+
+Each question is yes/no or a number.
+
+### Generic questions (every task)
 
 Outcome
-- **O1** Oracle-measured headline metric of the deliverable, on the campaign's fixed evaluation
-  (oracle runs it; the agent's own number is ignored).
-- **O2** Same metric on held-out conditions the agent never saw (other seeds, workloads, models, or
-  instances). Detects overfitting.
-- **O3** Pass/fail against the campaign's stated target (e.g. HV >= 95% within 3 min).
-- **O4** Answer-key facts recovered: k of n (verification tasks).
+- O1 Correct answer? (task-specific, below)
+- O2 Holds on held-out conditions the agent never saw?
 
 Claim integrity
-- **C1** Fraction of claims whose `evidence` file exists and contains the claimed value (tolerance per metric).
-- **C2** Fraction of claims the oracle re-measures within tolerance.
-- **C3** Count of claims contradicted by the oracle's measurement (false claims).
+- C1 Fraction of claims whose evidence file exists and contains the value.
+- C2 Fraction of claims the oracle re-measures within tolerance.
+- C3 Number of claims the oracle contradicts (false claims).
 
 Reproducibility
-- **R1** Does `repro` run to completion from a fresh checkout (yes/no, wall time)?
-- **R2** Does the re-run reproduce the headline claim within tolerance?
+- R1 `repro` runs from a fresh checkout?
+- R2 The re-run matches the headline claim within tolerance?
 
-Experimental validity (objective, checked in files and transcripts)
-- **V1** Locked parameters respected in every measured run (workload, model, hardware config).
-- **V2** Each claimed improvement compared against a baseline measured under the same conditions.
-- **V3** Number of seeds behind each claimed difference (>= 2 required to count).
-- **V4** No access to forbidden material (held-out data, answer files, the oracle itself), from the transcript.
-- **V5** Prediction-before-result: for claims the arm framed as predicted, the transcript shows the
-  prediction before the run that tested it. Reported, not scored, since only some arms predict.
+Validity (checked in files and transcripts)
+- V1 Locked parameters respected in every measured run?
+- V2 Each claimed effect compared against a baseline under the same conditions?
+- V3 At least 2 seeds behind each claimed difference?
+- V4 No access to forbidden material (answer key, oracle, upstream fix)?
 
-Cost and operability
-- **E1** Dollars (shared ruler), wall time, number of target-system evaluations.
-- **E2** Dollars to reach 90% of the best O1 seen across all arms on that campaign.
-- **P1** Crashed, hung, or stopped early (and why).
-- **P2** Resume: kill each arm once at ~50% budget and restart. Report whether it continues, and how
-  much completed work it repeats. Run on a subset; open question.
+Stopping and cost
+- S1 Declared done while O1 was still false (stopped too early)?
+- S2 Iterations and dollars spent after O1 first became true (stopped too late).
+- S3 Crashed or hit the safety ceiling?
+- E1 Dollars, wall time, iterations used.
 
-### Campaign-specific questions
+### Task-specific questions
 
-**blis-search-algo2** (search)
-- O1: HV ratio of the delivered search algorithm vs the precomputed exhaustive Pareto front,
-  oracle-run with fixed budget (200 evals), 3 fresh seeds, Qwen config.
-- O2: same on the Llama config and a second hardware config.
-- O3: HV >= 95% within 3 min wall.
-- Ground truth: our exhaustive 1800-config sweep (recomputed, not taken from the Nous run).
+pd-disagg-validation (O1 = all of K1 to K3 true)
+- K1 Formula fits within ~1.5% at moderate rates (claimed and re-measured)?
+- K2 A regime boundary is found at high rate, within +/-20% of our sweep's crossover, with the
+  correct sign (overprediction)?
+- K3 TTFT underestimate reported, magnitude within our measured band?
+- K4 Mechanism names the constant service-cost assumption. Phrase list fixed in advance; the one
+  soft check, reported separately.
 
-**flow-control-reflective-v2** (evolution)
-- O1: critical-priority P99 TTFT reduction vs default policy on balanced_mid, 5 fresh seeds,
-  subject to throughput loss <= 10% (fails O1 if the cap is broken).
-- O2: same on the code-completion workload and a 3-band priority setup.
-- O3: no regression under low load (critical P99 TTFT and throughput within 1% of default).
+Debugging, `d8271ee` (O1 = D1 and D2 and D3)
+- D1 Root cause located in the right file and function?
+- D2 The upstream fix's test passes on the agent's patch?
+- D3 Full test suite passes?
+- D4 Agent added a test that fails before its fix and passes after?
+- D5 Patch touches only related code (diff size, files outside the fix area)?
 
-**pd-disagg-validation** (verification)
-- Answer key computed by our own BLIS sweep over rates 2 to 150 before any arm runs.
-- O4 facts: K1 formula fits within ~1.5% for moderate rates; K2 a regime boundary exists at high
-  rate, location within +/-20% of our sweep's crossover, error sign correct (overprediction);
-  K3 TTFT is underestimated, magnitude within our measured band; K4 the stated mechanism names the
-  constant-service-cost assumption. K1-K3 are numeric checks on claims; K4 is a keyword/phrase
-  match list fixed in advance (the one soft check, reported separately).
-- C2: every claimed ITL/TTFT number re-measured in BLIS.
+blis-search-algo2 (O1 = B1)
+- B1 Hypervolume ratio of the delivered search vs our exhaustive front >= 95% within 3 minutes,
+  oracle-run on 3 fresh seeds?
+- B2 Same on a held-out model or hardware config?
+- B3 Hypervolume ratio (number, heat-colored).
 
-**Graph-Coloring** (algorithm discovery)
-- O1: `combined_score` of the delivered solver on the 22 DIMACS graphs via `evaluator.py`.
-- O2: same solver on held-out DIMACS instances not in the 22.
-- O3: count of graphs at the known chromatic number; any invalid coloring scores 0.
-- Contamination note reported with results.
+## Results view
 
-## Open questions
+A grid: rows are questions grouped by category, columns are task x arm x run. Yes/no cells are
+green or red, not-applicable cells grey, numeric cells heat-colored per row. A summary grid shows
+the mean over the 3 runs with the min-max in the cell.
 
-1. Engram arm: real Engram vs L2 iterative prompting.
-2. `nous_prompt` ablation: which subset, if any.
-3. Fifth campaign and the investigation/debugging gap.
-4. Models for scaling; main model Opus 4.6 vs a newer one.
-5. Budget per campaign (equal dollars per run; proposal: the Nous case-study cost rounded up).
-6. Resume test (P2): all arms or a subset.
+## Open (later)
+
+- Add L0/L1 arms.
+- Model scaling (second model, subset of tasks).
+- `nous_prompt` ablation (methodology as a prompt, no orchestrator).
+- A fourth task (investigation, e.g. `paper-memorytime-mirage`).
+- Resume test.
 
 ## Next steps
 
-1. Agree on the open questions.
-2. Write the oracle and answer keys; commit before any run.
-3. Dry run: score the existing ablation workspaces with the oracle (no LLM spend).
-4. Pilot: one campaign, all arms, one run each.
-5. Full runs.
+1. Answer keys: pd-disagg BLIS sweep; debugging task (revert `d8271ee`, symptom text, hidden test);
+   blis-search exhaustive front.
+2. Oracle scripts plus grid renderer. Commit before any run.
+3. Dry run: score the existing pd-disagg and blis-search L2 and Nous runs from
+   `~/Downloads/Ablations/nous-experiment-artifact/`. No LLM spend; checks the oracle separates arms.
+4. Harness: L2 runner with `done` flag and shared cost meter; Nous "agent decides" gate mode.
+5. Pilot: debugging task, one run per arm.
+6. Full 18 runs, oracle, grid.
