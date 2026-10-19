@@ -1441,7 +1441,7 @@ class SDKDispatcher(CLIDispatcher):
             from orchestrator.effort import session_effort
             v8_kw["hang_after_s"] = v8_settings(self.campaign).hang_minutes * 60.0
             v8_kw["stop_on_output_limit"] = True
-            effort = session_effort(self.campaign, self.work_dir, self.model, explicit=self._effort)
+            effort = session_effort(self.work_dir, self.model, label=self._session_label, explicit=self._effort)
             output_limit_resumes_left = 3
             limit_prompt = V8_OUTPUT_LIMIT_PROMPT
         self._last_effort = effort
@@ -1551,16 +1551,17 @@ class SDKDispatcher(CLIDispatcher):
             # A reply over the CLI's output-token maximum is lost, and the CLI gives up after a few in a
             # row. A fresh restart would redo the same long reasoning, so resume this session instead
             # (its files and earlier turns survive) and ask for the work in short steps.
-            if (result.is_error and result.session_id and output_limit_resumes_left > 0
-                    and _is_output_limit(result)):
+            cut = result.is_error and _is_output_limit(result)
+            if v8 and cut:
+                from orchestrator.effort import lower, record_output_limit
+                record_output_limit(self.work_dir)  # every lost reply lowers later sessions
+                effort = lower(effort or "high")
+                self._last_effort = effort
+            if cut and result.session_id and output_limit_resumes_left > 0:
                 output_limit_resumes_left -= 1
                 self._log_retry("output_limit_resume", failure_count + 1, RuntimeError(result.error_message))
                 resume_id, prompt = result.session_id, limit_prompt
                 if v8:
-                    from orchestrator.effort import lower, record_output_limit
-                    record_output_limit(self.work_dir)
-                    effort = lower(effort or "high")
-                    self._last_effort = effort
                     logger.warning("v8: a reply hit the output limit; resuming at effort %s", effort)
                 continue
             if resume_id is not None:

@@ -1,34 +1,62 @@
-import json,glob,os
+"""Replay the v8 effort rule over finished runs' logs: which sessions it would run at which effort.
+
+For each task's run: metrics rows give the sessions and their time windows; transcripts give each reply cut at
+the output limit (stop_reason max_tokens). Prints per session the effort the rule picks and marks cut sessions.
+Usage: python gen/replay_effort_ladder.py [slug-suffix, default v8c50]
+"""
+import glob
+import json
+import os
+import sys
 from datetime import datetime
-G="/Users/toslali/frontier/gen_logs"; base=os.path.expanduser("~/.claude/projects")
-LV=("low","medium","high")
-def ts(s): return datetime.fromisoformat(s.replace("Z","+00:00")).timestamp()
-for p in ("0","5","26","58","181"):
-    slug=f"p{p}-v8c50"; W=f"{G}/nous_runs/research-{slug}"
-    off=[json.loads(l) for l in open(f"{G}/official_p{p}_v8c50.jsonl") if l.strip()]
-    first=min((r["ts"] for r in off if r.get("score",0)>0 and not r.get("rejected")), default=None)
-    # truncated replies by time
-    cuts=[]
-    for D in glob.glob(f"{base}/-Users-toslali-frontier-gen-logs-research-{slug}-ws*"):
-        if "v8c50r" in D: continue
-        for F in glob.glob(D+"/*.jsonl"):
-            for l in open(F):
-                try:r=json.loads(l)
-                except:continue
-                m=r.get("message")
-                if isinstance(m,dict) and m.get("stop_reason")=="max_tokens": cuts.append(ts(r["timestamp"]))
-    cuts=sorted(set(cuts))
-    rows=[json.loads(l) for l in open(f"{W}/llm_metrics.jsonl") if l.strip()]
-    sess=[r for r in rows if r.get("dispatcher")=="sdk"]
-    out=[]
-    for r in sess:
-        end=ts(r["timestamp"]); start=end-(r.get("duration_ms") or 0)/1000
-        sd=sum(1 for c in cuts if c<start)
-        scored=first is not None and first<start
-        base_l="high" if scored else "medium"
-        eff=LV[max(1, LV.index(base_l)-sd)] if base_l=="high" else "medium"
-        cut_in=any(start<=c<=end for c in cuts)
-        out.append((r.get("session_label") or r.get("phase"), eff, "CUT" if cut_in else ""))
-    med=sum(1 for _,e,_ in out if e=="medium"); n=len(out)
-    print(f"p{p}: sessions {n}, would run medium {med}, high {n-med}; truncated replies {len(cuts)}; first score>0 at session #{next((i for i,(_,e,_) in enumerate(out) if e=='high'), '-')}")
-    print("   ", " ".join(f"{a}:{e[0]}{'!' if c else ''}" for a,e,c in out))
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+from orchestrator.effort import LEVELS, SETUP_LABELS, model_default  # noqa: E402
+
+G = "/Users/toslali/frontier/gen_logs"
+BASE = os.path.expanduser("~/.claude/projects")
+SUFFIX = sys.argv[1] if len(sys.argv) > 1 else "v8c50"
+
+
+def ts(s):
+    return datetime.fromisoformat(s.replace("Z", "+00:00")).timestamp()
+
+
+def rule(label, model, step_down):
+    normal = model_default(model)
+    if label in SETUP_LABELS:
+        normal = LEVELS[min(LEVELS.index(normal), LEVELS.index("medium"))]
+    floor = min(LEVELS.index(normal), LEVELS.index("medium"))
+    return LEVELS[max(floor, LEVELS.index(normal) - step_down)]
+
+
+for p in ("0", "5", "26", "58", "181"):
+    slug = f"p{p}-{SUFFIX}"
+    cuts = []
+    for d in glob.glob(f"{BASE}/-Users-toslali-frontier-gen-logs-research-{slug}-ws*"):
+        if f"{SUFFIX}r" in d:
+            continue
+        for f in glob.glob(d + "/*.jsonl"):
+            for line in open(f):
+                try:
+                    r = json.loads(line)
+                except ValueError:
+                    continue
+                m = r.get("message")
+                if isinstance(m, dict) and m.get("stop_reason") == "max_tokens":
+                    cuts.append(ts(r["timestamp"]))
+    cuts = sorted(set(cuts))
+    mf = f"{G}/nous_runs/research-{slug}/llm_metrics.jsonl"
+    if not os.path.exists(mf):
+        continue
+    rows = [json.loads(x) for x in open(mf) if x.strip()]
+    out = []
+    for r in (x for x in rows if x.get("dispatcher") == "sdk"):
+        end = ts(r["timestamp"])
+        start = end - (r.get("duration_ms") or 0) / 1000
+        label = r.get("session_label") or r.get("phase")
+        eff = rule(label, r.get("model"), sum(1 for c in cuts if c < start))
+        out.append((label, eff, any(start <= c <= end for c in cuts)))
+    changed = sum(1 for _, e, _ in out if e != "high")
+    print(f"p{p}: {len(out)} sessions, {changed} not at high, {len(cuts)} cut replies")
+    print("   " + " ".join(f"{a}:{e}{'(CUT)' if c else ''}" for a, e, c in out))

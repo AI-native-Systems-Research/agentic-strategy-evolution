@@ -3,6 +3,7 @@
 No live LLM: SDK sessions are scripted runners (``sdk_runner=``) or fake ``claude_agent_sdk`` modules
 whose "CLI" is a dummy local process, as in tests/test_sdk_cli_reap.py.
 """
+import contextlib
 import json
 import os
 import re
@@ -1429,43 +1430,46 @@ class _EffortRunner:
         return SDKResult(text="done", session_id="s1")
 
 
-def _official(work, score):
-    (work / "official_measures.jsonl").write_text(json.dumps({"ts": 1.0, "sha256": "x", "score": score}) + "\n")
-
-
 class TestEffortLadder:
-    def test_first_solution_at_medium_then_the_model_default(self, tmp_path):
+    def test_evaluator_at_medium_every_other_session_at_the_model_default(self, tmp_path):
         from orchestrator.effort import session_effort
-        c = _v8()
-        assert session_effort(c, tmp_path, "claude-opus-4-6") == "medium"
-        _official(tmp_path, 0.0)
-        assert session_effort(c, tmp_path, "claude-opus-4-6") == "medium"  # a 0 is not a solution
-        _official(tmp_path, 12.5)
-        assert session_effort(c, tmp_path, "claude-opus-4-6") == "high"
-        assert session_effort(c, tmp_path, "aws/claude-opus-5-5") == "medium"  # its default
-        assert session_effort(c, tmp_path, "claude-opus-4-6", explicit="xhigh") == "xhigh"
+        assert session_effort(tmp_path, "claude-opus-4-6", label="evaluator") == "medium"
+        assert session_effort(tmp_path, "claude-opus-4-6", label="h-main") == "high"
+        assert session_effort(tmp_path, "claude-opus-4-6", label="design") == "high"
+        assert session_effort(tmp_path, "aws/claude-opus-5-5", label="h-main") == "medium"  # its default
+        assert session_effort(tmp_path, "claude-opus-4-6", label="h-main", explicit="xhigh") == "xhigh"
+        assert session_effort(tmp_path, "claude-opus-4-6", label="evaluator", explicit="low") == "low"
 
     def test_lost_replies_lower_later_sessions_but_not_below_medium(self, tmp_path):
         from orchestrator.effort import record_output_limit, session_effort
-        c = _v8()
-        _official(tmp_path, 12.5)
         record_output_limit(tmp_path)
-        assert session_effort(c, tmp_path, "claude-opus-4-6") == "medium"
+        assert session_effort(tmp_path, "claude-opus-4-6", label="h-main") == "medium"
         record_output_limit(tmp_path)
-        assert session_effort(c, tmp_path, "claude-opus-4-6") == "medium"
+        assert session_effort(tmp_path, "claude-opus-4-6", label="h-main") == "medium"
+        assert session_effort(tmp_path, "claude-opus-4-6", label="h-main", explicit="max") == "high"
 
     def test_cut_reply_resumes_the_session_one_level_lower(self, tmp_path, monkeypatch):
         monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
         c = _v8()
         c["target_system"]["repo_path"] = str(tmp_path)
-        _official(tmp_path, 12.5)
         r = _EffortRunner()
         d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=r, max_retries=1)
-        d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        with d.session_budget(9.0, label="h-main"):
+            d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
         assert r.efforts == ["high", "medium"]
         assert json.loads((tmp_path / "effort_state.json").read_text())["step_down"] == 1
         assert [m.get("effort") for m in _metrics(tmp_path)] == ["high", "medium"]
         assert "output_limit_resume" in (tmp_path / "retry_log.jsonl").read_text()
+
+    def test_repeated_cuts_in_one_session_reach_low_as_a_last_resort(self, tmp_path, monkeypatch):
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        r = _EffortRunner(cut=2)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=r, max_retries=1)
+        with d.session_budget(9.0, label="h-main"):
+            d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        assert r.efforts == ["high", "medium", "low"]
 
     def test_v7_sessions_keep_the_sdk_default(self, tmp_path, monkeypatch):
         monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
@@ -1475,3 +1479,17 @@ class TestEffortLadder:
         SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=r, max_retries=1).dispatch(
             "planner", "design", output_path=tmp_path / "o.md", iteration=1)
         assert r.efforts == [None] and not (tmp_path / "effort_state.json").exists()
+
+    def test_a_cut_after_the_resumes_run_out_still_lowers_later_sessions(self, tmp_path, monkeypatch):
+        from orchestrator.effort import session_effort
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        r = _EffortRunner(cut=99)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=r, max_retries=1)
+        with d.session_budget(9.0, label="h-main"), contextlib.suppress(RuntimeError):
+            d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        hits = json.loads((tmp_path / "effort_state.json").read_text())["output_limit_hits"]
+        assert hits == len(r.efforts) and hits > 4  # 3 resumes, then the retries are counted too
+        assert session_effort(tmp_path, "claude-opus-4-6", label="h-main") == "medium"
+

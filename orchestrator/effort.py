@@ -1,13 +1,13 @@
-"""v8 effort ladder: how hard each SDK session thinks. Pure Python, no LLM calls.
+"""v8 effort rule: how hard each SDK session thinks. Pure Python, no LLM calls.
 
 Adaptive-thinking models ignore thinking-token budgets; ``effort`` is the control they honour
-(https://platform.claude.com/docs/en/build-with-claude/effort). The policy:
+(https://platform.claude.com/docs/en/build-with-claude/effort). On ``stop_reason: max_tokens`` the docs
+advise raising the output limit or lowering effort; Claude Code caps output at 64k, so we lower effort.
 
-1. Until an official measure scores above 0, a session runs at ``medium`` (never above the model's
-   default): a first correct solution rarely needs the deepest reasoning.
-2. After that, sessions run at the model's default (or the campaign's explicit effort).
-3. A reply that hits the CLI's output-token limit is lost, so the session resumes one level lower and
-   the campaign remembers it: later sessions start one level lower too, never below ``medium``.
+1. The evaluator session (setup: a grader and a first baseline) runs at ``medium``.
+2. Every other session runs at the model's default, or the campaign's explicit effort.
+3. Each reply cut at the output limit lowers later sessions one level (never below ``medium``); inside the
+   cut session each resume drops one level, down to ``low`` as a last resort.
 """
 from __future__ import annotations
 
@@ -18,8 +18,9 @@ from orchestrator.util import atomic_write
 
 LEVELS = ("low", "medium", "high", "xhigh", "max")
 EFFORT_FILE = "effort_state.json"
-FIRST_SOLUTION = "medium"
+SETUP_EFFORT = "medium"
 NEW_SESSION_FLOOR = "medium"
+SETUP_LABELS = frozenset({"evaluator"})
 
 
 def model_default(model: str | None) -> str:
@@ -45,7 +46,7 @@ def _state(work_dir: Path) -> dict:
 
 
 def record_output_limit(work_dir: Path) -> int:
-    """Count one lost reply; returns the campaign's step-down (levels below the normal start)."""
+    """Count one lost reply; returns how many levels later sessions start below their normal level."""
     data = _state(work_dir)
     data["output_limit_hits"] = int(data.get("output_limit_hits") or 0) + 1
     data["step_down"] = int(data.get("step_down") or 0) + 1
@@ -53,11 +54,11 @@ def record_output_limit(work_dir: Path) -> int:
     return data["step_down"]
 
 
-def session_effort(campaign: dict, work_dir: Path, model: str | None, explicit: str | None = None) -> str:
-    """Effort for a new session under the ladder above."""
-    from orchestrator.judge_profile import best_official
-    default = explicit if explicit in LEVELS else model_default(model)
-    scored = (best_official(campaign, work_dir) or 0.0) > 0
-    base = default if scored else LEVELS[min(_idx(default), _idx(FIRST_SOLUTION))]
-    floor = min(_idx(base), _idx(NEW_SESSION_FLOOR))
-    return LEVELS[max(floor, _idx(base) - int(_state(work_dir).get("step_down") or 0))]
+def session_effort(work_dir: Path, model: str | None, label: str | None = None,
+                   explicit: str | None = None) -> str:
+    """Effort for a new session under the rule above."""
+    normal = explicit if explicit in LEVELS else model_default(model)
+    if label in SETUP_LABELS:
+        normal = LEVELS[min(_idx(normal), _idx(SETUP_EFFORT))]
+    floor = min(_idx(normal), _idx(NEW_SESSION_FLOOR))
+    return LEVELS[max(floor, _idx(normal) - int(_state(work_dir).get("step_down") or 0))]
