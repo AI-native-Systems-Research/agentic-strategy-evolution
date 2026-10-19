@@ -7,58 +7,80 @@ Status: draft. Nothing has been run yet.
 The case studies stay as they are and show real-world impact. This study adds controlled evidence
 for the questions ICSE reviewers raised:
 
-- the same task, two agents, identical conditions;
+- the same task, several agents, identical conditions;
+- whether a strong prompt alone can reproduce Nous's benefit, without its orchestrator;
 - repeated runs (variance);
 - grading by a deterministic, objective oracle instead of an LLM judge.
 
 Framing: investigation, not score maximization. Each task asks a question about a system's
-behavior. The oracle grades whether the answer is correct, backed by evidence, and reproducible.
-Where a task has a metric, it is one check, not the goal.
+behavior. The oracle grades whether the answer is correct, backed by evidence, generalizes, and is
+reproducible. Where a task has a metric, it is one check, not the goal.
 
-## Comparison
+## Arms
 
-| Arm | What it is |
-|---|---|
-| `l2` | Claude Code with a scientific-method prompt, run as N sequential sessions. Each session gets the prior sessions' final answers pasted in (Engram-style iterative prompting). Reuses `claude_methodology_loop` from the `bench-framework` branch (PR #291). |
-| `nous` | Nous `main` at `decbde7` (v0.5.0, Claude Agent SDK dispatcher), re-run for every cell. |
+| Arm | What it is | Models |
+|---|---|---|
+| `l2` | Claude Code with a short scientific-method prompt (4 bullets), N sequential sessions, prior sessions' final answers pasted into the next (Engram-style iterative prompting). From `bench-framework` (PR #291): `claude_methodology_loop`. | Opus 4.6, all sessions |
+| `nous_prompt` | Nous's full methodology prompts (`prompts/methodology/design.md`, `execute_analyze.md`, `report.md`) injected each session, N sequential sessions, prior answers pasted forward. No orchestrator: no schema validation, gates, worktrees, ledger, or principle store. From `bench-framework`: `claude_arm_structured_loop`. | Opus 4.6, all sessions |
+| `nous` | Nous `main` at `decbde7` (v0.5.0, Claude Agent SDK dispatcher), as shipped, re-run for every cell. | Opus 4.6 design, Sonnet 4.6 execute and report (`orchestrator/defaults.yaml`) |
 
-L2 vs Nous is the matched pair: same model, same iteration count, both iterate. It isolates the
-method. L0 (plain Claude) and L1 (single session + prompt) can be added later; they are cheap.
+What each pair tests:
+- `l2` vs `nous_prompt`: does Nous's methodology help, beyond generic "be scientific" prompting?
+- `nous_prompt` vs `nous`: does the orchestrator add value beyond the same methodology as a prompt?
 
-Same for both arms:
-- model `claude-opus-4-6`, same `claude` CLI version, no web tools;
+Model asymmetry, on purpose: Nous runs as shipped, with Sonnet for execution, while both baselines
+run entirely on Opus 4.6. This biases against Nous. Any Nous advantage holds despite the baselines
+having the stronger model throughout. Reported in the paper. Model scaling (all arms on one
+model) is a later step.
+
+Same for every arm:
+- same `claude` CLI version, no web tools;
 - same target repo commit and locked parameters;
 - same task prompt and the same output contract (below);
 - full transcripts kept;
-- cost measured by one token-based ruler over the Claude transcripts (not each tool's self-report).
-  Crashed sessions are still counted.
+- cost from one token-based ruler over the Claude transcripts (not each tool's self-report);
+  crashed sessions are still counted.
 
 ## Iterations, stopping, cost
 
-- Upper bound: N iterations for Nous, N sessions for L2. N is fixed per task.
-- Early stop: each arm decides when it is done. Neither arm sees the oracle.
+- Upper bound: N iterations for Nous, N sessions for `l2` and `nous_prompt`. N fixed per task.
+- Each arm decides when it is done. No arm sees the oracle.
   - Nous: the continue gate follows the agent's own continue/stop recommendation, instead of
     always approving. Small change: an "agent decides" gate mode next to `--auto-approve`.
-  - L2: each session ends by writing `{"done": true|false, "why": "..."}`; the loop stops on `done`.
+  - `l2`, `nous_prompt`: each session ends by writing `{"done": true|false, "why": "..."}`; the loop
+    stops on `done`.
 - No dollar cap. A safety ceiling of 3x the original Nous campaign cost kills runaway runs; any run
   that hits it is reported.
 - Cost is reported, not equalized: dollars, wall time, iterations used.
+- Crashes are outcomes, not retried. (In the ICSE runs, every `nous_prompt` attempt on pd-disagg
+  crashed; the pilot checks this first.)
 
 ## Tasks
 
 | Use case | Task | Ground truth | N |
 |---|---|---|---|
-| Verification | `pd-disagg-validation`: does the ITL formula for prefill/decode disaggregation hold, and where does it break? | Answer key from our own BLIS sweep over rates 2 to 150, computed before any run | 5 |
-| Debugging | BLIS bug `d8271ee` reverted at its parent commit: TotalOutputTokens double-counted after preemption. Agent gets only the symptom. | The merged upstream fix and its test | 3 |
+| Verification | `pd-disagg-validation`: does the ITL formula for prefill/decode disaggregation hold, and where does it break? | Our own BLIS sweep over rates 2 to 150, computed before any run | 5 |
+| Debugging | BLIS bug `d8271ee` reverted at its parent: TotalOutputTokens double-counted after preemption. Agent gets only the symptom. The fix is removed from the repo's git history (no `git log --all` leak). | The merged upstream fix, its test, and our hidden regression tests | 3 |
 | Optimization | `blis-search-algo2`: design a multi-objective config search for BLIS | Our own exhaustive sweep of the full config space | 10 |
 
 All three are CPU-only on BLIS (inference-sim), seeded, and cheap to evaluate. Contamination is
 low: niche repo, 2026 commits.
 
-Repetition: 3 runs per arm per task. 3 tasks x 2 arms x 3 runs = 18 runs, roughly $550 based on the
-earlier ablation costs.
+Runs: 3 per arm per task. 3 tasks x 3 arms x 3 runs = 27 runs, roughly $800 to $900 based on
+earlier costs.
 
-## Output contract (same text appended to both arms' prompts)
+## Held-out conditions
+
+Held out means conditions the agent never ran, not only new seeds. Fixed before any run and kept
+out of the agent's workspace.
+- pd-disagg: workload shapes (input/output length mixes) and instance counts not in the task prompt.
+- Debugging: hidden regression tests on other preemption-related metrics (ITL, TTFT, request
+  counts under preemption), plus tests on non-preemption paths, so a patch that only satisfies the
+  upstream test is caught.
+- blis-search: a different model config and a different hardware config, with their own exhaustive
+  fronts.
+
+## Output contract (same text appended to every arm's prompt)
 
 At the end, write `final/answer.json`:
 
@@ -81,18 +103,22 @@ A missing or malformed contract is recorded, not repaired.
 Rules:
 - Every question is answered by a script or by an answer key committed before the first run.
   No LLM grades anything.
-- Format-neutral: it only asks for what both arms were asked to produce through the contract.
+- Format-neutral: it only asks for what every arm was asked to produce through the contract.
   No credit for Nous's file layout.
 - The oracle runs on a fresh copy of the final workspace.
 - It also scores per-iteration snapshots, so it can tell when the task was first solved.
 
 Each question is yes/no or a number.
 
-### Generic questions (every task)
+### Primary outcome
 
-Outcome
-- O1 Correct answer? (task-specific, below)
-- O2 Holds on held-out conditions the agent never saw?
+**O1, correct answer** (task-specific definition below). Declared primary before any run. All
+other questions are secondary and reported in full, never selected after the fact.
+
+### Secondary questions (every task)
+
+Generalization
+- O2 The answer or deliverable holds on the held-out conditions?
 
 Claim integrity
 - C1 Fraction of claims whose evidence file exists and contains the value.
@@ -107,7 +133,7 @@ Validity (checked in files and transcripts)
 - V1 Locked parameters respected in every measured run?
 - V2 Each claimed effect compared against a baseline under the same conditions?
 - V3 At least 2 seeds behind each claimed difference?
-- V4 No access to forbidden material (answer key, oracle, upstream fix)?
+- V4 No access to forbidden material (answer key, oracle, upstream fix, held-out sets)?
 
 Stopping and cost
 - S1 Declared done while O1 was still false (stopped too early)?
@@ -117,10 +143,10 @@ Stopping and cost
 
 ### Task-specific questions
 
-pd-disagg-validation (O1 = all of K1 to K3 true)
+pd-disagg-validation (O1 = K1 and K2 and K3)
 - K1 Formula fits within ~1.5% at moderate rates (claimed and re-measured)?
-- K2 A regime boundary is found at high rate, within +/-20% of our sweep's crossover, with the
-  correct sign (overprediction)?
+- K2 Regime boundary found at high rate, within +/-20% of our sweep's crossover, correct sign
+  (overprediction)?
 - K3 TTFT underestimate reported, magnitude within our measured band?
 - K4 Mechanism names the constant service-cost assumption. Phrase list fixed in advance; the one
   soft check, reported separately.
@@ -128,15 +154,34 @@ pd-disagg-validation (O1 = all of K1 to K3 true)
 Debugging, `d8271ee` (O1 = D1 and D2 and D3)
 - D1 Root cause located in the right file and function?
 - D2 The upstream fix's test passes on the agent's patch?
-- D3 Full test suite passes?
-- D4 Agent added a test that fails before its fix and passes after?
-- D5 Patch touches only related code (diff size, files outside the fix area)?
+- D3 Full existing test suite passes?
+- D4 Our hidden regression tests pass?
+- D5 Agent added a test that fails before its fix and passes after?
+- D6 Patch touches only related code (diff size, files outside the fix area)?
 
-blis-search-algo2 (O1 = B1)
+blis-search-algo2 (O1 = B1 and T-score >= 3 of 4)
 - B1 Hypervolume ratio of the delivered search vs our exhaustive front >= 95% within 3 minutes,
   oracle-run on 3 fresh seeds?
-- B2 Same on a held-out model or hardware config?
+- B2 Same on the held-out model and hardware configs?
 - B3 Hypervolume ratio (number, heat-colored).
+- Trade-off facts, each matched against the agent's claims, numbers checked against our sweep:
+  - T1 Names the knobs that dominate the Pareto front, matching our sweep's top knobs?
+  - T2 Identifies the knobs that barely matter (flat effect in our sweep)?
+  - T3 States the main trade-off direction correctly (which objective rises as the other falls)?
+  - T4 Reports the front's structure (its size and its shape, within tolerance of our sweep)?
+  The exact facts and tolerances come from our sweep and are committed before any run.
+
+## Analysis plan (fixed before any run)
+
+- Report every run's O1 and secondary values individually, per task and arm.
+- Per task: mean, min-max, and the difference in means between arms for each pair
+  (`nous` - `nous_prompt`, `nous_prompt` - `l2`, `nous` - `l2`).
+- Pooled across the 3 tasks (9 runs per arm): O1 success rate and paired task-level differences, as a
+  secondary view.
+- Uncertainty: bootstrap intervals over runs, labeled as descriptive.
+- No significance claims. With 3 vs 3 runs, the smallest possible two-sided permutation p-value is
+  0.1. No broad reliability claims from 3 runs.
+- Cost always reported next to outcome.
 
 ## Results view
 
@@ -144,21 +189,22 @@ A grid: rows are questions grouped by category, columns are task x arm x run. Ye
 green or red, not-applicable cells grey, numeric cells heat-colored per row. A summary grid shows
 the mean over the 3 runs with the min-max in the cell.
 
-## Open (later)
+## Later
 
-- Add L0/L1 arms.
-- Model scaling (second model, subset of tasks).
-- `nous_prompt` ablation (methodology as a prompt, no orchestrator).
+- L0/L1 arms (plain Claude, single session + prompt).
+- Model scaling: all arms on one model (Sonnet 4.6, Opus 4.7), subset of tasks.
 - A fourth task (investigation, e.g. `paper-memorytime-mirage`).
 - Resume test.
 
 ## Next steps
 
-1. Answer keys: pd-disagg BLIS sweep; debugging task (revert `d8271ee`, symptom text, hidden test);
-   blis-search exhaustive front.
+1. Answer keys and held-out sets: pd-disagg BLIS sweep and held-out workloads; debugging task
+   (revert `d8271ee`, scrub history, symptom text, hidden regression tests); blis-search exhaustive
+   fronts (main + held-out configs) and trade-off facts.
 2. Oracle scripts plus grid renderer. Commit before any run.
-3. Dry run: score the existing pd-disagg and blis-search L2 and Nous runs from
+3. Dry run: score the existing pd-disagg and blis-search runs (L2, Nous) from
    `~/Downloads/Ablations/nous-experiment-artifact/`. No LLM spend; checks the oracle separates arms.
-4. Harness: L2 runner with `done` flag and shared cost meter; Nous "agent decides" gate mode.
-5. Pilot: debugging task, one run per arm.
-6. Full 18 runs, oracle, grid.
+4. Harness: `l2` and `nous_prompt` runners with `done` flag and shared cost meter; Nous "agent
+   decides" gate mode.
+5. Pilot: debugging task, one run per arm, `nous_prompt` first.
+6. Full 27 runs, oracle, grid.
