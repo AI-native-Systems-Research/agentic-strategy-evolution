@@ -651,6 +651,8 @@ class SDKResult:
     last_turn_cost_usd: float = 0.0
     # Token-ruler cost of the session's most expensive single reply (v8, from its transcript).
     max_reply_usd: float = 0.0
+    # v8: replies in this session that stopped at the output-token limit (from its transcript).
+    output_limit_hits: int = 0
 
     def __post_init__(self) -> None:
         if self.is_error and not self.error_message.strip():
@@ -826,11 +828,15 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
             return tu if usage_cost(tu, cost_rates) > usage_cost(stream_usage, cost_rates) else stream_usage
 
         def _with_transcript_usage(res: SDKResult) -> SDKResult:
-            if meter is None or not transcript_caps:
+            if meter is None:
                 return res
             import dataclasses as _dc
+            meter.poll()
+            res = _dc.replace(res, max_reply_usd=max(res.max_reply_usd, meter.max_reply_cost()),
+                              output_limit_hits=max(res.output_limit_hits, meter.output_limit_hits))
+            if not transcript_caps:
+                return res
             best = _best_usage(_usage_of(res))
-            res = _dc.replace(res, max_reply_usd=max(res.max_reply_usd, meter.max_reply_cost()))
             if usage_cost(best, cost_rates) <= usage_cost(_usage_of(res), cost_rates):
                 return res
             return _dc.replace(res, cost_usd=usage_cost(best, cost_rates),
@@ -863,6 +869,7 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
                                  subtype="error_output_limit", cost_usd=spent,
                                  duration_ms=int((time.time() - t0) * 1000), num_turns=n, session_id=session_id,
                                  max_reply_usd=meter.max_reply_cost() if meter is not None else 0.0,
+                                 output_limit_hits=meter.output_limit_hits if meter is not None else 0,
                                  **{k: int(totals.get(k, 0) or 0) for k in _USAGE_KEYS})
             if stop.get("why") == "hang":
                 err = SDKHangError(f"no assistant reply for over {hang_after_s:.0f}s while only API errors "
@@ -874,6 +881,7 @@ def _default_sdk_runner_factory(transcript_locator: Callable | None = None,
                              subtype="error_max_budget_usd", cost_usd=spent,
                              duration_ms=int((time.time() - t0) * 1000), num_turns=n, session_id=session_id,
                              max_reply_usd=meter.max_reply_cost() if meter is not None else 0.0,
+                             output_limit_hits=meter.output_limit_hits if meter is not None else 0,
                              **{k: int(totals.get(k, 0) or 0) for k in _USAGE_KEYS})
 
         async def _session() -> SDKResult:
@@ -1512,6 +1520,14 @@ class SDKDispatcher(CLIDispatcher):
             self._log_metrics_row(result, budget if cap is not None else None)
             if result.session_id:
                 self.last_session_id = result.session_id
+            cut = _is_output_limit(result) or result.output_limit_hits > 0
+            if v8 and cut:
+                # Recorded whichever check ended the session (a cap can trip on the same reply).
+                from orchestrator.effort import lower, record_output_limit
+                for _ in range(max(1, result.output_limit_hits)):
+                    record_output_limit(self.work_dir)
+                effort = lower(effort or "high")
+                self._last_effort = effort
             if cap is not None:
                 spent += usage_cost(_usage_of(result), self._cost_rates())
                 last_text = result.text or last_text
@@ -1551,13 +1567,8 @@ class SDKDispatcher(CLIDispatcher):
             # A reply over the CLI's output-token maximum is lost, and the CLI gives up after a few in a
             # row. A fresh restart would redo the same long reasoning, so resume this session instead
             # (its files and earlier turns survive) and ask for the work in short steps.
-            cut = result.is_error and _is_output_limit(result)
-            if v8 and cut:
-                from orchestrator.effort import lower, record_output_limit
-                record_output_limit(self.work_dir)  # every lost reply lowers later sessions
-                effort = lower(effort or "high")
-                self._last_effort = effort
-            if cut and result.session_id and output_limit_resumes_left > 0:
+            if result.is_error and _is_output_limit(result) and result.session_id \
+                    and output_limit_resumes_left > 0:
                 output_limit_resumes_left -= 1
                 self._log_retry("output_limit_resume", failure_count + 1, RuntimeError(result.error_message))
                 resume_id, prompt = result.session_id, limit_prompt

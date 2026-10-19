@@ -1493,3 +1493,28 @@ class TestEffortLadder:
         assert hits == len(r.efforts) and hits > 4  # 3 resumes, then the retries are counted too
         assert session_effort(tmp_path, "claude-opus-4-6", label="h-main") == "medium"
 
+    def test_a_cut_reply_that_also_trips_the_cap_still_lowers_later_sessions(self, monkeypatch, tmp_path,
+                                                                            spawned):
+        # live p26 smoke: the 64k reply crossed the $4 cap, the cap stopped the session first
+        from orchestrator.effort import session_effort
+        runner, _ = _transcript_runner(monkeypatch, tmp_path, spawned, replies=1, tx_out=64_000,
+                                       stop_reason="max_tokens", silent_s=20.0, finish=False)
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=runner, max_retries=1)
+        with d.session_budget(2.0, label="evaluator"):
+            d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        assert json.loads((tmp_path / "effort_state.json").read_text())["output_limit_hits"] >= 1
+        assert session_effort(tmp_path, "claude-opus-4-6", label="h-main") == "medium"
+
+    def test_an_uncut_session_leaves_effort_alone(self, monkeypatch, tmp_path, spawned):
+        runner, _ = _transcript_runner(monkeypatch, tmp_path, spawned, replies=2)
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=runner, max_retries=1)
+        with d.session_budget(9.0, label="h-main"):
+            d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        assert not (tmp_path / "effort_state.json").exists()
+
