@@ -1,0 +1,10 @@
+{
+  "slots": {
+    "NOUS_LITELLM_KEY1": "p26_cs50mr1",
+    "NOUS_LITELLM_KEY3": "p58_cs50mr1",
+    "NOUS_LITELLM_KEY2": "p0_v8c50mr1",
+    "FCS_VPC_KEY": "p225_v8c50mr1",
+    "NOUS_VPCINT_KEY1": "p44_v8c50mr1",
+    "NOUS_VPCINT_KEY2": "p5_v8c50mr1"
+  }
+}
