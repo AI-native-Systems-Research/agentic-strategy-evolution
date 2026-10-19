@@ -29,6 +29,8 @@ def main():
     ap.add_argument("--max-score", type=float, default=100.0)
     ap.add_argument("--max-turns", type=int, default=400)
     ap.add_argument("--out-dir", required=True); ap.add_argument("--out", required=True)
+    ap.add_argument("--max-output-tokens", type=int, default=0,
+                    help="CLAUDE_CODE_MAX_OUTPUT_TOKENS for the CLI (0 = the CLI default, 64k); 128000 matches Nous v8")
     ap.add_argument("--continue-on-crash", action="store_true",
                     help="robustness variant: a CLI crash is treated like a session end (resume with 'Continue.')")
     a = ap.parse_args(); pid = a.pid
@@ -70,7 +72,7 @@ def main():
     cont = "Continue."
     (run / "driver_cfg.json").write_text(json.dumps({"run_dir": str(run), "model": a.model, "max_turns": a.max_turns,
         "max_score": a.max_score, "budget": a.budget, "prompt": prompt, "continue": cont,
-        "continue_on_crash": a.continue_on_crash}))
+        "continue_on_crash": a.continue_on_crash, "max_output_tokens": a.max_output_tokens}))
 
     home = os.path.expanduser("~"); rr = os.path.realpath
     paper = rr(HERE.parents[3])

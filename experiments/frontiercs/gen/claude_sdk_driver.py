@@ -29,7 +29,9 @@ async def session(prompt, resume):
         system_prompt={"type": "preset", "preset": "claude_code"},
         permission_mode="bypassPermissions",
         disallowed_tools=["WebSearch", "WebFetch"],
-        continue_conversation=resume)
+        continue_conversation=resume,
+        **({"env": {"CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(cfg["max_output_tokens"])}}
+           if cfg.get("max_output_tokens") else {}))
     turns = 0
     async for msg in query(prompt=prompt, options=opts):
         turns += 1
