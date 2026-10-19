@@ -22,6 +22,7 @@ import yaml
 
 from orchestrator.design_profile import design_guidance, execute_guidance, v7_settings, v8_settings
 from orchestrator.sdk_dispatch import SDKDispatcher, SDKHangError, SDKResult, _default_sdk_runner_factory
+from orchestrator.metrics import usage_cost
 from orchestrator.validate import validate_design
 from tests.test_sdk_cli_reap import _alive
 from tests.test_v7_profile import (
@@ -1665,4 +1666,128 @@ class TestEvaluatorKeepsCappedWork:
         patch = it / "patches" / "baseline.patch"
         assert patch.is_file() and "v = 7" in patch.read_text()
         assert "v = 7" in (repo / "solution.py").read_text()  # committed so the arms start from it
+
+
+# ─── replay of recorded transcripts through the real runner and dispatcher ──────────────────
+FIXTURES = Path(__file__).parent / "fixtures" / "transcripts"
+
+
+def _replay_sdk(transcript: Path, spawned: dict, rows: list[dict], stop_after: int | None = None):
+    """A fake SDK that writes ``rows`` (a recorded Claude Code transcript, timestamps refreshed) as the real CLI
+    would, and streams one AssistantMessage per reply. ``stop_after``: rows written before the "CLI" waits."""
+    import anyio
+
+    class _Opts:
+        def __init__(self, **kw):
+            self.kw = kw
+
+    class SystemMessage:
+        def __init__(self):
+            self.subtype, self.data = "init", {"session_id": "sess-t"}
+
+    class AssistantMessage:
+        def __init__(self, mid):
+            self.content, self.usage, self.message_id, self.session_id = [], {"output_tokens": 1}, mid, "sess-t"
+
+    class ResultMessage:
+        is_error, usage, total_cost_usd, duration_ms, num_turns = False, {"output_tokens": 1}, 0.0, 1, 1
+        session_id, subtype, result = "sess-t", "success", "done"
+
+    class SubprocessCLITransport:
+        def __init__(self, prompt, options):  # noqa: ARG002
+            self._process = None
+
+        async def connect(self):
+            self._process = await anyio.open_process([sys.executable, "-c", _SLEEPER])
+            spawned["cli"] = self._process.pid
+
+    async def _query(*, prompt, options, transport=None):  # noqa: ARG001
+        await transport.connect()
+        pid = spawned["cli"]
+        yield SystemMessage()
+        todo = rows if stop_after is None else rows[:stop_after]
+        for r in todo:
+            if not _alive(pid):
+                return
+            r = dict(r, timestamp=_iso(), sessionId="sess-t")
+            with open(transcript, "a") as f:
+                f.write(json.dumps(r) + "\n")
+            if r.get("type") == "assistant":
+                yield AssistantMessage((r.get("message") or {}).get("id"))
+            await anyio.sleep(0.02)
+        t0 = time.time()
+        while stop_after is not None and time.time() - t0 < 20 and _alive(pid):
+            await anyio.sleep(0.05)
+        if _alive(pid):
+            os.kill(pid, 15)
+            yield ResultMessage()
+
+    m = types.ModuleType("claude_agent_sdk")
+    m.ClaudeAgentOptions, m.query, m.SubprocessCLITransport = _Opts, _query, SubprocessCLITransport
+    return m
+
+
+def _fixture(name):
+    return [json.loads(x) for x in (FIXTURES / name).read_text().splitlines() if x.strip()]
+
+
+class TestRecordedTranscripts:
+    """Session-end invariants on real p58 transcripts: spend counted once, every cut recorded, the cut
+    reasoning saved and fed to one funded resume, effort lowered."""
+
+    def _dispatch(self, monkeypatch, tmp_path, spawned, rows, budget, label="evaluator", stop_after=None):
+        transcript = tmp_path / "sess-t.jsonl"
+        attempts = []
+
+        def factory_runner(**kw):
+            attempts.append(kw)
+            # the first attempt replays the recording; a resume replays nothing new and finishes
+            use = rows if len(attempts) == 1 else []
+            monkeypatch.setitem(sys.modules, "claude_agent_sdk",
+                                _replay_sdk(transcript, spawned, use, stop_after if len(attempts) == 1 else None))
+            return _default_sdk_runner_factory(
+                transcript_locator=lambda cwd, ids: [transcript] if transcript.exists() else [], poll_s=0.05)(**kw)
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=factory_runner, max_retries=1)
+        with d.session_budget(budget, label=label):
+            d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        return attempts, _metrics(tmp_path)
+
+    def test_cut_reply_crossing_the_cap_is_counted_once_and_gets_one_funded_resume(self, monkeypatch, tmp_path,
+                                                                                 spawned):
+        rows = _fixture("p58_cut_on_cap.jsonl")
+        cut_at = next(i for i, r in enumerate(rows) if (r.get("message") or {}).get("stop_reason") == "max_tokens")
+        attempts, metrics = self._dispatch(monkeypatch, tmp_path, spawned, rows, budget=4.0, stop_after=cut_at + 1)
+        cut_usd = usage_cost(rows[cut_at]["message"]["usage"])
+        assert len(attempts) == 2  # the recording, then Nous's own resume
+        resume = attempts[1]
+        assert resume["resume"] == "sess-t" and "Do not re-derive" in resume["prompt"]
+        assert resume["effort"] == "low" and resume["max_cost_usd"] >= 1.9  # funded, not eaten by a recount
+        assert sum(m["cost_usd"] for m in metrics) < cut_usd * 1.5  # the 64k reply is charged once
+        assert (tmp_path / "cut_reasoning" / "evaluator-1.md").read_text().strip()
+        assert json.loads((tmp_path / "effort_state.json").read_text())["output_limit_hits"] == 1
+
+    def test_two_cut_replies_in_a_row_are_both_recorded_and_the_session_is_not_left_looping(self, monkeypatch,
+                                                                                        tmp_path, spawned):
+        rows = _fixture("p58_two_cuts.jsonl")
+        attempts, metrics = self._dispatch(monkeypatch, tmp_path, spawned, rows, budget=20.0, label="h-main")
+        hits = json.loads((tmp_path / "effort_state.json").read_text())["output_limit_hits"]
+        assert hits >= 1
+        assert len(attempts) >= 2 and "Do not re-derive" in attempts[1]["prompt"]  # Nous's resume, not the CLI's
+        assert sum(m["cost_usd"] for m in metrics) <= 20.0 + 5.0  # within the cap plus one reply
+
+    def test_v8_sessions_do_not_get_the_old_per_message_silence_guard(self, tmp_path, monkeypatch):
+        seen = {}
+
+        def runner(**kw):
+            seen.update(kw)
+            return SDKResult(text="ok", session_id="s1")
+        monkeypatch.setattr("orchestrator.sdk_dispatch.time.sleep", lambda _s: None)
+        c = _v8()
+        c["target_system"]["repo_path"] = str(tmp_path)
+        d = SDKDispatcher(work_dir=tmp_path, campaign=c, sdk_runner=runner, max_retries=1)
+        d.dispatch("planner", "design", output_path=tmp_path / "o.md", iteration=1)
+        assert seen["turn_silence_threshold"] is None
 

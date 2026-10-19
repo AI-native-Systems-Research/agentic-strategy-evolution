@@ -1517,7 +1517,9 @@ class SDKDispatcher(CLIDispatcher):
                     settings_path=self._settings_path,
                     event_log_path=self._event_log_path,
                     permission_mode=self._permission_mode,
-                    turn_silence_threshold=self._turn_silence_threshold,
+                    # v8 has its own hang watchdog (API errors + no reply); the per-message silence guard
+                    # killed 64k thinking replies at 10 min, before they ended (live p58 smoke s1).
+                    turn_silence_threshold=None if v8 else self._turn_silence_threshold,
                     effort=effort,
                     **({"resume": resume_id} if resume_id else {}),
                     **({"max_cost_usd": budget, "cost_rates": self._cost_rates()}
