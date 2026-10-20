@@ -174,3 +174,4 @@ Times are local (EDT).
 - 22:21 tick: 5 runs live.
 - 22:26 tick: 5 runs live.
 - 22:31 search/l2/rep3 ($2.59, 1 session): HV 0.995 main, held-out pass; T1 yes, T3 yes; T2 no (claims fcfs Pareto-dominates sjf, i.e. scheduler matters - contradicts our sweep, both appear ~equally on the front); T4 no (KV 'sufficiency threshold', not that small KV suffices). T=2/4, O1 false. Checked by hand. 17/27 scored.
+- 22:35 tick: 5 runs live.
