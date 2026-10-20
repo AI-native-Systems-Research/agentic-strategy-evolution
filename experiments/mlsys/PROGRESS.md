@@ -77,3 +77,6 @@ Times are local (EDT).
 - 20:19 tick: L2 done; nous_prompt and Nous running.
 - 20:24 tick: nous_prompt and Nous still running, no errors.
 - 20:29 tick: Nous in EXECUTE iter 1 (worktree OK, Sonnet executor); nous_prompt session 1.
+- 20:29 Pilot 2, nous_prompt finished: O1 true, one session, $5.67, 21.5 min. Verified by hand: same fix as
+  upstream (10 non-test lines, incl. the zero-output guard), 68-line regression test; all hidden checks pass, 6/6 claims
+  backed and reproduced. Both baselines solve this bug in one session.
