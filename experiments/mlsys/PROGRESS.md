@@ -173,3 +173,4 @@ Times are local (EDT).
 - 22:20 search/nous_prompt/rep3 ($7.16, 1 session): HV 0.997 main and held-out; T1 yes (block 32 'almost universally dominant'), T3 yes; T2 no (scheduler 'matters only in saturated regime... minor differences' - stated as minor-but-relevant, so not counted as irrelevant); T4 no (says trade-off vs KV cost, not that small KV suffices). T=2/4, O1 false. Checked by hand; no matcher change.
 - 22:21 tick: 5 runs live.
 - 22:26 tick: 5 runs live.
+- 22:31 search/l2/rep3 ($2.59, 1 session): HV 0.995 main, held-out pass; T1 yes, T3 yes; T2 no (claims fcfs Pareto-dominates sjf, i.e. scheduler matters - contradicts our sweep, both appear ~equally on the front); T4 no (KV 'sufficiency threshold', not that small KV suffices). T=2/4, O1 false. Checked by hand. 17/27 scored.
