@@ -135,3 +135,4 @@ Times are local (EDT).
 - 21:40 tick: 5 runs live.
 - 21:46 pd/l2/rep3 ($4.45, 1 session): O1 false. Read by hand: whole-range fit (MAPE 3.9%), says a linear model fits better, names the right mechanism (decreasing marginal cost, weight amortization), never reports the formula breaking or over-predicting at high rate. Oracle bug fixed: C2 re-measured derived quantities ('marginal ITL cost (us)') as if they were ITL means, wrongly counting 2 false claims; now only plain mean ITL/TTFT is re-measured. Rescored all pd runs (O1 unchanged).
 - 21:47 tick: 5 runs live; independent cost+isolation audit agent running on finished runs.
+- 21:50 12/27 scored, 5 running, 10 queued. $88.
