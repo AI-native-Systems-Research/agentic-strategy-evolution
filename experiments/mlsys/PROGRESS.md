@@ -101,3 +101,13 @@ Times are local (EDT).
 - 20:41 tick: 5 runs live (pd nous/l2 rep2, search nous_prompt rep2, smoke pd nous_prompt/search l2 rep2).
 - 20:46 tick: 5 runs live, all in iteration/session 1.
 - 20:51 tick: 5 runs live, no crashes.
+- 20:56 pd/nous_prompt/rep2 finished ($4.35, 17.5 min, 1 session, declared done). Its harness run_one wrote
+  meta + oracle fine; the queue's "no oracle.json" was a race in my monitor. Oracle: O1 false (K1 yes, K3 yes,
+  K2 no). It fit W over the whole range 1-150 and reported "holds well, max error 7.2%, S-shaped residual from
+  concave step time (weight amortization)" - the mechanism is right, but it never reports a high-rate breakdown.
+  Oracle parser bugs found on this answer and fixed (applies to every run; no run had been scored on pd before):
+  decimals ("3.76%") ended a sentence for the phrase windows; AL-vs-AD differences like "AD ITL reduction (%)" were
+  read as formula errors; "raises TTFT"/"decreases ITL" verbs missing; K4 missed "concave ... step time". Self-tests
+  (good/wrong-sign/bad answers) still behave. Not changed: the pre-registered K2 criterion. Caveat to report: K2
+  depends on fitting W at moderate rates (as the paper does: W is a per-request work constant); a whole-range fit
+  spreads the error and can hide the breakdown.

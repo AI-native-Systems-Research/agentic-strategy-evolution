@@ -29,7 +29,9 @@ def answer_text(a):
     for c in a.get("claims", []):
         if isinstance(c, dict):
             parts.append(" ".join(str(c.get(k, "")) for k in ("metric", "condition", "value")))
-    return re.sub(r"\s+", " ", "\n".join(parts)).lower()
+    t = re.sub(r"\s+", " ", "\n".join(parts)).lower()
+    # decimal points ("3.76%") must not end a sentence for the phrase windows ([^.\n]{0,N}) in the task oracles
+    return re.sub(r"(?<=\d)\.(?=\d)", "\u00b7", t)
 
 
 def task_score(task, ws, a):

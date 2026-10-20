@@ -28,7 +28,8 @@ FIXED = ["--model", "qwen/qwen3-14b", "--num-instances", "4", "--prefill-instanc
 K4_PHRASES = [r"\bw\b[^.\n]{0,80}(not constant|non-?constant|varies|vary|decreas|sublinear|depends on (the )?(batch|load))",
               r"(constant|fixed)[- ](w|work|service[- ]cost|per[- ]request (work|cost)|marginal cost)[^.\n]{0,100}(break|fail|invalid|violat|assumption)",
               r"sub-?linear[^.\n]{0,80}(step|batch|iteration)", r"(step|iteration)[- ]time[^.\n]{0,100}(sub-?linear|concave|saturat)",
-              r"amortiz[^.\n]{0,80}(batch|overhead|weight)", r"(weight[- ]load\w*|fixed overhead)[^.\n]{0,100}amortiz"]
+              r"amortiz[^.\n]{0,80}(batch|overhead|weight)", r"(weight[- ]load\w*|fixed overhead|weight)[^.\n]{0,100}amortiz",
+              r"(concave|sub-?linear)[^.\n]{0,40}(step[- ]time|iteration time|batch)"]
 
 
 def rate_policy(cond):
@@ -43,8 +44,11 @@ def rate_policy(cond):
 
 def _kind(metric):
     m = (metric or "").lower()
-    if re.search(r"err|deviation|mape|residual|pct|percent|%|ratio|delta|diff", m):
+    # "error" = the formula's prediction error; not AL-vs-AD differences such as "AD ITL reduction (%)"
+    if re.search(r"err|deviation|mape|residual", m) and not re.search(r"reduction|increase|overhead|ratio|vs\b", m):
         return "error"
+    if re.search(r"pct|percent|%|ratio|delta|diff|reduction|increase|overhead", m):
+        return None
     if "p99" in m or "p90" in m or "p95" in m or "p50" in m:
         return None
     if "itl" in m:
@@ -83,7 +87,7 @@ def score(answer, text):
     res = {}
     # K1: fit within ~2% at moderate rates (claim-based, or stated in prose).
     k1_claim = any(r <= 60 and abs(v) <= 2.0 for r, v, _ in err_claims)
-    k1_text = bool(re.search(r"(within|under|below|<|≤|less than|about|~)\s*~?\s*[0-2](\.\d+)?\s*%", text)) and \
+    k1_text = bool(re.search(r"(within|under|below|<|≤|less than|about|~)\s*~?\s*[0-2]([.·]\d+)?\s*%", text)) and \
         bool(re.search(r"(fit|hold|accurate|match|agree|valid)", text))
     res["K1_fit_moderate"] = bool(k1_claim or k1_text)
     # K2: overprediction at high rate (>= 100), error growing with rate.
@@ -96,10 +100,10 @@ def score(answer, text):
                        re.search(r"(rate|load)s?\s*(>=|≥|above|beyond|over|of)\s*~?\s*(8\d|9\d|1[0-5]\d)", text))
     res["K2_breakdown_overpredict"] = bool((hi and hi_sign_ok) or (over_text and breaks_text and not under_text))
     # K3: AD TTFT higher than AL; AD ITL lower than AL.
-    t1 = re.search(r"(\bad\b|always[- ]disagg\w*|disaggregat\w*)[^.\n]{0,100}(higher|larger|worse|greater|more|longer|adds?|pays?)[^.\n]{0,40}ttft", text)
+    t1 = re.search(r"(\bad\b|always[- ]disagg\w*|disaggregat\w*)[^.\n]{0,100}(higher|larger|worse|greater|more|longer|adds?|pays?|raises?|increases?)[^.\n]{0,40}ttft", text)
     t2 = re.search(r"ttft[^.\n]{0,100}(higher|larger|worse|greater|longer)[^.\n]{0,60}(\bad\b|disaggregat)", text)
     t3 = re.search(r"(\bal\b|always[- ]local|local)[^.\n]{0,80}(lower|better|smaller|shorter)[^.\n]{0,40}ttft", text)
-    i1 = re.search(r"(\bad\b|always[- ]disagg\w*|disaggregat\w*)[^.\n]{0,100}(lower|smaller|better|less|reduc)[^.\n]{0,40}itl", text)
+    i1 = re.search(r"(\bad\b|always[- ]disagg\w*|disaggregat\w*)[^.\n]{0,100}(lower|smaller|better|less|reduc|decreas)[^.\n]{0,40}itl", text)
     i2 = re.search(r"itl[^.\n]{0,100}(lower|smaller|better|reduc)[^.\n]{0,60}(\bad\b|disaggregat)", text)
     i3 = re.search(r"(\bal\b|always[- ]local)[^.\n]{0,80}(higher|worse|larger)[^.\n]{0,40}itl", text)
     res["K3_al_vs_ad"] = bool((t1 or t2 or t3) and (i1 or i2 or i3))
