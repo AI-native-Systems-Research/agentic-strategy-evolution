@@ -69,3 +69,8 @@ Times are local (EDT).
   writing into a stale rep0 dir after its proxy was killed; it is gone and the stale dirs were removed.
 - 20:09 tick: pilot 2 running (3 arms, iteration/session 1), no errors.
 - 20:14 tick: pilot 2 still in iteration 1, no errors.
+- 20:19 Pilot 2, L2 finished: O1 true. One session, $3.75, 10.5 min, declared done. Verified by hand: its
+  source change is the upstream fix in substance (remove the inline TotalOutputTokens++ in executeBatchStep, count
+  ProgressIndex - len(InputTokens) once at completion; 2 non-test lines), plus a 69-line regression test that fails
+  on the buggy code. Upstream hidden test, full suite, and all 8 hidden checks pass; 5/5 claims backed and
+  reproduced. Note: this bug may be too easy to separate the arms (a strong baseline solves it in one session).
