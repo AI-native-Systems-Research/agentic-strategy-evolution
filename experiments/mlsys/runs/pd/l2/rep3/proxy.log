@@ -1,0 +1,65 @@
+21:22:05 POST /v1/messages?beta=true model=claude-opus-4-6 status=400 bytes=296 t=1s attempt=1
+21:22:13 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=16501 t=8s attempt=1
+21:22:20 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=7370 t=6s attempt=1
+21:22:26 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=6953 t=7s attempt=1
+21:22:30 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=7094 t=4s attempt=1
+21:22:47 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=6491 t=17s attempt=1
+21:22:51 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=2631 t=4s attempt=1
+21:22:55 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=4242 t=4s attempt=1
+21:23:04 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=3511 t=9s attempt=1
+21:25:05 POST /v1/messages?beta=true model=claude-opus-4-6 attempt=1 EXC TimeoutError after 121s
+21:25:09 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=3923 t=4s attempt=2
+21:27:10 POST /v1/messages?beta=true model=claude-opus-4-6 attempt=1 EXC TimeoutError after 121s
+21:27:11 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=68602 t=1s attempt=2
+21:27:18 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=15743 t=7s attempt=1
+21:27:19 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=4666 t=8s attempt=1
+21:27:22 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=11339 t=5s attempt=1
+21:27:27 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=3091 t=6s attempt=1
+21:27:42 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=20249 t=20s attempt=1
+21:27:49 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=11016 t=7s attempt=1
+21:27:50 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=11773 t=22s attempt=1
+21:27:55 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=9256 t=5s attempt=1
+21:27:56 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=12711 t=6s attempt=1
+21:28:08 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=30015 t=13s attempt=1
+21:28:13 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=15662 t=17s attempt=1
+21:28:18 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=2360 t=10s attempt=1
+21:28:27 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=7388 t=10s attempt=1
+21:28:35 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=11862 t=8s attempt=1
+21:29:01 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=33021 t=25s attempt=1
+21:29:05 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=2494 t=4s attempt=1
+21:29:10 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=4901 t=6s attempt=1
+21:30:13 POST /v1/messages?beta=true model=claude-opus-4-6 attempt=1 EXC TimeoutError after 120s
+21:30:23 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=13909 t=9s attempt=2
+21:30:29 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=10330 t=7s attempt=1
+21:30:35 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=11412 t=6s attempt=1
+21:30:46 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=9204 t=10s attempt=1
+21:30:52 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=3789 t=6s attempt=1
+21:31:11 POST /v1/messages?beta=true model=claude-opus-4-6 attempt=1 EXC TimeoutError after 121s
+21:31:12 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=54443 t=1s attempt=2
+21:31:22 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=5383 t=10s attempt=1
+21:32:08 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=180876 t=77s attempt=1
+21:33:44 POST /v1/messages?beta=true model=claude-opus-4-6 attempt=1 EXC TimeoutError after 121s
+21:35:54 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=336069 t=131s attempt=2
+21:36:01 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=6654 t=7s attempt=1
+21:36:05 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=4074 t=4s attempt=1
+21:36:14 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=4231 t=7s attempt=1
+21:36:18 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=4642 t=4s attempt=1
+21:36:32 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=6216 t=5s attempt=1
+21:37:38 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=281839 t=66s attempt=1
+21:37:49 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=4663 t=11s attempt=1
+21:39:10 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=119533 t=75s attempt=1
+21:39:16 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=2365 t=5s attempt=1
+21:39:25 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=10063 t=10s attempt=1
+21:39:40 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=23989 t=14s attempt=1
+21:40:25 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=76756 t=44s attempt=1
+21:40:41 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=36239 t=16s attempt=1
+21:41:04 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=28794 t=22s attempt=1
+21:41:08 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=2223 t=5s attempt=1
+21:41:45 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=112437 t=36s attempt=1
+21:42:08 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=59499 t=23s attempt=1
+21:42:40 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=44802 t=32s attempt=1
+21:42:50 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=7555 t=10s attempt=1
+21:43:04 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=10962 t=14s attempt=1
+21:43:10 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=2495 t=7s attempt=1
+21:43:20 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=14077 t=10s attempt=1
+21:43:35 POST /v1/messages?beta=true model=claude-opus-4-6 status=200 bytes=22532 t=15s attempt=1
