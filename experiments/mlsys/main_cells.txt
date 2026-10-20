@@ -1,0 +1,25 @@
+# reps: dbg 1(pilot),2,3 ; pd 2,3,4 ; search 2,3,4 (rep numbers only label runs)
+pd nous 2
+pd l2 2
+pd nous_prompt 2
+search l2 2
+search nous_prompt 2
+search nous 2
+dbg nous_prompt 2
+dbg nous 2
+dbg l2 2
+pd l2 3
+pd nous_prompt 3
+pd nous 3
+search nous_prompt 3
+search nous 3
+search l2 3
+dbg nous 3
+dbg l2 3
+dbg nous_prompt 3
+pd nous_prompt 4
+pd nous 4
+pd l2 4
+search nous 4
+search l2 4
+search nous_prompt 4
