@@ -112,3 +112,4 @@ Times are local (EDT).
   depends on fitting W at moderate rates (as the paper does: W is a per-request work constant); a whole-range fit
   spreads the error and can hide the breakdown.
 - 20:56 tick: 5 runs live.
+- 21:01 search/l2/rep2 ($3.66, 1 session): HV 0.997 main, 0.997/0.997 held-out, within 186 evals and 20 s. T-facts: scheduler near-irrelevant and GPU trade-off stated; it claims block size has 'near-zero impact' (our sweep: block 32 is on 93.5% of the front) and does not state that small KV budgets dominate. Parser fix: T2 phrase list lacked 'near-zero/marginal/tiny/insignificant' (same meaning; applied to all arms). O1 = HV>=0.95 and T>=3.
