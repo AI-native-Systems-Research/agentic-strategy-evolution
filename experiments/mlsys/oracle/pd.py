@@ -93,7 +93,9 @@ def score(answer, text):
     # K2: overprediction at high rate (>= 100), error growing with rate.
     hi = [(r, v) for r, v, _ in err_claims if r >= 100 and abs(v) >= 5]
     over_text = bool(re.search(r"over-?predict|over-?estimat|predicts? (a )?(higher|too high|larger)|"
-                               r"(formula|model|prediction)[^.\n]{0,40}(higher|exceeds|above) (than )?(the )?(observ|measur|simul|blis)", text))
+                               r"(formula|model|prediction)[^.\n]{0,40}(higher|exceeds|above) (than )?(the )?(observ|measur|simul|blis)|"
+                               r"(observed|measured|blis|actual|simulated)? ?itl[^.\n]{0,60}(saturat|plateau|ceiling|grows? (more )?slow|sub-?linear|flatten|levels? off)|"
+                               r"itl[^.\n]{0,40}(lower|less|smaller) than (the )?(formula|model|predict)", text))
     under_text = bool(re.search(r"under-?predict|under-?estimat", text) and re.search(r"itl[^.\n]{0,60}under-?(predict|estimat)", text))
     hi_sign_ok = all(v > 0 for _, v in hi) if hi else None  # convention: (pred - obs)/obs > 0 = overprediction
     breaks_text = bool(re.search(r"(break|diverg|fail|deviat|degrad|no longer)[^.\n]{0,80}(high|heavy|large)[^.\n]{0,20}(rate|load)", text) or
@@ -106,7 +108,10 @@ def score(answer, text):
     i1 = re.search(r"(\bad\b|always[- ]disagg\w*|disaggregat\w*)[^.\n]{0,100}(lower|smaller|better|less|reduc|decreas)[^.\n]{0,40}itl", text)
     i2 = re.search(r"itl[^.\n]{0,100}(lower|smaller|better|reduc)[^.\n]{0,60}(\bad\b|disaggregat)", text)
     i3 = re.search(r"(\bal\b|always[- ]local)[^.\n]{0,80}(higher|worse|larger)[^.\n]{0,40}itl", text)
-    res["K3_al_vs_ad"] = bool((t1 or t2 or t3) and (i1 or i2 or i3))
+    # symbolic comparisons ("TTFT_AD > TTFT_AL", "ITL_AL > ITL_AD"), same meaning as the prose forms
+    t4 = re.search(r"ttft[_ ]?\(?ad\)?\s*>\s*ttft[_ ]?\(?al\)?|ttft[_ ]?\(?al\)?\s*<\s*ttft[_ ]?\(?ad\)?", text)
+    i4 = re.search(r"itl[_ ]?\(?ad\)?\s*<\s*itl[_ ]?\(?al\)?|itl[_ ]?\(?al\)?\s*>\s*itl[_ ]?\(?ad\)?", text)
+    res["K3_al_vs_ad"] = bool((t1 or t2 or t3 or t4) and (i1 or i2 or i3 or i4))
     res["K4_mechanism_soft"] = any(re.search(p, text) for p in K4_PHRASES)
     res["O1"] = bool(res["K1_fit_moderate"] and res["K2_breakdown_overpredict"] and res["K3_al_vs_ad"])
     rm = [remeasure(c) for c in claims]

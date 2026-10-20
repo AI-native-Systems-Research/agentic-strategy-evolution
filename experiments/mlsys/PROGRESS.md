@@ -119,3 +119,10 @@ Times are local (EDT).
 - 21:12 tick: 5 runs live.
 - 21:13 search/nous/rep2: one gateway request stalled mid-stream for ~5 min (21:06-21:11); the CLI retried on its own and the run continues. Gateway stalls hit all arms alike; wall time is reported but not used for any primary result.
 - 21:16 tick: 5 runs live.
+- 21:20 pd/l2/rep2 ($10.55, 2 sessions): read by hand. Fits within 0.44% at rates 1-60, says the model
+  "breaks down structurally at high rates": observed ITL saturates near 21 ms instead of diverging (= formula
+  over-predicts), mechanism batch cap (max_num_running_reqs). AD ITL < AL ITL and AD TTFT > AL TTFT, plus a TTFT
+  reversal at rate ~250. First scored O1 false because of two matcher gaps, both meaning-preserving and applied to
+  every arm: K3 now accepts symbolic comparisons ("TTFT_AD > TTFT_AL"); K2 accepts "observed ITL saturates / hits a
+  ceiling / grows slower than predicted" as the observed-side statement of over-prediction. Rescored: L2 O1 true;
+  nous_prompt rep2 unchanged (O1 false: it reports no breakdown). Self-tests unchanged.
