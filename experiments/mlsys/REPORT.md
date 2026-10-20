@@ -12,13 +12,14 @@ Nous did **not** beat the baselines on the primary outcome.
 |---|---|---|---|
 | Debugging (BLIS bug) | 3/3 correct, $3.40/run | 3/3, $4.99 | 3/3, $8.39 |
 | Verification (pd-disagg) | **2/3**, $10.43 | 1/3, $4.67 | 1/3, $14.66 |
-| Optimization (blis-search) | 0/3, $3.26 | 0/3, $5.90 | 0/__NOUS_SEARCH_N__, $__NOUS_SEARCH_COST__ |
+| Optimization (blis-search) | 0/3, $3.26 | 0/3, $5.90 | 0/3, $30.69 |
 
 O1 = correct answer, the pre-registered primary outcome. Costs are means over that arm's runs on that task.
 
 - On correctness, the three arms are statistically indistinguishable: 3 runs per cell, and the differences are 0
   or 1 run. Nous was never ahead on O1.
-- Nous cost the most on every task: 2-2.5x L2 on debugging, 1.4x on verification, ~7x on optimization.
+- Nous cost the most on every task: 2.5x L2 on debugging, 1.4x on verification, 9.4x on optimization.
+  Total spend for all 27 runs: $259 (L2 $51, Nous-prompt $47, Nous $161).
 - Where Nous did differ, it was on secondary, process-level checks (below), not on getting the answer right.
 
 ![O1](figures/fig_o1.png)
@@ -60,7 +61,10 @@ All arms: same task text and output contract, same model family and CLI (2.1.301
   its own schema validator rejecting the executor's `findings.json`; Nous rep4 lost iteration 1 to a Claude Agent SDK
   1 MB message-buffer overflow when the designer read 10 PDF pages in one call.
 - **Optimization**: every arm's search script reached hypervolume ~0.995-0.997 on the main and held-out configs
-  (except L2 rep4: 0.916). The O1 failures are all on the structure facts: no arm stated that small KV budgets
+  (except L2 rep4: 0.916). Nous rep4's script also reached 0.995-0.9999, but used 204 evaluations: it runs 4
+  "probe" evaluations it explicitly excludes from its own budget count. The oracle counts every real `blis run`,
+  so that run exceeds the 200-evaluation limit and scores 0 on hypervolume, as pre-registered. The O1 failures
+  are mostly on the structure facts: no arm stated that small KV budgets
   suffice (T4), and most called block size "secondary" although block 32 is on 93.5% of the true front.
 - **Stopping**: L2 and Nous-prompt almost always stopped after 1 session (declared done). Nous used 1-4 iterations;
   on debugging its gate said "continue" once after the bug was already fixed.
@@ -84,7 +88,8 @@ All arms: same task text and output contract, same model family and CLI (2.1.301
   applied to every arm, every run was rescored after each fix, and each fix is logged in `PROGRESS.md`. The
   pre-registered criteria themselves were not changed.
   - Two fixes changed O1: L2 pd rep2 (false to true) and L2 pd rep4 (false to true).
-  - No fix changed a Nous O1.
+  - Nous pd rep4 and nous_prompt pd rep4 were scored after the fixes and passed.
+  - No fix ever changed a Nous O1 from true to false or the reverse.
 
 ## Caveats
 
@@ -95,6 +100,8 @@ All arms: same task text and output contract, same model family and CLI (2.1.301
   Nous; it may explain part of the gap.
 - Nous needs `max_buffer_size` raised in the SDK options, and its schema validation rejected otherwise-valid
   iterations. Both are Nous `main` robustness issues; they cost Nous iterations on verification.
+- The 200-evaluation limit is strict: Nous search rep4 is scored 0 on hypervolume for 204 evaluations. Its
+  structure facts were 1/4, so its O1 would be false regardless.
 
 ## What this means for the paper
 

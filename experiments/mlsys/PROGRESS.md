@@ -283,3 +283,9 @@ Times are local (EDT).
 - 10-20 04:12 tick: search/nous/rep4 executing iteration 5 of 5.
 - 10-20 04:17 tick: search/nous/rep4 executing iteration 5 of 5.
 - 10-20 04:22 tick: search/nous/rep4 executing iteration 5 of 5.
+- 10-20 04:26 search/nous/rep4 ($45.53, 5 iterations, hit max): script gets HV 0.995-0.9999, but uses 204
+  evaluations (4 "TP probe" runs it excludes from its own count); the wrapper counts every real blis run, so it fails
+  the pre-registered <=200 limit and scores HV 0. T 1/4. O1 false either way.
+- ALL 27 RUNS SCORED. Final O1: dbg L2 3/3, NP 3/3, Nous 3/3; pd L2 2/3, NP 1/3, Nous 1/3; search 0/3 each.
+  Spend $259.22 (L2 $51.29, NP $46.68, Nous $161.26). REPORT.md + figures/ written. Queue stopped, caffeinate
+  stopped, run data kept at ~/mlsys_runs.
