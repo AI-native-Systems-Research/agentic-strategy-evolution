@@ -1,0 +1,41 @@
+{
+  "reference_pareto_size": 26,
+  "search_pareto_size": 38,
+  "coverage_seed42": "100.0%",
+  "coverage_seed123": "100.0%",
+  "dose_response": {
+    "50": {
+      "budget": 50,
+      "pareto_configs": 17,
+      "covered": 15,
+      "total_ref": 26,
+      "coverage_pct": 57.7
+    },
+    "100": {
+      "budget": 100,
+      "pareto_configs": 34,
+      "covered": 26,
+      "total_ref": 26,
+      "coverage_pct": 100.0
+    },
+    "150": {
+      "budget": 150,
+      "pareto_configs": 38,
+      "covered": 26,
+      "total_ref": 26,
+      "coverage_pct": 100.0
+    },
+    "200": {
+      "budget": 200,
+      "pareto_configs": 38,
+      "covered": 26,
+      "total_ref": 26,
+      "coverage_pct": 100.0
+    }
+  },
+  "best_rps": 32.00923914678733,
+  "best_ttft": 27.54302,
+  "evals_for_100pct_coverage": 100,
+  "total_space_size": 1800,
+  "search_efficiency": "100 evals = 5.6% of space for 100% coverage"
+}

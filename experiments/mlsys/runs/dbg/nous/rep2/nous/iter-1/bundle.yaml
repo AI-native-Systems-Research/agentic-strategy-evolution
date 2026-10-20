@@ -1,0 +1,52 @@
+metadata:
+  iteration: 1
+  family: "preemption-metrics-double-count"
+  research_question: "When KV cache is small enough that requests get preempted, total_output_tokens and tokens_per_sec in BLIS metrics are inflated. Is this a real bug, what is the root cause, and what is the correct fix?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (output token counting on preemption), treatment vs control"
+
+arms:
+  - type: h-main
+    prediction: "After applying the fix (subtracting previously-counted output tokens at preemption time, resetting TTFTSet and ITL), total_output_tokens with tight KV cache (600 blocks, 265 preemptions) will equal total_output_tokens with large KV cache (60000 blocks, 0 preemptions), both producing 105082 for the same 200-request workload."
+    mechanism: "In sim/batch_formation.go:preemptForTokens, a preempted request has ProgressIndex reset to 0 (line 232) and ComputedTokens deleted (line 234). On re-schedule, the request re-enters prefill and decode from scratch. sim/simulator.go:647 increments TotalOutputTokens++ on every decode step. Since the counter was already incremented during the first scheduling round, the same output tokens are counted again. The fix stores OutputTokensGenerated in PreemptedRequest before the reset, and the simulator subtracts it when processing preemptions."
+    diagnostic: "If the prediction is wrong (tokens still differ after fix), check: (1) whether OutputTokensGenerated is computed correctly relative to ProgressIndex and InputTokens length, (2) whether there are other paths that count output tokens besides sim/simulator.go:647, (3) whether preemption happens in a code path not handled by preemptForTokens."
+    code_changes:
+      - file: "sim/batch_formation.go"
+        intent: "Add OutputTokensGenerated int64 field to PreemptedRequest struct. In preemptForTokens, before resetting ProgressIndex to 0, compute output tokens generated as max(0, ProgressIndex - len(InputTokens)) and store it in the PreemptedRequest."
+        rationale: "Preserves the count of already-counted output tokens before it is lost by the ProgressIndex reset, enabling the simulator to correct the double-counting."
+      - file: "sim/simulator.go"
+        intent: "In scheduleBatch's preemption loop, subtract p.OutputTokensGenerated from TotalOutputTokens. Also reset p.Request.TTFTSet to false and p.Request.ITL to nil to prevent TTFTSum double-counting and ITL entry duplication."
+        rationale: "Corrects the global metrics counters that were inflated by tokens counted in a prior scheduling round for the same request."
+      - file: "sim/simulator_test.go"
+        intent: "Add regression test TestSimulator_PreemptionDoesNotInflateTotalOutputTokens that runs the same workload with large KV (no preemptions) and tight KV (many preemptions) and asserts TotalOutputTokens is identical."
+        rationale: "Prevents regression of this double-counting bug."
+
+  - type: h-control-negative
+    prediction: "With large KV cache (60000 blocks), preemption_count is 0 and total_output_tokens equals 105082. Since there are no preemptions, the fix has no effect and the output is identical to the unfixed code."
+    mechanism: "When no preemptions occur, the preemption loop in scheduleBatch never executes, so the subtraction code path is never reached. The baseline behavior is unchanged."
+    diagnostic: "If this fails, the fix is incorrectly subtracting tokens even when no preemptions occur. Check whether OutputTokensGenerated can be non-zero without preemption."
+
+# Arm selection rationale: h-main tests the fix directly (before/after on the buggy regime).
+# h-control-negative confirms the fix doesn't affect the no-preemption regime.
+# No ablation or dose-response needed — this is a binary bug fix (double-counting present vs absent).
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    rate: 20
+    num_requests: 200
+    seed: 42
+    total_kv_blocks_tight: 600
+    total_kv_blocks_large: 60000
+  unlocked_parameters_audit:
+    - name: "block_size_tokens"
+      default_value: 16
+      justification: "Default block size; not relevant to the double-counting mechanism which operates at the token level."
+    - name: "max_running_reqs"
+      default_value: 256
+      justification: "Default batch size; preemption is triggered by KV pressure not batch size limits."
+    - name: "max_scheduled_tokens"
+      default_value: 2048
+      justification: "Default token budget; does not affect the double-counting mechanism."

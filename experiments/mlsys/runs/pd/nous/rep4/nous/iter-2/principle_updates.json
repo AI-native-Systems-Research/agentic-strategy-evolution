@@ -1,0 +1,74 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Always-Disaggregate (AD) produces strictly lower mean ITL than Always-Local (AL) at all tested arrival rates (5-150 req/s), with the ITL advantage growing with load: from 0.06ms at low rates to 1.69ms at high rates.",
+    "confidence": "high",
+    "regime": "Fixed workload: 4-instance cluster (2 prefill, 2 decode), 512 input tokens, 128 output tokens, qwen/qwen3-14b, rates 5-150 req/s, 300 requests per run.",
+    "evidence": [
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "AD routes all requests through the prefill pool first, then to the decode pool. This separates prefill and decode workloads across pools, reducing decode-pool utilization (rho_D = lambda*W_D < lambda*W_tot). Lower decode utilization means smaller decode batches, shorter per-iteration time T_iter^D = alpha/(1-rho_D), and thus lower ITL. Under AL, the decode pool handles both prefill and decode phases, creating higher utilization and larger batches.",
+    "applicability_bounds": "Holds when decode-pool utilization under AD is lower than under AL. Will break if prefill-pool becomes a bottleneck (high rho_P causing prefill backlog that delays KV transfer). Not tested under heterogeneous token lengths or prefix-threshold decider.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Always-Disaggregate (AD) produces strictly higher mean TTFT than Always-Local (AL) at all tested rates, with the TTFT penalty decreasing with load: from ~9.6ms at rate=5 to ~4.4ms at rate=120.",
+    "confidence": "high",
+    "regime": "Same as RP-1. KV transfer bandwidth=25 GB/s, base latency=0.05ms, fixed 512-token prompts producing ~3.4ms KV transfer time.",
+    "evidence": [
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "AD TTFT includes the prefill pipeline overhead: prefill queueing + prefill iteration + KV transfer (~3.4ms for 512-token prompts at 25 GB/s). Under AL, prefill happens on the same instance as decode, without a separate pipeline delay. AL TTFT grows with rate because the decode pool accumulates mixed load. AD TTFT stays nearly constant (~45-50ms) as the prefill pool is only lightly loaded (prefill work only).",
+    "applicability_bounds": "TTFT cost bounded by KV transfer overhead which is fixed for fixed prompt length. Will increase if prefill pool becomes loaded (very high rates or large prompt tokens). The decreasing cost pattern relies on AL TTFT growing faster than AD TTFT with rate.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "In a finite-horizon simulation (300 requests), ITL is monotone increasing with arrival rate for both AL and AD modes, but the rate of increase decelerates at high rates (>=60 req/s) due to transient effects \u2014 the system never reaches the steady-state batch size predicted by the paper's 1/(1-rho) formula.",
+    "confidence": "high",
+    "regime": "Same as RP-1. At rate=150, the simulation runs for ~2s wall time while per-request E2E latency is ~1.6s, so the system is in a ramp-up transient for the majority of requests.",
+    "evidence": [
+      "iteration-2-h-dose-response"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The paper's 1/(1-rho) formula assumes steady-state: the mean batch size stabilizes at B = lambda*W/(n_c+o). In a finite-horizon experiment, the batch builds up over the first N requests and the mean over all requests includes the low-batch ramp-up phase. At high rates (rate >= 60), the experiment duration (300/rate ~= 2-5s) is comparable to the per-request service time (~1.6s), so the ramp-up transient dominates the mean. At low rates (rate <= 20), experiment duration (15-60s) >> service time, so steady state is well-approximated.",
+    "applicability_bounds": "Applies when experiment duration / per-request service time < 10. For 300 requests with ~1.6s E2E, this corresponds to rates > ~20 req/s. For steady-state validation of the paper's formula, use larger request counts (e.g., 3000 requests) at high rates.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-4",
+    "statement": "The AD TTFT cost (relative to AL) is inversely correlated with arrival rate: the tradeoff improves at higher loads, making AD more attractive precisely when ITL pressure is highest.",
+    "confidence": "medium",
+    "regime": "Same as RP-1.",
+    "evidence": [
+      "iteration-2-h-tradeoff"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "AL TTFT increases with rate because the decode pool must absorb mixed prefill+decode load. AD TTFT is nearly constant because the prefill pool only does prefill work. At high rates, AL TTFT approaches AD TTFT, shrinking the cost gap. The net effect: at rate=5 AD costs +9.6ms TTFT for +0.06ms ITL improvement; at rate=150 AD costs +4.6ms TTFT for +1.69ms ITL improvement \u2014 a much better tradeoff.",
+    "applicability_bounds": "The 'improving tradeoff' pattern holds when prefill-pool remains lightly loaded. Will reverse if prefill becomes a bottleneck at very high rates or large token counts.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

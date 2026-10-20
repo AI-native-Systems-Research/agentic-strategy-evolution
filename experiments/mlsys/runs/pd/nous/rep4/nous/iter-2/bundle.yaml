@@ -1,0 +1,140 @@
+metadata:
+  iteration: 2
+  family: "pd-latency-model-validation"
+  research_question: "Do the paper's ITL and TTFT predictions for AL and AD hold inside BLIS, over what range of arrival rates, and where and why do they break down?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — single mechanism (P/D disaggregation latency) + dose-response on arrival rate"
+
+arm_selection_rationale: >
+  h-main tests the paper's two directional predictions (ITL_AD < ITL_AL, TTFT_AD > TTFT_AL)
+  across all rates and seeds — this is the core falsifiable claim. h-dose-response tests
+  whether ITL follows monotone_increasing shape with rate, as the paper's 1/(1-rho) model
+  predicts. h-tradeoff quantifies the TTFT cost of AD's ITL improvement. All three arms
+  share the same runs (9 rates × 2 modes × 3 seeds = 54 runs total).
+
+arms:
+  - type: h-main
+    prediction: >
+      Always-Disaggregate (AD, pd-decider=always) will produce consistently lower mean ITL
+      and consistently higher mean TTFT than Always-Local (AL, pd-decider=never) across all
+      tested rates (5-150 req/s) and seeds (42,43,44). The ITL gap (AL minus AD) will be
+      positive at every rate-seed combination, and the TTFT gap (AD minus AL) will be positive
+      at every rate-seed combination.
+    mechanism: >
+      The paper (Section 3.5, Table 1) predicts that disaggregation reduces decode-server
+      utilization from rho_D = lambda*W_tot to rho_D = lambda*W_D, where W_D < W_tot because
+      W_tot includes prefill work W_P. Lower utilization means smaller batches on the decode
+      server, reducing per-iteration time T_iter^D = alpha/(1-rho_D), which directly determines
+      ITL (sim/simulator.go:772: ITL = currStepAdvance + OutputTokenProcessingTime). TTFT
+      increases because disaggregated requests traverse the prefill pipeline (prefill queueing
+      + prefill iteration + KV transfer ~3.4ms) before arriving at the decode server
+      (sim/simulator.go:781-784).
+    diagnostic: >
+      If ITL_AD >= ITL_AL at some rate, check whether prefill-pool queueing is causing
+      decode-pool starvation (delayed KV transfers backing up decode admissions). Examine
+      per-instance metrics to see if decode instances are idle waiting for prefill completions.
+      If TTFT_AD <= TTFT_AL at some rate, check whether the decode backlog at high rates
+      dominates the prefill pipeline overhead.
+
+  - type: h-dose-response
+    knob: "rate"
+    values: [5, 10, 20, 40, 60, 80, 100, 120, 150]
+    metric: "itl_mean_ms"
+    expected_shape: "monotone_increasing"
+    prediction: >
+      Mean ITL will increase monotonically with arrival rate for both AL and AD modes,
+      consistent with the paper's T_iter = alpha/(1-rho) model where rho = lambda*W grows
+      linearly with rate. The rate of ITL increase may decelerate at higher rates due to
+      transient effects (300 requests at rate=150 runs for only 2s, not reaching steady state).
+    mechanism: >
+      Higher arrival rate increases the steady-state batch size B via Little's Law
+      (B = lambda*(n_c+o)*T_iter). Larger batches increase StepTime through the batch-size
+      term (Beta[5]*batchSize in trained_physics_model.go:326) and the decode KV bandwidth
+      term (tDcKv scales with sumCtx, which grows with batch size as more requests occupy
+      longer context lengths). Each additional request adds marginal cost delta = W_tot/(n_c+o)
+      per iteration (paper Eq. 8), creating the positive feedback loop that produces the
+      1/(1-rho) form.
+    diagnostic: >
+      If ITL is not monotone increasing, check whether max_model_len or KV block limits cap
+      the batch size at high rates, or whether preemptions cause some high-rate requests to
+      have artificially low ITL (short lifetime before preemption).
+
+  - type: h-tradeoff
+    metric: "itl_mean_ms"
+    secondary_metric: "ttft_mean_ms"
+    secondary_budget: 15.0
+    secondary_direction: "increase"
+    prediction: >
+      AD will reduce mean ITL relative to AL (primary improvement), while increasing mean
+      TTFT by no more than 15ms (secondary cost). The TTFT increase is bounded because the
+      prefill pipeline overhead is dominated by the fixed KV transfer cost (~3.4ms) and
+      prefill-server iteration time, which remains stable as the prefill pool operates at
+      low utilization (only doing prefill, no decode work).
+    mechanism: >
+      The KV transfer adds a fixed ~3.4ms (observed in probes: KV Transfer Duration mean=3406us).
+      The prefill server iteration time T_iter^P = alpha/(1-rho_P) where rho_P = lambda*W_P.
+      Since W_P < W_tot, the prefill server utilization is lower than the decode server would
+      be under AL, keeping T_iter^P small. The TTFT difference (Eq. 20) is
+      Q_P + T_iter^P + c + [W_P(n_c^P) - W_P(n_c^D)], which is bounded by the prefill
+      pipeline components.
+    diagnostic: >
+      If TTFT increase exceeds 15ms, check whether prefill-pool queueing (Q_P) grows
+      significantly at high rates. Examine prefill instance utilization and backlog.
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  fanout_template: >
+    ./blis run
+    --model qwen/qwen3-14b
+    --num-instances 4 --prefill-instances 2 --decode-instances 2
+    --num-requests 300
+    --prompt-tokens 512 --prompt-tokens-stdev 0
+    --output-tokens 128 --output-tokens-stdev 0
+    --routing-policy least-loaded
+    --pd-decider {pd_decider} --rate {rate} --seed {seed}
+    --metrics-path {output_path}
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    num_instances: 4
+    prefill_instances: 2
+    decode_instances: 2
+    num_requests: 300
+    prompt_tokens: 512
+    prompt_tokens_stdev: 0
+    output_tokens: 128
+    output_tokens_stdev: 0
+    routing_policy: "least-loaded"
+    pd_transfer_bandwidth_gbps: 25.0
+    pd_transfer_base_latency_ms: 0.05
+
+  unlocked_parameters_audit:
+    - name: "total_kv_blocks"
+      default_value: 1000000
+      justification: "Default is extremely large (1M blocks); KV cache is never a bottleneck at 300 requests with 640 tokens each."
+    - name: "max_model_len"
+      default_value: 0
+      justification: "Default 0 means unlimited; with fixed 512+128=640 tokens, no length constraint applies."
+    - name: "scheduler"
+      default_value: "fcfs"
+      justification: "FCFS is the standard scheduler; the paper's model assumes FCFS-equivalent continuous batching."
+    - name: "latency_model"
+      default_value: "trained-physics"
+      justification: "Trained-physics is the default and most realistic model; it implements the roofline basis functions the paper's alpha/beta/gamma map to."
+    - name: "snapshot_refresh_interval"
+      default_value: 50000
+      justification: "50ms refresh interval for routing signals; affects routing decision freshness but not the per-instance latency model being tested."
+    - name: "pd_transfer_contention"
+      default_value: false
+      justification: "Contention model disabled by default; at our rates the concurrent KV transfers are few enough that fair-share contention is negligible."
+    - name: "timeout"
+      default_value: 300
+      justification: "300s timeout; all requests complete well within this at all tested rates (max E2E ~2s)."
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      AL_per_run: 2
+      AD_per_run: 3
+    observation_method: "Timed smoke tests with 50-100 requests at various rates; each run completes in <3s wall time."

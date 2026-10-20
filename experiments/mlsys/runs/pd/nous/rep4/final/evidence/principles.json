@@ -1,0 +1,202 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "Always-Disaggregate (AD) produces strictly lower mean ITL than Always-Local (AL) at all tested arrival rates (5-150 req/s), with the ITL advantage growing with load: from 0.06ms at low rates to 1.69ms at high rates.",
+      "confidence": "high",
+      "regime": "Fixed workload: 4-instance cluster (2 prefill, 2 decode), 512 input tokens, 128 output tokens, qwen/qwen3-14b, rates 5-150 req/s, 300 requests per run.",
+      "evidence": [
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "AD routes all requests through the prefill pool first, then to the decode pool. This separates prefill and decode workloads across pools, reducing decode-pool utilization (rho_D = lambda*W_D < lambda*W_tot). Lower decode utilization means smaller decode batches, shorter per-iteration time T_iter^D = alpha/(1-rho_D), and thus lower ITL. Under AL, the decode pool handles both prefill and decode phases, creating higher utilization and larger batches.",
+      "applicability_bounds": "Holds when decode-pool utilization under AD is lower than under AL. Will break if prefill-pool becomes a bottleneck (high rho_P causing prefill backlog that delays KV transfer). Not tested under heterogeneous token lengths or prefix-threshold decider.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Always-Disaggregate (AD) produces strictly higher mean TTFT than Always-Local (AL) at all tested rates, with the TTFT penalty decreasing with load: from ~9.6ms at rate=5 to ~4.4ms at rate=120.",
+      "confidence": "high",
+      "regime": "Same as RP-1. KV transfer bandwidth=25 GB/s, base latency=0.05ms, fixed 512-token prompts producing ~3.4ms KV transfer time.",
+      "evidence": [
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "AD TTFT includes the prefill pipeline overhead: prefill queueing + prefill iteration + KV transfer (~3.4ms for 512-token prompts at 25 GB/s). Under AL, prefill happens on the same instance as decode, without a separate pipeline delay. AL TTFT grows with rate because the decode pool accumulates mixed load. AD TTFT stays nearly constant (~45-50ms) as the prefill pool is only lightly loaded (prefill work only).",
+      "applicability_bounds": "TTFT cost bounded by KV transfer overhead which is fixed for fixed prompt length. Will increase if prefill pool becomes loaded (very high rates or large prompt tokens). The decreasing cost pattern relies on AL TTFT growing faster than AD TTFT with rate.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "In a finite-horizon simulation (300 requests), ITL is monotone increasing with arrival rate for both AL and AD modes, but the rate of increase decelerates at high rates (>=60 req/s) due to transient effects \u2014 the system never reaches the steady-state batch size predicted by the paper's 1/(1-rho) formula.",
+      "confidence": "high",
+      "regime": "Same as RP-1. At rate=150, the simulation runs for ~2s wall time while per-request E2E latency is ~1.6s, so the system is in a ramp-up transient for the majority of requests.",
+      "evidence": [
+        "iteration-2-h-dose-response"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "The paper's 1/(1-rho) formula assumes steady-state: the mean batch size stabilizes at B = lambda*W/(n_c+o). In a finite-horizon experiment, the batch builds up over the first N requests and the mean over all requests includes the low-batch ramp-up phase. At high rates (rate >= 60), the experiment duration (300/rate ~= 2-5s) is comparable to the per-request service time (~1.6s), so the ramp-up transient dominates the mean. At low rates (rate <= 20), experiment duration (15-60s) >> service time, so steady state is well-approximated.",
+      "applicability_bounds": "Applies when experiment duration / per-request service time < 10. For 300 requests with ~1.6s E2E, this corresponds to rates > ~20 req/s. For steady-state validation of the paper's formula, use larger request counts (e.g., 3000 requests) at high rates.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "The AD TTFT cost (relative to AL) is inversely correlated with arrival rate: the tradeoff improves at higher loads, making AD more attractive precisely when ITL pressure is highest.",
+      "confidence": "medium",
+      "regime": "Same as RP-1.",
+      "evidence": [
+        "iteration-2-h-tradeoff"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "AL TTFT increases with rate because the decode pool must absorb mixed prefill+decode load. AD TTFT is nearly constant because the prefill pool only does prefill work. At high rates, AL TTFT approaches AD TTFT, shrinking the cost gap. The net effect: at rate=5 AD costs +9.6ms TTFT for +0.06ms ITL improvement; at rate=150 AD costs +4.6ms TTFT for +1.69ms ITL improvement \u2014 a much better tradeoff.",
+      "applicability_bounds": "The 'improving tradeoff' pattern holds when prefill-pool remains lightly loaded. Will reverse if prefill becomes a bottleneck at very high rates or large token counts.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "The paper's ITL = alpha/(1-rho) formula achieves MAPE < 0.1% at low rates (5-20 req/s) in BLIS finite-horizon simulations (300 requests), confirming quantitative accuracy in the steady-state regime.",
+      "confidence": "high",
+      "regime": "300-request finite-horizon simulation at rates 5-20 req/s; simulation duration >> service time (duration/service_time >= 9)",
+      "evidence": [
+        "iteration-3-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "At low rates, the 300-request simulation duration (60s at rate=5, 15s at rate=20) is long enough for the batch to reach approximate steady-state. The positive feedback loop (larger batch -> slower iterations -> even larger batch) has time to fully engage, and the remaining simulation time is dominated by near-steady-state behavior. The formula's two free parameters (alpha, w) can be calibrated from any two low-rate observations.",
+      "applicability_bounds": "Applies when simulation duration / per-request service time >= ~9. Breaks down when this ratio < ~2 (rates >= 100 req/s in the 300-request setup). Formula is structurally correct; breakdown is purely a finite-horizon effect.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "A simple linear fit (ITL = a + b*rate) achieves R\u00b2 > 0.975 across rates 5-150 req/s for both AL and AD modes in 300-request finite-horizon BLIS simulations, outperforming the best-fit 1/(1-rho) formula (R\u00b2 < 0.95).",
+      "confidence": "high",
+      "regime": "300-request finite-horizon simulations; rates 5-150 req/s; 4-instance cluster with 2 prefill, 2 decode; fixed token lengths (512+128=640 tokens)",
+      "evidence": [
+        "iteration-3-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "In the finite-horizon regime, the mean batch size grows approximately linearly with rate (batch never reaches the 1/(1-rho) steady-state size), producing an approximately linear ITL-vs-rate relationship. The paper's formula is convex (accelerating growth), but the observed data is concave (decelerating growth) because the transient ramp-up limits how large the batch grows before all 300 requests complete.",
+      "applicability_bounds": "Holds for 300-request simulations at rates 5-150. Expected to fail for very long simulations (>>1000 requests at high rates) where steady-state is reached. The linear approximation is an artifact of the finite-horizon regime, not a correction to the paper's formula.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "The formula overprediction percentage (calibrated 1/(1-rho) vs observed ITL) is strictly monotone increasing with arrival rate for rates >= 20 req/s, reaching 108% for AL and 50% for AD at rate=150 req/s.",
+      "confidence": "high",
+      "regime": "Low-rate calibration (rates 5, 10 as calibration points); extrapolation to rates 20-150; 300-request simulation",
+      "evidence": [
+        "iteration-3-h-dose-response"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "As rate increases, the ratio (experiment duration / service time) decreases monotonically, meaning the fraction of simulation time spent in transient (non-steady-state) behavior increases monotonically. The formula assumes steady-state batch size, so its overprediction grows monotonically. AL overpredicts more than AD because w_AL > w_AD (0.00471 vs 0.00369), making the formula's denominator (1-rate*w) smaller for AL, amplifying the convexity mismatch.",
+      "applicability_bounds": "Holds for two-point calibration at (5,10) with extrapolation to higher rates. Would not apply if calibrating at higher rates.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-8",
+      "statement": "The two-point calibrated formula parameters confirm w_AL > w_AD (0.00471 vs 0.00369), consistent with the paper's prediction that Always-Local mode incurs more per-request processing work than Always-Disaggregate decode-only mode.",
+      "confidence": "high",
+      "regime": "4-instance cluster (2 prefill, 2 decode); fixed 512+128 token lengths; rates 5-150 req/s",
+      "evidence": [
+        "iteration-3-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "In AL mode, each decode instance handles both prefill and decode phases for each request. In AD mode, prefill instances handle the compute-intensive prefill phase and decode instances handle only the decode phase (pure batch decode at alpha_D < alpha_total). The reduced per-instance work in AD mode means each decode token takes less time (smaller effective alpha_D), so the formula parameter w_AD (which captures the time each request occupies the system per token) is smaller than w_AL.",
+      "applicability_bounds": "Quantitative values (0.00471 vs 0.00369) are specific to qwen3-14b, 4-instance cluster, 512+128 tokens. The directional inequality (w_AL > w_AD) should hold generally whenever AL processing is compute-heavier than AD decode-only processing.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-9",
+      "statement": "The paper's ITL formula 1/(1-w*lambda) is structurally mismatched with BLIS's trained-physics latency model. The formula is convex (accelerating growth) but BLIS produces concave (decelerating) ITL growth with rate, yielding R\u00b2=0.919 (AL) and R\u00b2=0.947 (AD) vs linear R\u00b2=0.976 (AL) and R\u00b2=0.985 (AD) across rates 5-150 req/s.",
+      "confidence": "high",
+      "regime": "BLIS trained-physics latency model, qwen/qwen3-14b, 4-instance cluster (2 prefill, 2 decode), 300 requests, prompt=512 fixed, decode=128 fixed",
+      "evidence": [
+        "iteration-4-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "BLIS's StepTime() (sim/latency/trained_physics_model.go:238) computes decode KV bandwidth as proportional to sumCtx (sum of context lengths across batch), and uses sub-linear MoE expert scaling nEff=min(N,max(k,B*k)) at line 248. These nonlinear terms make per-request ITL grow sub-linearly with batch size, while the paper assumes linear W (ITL proportional to batch size). This produces concave ITL vs rate curves that the convex 1/(1-rho) formula cannot capture.",
+      "applicability_bounds": "Applies to BLIS's trained-physics model. May differ under --latency-model roofline. Does not invalidate the monotone-increasing directional trend of ITL with rate (confirmed by RP-1); only concerns the functional form.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-10",
+      "statement": "Removing finite-horizon transients (Q2-Q3 quartile restriction) WORSENS the formula fit: R\u00b2_full - R\u00b2_Q2Q3 = 0.044 (AL) and 0.023 (AD). This proves the formula breakdown is caused by structural latency model mismatch, not by transient ramp-up/drain effects.",
+      "confidence": "high",
+      "regime": "Same as RP-9. Quartile boundaries: Q1=requests[0:75], Q2=[75:150], Q3=[150:225], Q4=[225:300], sorted by arrival time.",
+      "evidence": [
+        "iteration-4-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "Q2-Q3 restriction removes the ramp-up (Q1: low ITL) and drain (Q4: low ITL) phases. At high rates, Q2-Q3 means are 3-5% higher than full-run means (AL rate=80: +4.72%, rate=100: +4.11%). This raises high-rate data points without affecting low-rate data points, making the aggregate curve MORE concave \u2014 amplifying the mismatch with the convex formula. At low rates, Q2-Q3 \u2248 full-run (diff < 0.1%), confirming the transient effect only manifests at moderate-to-high rates.",
+      "applicability_bounds": "Holds for any formula with a convex (accelerating) functional form when the underlying data is concave. Linear formula R\u00b2 also decreases with Q2-Q3 (0.976\u21920.956 for AL), but by a smaller margin, because a linear fit is more tolerant of shape changes.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-11",
+      "statement": "The ITL intra-run spread (max quartile mean - min quartile mean) / overall mean follows an inverted-U pattern with arrival rate, peaking at rate=80 (AL: 12.15%) and rate=100 (AD: 10.47%), and declining at both lower and higher rates.",
+      "confidence": "high",
+      "regime": "Same as RP-9. Rates 5-150 req/s, confirmed across both P/D modes.",
+      "evidence": [
+        "iteration-4-h-dose-response"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "At low rates, the system reaches near-steady-state quickly (service_time << 1/rate), so quartile means are nearly uniform. At moderate-high rates (80-100), the ramp-up batch-building and drain batch-shrinking phases create maximal contrast with the quasi-steady-state middle. At very high rates (120-150), even transient phases have substantial batching (arrivals are so fast that batch never fully drains), compressing the spread. AL and AD peak at different rates (80 vs 100) because AD's dedicated decode instances have lower per-instance arrival rate, shifting saturation to higher total rates.",
+      "applicability_bounds": "Specific to the inverted-U shape at these parameter settings (300 requests, fixed token lengths). With longer runs (e.g., 3000 requests), the transient fraction shrinks and the peak spread would decrease. With variable token lengths, the pattern would be more complex.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

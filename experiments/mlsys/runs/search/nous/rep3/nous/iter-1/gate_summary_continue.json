@@ -1,0 +1,10 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 fully confirmed both hypotheses: the two-phase adaptive search finds a complete Pareto front (62\u201380 non-dominated configs across all 8 GPU tiers) in just 200 evaluations (~18 seconds wall time), and KV block capacity shows a clean saturating threshold effect on TTFT p99. The configuration space has surprisingly low effective dimensionality \u2014 GPU count dominates throughput, while KV blocks and max-running-reqs each have simple binary threshold behavior.",
+  "key_points": [
+    "Search algorithm validated: 200 evaluations (11.1% of 1800 configs) found 62\u201380 Pareto-optimal configurations covering all GPU tiers (1\u20138 GPUs), far exceeding the predicted minimum of 20. Best config: tp=8, i=1 at 32.0 rps with 27.5ms TTFT p99.",
+    "KV block dose-response confirmed exactly: TTFT p99 drops from 9,252ms \u2192 4,776ms \u2192 2,682ms \u2192 39ms as blocks increase from 2,000 to 5,000, then plateaus perfectly at 39ms through 10,000 blocks \u2014 the threshold for zero preemptions falls between 4,000\u20135,000 blocks at tp=2, i=2, rate=100.",
+    "Still unknown: how the KV block threshold and Pareto front structure shift at different request rates (e.g., rate=50 or rate=200). Next iteration should test search.py robustness across rates and explore whether the preemption threshold can be predicted analytically from workload parameters (rate \u00d7 mean request length).",
+    "recommendation: continue"
+  ]
+}

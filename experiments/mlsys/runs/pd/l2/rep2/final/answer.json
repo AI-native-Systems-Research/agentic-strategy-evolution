@@ -1,0 +1,182 @@
+{
+  "answer": "The paper's P/D model holds qualitatively in BLIS and quantitatively at low-to-moderate rates, but breaks down structurally at high rates due to batch size capping. Specifically: (1) The ITL formula ITL=alpha/(1-lambda*W) fits excellently at rates 1-30 (R²>0.999, MAPE<0.08%) and well at rates 1-60 (R²>0.997, MAPE<0.44%), but degrades at rates 1-150 (R²=0.92-0.95, MAPE=2.5-3.9%) with systematic S-shaped residuals, and fails badly at rates 1-400 (R²=0.66-0.73) because ITL approaches a ceiling rather than diverging as M/G/1 predicts. (2) The ceiling mechanism is batch size capping: BLIS's max_num_running_reqs=256 bounds the batch, so step time saturates around 21.4ms (AL) / 20ms (AD) — a 75% increase over baseline, not the infinity M/G/1 predicts. The paper's M/G/1 derivation assumes unbounded batch growth (B=lambda*W*T_iter → infinity as rho→1), which is violated by any practical system with a batch cap. (3) All directional predictions hold at rates 1-150: ITL_AD < ITL_AL at every rate (by 0-1.7ms), TTFT_AD > TTFT_AL (by 4-16ms), and AD has higher capacity (456 vs 395 implied req/s, ratio 1.155). (4) A new finding: the TTFT ordering REVERSES at rate≈250 — beyond this AL TTFT > AD TTFT because AD's isolated prefill pool keeps TTFT nearly constant (49.8ms at all rates) while AL TTFT explodes (119ms at rate=400) due to head-of-line blocking from large decode batches. (5) E2E favors AD at ALL tested rates (1-400) because ITL savings × 128 tokens always exceed the TTFT penalty. (6) Results are essentially deterministic across seeds (max CV = 0.009%). (7) The step time in BLIS is NOT linear in batch size (contrary to the paper's Eq 9 assumption): it depends on the roofline max(compute_time, memory_time) with memory cost scaling as sum of context lengths, not batch count. This richer model partially explains the concave ITL growth — even without the batch cap, ITL would not follow a pure 1/(1-rho) curve because the marginal cost delta varies with the batch composition.",
+  "deliverable": "final/data/sweep_results.csv",
+  "repro": "bash final/sweep.sh && bash final/sweep_seeds.sh && bash final/sweep_highrate.sh && python3 -I final/analyze_final.py",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "AL ITL M/G/1 fit R² (rates 1-30)",
+      "value": 0.9997,
+      "condition": "pd-decider=never, 2-param M/G/1, rates 1-30, 300 requests, seed=42",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c2",
+      "metric": "AL ITL M/G/1 fit R² (rates 1-60)",
+      "value": 0.9971,
+      "condition": "pd-decider=never, 3-param M/G/1, rates 1-60, 300 requests, seed=42",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c3",
+      "metric": "AL ITL M/G/1 fit R² (rates 1-150)",
+      "value": 0.9183,
+      "condition": "pd-decider=never, rates 1-150, 300 requests, seed=42",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c4",
+      "metric": "AD ITL M/G/1 fit R² (rates 1-150)",
+      "value": 0.9457,
+      "condition": "pd-decider=always, rates 1-150, 300 requests, seed=42",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c5",
+      "metric": "AL ITL M/G/1 fit MAPE (rates 1-150, %)",
+      "value": 3.891,
+      "condition": "pd-decider=never, rates 1-150",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c6",
+      "metric": "AD ITL M/G/1 fit MAPE (rates 1-150, %)",
+      "value": 2.516,
+      "condition": "pd-decider=always, rates 1-150",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c7",
+      "metric": "AL ITL M/G/1 fit R² (rates 1-400)",
+      "value": 0.6642,
+      "condition": "pd-decider=never, 2-param M/G/1, rates 1-400",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c8",
+      "metric": "AD ITL M/G/1 fit R² (rates 1-400)",
+      "value": 0.7344,
+      "condition": "pd-decider=always, 2-param M/G/1, rates 1-400",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c9",
+      "metric": "ITL_AD < ITL_AL at all rates",
+      "value": true,
+      "condition": "all 35 tested rates from 1 to 400 req/s",
+      "evidence": "final/data/sweep_results.csv"
+    },
+    {
+      "id": "c10",
+      "metric": "TTFT_AD > TTFT_AL at rates 1-150",
+      "value": true,
+      "condition": "all 27 tested rates from 1 to 150 req/s",
+      "evidence": "final/data/sweep_results.csv"
+    },
+    {
+      "id": "c11",
+      "metric": "TTFT crossover rate (AL TTFT exceeds AD TTFT)",
+      "value": 250,
+      "condition": "pd-decider=never vs always, TTFT_AL > TTFT_AD starting at this rate",
+      "evidence": "final/data/highrate_sweep.csv"
+    },
+    {
+      "id": "c12",
+      "metric": "AL implied capacity from M/G/1 fit (req/s)",
+      "value": 394.5,
+      "condition": "M/G/1 fit to rates 1-150, 1/w_eff, pd-decider=never",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c13",
+      "metric": "AD implied capacity from M/G/1 fit (req/s)",
+      "value": 455.7,
+      "condition": "M/G/1 fit to rates 1-150, 1/w_eff, pd-decider=always",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c14",
+      "metric": "W_tot/W_D ratio (AL/AD capacity ratio)",
+      "value": 1.155,
+      "condition": "from M/G/1 w_eff fits: w_AL/w_AD",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c15",
+      "metric": "E2E_AD < E2E_AL at all tested rates",
+      "value": true,
+      "condition": "35/35 rates from 1 to 400 req/s",
+      "evidence": "final/data/highrate_sweep.csv"
+    },
+    {
+      "id": "c16",
+      "metric": "Seed maximum CV (%)",
+      "value": 0.009,
+      "condition": "seeds 1,2,3,42 at rates 1,10,30,60,100,150 for both AL and AD",
+      "evidence": "final/data/seed_sweep.csv"
+    },
+    {
+      "id": "c17",
+      "metric": "AL ITL at rate=1 (baseline, ms)",
+      "value": 12.261,
+      "condition": "pd-decider=never, rate=1, seed=42",
+      "evidence": "final/data/sweep_results.csv"
+    },
+    {
+      "id": "c18",
+      "metric": "AL ITL at rate=400 (ceiling, ms)",
+      "value": 21.403,
+      "condition": "pd-decider=never, rate=400, seed=42",
+      "evidence": "final/data/highrate_sweep.csv"
+    },
+    {
+      "id": "c19",
+      "metric": "ITL growth from rate=1 to rate=400 (%)",
+      "value": 74.6,
+      "condition": "pd-decider=never, ITL ceiling vs baseline",
+      "evidence": "final/data/highrate_sweep.csv"
+    },
+    {
+      "id": "c20",
+      "metric": "AL TTFT at rate=400 (ms)",
+      "value": 118.771,
+      "condition": "pd-decider=never, rate=400, head-of-line blocking in shared instances",
+      "evidence": "final/data/highrate_sweep.csv"
+    },
+    {
+      "id": "c21",
+      "metric": "AD TTFT at rate=400 (ms)",
+      "value": 49.766,
+      "condition": "pd-decider=always, rate=400, isolated prefill pool",
+      "evidence": "final/data/highrate_sweep.csv"
+    },
+    {
+      "id": "c22",
+      "metric": "TTFT gap at rate=1 (TTFT_AD - TTFT_AL, ms)",
+      "value": 15.661,
+      "condition": "KV transfer overhead at zero load",
+      "evidence": "final/data/sweep_results.csv"
+    },
+    {
+      "id": "c23",
+      "metric": "KV transfer latency (ms)",
+      "value": 3.406,
+      "condition": "pd-decider=always, from PD metrics",
+      "evidence": "final/data/run_AD_rate10.txt"
+    },
+    {
+      "id": "c24",
+      "metric": "AL M/G/1 MAPE at rates 1-30 (%)",
+      "value": 0.076,
+      "condition": "pd-decider=never, 2-param M/G/1 fit, rates 1-30",
+      "evidence": "final/data/final_results.json"
+    },
+    {
+      "id": "c25",
+      "metric": "AD M/G/1 MAPE at rates 1-30 (%)",
+      "value": 0.047,
+      "condition": "pd-decider=always, 2-param M/G/1 fit, rates 1-30",
+      "evidence": "final/data/final_results.json"
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Tensor parallelism (TP) is the dominant throughput lever in BLIS's configuration space: at fixed GPU count, higher TP monotonically increases responses_per_sec and decreases ttft_p99 regardless of how instances are split.",
+    "confidence": "high",
+    "regime": "qwen/qwen3-14b on H100, rate=100, num-requests=200, kv=10000 (unconstrained cache), bs=16, maxr=256",
+    "evidence": [
+      "iteration-1-h-dose-response"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Higher TP splits each request's attention computation across more GPUs, reducing per-step latency proportionally. The BLIS trained-physics latency model scales prefill/decode time with TP dimension, so tp=8 produces 32.01 rps vs tp=1 (8 instances) at 11.93 rps \u2014 a 2.68x gain from same 8 GPUs.",
+    "applicability_bounds": "Holds when the KV cache is sufficient (no preemptions). May not hold when very high TP creates routing imbalance or when KV pressure forces preemptions at large batch sizes. Verified for tp=1,2,4,8 at 8 total GPUs.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "The Pareto front of BLIS's 6-knob configuration space (1800 configs, 4 objectives) has strong structural redundancy: 124 Pareto configs map to only 35 unique performance levels. A hierarchical search exploiting TP dominance and effective cache equivalence can find >=83% of unique Pareto levels with 11.1% of total evaluations.",
+    "confidence": "high",
+    "regime": "qwen/qwen3-14b on H100, rate=100, num-requests=200, space: tp={1,2,4,8}, ni={1..8/tp}, sched={fcfs,sjf}, maxr={32,64,128,256,512}, kv={2000,3000,4000,5000,7500,10000}, bs={16,32}",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "Three structural regularities enable pruning: (1) effective_cache = kv*bs determines cache regime \u2014 configs with identical effective cache perform identically (kv=2000,bs=32 == kv=4000,bs=16). (2) maxr=256 is a universal saturation plateau \u2014 all configs show identical performance at maxr=256 vs 512. (3) TP dominates over instance count at same GPU count. The hierarchical search exploits these regularities to focus budget on Pareto-relevant regions.",
+    "applicability_bounds": "Demonstrated for qwen/qwen3-14b at rate=100. The structural regularities (TP dominance, cache equivalence, maxr plateau) should generalize to other models but the specific plateau thresholds may shift. Coverage may degrade at lower rates where the Pareto front shifts toward KV-efficiency tradeoffs.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "KV cache preemption-induced throughput degradation in BLIS is gradual below the cache plateau and stays under 25% even at half the plateau capacity (effective cache = 64K vs 160K tokens).",
+    "confidence": "high",
+    "regime": "tp=1, ni=1, rate=100, num-requests=200, bs=32, maxr=256. Cache plateau: kv=5000,bs=32 (160K tokens effective).",
+    "evidence": [
+      "iteration-1-h-tradeoff"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The BLIS FCFS preemption policy evicts the request with most allocated blocks when a new request cannot fit. Below the cache plateau, long-running requests get evicted and re-processed, adding TTFT overhead without eliminating throughput. Degradation is: kv=4000 (0.9%), kv=3000 (14.7%), kv=2000 (24.4%). The mechanism is linear in preemption count, not catastrophic.",
+    "applicability_bounds": "Holds for FCFS preemption policy at tp=1,ni=1,rate=100. Different schedulers (SJF) or multiple instances may show different degradation curves. The 24.4% bound at kv=2000 (64K tokens) applies to this workload; prefix-heavy workloads with longer sequences would push the threshold to larger effective caches.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-4",
+    "statement": "max_num_running_reqs has a universal saturation plateau at 256: all 360 tested (tp, instances, kv, bs) combinations show identical performance at maxr=256 and maxr=512, making maxr a non-differentiating knob above its plateau.",
+    "confidence": "high",
+    "regime": "All 15 tp/instances combos x kv={2000,3000,4000,5000} x bs={16,32} at rate=100, num-requests=200",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "At rate=100, the request arrival rate limits the number of concurrent in-flight requests below 256 in nearly all configurations. Once maxr exceeds the natural concurrency imposed by the arrival rate and scheduling latency, additional capacity is unused. This makes maxr a quasi-free knob \u2014 setting it to 256 dominates 512 in cost-objective terms while producing identical throughput.",
+    "applicability_bounds": "Holds at rate=100 with 200 requests. At higher rates or longer-running workloads, the plateau may shift to higher maxr values. Single-instance configurations (tp=1,ni=1) may show different behavior at very high rates where the scheduler queue fills.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

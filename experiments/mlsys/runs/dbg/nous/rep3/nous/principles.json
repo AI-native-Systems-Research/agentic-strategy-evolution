@@ -1,0 +1,63 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "Any code path that resets per-request progress state (e.g., ProgressIndex=0 on preemption) must also reverse all cumulative metrics that were incremented based on that progress. Failing to do so causes irreversible metric inflation proportional to the number of preemptions.",
+      "confidence": "high",
+      "regime": "Single-instance simulator with KV cache pressure causing preemptions. Validated at 47-348 preemptions across 5 seeds and 3 cache-pressure levels (600, 6000, 60000 blocks).",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-2-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "sim/simulator.go:executeBatchStep() increments TotalOutputTokens++ per decode step. sim/batch_formation.go:preemptForTokens() resets ProgressIndex=0 on preemption. Without the fix, tokens counted before preemption are counted again after rescheduling. The fix computes outputTokensLost = max(0, ProgressIndex - len(InputTokens)) before reset and subtracts it in scheduleBatch.",
+      "applicability_bounds": "Applies to any simulator metric incremented inside the decode loop before a state reset. Does not apply to cluster-level metric merging paths (untested). ITL slice entries face the same hazard (RP-2).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Per-request slice metrics (e.g., ITL inter-token latency entries) must be cleared on preemption to prevent duplicate entries from accumulating across re-executions of the same decode tokens.",
+      "confidence": "high",
+      "regime": "Single-instance simulator with preemptions. Fix validated across 5 seeds and 3 cache-pressure levels. ITL correctness confirmed indirectly: no duplicate ITL entries in output (itl_mean_ms values are in expected range).",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-2-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "sim/batch_formation.go:preemptForTokens() appends to result.Preempted. Without ITL clearing, re-execution of the same tokens appends duplicate ITL entries to the same request's ITL slice. The fix: preemptedRequest.ITL = preemptedRequest.ITL[:0] immediately after ProgressIndex reset.",
+      "applicability_bounds": "Applies to any per-request append-only slice that accumulates entries during decode. ITL is the only such slice identified. Token-scalar metrics (TotalOutputTokens) fall under RP-1.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "The preemption output-token double-counting fix (OutputTokensLost subtraction) is robust across seed variation (5 seeds tested) and across preemption regimes (47 preemptions in unit test, 47-72 moderate, 265-348 high). The fix produces exact token-count equality in all tested conditions.",
+      "confidence": "high",
+      "regime": "qwen/qwen3-14b model, rate=20 req/s, num_requests=200, seeds [42, 123, 456, 789, 1337], total_kv_blocks in {600, 6000, 60000}. Iter-2 full experiment.",
+      "evidence": [
+        "iteration-2-h-main",
+        "iteration-2-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "The OutputTokensLost computation is algebraically correct: it captures exactly the decode tokens that were counted but will be re-generated. max(0, ProgressIndex - len(InputTokens)) = 0 for prefill-stage preemptions, positive for decode-stage preemptions. The subtraction is exact (integer arithmetic, no rounding). Seed variation confirms no edge-case code path exists that bypasses the fix.",
+      "applicability_bounds": "Validated for single-instance runs without cluster routing. Cluster-level metric merging (sim/cluster/cluster.go) is not covered. The fix is in sim/ (library layer) and applies to both blis run and blis replay paths.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

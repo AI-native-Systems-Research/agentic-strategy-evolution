@@ -1,0 +1,57 @@
+[
+  {
+    "id": "RP-5",
+    "statement": "A ceiling-cheapest-boundary search strategy achieves 100% Pareto coverage of the BLIS 6-knob space with just 100 evaluations (5.6% of the 1800-config full space), because the Pareto front lives entirely in the {kv in {2000-5000}, bs=32, fcfs, maxrun>=128} subspace which has only 60 core configs across 15 topologies.",
+    "confidence": "high",
+    "regime": "BLIS, qwen3-14b, H100, rate=100, seed={42,123}; 4-objective Pareto (rps, ttft, gpus, kv_blocks)",
+    "evidence": [
+      "iteration-2-h-main",
+      "iteration-2-h-dose-response"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "mechanism": "The Pareto front is concentrated in a small subspace because: (1) kv_blocks saturates at 5000 for bs=32 (above this, more cache has zero effect on any metric), (2) bs=32 always dominates bs=16 for the same kv_blocks count (it doubles effective cache capacity), (3) scheduler has negligible effect (mean rps difference 0.19), (4) maxrun saturates above 128. By fixing scheduler=fcfs and maxrun=256 (both established in iter-1 as dominant), the search needs only to cover 15 topologies \u00d7 4 kv values \u00d7 1 block_size = 60 configs to hit all Pareto points.",
+    "applicability_bounds": "Validated at rate=100, qwen3-14b, H100. The kv=5000 ceiling and bs=32 dominance may shift with different models (larger vocab/hidden size), rates (higher rate increases working set), or hardware (different memory capacity changes KV budget). The scheduler irrelevance holds at this rate; at extreme overload, SJF might differentiate.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-6",
+    "statement": "The budget-coverage relationship for the improved BLIS Pareto search follows a sharply saturating curve: 57.7% coverage at 50 evals, 100% at 100 evals, with no further improvement from 100 to 200 evals. The inflection point is at ~60 evals where Phase 1+2 complete.",
+    "confidence": "high",
+    "regime": "BLIS, qwen3-14b, H100, rate=100, seed=42; 4-phase search algorithm",
+    "evidence": [
+      "iteration-2-h-dose-response"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "mechanism": "The search algorithm front-loads the most valuable evaluations in Phase 1 (ceiling+cheapest, 30 evals) and Phase 2 (boundary mapping, ~30 evals). Together these cover all 15 topologies \u00d7 {2000, 3000, 4000, 5000} \u00d7 bs=32, which contains all reference Pareto configs. Phases 3-4 (sensitivity + fill) add Pareto points from secondary knob variations (maxrun, sjf) but these are refinements, not new performance tiers. The 50\u2192100 jump (57.7%\u2192100%) corresponds exactly to Phase 2 completing: at budget=50, Phase 2 has only 20 evals available and can't map all preempting topologies; at budget=100, it fully maps all 15 topologies.",
+    "applicability_bounds": "The saturation point (100 evals) depends on the number of topologies (15) and number of important kv values (4). With more topologies or a wider kv range, the saturation point would shift rightward proportionally.",
+    "superseded_by": null,
+    "category": "meta",
+    "status": "active"
+  },
+  {
+    "id": "RP-3",
+    "statement": "A topology-first adaptive Pareto search of the BLIS 6-knob space finds only ~41% of performance tiers with a simple 5-phase strategy, because the Pareto front includes preemption-regime configs (high TTFT, low kv_blocks) and non-power-of-2 GPU topologies that topology-first enumeration misses.",
+    "confidence": "high",
+    "regime": "BLIS 6-knob space: tp in {1,2,4,8}, num_instances in {1..8} with tp*inst<=8, scheduler {fcfs,sjf}, maxrun {64,128,256,512}, kv_blocks {2000,5000,10000}, block_size {16,32}",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "mechanism": "The Pareto front in a 4-objective space includes configs that are dominated in performance metrics but not in resource metrics. A topology-first search that prunes preemption-regime configs misses resource-efficient Pareto points.",
+    "applicability_bounds": "Superseded by RP-5 which shows that a corrected search strategy achieves 100% coverage. The 41% figure was based on the original 71-eval search; the 200-eval version achieved 84.6%. Both were improved to 100% by the iter-2 algorithm.",
+    "superseded_by": "RP-5",
+    "category": "meta",
+    "status": "superseded"
+  }
+]

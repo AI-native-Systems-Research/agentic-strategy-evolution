@@ -1,0 +1,103 @@
+metadata:
+  iteration: 1
+  family: "pareto-search-space-structure"
+  research_question: "What is the structure of the BLIS 6-knob configuration space's Pareto front, and can a two-phase adaptive search find a near-complete Pareto front within 200 evaluations?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism — space exploration and Pareto front characterization via adaptive search"
+
+# Arms chosen:
+# - h-main: Tests whether the adaptive search algorithm finds a near-complete Pareto front
+#   within 200 evaluations (11% of the 1800-config space).
+# - h-dose-response: Tests the KV-blocks threshold shape, which is the key mechanism
+#   underlying the Pareto trade-off structure.
+# Other arm types skipped: no code changes needed (flag-only), no ablation target yet,
+# and scheduler/block_size negligibility is documented in findings rather than tested
+# as a separate arm.
+
+arms:
+  - type: h-main
+    prediction: >
+      The two-phase adaptive search algorithm will find a Pareto front covering all
+      reachable GPU-count tiers (1 through 8 GPUs) and spanning the full range of
+      throughput (from ~7 rps at 1 GPU to ~32 rps at 8 GPUs) and TTFT (from ~28ms
+      to ~40000+ms under resource starvation) within 200 evaluations. The discovered
+      front will contain at least 20 non-dominated configurations.
+    mechanism: >
+      The search exploits the space's hierarchical structure: GPU count (tp × instances)
+      creates discrete throughput tiers, while KV blocks and max_running_reqs create
+      threshold-saturation transitions within each tier. Phase 1 structured sampling
+      covers all GPU tiers with varied resource levels, discovering the tier boundaries.
+      Phase 2 neighbor expansion from the current Pareto front fills gaps by exploring
+      adjacent knob values, exploiting the locality of the Pareto surface. This works
+      because the space has low effective dimensionality — scheduler and block_size have
+      negligible effect when resources are sufficient, reducing the effective search space.
+    diagnostic: >
+      If the Pareto front is incomplete (missing GPU tiers or narrow range), check whether
+      Phase 1 sampling missed a tier. If the front is too small (<20 configs), check whether
+      neighbor expansion is generating enough candidates or whether many configs produce
+      identical metrics (plateau regions).
+
+  - type: h-dose-response
+    prediction: >
+      Increasing total_kv_blocks from 2000 to 10000 with fixed tp=2, num_instances=2,
+      scheduler=fcfs, max_run=128, block_size=16 will produce a saturating response curve
+      for ttft_p99_ms: ttft drops steeply from ~9000ms to ~40ms between 2000-5000 blocks,
+      then flattens at ~39ms for 5000-10000 blocks.
+    mechanism: >
+      Below the KV cache sufficiency threshold (~5000 blocks at this workload), requests
+      compete for limited cache, causing preemptions (sim/config.go:10 TotalKVBlocks).
+      Preempted requests must re-queue and re-prefill, spiking TTFT p99. Above the
+      threshold, all concurrent requests fit in cache simultaneously, preemptions drop to
+      zero, and TTFT is determined only by compute (prefill latency). The saturation shape
+      arises because the threshold is binary: once no request is evicted, additional cache
+      is unused.
+    diagnostic: >
+      If the curve is not saturating (e.g., monotonically decreasing without a plateau),
+      check if the workload's working set keeps growing with available cache (e.g., longer
+      prefix tokens filling all available blocks). If TTFT doesn't improve at all, check
+      if TTFT is dominated by scheduling delay rather than preemption.
+    knob: total_kv_blocks
+    values: [2000, 3000, 4000, 5000, 7500, 10000]
+    metric: ttft_p99_ms
+    expected_shape: saturating
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    rate: 100
+    prefix_tokens: 512
+    max_num_scheduled_tokens: 4096
+    long_prefill_token_threshold: 0
+    admission_policy: "always-admit"
+    preemption_policy: "fcfs"
+    routing_policy: "round-robin"
+    gpu_memory_utilization: 0.9
+
+  unlocked_parameters_audit:
+    - name: max_model_len
+      default_value: "auto (from HF config)"
+      justification: "Model length limit is not varied — all requests use prefix_tokens=512 which is well below any reasonable model length."
+    - name: max_output_len
+      default_value: "auto (from model config)"
+      justification: "Output length budget is not constrained for this workload — no length_capped_requests observed in any probe."
+    - name: kv_cpu_blocks
+      default_value: 0
+      justification: "CPU offload is not part of this experiment's search space — all KV cache is GPU-only."
+    - name: rtt_ms
+      default_value: 0
+      justification: "Network RTT is irrelevant for simulated DES runs (no real server)."
+
+  physical_realism_check:
+    model: "qwen/qwen3-14b"
+    gpu: "H100"
+    gpu_memory_utilization: 0.9
+    derived_k_realistic: 7500
+    k_used_in_experiment: 5000
+    k_realism_ratio: 0.67
+    justification: "The search explores KV blocks 2000-10000; the midpoint 5000 is used as representative. H100 80GB with 14B model at TP=2 supports ~7500 realistic blocks. Ratio 0.67 reflects that many Pareto configs use 5000 blocks."

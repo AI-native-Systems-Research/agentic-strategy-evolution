@@ -1,0 +1,50 @@
+[
+  {
+    "id": "RP-4",
+    "statement": "In BLIS, the ITL-rate curve follows a saturating (concave) shape for both AL and AD modes over 1-150 req/s. The Michaelis-Menten model ITL = a + b*rate/(1+c*rate) fits with R2=0.997 (AL) and R2=0.998 (AD), substantially outperforming the paper's queueing model alpha/(1-rho) which achieves R2=0.939 (AL) and R2=0.960 (AD). The linear model achieves intermediate fit (R2=0.982 AL, 0.989 AD) and also beats the queueing model.",
+    "confidence": "high",
+    "regime": "qwen/qwen3-14b, 4 instances (2 prefill, 2 decode), 300 requests, prompt=512 tokens, output=128 tokens, rates 1-150 req/s, trained-physics latency model",
+    "evidence": ["iteration-2-h-main", "iteration-2-h-dose-response"],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "BLIS's step-time formula (sim/latency/trained_physics_model.go:321-328) includes fixed per-step overhead (weight loading beta_3*tWeight, per-layer overhead beta_5*L, per-step constant beta_7) that is independent of batch size. In continuous batching, per-token ITL = F/B + c where F is fixed overhead and B is batch size. As arrival rate increases, batch sizes grow, F/B decreases, and the per-token ITL curve saturates toward the marginal cost c rather than diverging as the paper's alpha/(1-rho) would predict.",
+    "applicability_bounds": "Applies when using trained-physics latency model with continuous batching and non-trivial batch sizes (batch > 1). Would not apply if every decode step processed exactly 1 request (M/G/1 regime). Saturation onset occurs around 50 req/s for 4-instance cluster with these token lengths.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "In BLIS, the queueing model ITL = alpha/(1-rho) shows systematic residual bias when fit to the full 1-150 req/s range: the fit overcorrects at low rates (fitted alpha=13.06ms vs actual 12.26ms at rate=1) and underestimates mid-rate ITL (mean residual +0.68ms at rates 50-110). This bias pattern confirms the paper's alpha/(1-rho) treats alpha as a constant independent of batch size, missing the batch-size-dependent overhead amortization effect that reduces effective alpha at higher loads.",
+    "confidence": "high",
+    "regime": "Same as RP-4",
+    "evidence": ["iteration-2-h-main"],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "The paper's model correctly captures queueing delay (1/(1-rho) term) but models alpha as constant batch-size-independent step time. In BLIS, alpha_eff(B) = alpha_B1 - F*(1 - 1/B) where alpha_B1 is single-request step time and F is fixed overhead. At B>1 (which occurs even at moderate loads in continuous batching), the effective alpha is smaller than at B=1, causing the fixed-alpha model to systematically overfit at low rates and underfit at mid rates.",
+    "applicability_bounds": "Relevant to any simulator or analytical model that uses continuous batching with batch-size-dependent step times. Specifically applies to BLIS's trained-physics model. Would not apply to pure M/M/1 queues where each token step processes exactly 1 token.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "UPDATE: In BLIS, ITL follows a SATURATING (concave) function of arrival rate, not simply 'monotonically increasing consistent with alpha/(1-rho)'. The R2=0.94/0.96 fit from iter-1 was adequate but the better-fitting model is Michaelis-Menten (R2=0.997/0.998). The 'concave' observation from iter-1 is now quantified: marginals peak at rate~50 req/s and then decrease monotonically, reaching 0.020 ms/req/s at rate=150 (down from 0.070 at peak). The paper's queueing formula systematically overestimates ITL at high rates.",
+    "confidence": "high",
+    "regime": "Extended to full rate range 1-150 req/s from iter-1's 10-130 req/s. Same cluster config.",
+    "evidence": ["iteration-1-h-main", "iteration-2-h-main", "iteration-2-h-dose-response"],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Batch-size overhead amortization (see RP-4). At low rates, amortization and queueing both grow, so marginals increase. At high rates (>50 req/s), overhead amortization dominates and marginals decrease.",
+    "applicability_bounds": "Same as RP-3 original, extended to confirm saturating shape over 1-150 req/s.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

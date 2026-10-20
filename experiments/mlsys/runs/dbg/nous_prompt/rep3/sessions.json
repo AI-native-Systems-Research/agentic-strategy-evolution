@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "All tests pass. Here's the final report:\n\n---\n\n### Answer\n\nYes, this is a real bug. When KV cache pressure causes preemptions, `total_output_tokens` is inflated because decode tokens are double-counted. The root cause is in `sim/batch_formation.go:232` where `ProgressIndex` is reset to 0 on preemption, causing re-executed decode steps to re-increment `sim.Metrics.TotalOutputTokens++` at `sim/simulator.go:647`. With the reported configuration (200 requests, 265 preemptions), `total_output_tokens` was inflated by 9.1% (114630 vs correct 105082).\n\n### Evidence\n\n- **Before fix**: small KV (600 blocks, 265 preemptions) \u2192 `total_output_tokens=114630`; large KV (default, 0 preemptions) \u2192 `total_output_tokens=105082`\n- **After fix**: both configurations \u2192 `total_output_tokens=105082`\n- The fix subtracts already-counted output tokens at preemption time and resets `req.ITL` to prevent ITL inflation\n- Regression test `TestPreemption_TotalOutputTokens_NoDoubleCount` added (29 preemptions in unit test, verifies token count equality)\n- All 9 `sim/` test packages pass\n\n### Principles Discovered\n\n- **RP-1** (high confidence): Running counters incremented during step execution must be corrected when preemption resets request progress. Applies to any metric accumulated per-step that should count unique token generation.\n\n### Limitations & Open Questions\n\n- **TTFT double-counting**: `TTFTSum` is also inflated by preemption (prefill metrics re-recorded). Per-request `RequestTTFTs` is overwritten (OK for final value) but the sum-based mean TTFT is wrong. Separate fix needed.\n- **ITL fix is partial**: The fix clears `req.ITL` on preemption, which correctly prevents duplicate ITL entries but means the final ITL reflects only the last execution pass, not the first. For client-perceived latency this is actually correct (the client sees the re-execution latency).",
+  "cli_cost": 4.078825750000002,
+  "subtype": "success",
+  "wall": 750.8,
+  "num_turns": 77,
+  "n": 1
+ }
+]

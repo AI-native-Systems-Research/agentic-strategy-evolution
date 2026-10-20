@@ -1,0 +1,10 @@
+=== After fix ===
+  "completed_requests": 200,
+  "total_output_tokens": 105082,
+  "tokens_per_sec": 1376.4764829709404,
+  "preemption_count": 265,
+---
+  "completed_requests": 200,
+  "total_output_tokens": 105082,
+  "tokens_per_sec": 5629.82373972408,
+  "preemption_count": 0,

@@ -1,0 +1,32 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "All evidence files exist and claims are verified. Here is the summary of findings from this iteration:\n\n## Findings Summary\n\n**Paper's qualitative predictions hold in BLIS:**\n- AD always has lower ITL than AL (0-1.7 ms, up to 8.5% at rate=150-500)\n- AD has higher TTFT at low-moderate rates (4-16 ms pipeline overhead)\n\n**Paper's quantitative ITL formula partially holds:**\n- At low utilization (rates 1-20, \u03c1<0.10): within 1% of BLIS measurements using physical parameters\n- At moderate rates (50-100): overpredicts by 3-28% \u2014 the 1/(1-\u03c1) blowup is too aggressive\n- At high rates (\u2265200): predicts instability/divergence, but BLIS shows ITL *plateauing* at ~21.4 ms\n\n**Breakdown mechanism:** The 300-request finite horizon prevents steady-state batch sizes from building up. The paper's model assumes Little's law (B = \u03bb\u00b7(n_c+o)\u00b7T_iter) which creates a self-reinforcing feedback loop. In BLIS, the burst completes before this equilibrium establishes, so the effective utilization is much lower than predicted.\n\n**Emergent finding:** At rate\u2265250, AL TTFT exceeds AD TTFT (crossover: 187ms vs 50ms at rate=500), driven by AL queueing delay explosion \u2014 strongly supporting the paper's thesis that disaggregation becomes more valuable under load.\n\n**What to investigate next (iteration 2):**\n1. Run with a longer horizon or more requests to test the steady-state 1/(1-\u03c1) regime\n2. Decompose ITL into batch-size dynamics: measure actual batch sizes during simulation to directly test Little's law\n3. Test with prefill-only interference: run decode-only batches to isolate the prefill mixing effect on ITL",
+  "cli_cost": 5.319051999999999,
+  "subtype": "success",
+  "wall": 1285.2,
+  "num_turns": 51,
+  "n": 1
+ },
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "## Iteration 2 Summary\n\n**What was investigated:**\n1. Extracted exact BLIS latency model parameters (alpha=12.157ms, W_tot=9.739ms, W_D=7.605ms) from the trained-physics model coefficients, model architecture (qwen3-14b), and hardware specs (H100)\n2. Computed paper's predictions with these exact parameters and compared against 22 rate points (1-150 req/s)\n3. Built a transient batch-dynamics simulation that models the finite 300-request burst\n4. Ran multi-seed experiments (5 seeds at rates 50, 100, 150) confirming negligible variance (ITL CV < 0.01%)\n\n**Key findings:**\n\n- **ITL formula accuracy by utilization**: <1% error at rho<0.10 (rates 1-20), growing to 29% at rate=100 and 127% at rate=150\n- **Root cause identified**: The paper assumes Little's law steady-state batch size B_ss = lambda*(n_c+o)*T_iter. At rate=150, B_ss=436 per instance \u2014 but only 150 requests arrive per instance. The effective batch size is 101, just 23% of the prediction. The finite burst cannot fill the feedback loop.\n- **Transient model**: A simulation tracking actual arrivals/departures with variable prefill/decode costs achieves RMSE 3.9% \u2014 10x more accurate than the steady-state formula (RMSE 40.6%)\n- **Qualitative predictions confirmed**: AD ITL < AL ITL at all rates (max diff 1.685ms), AD TTFT > AL TTFT throughout rates 1-150 (pipeline overhead 4-16ms)\n- **The effective W_eff = 5.87ms** (vs physical W_tot = 9.74ms) \u2014 the system behaves as if requests contribute 1.7x less work than physical parameters predict, precisely because the batch never reaches steady state\n\n**What to investigate next (iteration 3):**\n1. The transient model still underpredicts by ~6% at high rates \u2014 investigate BLIS scheduling overhead (FormBatch timing, event processing) and whether integer microsecond truncation accumulates\n2. Extract actual per-step batch sizes from BLIS (via debug logging or instrumentation) to directly validate the transient model's batch size predictions\n3. Test whether increasing --num-requests (if allowed) narrows the gap between physical and effective W, confirming the finite-horizon mechanism",
+  "cli_cost": 5.944160499999999,
+  "subtype": "success",
+  "wall": 1173.4,
+  "num_turns": 57,
+  "n": 2
+ },
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "All 20 claims verified, all evidence files exist. Here's the iteration 3 summary:\n\n## Iteration 3 Summary\n\n**What was investigated:** Three mechanisms causing the iter2 transient model's ~7% underprediction at high rates.\n\n**Key findings:**\n\n1. **Batch-size weighting bias (7% effect):** BLIS computes `itl_mean_ms` as the flat mean of ALL per-step ITL entries (AllITLs). Steps with larger batches contribute more entries, creating a batch-size-weighted average. The iter2 model used an unweighted average of step times. The weighting bias grows from 0.01ms at rate=1 to 1.4ms at rate=130 (7.3% of ITL), explaining the bulk of the gap.\n\n2. **Deterministic vs Poisson arrivals (0.5% effect):** BLIS's least-loaded routing distributes requests so evenly (151/149 split at rate=100) that per-instance arrivals are effectively constant-rate, not Poisson. Multi-seed experiments confirmed near-zero variance (CV=0.01% across 10 seeds). Using deterministic arrivals instead of Poisson reduces remaining error from 0.5% to 0.05%.\n\n3. **Decode step count correction:** BLIS does 127 decode steps per 128 output tokens (the first output token's latency is in TTFT, not ITL). The iter2 model simulated 128 decode steps.\n\n**Final model accuracy:**\n- Corrected transient: RMSE 0.02% AL, 0.01% AD, max error 0.05% \u2014 essentially exact across all rates 1-150\n- Paper steady-state: RMSE 39%, works at <0.5% for \u03c1<0.10, breaks at 122% by rate=150\n- The paper's qualitative predictions all hold: AD lower ITL (always), AD higher TTFT (always), AD lower E2E (always)\n\n**What would be investigated next (iteration 4):**\n- Test with non-zero prompt/output stdev to see if distributional variance amplifies or dampens the weighting bias\n- Investigate whether the paper's TTFT formula can be similarly corrected for the finite horizon\n- Test at rates beyond 150 (approaching the theoretical \u03bb_max=207) to see if instability ever manifests or if the finite horizon permanently caps batch sizes",
+  "cli_cost": 5.034005250000002,
+  "subtype": "success",
+  "wall": 1138.7,
+  "num_turns": 54,
+  "n": 3
+ }
+]

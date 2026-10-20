@@ -1,0 +1,59 @@
+metadata:
+  iteration: 4
+  family: "cross-architecture-pareto-search-generalization"
+  research_question: "Does the 4-phase adaptive Pareto search algorithm generalize across fundamentally different model architectures (MoE with interleaved expert/dense layers, small dense models with invalid TP configurations) while maintaining >=90% Pareto coverage within 200 evaluations?"
+  complexity_tier: 3
+  tier_justification: "iter-4; tier 2 confirmed in iter-3 (cross-model/cross-rate robustness on dense models). Escalating to tier 3 for cross-architecture generalization: MoE models exercise different latency model paths and KV dynamics, small models exercise TP constraint failures and KV-insensitive regime where Phase 2 is entirely skipped."
+
+arms:
+  - type: h-main
+    prediction: "The search algorithm achieves >=90% Pareto coverage on the MoE model (Llama-4-Scout-17B-16E-Instruct-FP8-dynamic) at rate=100, budget=200, across seeds 42 and 123. The MoE model has a KV ceiling at kv=3000 (same as Llama-70B) and follows the tp > instances throughput pattern, so the algorithm's Phase 1 (adaptive ceiling at kv=max) and Phase 2 (boundary mapping) should discover all Pareto-relevant configurations."
+    mechanism: "The algorithm's Phase 1 tests kv=max(KV_VALUES)=10000 (ceiling) and kv=2000 (cheapest) for all topologies. For the MoE model, kv=10000 equals the true ceiling (kv=3000), so Phase 1 discovers best-case performance. kv=2000 triggers preemptions (preempt=36 at tp=4,inst=2), so Phase 2 fills intermediate kv values (3000, 4000, 5000). This covers all Pareto-relevant kv values. The MoE model's latency model uses different compute paths (sim/latency/config.go:300-360, MoE-aware FLOPs scaling with num_local_experts=16, num_experts_per_tok=1, interleave_moe_layer_step=1) but the search algorithm doesn't depend on the latency model internals — it only observes the output metrics."
+    diagnostic: "If coverage drops below 90%, check: (1) Does the MoE model have Pareto configs at unusual kv values not tested by Phase 2? (2) Does the MoE model's different ITL (21ms vs qwen3-14b's ~5ms) shift which topologies are Pareto-optimal? (3) Does the MoE model's FP8 quantization (compressed-tensors, 8-bit weights) cause different KV cache capacity calculations?"
+
+  - type: h-robustness
+    prediction: "The search algorithm achieves >=90% Pareto coverage on qwen2.5-7b-instruct at rate=100, budget=200, across seeds 42 and 123, despite: (a) tp=8 configurations panicking with 'NumHeads (28) must be divisible by TP (8)' — search.py's except handler returns None and proceeds; (b) zero preemptions at all kv values, making Phase 2 boundary mapping a no-op; (c) a fundamentally different Pareto front structure where kv=2000 is always optimal (no kv diversity in the front)."
+    mechanism: "In the KV-insensitive regime, all 6 kv values produce identical performance for each topology. The Pareto front therefore contains only one kv value per topology (kv=2000, the cheapest). Phase 1 tests kv=10000 and kv=2000 — both give identical results, detecting no preemption gap. Phase 2 is skipped. Phase 3 tests maxrun/scheduler/bs variations, and Phase 4 fills remaining space. Even with 2 wasted evals per tp=8 topology (out of 15 topologies, only tp=8,inst=1 has tp=8), the algorithm has ample budget (200) to cover all valid configs. The critical test is whether the algorithm wastes too many evals on KV variations that produce no new Pareto points."
+    diagnostic: "If coverage drops below 90%, check: (1) Does the algorithm spend too many evals on kv variations that are all identical? (2) Does the Phase 4 strategic fill explore enough topology×maxrun×scheduler combinations? (3) Are there Pareto configs at maxrun<256 or sjf that Phase 3 misses?"
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  verified_parameters:
+    model_moe: "meta-llama/Llama-4-Scout-17B-16E-Instruct-FP8-dynamic"
+    model_small: "qwen/qwen2.5-7b-instruct"
+    rate: 100
+    budget: 200
+    seeds: [42, 123]
+    hardware: "H100"
+    num_requests: 200
+    prefix_tokens: 512
+    max_num_scheduled_tokens: 4096
+    kv_values: [2000, 3000, 4000, 5000, 7500, 10000]
+    bs_values: [16, 32]
+    maxrun_values: [32, 64, 128, 256, 512]
+    scheduler_values: ["fcfs", "sjf"]
+    tp_values: [1, 2, 4, 8]
+  unlocked_parameters_audit:
+    - name: "gpu_memory_utilization"
+      default_value: 0.9
+      justification: "Fixed by campaign research question; same across all regimes"
+    - name: "long_prefill_token_threshold"
+      default_value: 0
+      justification: "Fixed by campaign; disables chunked prefill uniformly"
+    - name: "admission_policy"
+      default_value: "always-admit"
+      justification: "Fixed by campaign; all requests admitted for Pareto analysis"
+    - name: "preemption_policy"
+      default_value: "fcfs"
+      justification: "Fixed by campaign; uniform preemption strategy"
+    - name: "routing_policy"
+      default_value: "round-robin"
+      justification: "Fixed by campaign; uniform routing eliminates routing-policy confound"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      search_200_moe: 35
+      search_200_q7b: 25
+      exhaustive_180_moe: 25
+      exhaustive_180_q7b: 20
+    observation_method: "timed search.py runs during design probes; MoE evals take ~0.15s each, qwen2.5-7b evals take ~0.1s each"

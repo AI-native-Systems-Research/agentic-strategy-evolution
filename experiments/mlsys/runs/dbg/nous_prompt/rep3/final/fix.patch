@@ -1,0 +1,111 @@
+diff --git a/sim/batch_formation.go b/sim/batch_formation.go
+index a14f13d..46db1e2 100644
+--- a/sim/batch_formation.go
++++ b/sim/batch_formation.go
+@@ -40,7 +40,8 @@ type ScheduledRequest struct {
+ 
+ // PreemptedRequest carries metadata about a preempted request.
+ type PreemptedRequest struct {
+-	Request *Request
++	Request              *Request
++	GeneratedOutputTokens int // decode tokens already counted in TotalOutputTokens before preemption
+ }
+ 
+ // BatchResult describes the outcome of batch formation.
+@@ -213,8 +214,12 @@ func (v *VLLMBatchFormation) preemptForTokens(req *Request, numNewTokens int64,
+ 			logrus.Warnf("[tick %07d] preemption: evicting %s to make room", ctx.Now, preemptedRequest.ID)
+ 			result.RunningBatch.Requests = result.RunningBatch.Requests[:len(result.RunningBatch.Requests)-1]
+ 
++			// Capture decode tokens generated before reset for metrics correction.
++			generatedOutput := int(max(preemptedRequest.ProgressIndex-util.Len64(preemptedRequest.InputTokens), 0))
++
+ 			result.Preempted = append(result.Preempted, PreemptedRequest{
+-				Request: preemptedRequest,
++				Request:               preemptedRequest,
++				GeneratedOutputTokens: generatedOutput,
+ 			})
+ 
+ 			// Defensive: restore token budget if preempted request was already
+diff --git a/sim/simulator.go b/sim/simulator.go
+index febe7fb..61f2580 100644
+--- a/sim/simulator.go
++++ b/sim/simulator.go
+@@ -581,10 +581,14 @@ func (sim *Simulator) scheduleBatch(now int64) {
+ 	// Apply result: update running batch
+ 	sim.RunningBatch = batchResult.RunningBatch
+ 
+-	// Record preemption metrics and emit debug log for each preempted request
++	// Record preemption metrics and emit debug log for each preempted request.
++	// Subtract output tokens already counted in TotalOutputTokens before preemption
++	// to prevent double-counting when the request re-enters the decode phase.
+ 	for _, p := range batchResult.Preempted {
+ 		logrus.Debugf("<< Preemption: %s at %d ticks", p.Request.ID, now)
+ 		sim.Metrics.PreemptionCount++
++		sim.Metrics.TotalOutputTokens -= p.GeneratedOutputTokens
++		p.Request.ITL = nil
+ 	}
+ 
+ 	// Schedule events for newly scheduled requests and record scheduling metrics
+diff --git a/sim/simulator_test.go b/sim/simulator_test.go
+index 5b438c2..3b0270f 100644
+--- a/sim/simulator_test.go
++++ b/sim/simulator_test.go
+@@ -2598,3 +2598,58 @@ func TestEnqueueDecodeSubRequest_SimClockAhead_StepEventAtSimClock(t *testing.T)
+ 			got, simClock, clusterTime)
+ 	}
+ }
++
++// TestPreemption_TotalOutputTokens_NoDoubleCount verifies that preemption does not
++// inflate TotalOutputTokens. When requests are preempted and re-executed, output
++// tokens generated before preemption must not be counted again.
++func TestPreemption_TotalOutputTokens_NoDoubleCount(t *testing.T) {
++	baseCfg := SimConfig{
++		Horizon:             math.MaxInt64,
++		Seed:                42,
++		BatchConfig:         NewBatchConfig(256, 2048, 0),
++		LatencyCoeffs:       NewLatencyCoeffs([]float64{1000, 10, 5}, []float64{100, 1, 100}),
++		ModelHardwareConfig: NewModelHardwareConfig(ModelConfig{}, HardwareCalib{}, "test", "H100", 1, "blackbox", 0),
++	}
++
++	requests := testGenerateRequests(42, math.MaxInt64, 50.0/1e6, 20,
++		0, 100, 20, 10, 200, 50, 10, 10, 100)
++
++	// Run 1: large KV cache — no preemption
++	largeCfg := baseCfg
++	largeCfg.KVCacheConfig = NewKVCacheConfig(10000, 16, 0, 0, 0, 0)
++	simLarge := mustNewSimulator(t, largeCfg)
++	for _, req := range requests {
++		simLarge.InjectArrival(req)
++	}
++	simLarge.Run()
++
++	if simLarge.Metrics.PreemptionCount != 0 {
++		t.Fatalf("large KV run had %d preemptions, expected 0", simLarge.Metrics.PreemptionCount)
++	}
++
++	// Run 2: small KV cache — forces preemption
++	requests2 := testGenerateRequests(42, math.MaxInt64, 50.0/1e6, 20,
++		0, 100, 20, 10, 200, 50, 10, 10, 100)
++
++	smallCfg := baseCfg
++	smallCfg.KVCacheConfig = NewKVCacheConfig(15, 16, 0, 0, 0, 0)
++	simSmall := mustNewSimulator(t, smallCfg)
++	for _, req := range requests2 {
++		simSmall.InjectArrival(req)
++	}
++	simSmall.Run()
++
++	if simSmall.Metrics.PreemptionCount == 0 {
++		t.Fatal("small KV run had 0 preemptions, test requires preemption to exercise the fix")
++	}
++
++	if simSmall.Metrics.CompletedRequests != simLarge.Metrics.CompletedRequests {
++		t.Fatalf("completed requests differ: small=%d large=%d",
++			simSmall.Metrics.CompletedRequests, simLarge.Metrics.CompletedRequests)
++	}
++
++	if simSmall.Metrics.TotalOutputTokens != simLarge.Metrics.TotalOutputTokens {
++		t.Errorf("TotalOutputTokens: small_kv=%d, large_kv=%d; preemption should not inflate output token count",
++			simSmall.Metrics.TotalOutputTokens, simLarge.Metrics.TotalOutputTokens)
++	}
++}

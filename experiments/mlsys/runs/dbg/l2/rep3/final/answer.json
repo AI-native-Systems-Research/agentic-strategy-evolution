@@ -1,0 +1,12 @@
+{
+  "answer": "Yes, this is a real bug. Root cause: sim/simulator.go executeBatchStep() increments TotalOutputTokens on every decode step (line 647), but when a request is preempted in batch_formation.go preemptForTokens() (line 232), ProgressIndex is reset to 0 while TotalOutputTokens is never decremented. When the request is rescheduled, it re-prefills and re-decodes from scratch, double-counting all previously generated output tokens. With 265 preemptions, this inflated total_output_tokens from 105082 to 114630 (9% inflation). The fix moves TotalOutputTokens counting from per-step to completion time (using len(req.ITL) which tracks actual decode steps), clears req.ITL on preemption to prevent ITL accumulation, and reverses TTFTSum contributions on preemption to prevent TTFT double-counting.",
+  "deliverable": "final/fix.patch",
+  "repro": "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 2>/dev/null | grep total_output_tokens",
+  "claims": [
+    {"id": "c1", "metric": "total_output_tokens (small KV, before fix)", "value": 114630, "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600", "evidence": "final/small_kv.txt"},
+    {"id": "c2", "metric": "total_output_tokens (large KV, before fix)", "value": 105082, "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 50000", "evidence": "final/large_kv.txt"},
+    {"id": "c3", "metric": "total_output_tokens (small KV, after fix)", "value": 105082, "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600", "evidence": "final/small_kv_fixed.txt"},
+    {"id": "c4", "metric": "total_output_tokens (large KV, after fix)", "value": 105082, "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 50000", "evidence": "final/large_kv_fixed.txt"},
+    {"id": "c5", "metric": "preemption_count", "value": 265, "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600", "evidence": "final/small_kv_fixed.txt"}
+  ]
+}

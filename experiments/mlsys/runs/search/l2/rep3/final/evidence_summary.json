@@ -1,0 +1,50 @@
+{
+  "best_throughput": {
+    "rps": 32.00923914678733,
+    "ttft_p99": 27.54302,
+    "preempt": 0,
+    "path": "final/evidence_tp8_ni1_mrr256_kvb4000_bs32_fcfs.json"
+  },
+  "best_8gpu_latency": {
+    "rps": 26.779501202332657,
+    "ttft_p99": 29.56809,
+    "preempt": 0,
+    "path": "final/evidence_tp4_ni2_mrr128_kvb3000_bs32_fcfs.json"
+  },
+  "best_1gpu": {
+    "rps": 6.995291713982529,
+    "ttft_p99": 92.57976,
+    "preempt": 0,
+    "path": "final/evidence_tp1_ni1_mrr256_kvb5000_bs32_fcfs.json"
+  },
+  "min_resource": {
+    "rps": 5.285642321694076,
+    "ttft_p99": 20695.46827,
+    "preempt": 116,
+    "path": "final/evidence_tp1_ni1_mrr128_kvb2000_bs32_fcfs.json"
+  },
+  "bs16": {
+    "rps": 5.720046945569291,
+    "ttft_p99": 16316.4708,
+    "preempt": 93,
+    "path": "final/evidence_tp1_ni1_mrr128_kvb5000_bs16_fcfs.json"
+  },
+  "bs32": {
+    "rps": 6.260585868129774,
+    "ttft_p99": 11973.722,
+    "preempt": 0,
+    "path": "final/evidence_tp1_ni1_mrr128_kvb5000_bs32_fcfs.json"
+  },
+  "fcfs": {
+    "rps": 18.47762309030301,
+    "ttft_p99": 3220.6559399999996,
+    "preempt": 55,
+    "path": "final/evidence_tp4_ni1_mrr128_kvb3000_bs32_fcfs.json"
+  },
+  "sjf": {
+    "rps": 19.56654047226389,
+    "ttft_p99": 3588.4201799999996,
+    "preempt": 47,
+    "path": "final/evidence_tp4_ni1_mrr128_kvb3000_bs32_sjf.json"
+  }
+}

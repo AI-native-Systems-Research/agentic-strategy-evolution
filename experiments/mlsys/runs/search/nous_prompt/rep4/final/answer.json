@@ -1,0 +1,70 @@
+{
+  "answer": "The BLIS configuration space's Pareto front is governed by 3 effective knobs (tp, num_instances, total_kv_blocks) out of 6: scheduler has zero effect, block_size=32 strictly dominates 16, and max_running_reqs has simple threshold behavior. The front exhibits a sharp KV 'preemption cliff' where ttft_p99 drops 100x (e.g., 9412ms→93ms) when cache capacity crosses a load-dependent threshold. A three-phase adaptive search (antenna→zoom→refine) finds 28 Pareto-optimal configs in 200 evaluations (~14s), spanning rps 5.3–32.0 and ttft_p99 27.5ms–20,696ms across 1–8 GPUs. The algorithm adapts to different rates: at rate=10 it finds 5 configs in 132 evals.",
+  "deliverable": "search.py",
+  "repro": "python3 search.py --model qwen/qwen3-14b --rate 100 --budget 200 --seed 42 --out final/pareto.json",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "responses_per_sec (best 1-GPU config)",
+      "value": 6.995,
+      "condition": "tp=1 inst=1 scheduler=fcfs mr=256 kv=5000 bs=32, rate=100 seed=42",
+      "evidence": "runs/iter-1/results/pareto_with_metrics.json"
+    },
+    {
+      "id": "c2",
+      "metric": "responses_per_sec (best 2-GPU config)",
+      "value": 12.764,
+      "condition": "tp=2 inst=1 scheduler=fcfs mr=256 kv=5000 bs=32, rate=100 seed=42",
+      "evidence": "runs/iter-1/results/pareto_with_metrics.json"
+    },
+    {
+      "id": "c3",
+      "metric": "responses_per_sec (best 4-GPU config)",
+      "value": 21.691,
+      "condition": "tp=4 inst=1 scheduler=fcfs mr=256 kv=5000 bs=32, rate=100 seed=42",
+      "evidence": "runs/iter-1/results/pareto_with_metrics.json"
+    },
+    {
+      "id": "c4",
+      "metric": "responses_per_sec (best 8-GPU config)",
+      "value": 32.009,
+      "condition": "tp=8 inst=1 scheduler=fcfs mr=256 kv=4000 bs=32, rate=100 seed=42",
+      "evidence": "runs/iter-1/results/pareto_with_metrics.json"
+    },
+    {
+      "id": "c5",
+      "metric": "ttft_p99_ms (best overall)",
+      "value": 27.5,
+      "condition": "tp=8 inst=1 scheduler=fcfs mr=256 kv=4000 bs=32, rate=100 seed=42",
+      "evidence": "runs/iter-1/results/pareto_with_metrics.json"
+    },
+    {
+      "id": "c6",
+      "metric": "Pareto front size",
+      "value": 28,
+      "condition": "200 eval budget, rate=100, seed=42, model=qwen/qwen3-14b",
+      "evidence": "runs/iter-1/results/pareto_v3.json"
+    },
+    {
+      "id": "c7",
+      "metric": "search wall-clock time (seconds)",
+      "value": 14.3,
+      "condition": "200 eval budget, rate=100, seed=42, macOS",
+      "evidence": "runs/iter-1/results/pareto_v3.json"
+    },
+    {
+      "id": "c8",
+      "metric": "KV preemption cliff (ttft_p99 drop factor for tp=1 inst=1)",
+      "value": 101.6,
+      "condition": "kv=4000→kv=5000 at tp=1 inst=1 mr=256 bs=32: ttft drops from 9412.3 to 92.6 (factor 101.6x)",
+      "evidence": "runs/iter-1/results/pareto_with_metrics.json"
+    },
+    {
+      "id": "c9",
+      "metric": "scheduler effect (rps difference fcfs vs sjf)",
+      "value": 0.0,
+      "condition": "All tested configurations: fcfs and sjf produce byte-identical metrics",
+      "evidence": "runs/iter-1/results/probes/all_probes.json"
+    }
+  ]
+}

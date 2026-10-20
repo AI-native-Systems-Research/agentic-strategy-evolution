@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "The preemption output-token double-counting bug in BLIS has been fully confirmed and fixed. Across 5 random seeds and 3 KV cache pressure levels (600, 6000, and 60,000 blocks), total_output_tokens is now identical regardless of how many preemptions occur (up to 348 per run), with zero deviation in all 15 test cases. The research question is completely answered.",
+  "key_points": [
+    "Fix confirmed at scale: All 5 seeds (42, 123, 456, 789, 1337) produce byte-identical total_output_tokens between high-preemption (265\u2013348 preemptions) and zero-preemption runs. Example: seed42=105,082 tokens in all three cache regimes.",
+    "Before the fix, inflation was measurable and significant: +9,548 tokens (+9.1%) at 265 preemptions and +1,303 tokens (+1.2%) at 72 preemptions \u2014 now eliminated entirely.",
+    "Root cause and fix are fully understood: sim/batch_formation.go computed no OutputTokensLost before resetting ProgressIndex=0 on preemption; the fix records max(ProgressIndex - len(InputTokens), 0) before the reset and subtracts it in scheduleBatch(). A regression test (TestPreemption_TotalOutputTokens_NoDoubleCount) now guards this invariant.",
+    "All sim/ unit tests pass; the only failing test (cmd/TestFetchHFConfig_Success) is a pre-existing, unrelated httptest issue.",
+    "Nothing remains unknown about this bug. A third iteration would add no new information. Canonical patch is at runs/iter-1/patches/h-main.patch. Optional follow-up: audit cluster-level metric merging in sim/cluster/cluster.go for analogous double-counting."
+  ],
+  "recommendation": "stop"
+}

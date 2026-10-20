@@ -1,0 +1,13 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 4 refuted the hypothesis that broadening Phase 2.5's scope would push recall above 88.6% at budget=100. All three implementation variants failed to beat the 80.0% baseline, revealing two fundamental design errors: fcfs+128 cannot be trimmed (it contributes 17/124 ground-truth Pareto configs), and Phase 1+2 already consumes 75 of the 100-eval budget, leaving only 25 evals for Phase 2.5 \u2014 too little room for any broadening. The recall curve shape (saturating, with a dead zone at budget=100\u2013125) was correctly predicted, but the absolute target was not achieved.",
+  "key_points": [
+    "All three Phase 2.5 variants scored \u226480.0% recall at budget=100 (best: 28/35 = 80.0%, same as baseline; worst: 25/35 = 71.4%), against a target of \u226531/35 = 88.6%.",
+    "Root cause: budget arithmetic is the binding constraint \u2014 Phase 1 (15 evals) + Phase 2 (60 evals) = 75 evals, leaving only 25 for Phase 2.5. Any meaningful scope broadening exhausts those 25 evals before covering existing combos, and there is zero budget left for a targeted gap-filler (Phase 2.6).",
+    "A secondary incorrect assumption was that fcfs+128 is 'rarely Pareto-relevant' \u2014 the ground truth shows 17/124 Pareto configs use fcfs+128, so trimming it directly reduces coverage rather than improving it.",
+    "The dead zone at budget=100\u2013125 is confirmed real: Phase 3 (bs=16 sweep, 30 evals) adds zero unique Pareto tuples. Eliminating Phase 3 and reallocating its 30 evals to Phase 2.5 is the most promising lever for the next iteration.",
+    "Recall at budget=150 jumps to 91.4% and reaches 94.3% at budget=200 (33/35); the 2 permanently missed tuples require maxr=64 on the non-best combo (1,2), a niche case not covered by any phase.",
+    "Next iteration should focus on: (1) eliminating or shrinking Phase 3 to free ~30 evals, (2) re-evaluating Phase 2.5 broadening with the recovered budget, and optionally (3) testing cross-model generalizability of these budget allocation changes."
+  ],
+  "recommendation": "continue"
+}

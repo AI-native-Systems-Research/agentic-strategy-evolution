@@ -1,0 +1,121 @@
+{
+ "task": "search",
+ "arm": "nous_prompt",
+ "rep": 2,
+ "contract": "ok",
+ "deliverable": true,
+ "runs": {
+  "main": [
+   {
+    "ok": true,
+    "hv_ratio": 0.9952,
+    "n_returned": 54,
+    "n_invalid": 0,
+    "evals": 200,
+    "wall": 28.0,
+    "within_limits": true
+   },
+   {
+    "ok": true,
+    "hv_ratio": 0.9952,
+    "n_returned": 50,
+    "n_invalid": 0,
+    "evals": 200,
+    "wall": 28.3,
+    "within_limits": true
+   },
+   {
+    "ok": true,
+    "hv_ratio": 0.9999,
+    "n_returned": 57,
+    "n_invalid": 0,
+    "evals": 200,
+    "wall": 28.2,
+    "within_limits": true
+   }
+  ],
+  "heldout_llama": [
+   {
+    "ok": true,
+    "hv_ratio": 0.9956,
+    "n_returned": 54,
+    "n_invalid": 0,
+    "evals": 200,
+    "wall": 28.0,
+    "within_limits": true
+   },
+   {
+    "ok": true,
+    "hv_ratio": 0.9956,
+    "n_returned": 56,
+    "n_invalid": 0,
+    "evals": 200,
+    "wall": 28.3,
+    "within_limits": true
+   },
+   {
+    "ok": true,
+    "hv_ratio": 1.0,
+    "n_returned": 51,
+    "n_invalid": 0,
+    "evals": 200,
+    "wall": 27.4,
+    "within_limits": true
+   }
+  ],
+  "heldout_qwen_r50": [
+   {
+    "ok": true,
+    "hv_ratio": 0.9957,
+    "n_returned": 59,
+    "n_invalid": 0,
+    "evals": 200,
+    "wall": 28.1,
+    "within_limits": true
+   },
+   {
+    "ok": true,
+    "hv_ratio": 0.9957,
+    "n_returned": 55,
+    "n_invalid": 0,
+    "evals": 200,
+    "wall": 28.5,
+    "within_limits": true
+   },
+   {
+    "ok": true,
+    "hv_ratio": 0.9983,
+    "n_returned": 43,
+    "n_invalid": 0,
+    "evals": 200,
+    "wall": 27.9,
+    "within_limits": true
+   }
+  ]
+ },
+ "B3_hv_main": 0.9968,
+ "B1_main": true,
+ "B3_hv_heldout_llama": 0.9971,
+ "B3_hv_heldout_qwen_r50": 0.9966,
+ "B2_heldout": true,
+ "limits_respected": true,
+ "T1_block_size_32": false,
+ "T2_scheduler_irrelevant": false,
+ "T3_gpu_tradeoff": false,
+ "T4_small_kv": false,
+ "T_score": 0,
+ "O1": false,
+ "O2_heldout": true,
+ "n_claims": 8,
+ "C1_evidence_frac": 0.625,
+ "R1_repro_runs": true,
+ "R2_repro_matches": 0.625,
+ "V4_no_forbidden_access": true,
+ "V4_hits": [],
+ "S1_stopped_early": true,
+ "S3_crashed_or_ceiling": false,
+ "E1_cost_usd": 5.1165,
+ "E1_wall_min": 25.5,
+ "E1_iterations": 1,
+ "status": "done"
+}

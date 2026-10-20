@@ -1,0 +1,1 @@
+{"done": true, "why": "Bug found, root cause identified (sim/simulator.go:647 double-counts output tokens after preemption resets ProgressIndex), fix implemented and verified (both runs report total_output_tokens=105082), regression test added and passing, all existing tests pass."}

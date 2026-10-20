@@ -1,0 +1,13 @@
+{
+  "gate_type": "continue",
+  "summary": "All three hypotheses in Iteration 3 were confirmed: the paper's ITL = \u03b1/(1\u2212\u03c1) formula systematically underperforms a simple linear fit across the full rate range (R\u00b2 0.92\u20130.95 vs 0.976\u20130.985), and its overprediction grows monotonically from <1% at low rates to >50\u2013108% at rate=150 req/s. The formula is accurate only in the low-rate steady-state regime (MAPE <0.08% at rates 5\u201320 req/s), and its breakdown at high rates is explained by finite-horizon transient effects rather than a fundamental modeling error.",
+  "key_points": [
+    "Formula vs. linear fit (R\u00b2): Best-fit 1/(1\u2212\u03c1) achieves R\u00b2=0.919 (AL) and 0.947 (AD) \u2014 both below 0.95. Simple linear fit achieves R\u00b2=0.976 (AL) and 0.985 (AD) \u2014 both above 0.95. Linear wins across the full 5\u2013150 req/s range.",
+    "Overprediction is strictly monotone increasing: At rate=20 req/s the formula overpredicts by <0.25% (confirming near-steady-state accuracy); at rate=150 req/s it overpredicts by 108.6% (AL) and 49.9% (AD), far exceeding the predicted thresholds of >50% and >30% respectively.",
+    "Root cause confirmed \u2014 finite-horizon transient effects: The 300-request simulation never reaches steady-state batch size at high rates, so the positive feedback loop (large batch \u2192 slower \u2192 larger batch) assumed by the formula never fully engages. The formula is structurally correct but operationally inapplicable for finite-horizon workloads above ~20 req/s.",
+    "w_AL > w_AD confirmed (0.004707 vs 0.003685): Consistent with the paper's prediction that aggregated-local mode carries more per-request overhead than disaggregated-decode-only mode.",
+    "What's still unknown: Whether increasing request count (e.g., 3000 requests) allows the simulation to reach true steady state and restores formula accuracy at high rates; how variable token lengths affect the fit; and whether a modified saturating formula (e.g., \u03b1\u00b7(1+c\u00b7rate)) better captures finite-horizon behavior.",
+    "Recommended next iteration: Run with a much larger request count (e.g., 3000) at high rates to test whether steady-state is reached and the formula recovers accuracy \u2014 this would cleanly separate 'formula is wrong' from 'finite-horizon prevents steady-state,' which is the remaining open question."
+  ],
+  "recommendation": "continue"
+}

@@ -1,0 +1,26 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The search algorithm, after adding dynamic TP validation, will achieve >=90% unique Pareto tuple recall on meta-llama/llama-3.1-70b-instruct using <=200 evaluations.",
+      "observed": "The search achieved 42/42 = 100.0% unique Pareto tuple recall with 100.0% precision (81/81 truly Pareto-optimal) using 200 evaluations on the 70B model. The ground truth has 132 Pareto configs mapping to 42 unique tuples (more diverse than 14B's 35 tuples, consistent with 70B having stronger TP dominance creating more differentiated performance levels). All four structural regularities transfer: TP dominance (4.5x ratio at 8 GPUs), cache equivalence (kv=5000,bs=32 identical to kv=10000,bs=16), maxr=256 plateau (256 identical to 512), and SJF x concurrency interaction at degraded cache (+9.3% rps for SJF+128 vs FCFS+256 at kv=3000,bs=32). The steeper maxr sensitivity below 256 (14% rps loss at maxr=128 vs 0% for 14B at ceiling) did NOT create additional Pareto points because low-maxr configs at ceiling are dominated on both rps and ttft.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "100% recall exceeds the 90% target. The 70B model's Pareto front has 42 unique tuples (vs 35 for 14B), but the search's hierarchical phase structure covers the additional diversity. The adaptive degraded-regime interaction phase (Phase 2.5) correctly detects degradation at 70B-specific thresholds and explores the SJF x low-maxr cross-product."
+    },
+    {
+      "arm_type": "h-robustness",
+      "predicted": "The search algorithm will achieve >=80% unique Pareto tuple recall on qwen/qwen2.5-7b-instruct (where tp=8 is invalid) using <=200 evaluations.",
+      "observed": "The search achieved 21/21 = 100.0% unique Pareto tuple recall with 100.0% precision (68/68 truly Pareto-optimal) using 200 evaluations on the 7B model. The dynamic TP validation correctly identified tp=8 as invalid (NumHeads=28 not divisible by 8) and restricted the search to tp={1,2,4}, reducing the config space from 1800 to 1680. The ground truth has 70 Pareto configs mapping to 21 unique tuples (fewer than 14B's 35, because the reduced TP range means fewer GPU allocation options). The search found all 21 unique performance levels with 200 evaluations (11.9% of 1680).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "100% recall far exceeds the 80% target. The 7B model's simpler Pareto structure (21 unique tuples) makes it easier for the search, but the key test was whether TP validation works correctly \u2014 it does. The reduced TP range (max tp=4) means the search has more budget remaining for refinement phases after the initial sweeps, which compensates for any structural differences."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms strongly confirmed. h-main: 100% recall on 70B model (42/42 unique tuples), demonstrating that the structural regularities (TP dominance, cache equivalence, maxr plateau, SJF x concurrency interaction) are architecture-independent properties of BLIS's simulation engine. h-robustness: 100% recall on 7B model (21/21 unique tuples), demonstrating that the dynamic TP validation makes the search robust to models where not all TP values are valid. Cross-model comparison: Pareto front size correlates with model complexity \u2014 7B has 21 unique tuples, 14B has 35, 70B has 42. The search handles all three with 100% recall. No regression on 14B (verified: still 35/35 = 100%).",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

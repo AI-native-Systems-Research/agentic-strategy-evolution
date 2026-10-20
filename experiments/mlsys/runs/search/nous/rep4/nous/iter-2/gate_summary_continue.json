@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "After two iterations, the Pareto search algorithm for BLIS now achieves 100% recall and 100% precision (35/35 unique Pareto tuples found, 81/81 configs correctly identified) within a 200-evaluation budget at the primary load rate (100 req/s), up from 82.9% recall in iteration 1. The same algorithm generalizes perfectly to rates 50 and 200 without modification.",
+  "key_points": [
+    "CONFIRMED (iter-2 h-main): Recall improved from 82.9% (29/35) to 100% (35/35), exceeding the \u226590% target. Precision held at 100%. The fix was adding an adaptive phase that detects cache-degraded configs and cross-explores scheduler \u00d7 max-concurrency combinations (SJF \u00d7 {64, 128}) rather than testing these knobs independently.",
+    "CONFIRMED (iter-2 h-robustness): The same 200-eval algorithm achieves 100% recall at rate=50 (23/23 tuples) and rate=200 (41/41 tuples), far exceeding the \u226580% threshold. The Pareto front grows with load (23\u219235\u219241 unique tradeoff tuples), and the adaptive degradation detection adjusts automatically to rate-dependent thresholds.",
+    "KEY INSIGHT: The missed Pareto points in iter-1 were caused by a scheduler\u00d7concurrency interaction that only appears under cache pressure \u2014 SJF+maxr=128 yields ~7% higher throughput than FCFS+maxr=256 in degraded regimes, at the cost of higher tail latency (e.g., 29.26 vs 28.64 rps but 1812 vs 1585ms ttft_p99). Independent knob exploration completely misses this.",
+    "STILL UNKNOWN: Whether the algorithm generalizes to other model architectures/sizes beyond qwen/qwen3-14b, and whether \u226590% recall is achievable with half the budget (100 evaluations). The 95% ceiling threshold for degradation detection has not been stress-tested across different workload characteristics (prefix token counts, request distributions).",
+    "RECOMMENDED NEXT (iter-3): Test model generalization (e.g., a different architecture or size class) and/or budget compression (target \u226590% recall at budget=100) to establish whether the approach is broadly applicable and cost-efficient."
+  ],
+  "recommendation": "continue"
+}

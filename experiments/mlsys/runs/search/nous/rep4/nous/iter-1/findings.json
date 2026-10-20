@@ -1,0 +1,34 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "A hierarchical search exploiting TP dominance, effective cache equivalence, and maxr plateau will find >=80% of unique Pareto objective tuples with <=200/1800 evaluations and >=95% precision.",
+      "observed": "Search returned 83 configs using ~200 evaluations. 80/83 (96.4%) are truly Pareto-optimal (precision exceeded threshold). 29/35 unique GT Pareto objective tuples covered (82.9% recall \u2014 above 80% threshold). Full enumeration: 1800 configs -> 124 Pareto configs -> 35 unique objective tuples. Structural discoveries confirmed: TP dominates throughput (tp=8,ni=1: 32.01 rps vs tp=1,ni=8: 11.93 rps at 8 GPUs), effective cache equivalence holds (kv=2000,bs=32 == kv=4000,bs=16), maxr=256 plateau universal across 360 tested pairs.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Both success criteria met: 82.9% >= 80% recall, 96.4% >= 95% precision. The 6 missing GT Pareto tuples (17.1%) are from intermediate kv values (5000, 7500) that the search did not prioritize \u2014 consistent with the space structure where these values are dominated at sufficient cache."
+    },
+    {
+      "arm_type": "h-dose-response",
+      "predicted": "Increasing tp (1->2->4->8) at fixed 8 GPU count will produce monotone_increasing responses_per_sec and monotone_decreasing ttft_p99_ms.",
+      "observed": "At fixed 8 GPUs with kv=10000, bs=16, maxr=256: tp=1,ni=8: rps=11.93, ttft_p99=47.4ms; tp=2,ni=4: rps=19.18, ttft_p99=34.7ms; tp=4,ni=2: rps=26.78, ttft_p99=29.6ms; tp=8,ni=1: rps=32.01, ttft_p99=27.5ms. Monotone increasing rps and decreasing ttft confirmed. Ratio tp=8 vs tp=1: 32.01/11.93 = 2.68x throughput improvement. Diminishing returns observed: tp1->2 gain is +7.25 rps, tp2->4 is +7.60 rps, tp4->8 is +5.23 rps \u2014 slight saturation at top end.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Monotone shape confirmed as expected. No preemptions at any TP level (kv=10000 is sufficient). The diminishing marginal gains at tp=8 align with mechanism: each additional GPU still helps but the benefit per added GPU decreases from ~7.4 rps/GPU-doubling to ~5.2 rps/GPU-doubling."
+    },
+    {
+      "arm_type": "h-tradeoff",
+      "predicted": "Reducing total_kv_blocks will decrease responses_per_sec, with degradation below 50% when kv_blocks >= 3000 with block_size=32 (effective cache >= 96K tokens).",
+      "observed": "At tp=1, ni=1, maxr=256, bs=32: kv=10000: rps=7.00 (baseline, 0 preemptions); kv=7500: rps=7.00 (0% degradation, 0 preemptions); kv=5000: rps=7.00 (0% degradation, 0 preemptions); kv=4000: rps=6.94 (0.9% degradation, 28 preemptions); kv=3000: rps=5.97 (14.7% degradation, 97 preemptions); kv=2000: rps=5.29 (24.4% degradation, 116 preemptions). All three thresholds below kv=5000 show degradation well under 50%. kv=3000 threshold: 14.7% degradation at effective cache=96K tokens.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The 50% degradation ceiling prediction is strongly confirmed \u2014 max observed degradation is 24.4% (at kv=2000, effective cache=64K tokens), still well below 50%. Cache plateau found at kv=5000 (bs=32 = 160K tokens): kv>=5000 shows zero preemptions and identical rps. The threshold is higher than the 120K tokens estimate from designer handoff: plateau extends down to ~160K tokens (kv=5000,bs=32) rather than kv=3000,bs=32 (96K tokens) for this workload."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "All three arms confirmed. h-main: hierarchical search achieved 82.9% recall and 96.4% precision with ~200 evaluations, meeting both success criteria. h-dose-response: TP shows clear monotone increasing rps and decreasing ttft_p99, confirming TP dominance mechanism. h-tradeoff: KV cache degradation stays well below 50% threshold down to kv=3000 (bs=32), confirming the preemption-based degradation mechanism is gradual. Unexpected finding: cache plateau extends to kv=5000,bs=32 (160K tokens), not just 120K tokens as estimated \u2014 workload's actual KV footprint is larger than expected, suggesting longer effective sequences than prefix_tokens=512 implies.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

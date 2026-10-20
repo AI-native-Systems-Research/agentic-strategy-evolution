@@ -1,0 +1,64 @@
+metadata:
+  iteration: 3
+  family: "cross-regime-pareto-search-robustness"
+  research_question: "Does the 4-phase adaptive Pareto search algorithm generalize across different LLM models and arrival rates, or is its 100% coverage overfit to the qwen3-14b/rate=100 regime?"
+  complexity_tier: 2
+  tier_justification: "iter-3; single mechanism (4-phase search) tested for robustness across multiple regimes (models, rates). Tier 2 is appropriate for robustness testing of an established mechanism."
+
+arms:
+  - type: h-main
+    prediction: "The improved search.py with adaptive ceiling detection (kv=max instead of kv=5000) achieves >=90% Pareto coverage across all 4 regimes (qwen3-14b/rate=100, Llama-70B/rate=100, qwen3-14b/rate=200, qwen3-14b/rate=50) within 200 evaluations each, because the 4-phase structure discovers the preemption boundary adaptively regardless of where it lies in the kv-blocks range."
+    mechanism: "The algorithm's robustness comes from three structural properties: (1) Phase 1 tests the MAXIMUM kv value as ceiling, guaranteeing the true performance plateau is found for any model; (2) Phase 1 also tests the MINIMUM kv value, revealing whether preemptions occur — this is model/rate-dependent but the detection is automatic; (3) Phase 2 fills intermediate kv values based on preemption detection from Phase 1, adapting to whatever boundary exists. The only model-specific property is WHERE the ceiling and boundary lie, which the algorithm discovers rather than assumes. Validated by probes: Llama-70B ceiling is kv=3000 (not 5000), but Phase 1+2 still cover all Pareto-relevant kv values because Phase 2 tests kv=3000 explicitly."
+    diagnostic: "If coverage drops below 90% for a specific regime, check: (1) Does the regime have Pareto configs at kv=7500 or kv=10000 that Phase 1's ceiling at kv=10000 would find but Phase 2 wouldn't fill? (2) Does the regime have Pareto configs with maxrun<256 or sjf that Phase 3 misses? (3) Is the reference Pareto front much larger (more configs to cover)?"
+    code_changes:
+      - file: "search.py"
+        intent: "Make Phase 1 ceiling adaptive: change hardcoded kv=5000 to kv=max(KV_VALUES)=10000. Expand Phase 2 intermediate fill from [3000, 4000] to [3000, 4000, 5000]. Remove redundant kv=7500/10000 from Phase 4 Round 1 (already covered by Phase 1). Repurpose saved Phase 4 budget for kv=5000/7500 at remaining topologies."
+        rationale: "kv=5000 as ceiling is qwen3-14b specific. Probes show Llama-70B ceiling is at kv=3000. Using kv=max(KV_VALUES) makes the algorithm model-agnostic without increasing Phase 1 eval count."
+
+  - type: h-robustness
+    prediction: "Pareto coverage for the improved search remains >=85% when the seed changes from 42 to 123, across all 4 regimes. Coverage difference between seeds is <=10 percentage points because the algorithm's structure (topology x kv sweep) is deterministic in its evaluation order — only the BLIS workload realization changes with seed, which affects metric values but not which configs are Pareto-optimal."
+    mechanism: "The search algorithm's evaluation order is deterministic (same configs tested in same order regardless of seed). The Pareto front structure is robust to seed changes because the dominant knobs (topology, kv_blocks) affect performance through architectural properties (TP parallelism, KV cache capacity) that are largely independent of specific request sequences. Seed changes shift metric VALUES but not the relative ordering of configs."
+    diagnostic: "If coverage varies >10pp between seeds, check whether the Pareto front itself changes significantly between seeds (some configs move in/out of the front due to metric noise). Compare the reference Pareto fronts at seed=42 vs seed=123 to distinguish algorithm fragility from Pareto front instability."
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  verified_parameters:
+    model_reference: "qwen/qwen3-14b"
+    model_cross: "meta-llama/Llama-3.1-70B-Instruct"
+    rate_reference: 100
+    rate_high: 200
+    rate_low: 50
+    budget: 200
+    seeds: [42, 123]
+    hardware: "H100"
+    num_requests: 200
+    prefix_tokens: 512
+    max_num_scheduled_tokens: 4096
+    kv_values: [2000, 3000, 4000, 5000, 7500, 10000]
+    bs_values: [16, 32]
+    maxrun_values: [32, 64, 128, 256, 512]
+    scheduler_values: ["fcfs", "sjf"]
+    tp_values: [1, 2, 4, 8]
+  unlocked_parameters_audit:
+    - name: "gpu_memory_utilization"
+      default_value: 0.9
+      justification: "Fixed by campaign research question; same across all regimes"
+    - name: "long_prefill_token_threshold"
+      default_value: 0
+      justification: "Fixed by campaign; disables chunked prefill uniformly"
+    - name: "admission_policy"
+      default_value: "always-admit"
+      justification: "Fixed by campaign; all requests admitted for Pareto analysis"
+    - name: "preemption_policy"
+      default_value: "fcfs"
+      justification: "Fixed by campaign; uniform preemption strategy"
+    - name: "routing_policy"
+      default_value: "round-robin"
+      justification: "Fixed by campaign; uniform routing eliminates routing-policy confound"
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      search_200_qwen14b: 30
+      search_200_llama70b: 35
+      exhaustive_180_any: 25
+    observation_method: "timed search.py runs during iter-2 and design probes"

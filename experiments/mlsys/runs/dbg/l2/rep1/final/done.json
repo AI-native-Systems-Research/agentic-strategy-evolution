@@ -1,0 +1,1 @@
+{"done": true, "why": "Root cause identified (double-counting output tokens on preemption in sim/simulator.go:647), fix applied (move counting to recordRequestCompletion using ProgressIndex), regression test added, all existing tests pass."}

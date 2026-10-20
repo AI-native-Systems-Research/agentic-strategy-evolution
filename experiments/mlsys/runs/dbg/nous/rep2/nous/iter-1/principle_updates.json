@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "In BLIS's vLLM batch formation, preempting a request resets its ProgressIndex to 0, causing TotalOutputTokens to be double-counted for output tokens already generated before preemption. The correct fix subtracts the already-counted output tokens (OutputTokensGenerated = max(0, ProgressIndex - len(InputTokens))) from TotalOutputTokens when processing each preempted request.",
+    "confidence": "high",
+    "regime": "Any BLIS simulation with KV cache pressure sufficient to trigger preemptions (preemption_count > 0). Observed inflation of 9.1% (9548 tokens) with 265 preemptions on a 200-request workload.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "sim/batch_formation.go:preemptForTokens (line 232) resets preemptedRequest.ProgressIndex = 0. On re-schedule, sim/simulator.go:647 increments TotalOutputTokens++ in the decode loop for every output step. Since ProgressIndex was already past len(InputTokens) before preemption, the re-started request re-enters decode and re-counts the same output tokens. Inflation = \u03a3 (output tokens generated before each preemption event).",
+    "applicability_bounds": "Applies only when preemption_count > 0. With large KV cache (preemption_count=0), the preemption handler is never entered and there is no double-counting. The fix is inert when preemption_count=0 (confirmed by h-control-negative).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "The TTFT and ITL metrics are also affected by preemption in the same way: TTFTSet is not reset on preemption, causing TTFTSum to accumulate the same FirstTokenTime multiple times (once per scheduling round that reaches prefill completion). ITL entries are not cleared, causing latency percentile distributions to reflect multiple decode rounds from the same logical request.",
+    "confidence": "medium",
+    "regime": "Any BLIS simulation with preemption_count > 0. TTFTSum inflation magnitude depends on the number of preemptions that interrupt a request after its first prefill completion.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "sim/simulator.go:652-655 records TTFTSet=true and increments TTFTSum when ProgressIndex == len(InputTokens) (prefill complete). If the request is later preempted and ProgressIndex reset to 0, the next scheduling round will again reach prefill completion and again increment TTFTSum (no TTFTSet guard in the recording path). The fix resets TTFTSet=false, FirstTokenTime=0, and ITL=nil in the preemption handler.",
+    "applicability_bounds": "Only affects requests that complete prefill before being preempted. Requests preempted during prefill (ProgressIndex < len(InputTokens)) do not have TTFTSet=true and are unaffected for TTFT. ITL inflation affects all requests with any decode progress before preemption.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

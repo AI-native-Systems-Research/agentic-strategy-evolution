@@ -1,0 +1,62 @@
+[
+  {
+    "id": "RP-2",
+    "statement": "The Pareto front of BLIS's 6-knob configuration space has strong structural redundancy, and a hierarchical search with adaptive degraded-regime interaction and dynamic TP validation achieves 100% unique Pareto tuple coverage with <=200 evaluations across three model architectures (7B, 14B, 70B) and three arrival rates (50, 100, 200).",
+    "confidence": "high",
+    "regime": "qwen2.5-7b, qwen3-14b, llama-3.1-70b on H100, rates={50,100,200}, num-requests=200, full 6-knob space",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main",
+      "iteration-2-h-robustness",
+      "iteration-3-h-main",
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "Four structural regularities enable efficient search: (1) TP dominance (ratio varies by model size: 2.06x for 7B, 2.68x for 14B, 4.5x for 70B), (2) effective_cache = kv*bs equivalence, (3) maxr=256 saturation plateau, (4) scheduler x concurrency interaction in degraded regimes. These arise from BLIS's simulation engine (routing, scheduling, batch formation, KV cache management), not from model-specific latency. Dynamic TP validation handles models where num_attention_heads is not divisible by all TP values.",
+    "applicability_bounds": "Verified for 7B/14B/70B models on H100 at rates 50-200. The Pareto front size varies by model (21/35/42 unique tuples) and rate (23-41 for 14B). May need tuning for non-transformer architectures or GPUs with very different memory/compute ratios.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-7",
+    "statement": "The four structural regularities of BLIS's configuration space (TP dominance, cache equivalence, maxr=256 plateau, SJF x concurrency interaction) are architecture-independent \u2014 they hold across models from 7B to 70B parameters with different attention head counts, KV head counts, and hidden dimensions. However, the TP dominance ratio scales with model size: 2.06x (7B), 2.68x (14B), 4.5x (70B) at 8 GPUs.",
+    "confidence": "high",
+    "regime": "qwen2.5-7b (28 heads, 4 KV heads), qwen3-14b (40 heads, 8 KV heads), llama-3.1-70b (64 heads, 8 KV heads) on H100, rate=100",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "TP dominance arises from TP sharding reducing per-instance compute and memory pressure \u2014 this effect is stronger for larger models because absolute compute per token is higher. Cache equivalence arises from BLIS's KV cache manager using effective_cache = kv_blocks * block_size to determine capacity. The maxr plateau occurs because batch formation saturates above ~256 concurrent requests regardless of per-request latency. SJF x concurrency interaction occurs when preemption pressure differentiates short vs long requests.",
+    "applicability_bounds": "Not all TP values are valid for all models \u2014 models with attention head counts not divisible by TP cause the latency model to panic. The search must validate TP dynamically. The maxr=256 plateau holds at model-level ceiling (sufficient cache); below ceiling, maxr sensitivity varies by model (70B loses 14% at maxr=128, 14B loses 0%).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-8",
+    "statement": "Pareto front diversity (number of unique objective tuples) correlates positively with model size: 21 unique tuples for 7B, 35 for 14B, 42 for 70B at rate=100. Larger models create more diverse performance tradeoffs because stronger TP dominance creates wider rps ranges across GPU allocations, and steeper maxr sensitivity creates more differentiated operating points in degraded regimes.",
+    "confidence": "high",
+    "regime": "qwen2.5-7b, qwen3-14b, llama-3.1-70b on H100, rate=100, num-requests=200",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "Larger models have: (a) higher per-token latency, making TP sharding gains proportionally larger (TP dominance ratio 4.5x for 70B vs 2.06x for 7B), which spreads rps across a wider range; (b) steeper maxr sensitivity below plateau (70B loses 14% at maxr=128, 14B loses 0%), creating more distinct performance levels at each GPU count. Both effects increase the number of non-dominated objective combinations.",
+    "applicability_bounds": "Observed for 3 models at rate=100. The relationship may not be monotonic for very small models (< 1B params) where single-GPU latency is trivial and all configs plateau quickly.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

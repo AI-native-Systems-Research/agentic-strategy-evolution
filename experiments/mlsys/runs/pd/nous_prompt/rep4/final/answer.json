@@ -1,0 +1,98 @@
+{
+  "answer": "The paper's ITL formula ITL = alpha/(1 - lambda*W/N_D) holds in BLIS with excellent accuracy (<1% error) at rates 1-50 req/s where the system reaches steady state. With sufficient requests for convergence (3000), it extends to <4% error for AD and <7% for AL up to rate=100. The formula breaks down for AL above rate ~130 (14.5% error at 150) because BLIS's max_num_running_reqs=256 caps the batch size, causing ITL to grow linearly instead of as 1/(1-rho). AD is unaffected within [1,150] because its lower per-request work keeps batches below the cap. The paper's qualitative predictions are fully confirmed: ITL_AD < ITL_AL at all rates >1 (0-8.7% reduction), and TTFT_AD > TTFT_AL at all rates (4-16ms overhead). With the prescribed 300 requests, an apparent formula breakdown at high rates is actually a transient measurement artifact — the simulation doesn't reach steady state at rate >50.",
+  "deliverable": "runs/iter-1/inputs/sweep.sh",
+  "repro": "bash runs/iter-1/inputs/sweep.sh && python3 -I runs/iter-1/inputs/final_analysis.py",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "ITL model fit RMSE (AL, rates 1-50, 300 req)",
+      "value": 0.0424,
+      "condition": "--pd-decider never, rates 1-50, --num-requests 300, --seed 42",
+      "evidence": "runs/iter-1/results/analysis_v2.json"
+    },
+    {
+      "id": "c2",
+      "metric": "ITL model fit max relative error (AL, rates 1-50)",
+      "value": 0.63,
+      "condition": "--pd-decider never, rates 1-50, --num-requests 300",
+      "evidence": "runs/iter-1/results/analysis_v2.json"
+    },
+    {
+      "id": "c3",
+      "metric": "ITL model fit RMSE (AD, rates 1-50, 300 req)",
+      "value": 0.0268,
+      "condition": "--pd-decider always, rates 1-50, --num-requests 300, --seed 42",
+      "evidence": "runs/iter-1/results/analysis_v2.json"
+    },
+    {
+      "id": "c4",
+      "metric": "ITL model fit max relative error (AD, rates 1-50)",
+      "value": 0.41,
+      "condition": "--pd-decider always, rates 1-50, --num-requests 300",
+      "evidence": "runs/iter-1/results/analysis_v2.json"
+    },
+    {
+      "id": "c5",
+      "metric": "ITL at zero load (AL = AD, rate=1)",
+      "value": 12.261,
+      "condition": "--rate 1, --num-requests 300, both pd-decider modes, all seeds",
+      "evidence": "runs/iter-1/results/sweep.csv"
+    },
+    {
+      "id": "c6",
+      "metric": "ITL formula error (AD, rate=150, 3000 req)",
+      "value": 4.05,
+      "condition": "--pd-decider always, --rate 150, --num-requests 3000",
+      "evidence": "runs/iter-1/results/convergence.csv"
+    },
+    {
+      "id": "c7",
+      "metric": "ITL formula error (AL, rate=150, 3000 req)",
+      "value": 14.45,
+      "condition": "--pd-decider never, --rate 150, --num-requests 3000, batch cap at 256",
+      "evidence": "runs/iter-1/results/convergence.csv"
+    },
+    {
+      "id": "c8",
+      "metric": "ITL AL at rate=150 (300 req vs 3000 req transient gap)",
+      "value": 51.4,
+      "condition": "percent increase from N=300 (19.89ms) to N=3000 (30.11ms), --pd-decider never, --rate 150",
+      "evidence": "runs/iter-1/results/convergence.csv"
+    },
+    {
+      "id": "c9",
+      "metric": "max ITL reduction from AD (percent)",
+      "value": 8.67,
+      "condition": "--rate 120, --num-requests 300, ITL_AL=19.172 vs ITL_AD=17.510",
+      "evidence": "runs/iter-1/results/sweep.csv"
+    },
+    {
+      "id": "c10",
+      "metric": "TTFT overhead from AD at low load (ms)",
+      "value": 15.661,
+      "condition": "--rate 1, TTFT_AD=45.560 vs TTFT_AL=29.899",
+      "evidence": "runs/iter-1/results/sweep.csv"
+    },
+    {
+      "id": "c11",
+      "metric": "fitted alpha (per-iteration overhead, ms)",
+      "value": 12.2436,
+      "condition": "fit to rates 1-50 with 300 requests, AL mode",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    },
+    {
+      "id": "c12",
+      "metric": "fitted W_tot (total per-request work, ms)",
+      "value": 8.596,
+      "condition": "W_tot = 2 * w_AL, from rate 1-50 fit",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    },
+    {
+      "id": "c13",
+      "metric": "fitted W_D (decode per-request work, ms)",
+      "value": 6.758,
+      "condition": "W_D = 2 * w_AD, from rate 1-50 fit",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    }
+  ]
+}

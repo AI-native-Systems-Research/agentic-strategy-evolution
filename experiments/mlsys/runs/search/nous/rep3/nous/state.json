@@ -1,0 +1,24 @@
+{
+  "last_entered_phase": "DONE",
+  "iteration": 4,
+  "run_id": "search-nous-rep3",
+  "family": null,
+  "timestamp": "2026-10-20T03:36:54.484431+00:00",
+  "config_ref": null,
+  "work_dir": "/Users/toslali/mlsys_runs/runs/search/nous/rep3/nous_work/search-nous-rep3",
+  "repo_path": "/Users/toslali/mlsys_runs/runs/search/nous/rep3/ws",
+  "reproducibility_metadata": {
+    "captured_at": "2026-10-20T01:45:25Z",
+    "repo_commit": "e8ffd891e8987620088c8efdaafb1d8d5fc28d5d",
+    "repo_dirty": false,
+    "hardware_config_sha256": "22e4c3ad34be1b62a62f04b6319fda28422dbf000ef8dda1acfdbf806de2b278",
+    "go_sum_sha256": "814911b6f728641fa026450ac4b1f581e9cfb1ca88eea2ff776768db56492b2d",
+    "language_versions": {
+      "python": "Python 3.11.7",
+      "go": "go version go1.24.0 darwin/arm64",
+      "node": "v25.2.1",
+      "rust": "rustc 1.93.1 (01f6ddf75 2026-02-11) (Homebrew)"
+    }
+  },
+  "max_iterations": 5
+}

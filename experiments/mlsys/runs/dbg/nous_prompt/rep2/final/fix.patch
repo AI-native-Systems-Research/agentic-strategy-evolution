@@ -1,0 +1,103 @@
+diff --git a/sim/request.go b/sim/request.go
+index 8d115cc..6e8af5f 100644
+--- a/sim/request.go
++++ b/sim/request.go
+@@ -41,9 +41,10 @@ type Request struct {
+ 	ArrivalTime      int64   // Timestamp in ticks when the request arrives in the simulator
+ 	ScheduledStepIdx int     // Step index when this request got scheduled (waiting -> running)
+ 	FinishedStepIdx  int     // Step index when this request finished (running -> completed)
+-	NumNewTokens     int     // Number of new tokens to be generated in the current step
+-	LengthCapped     bool    // Set when force-completed by runtime MaxModelLen cap (BC-5)
+-	ITL              []int64  // List of inter-token latencies
++	NumNewTokens        int     // Number of new tokens to be generated in the current step
++	LengthCapped        bool    // Set when force-completed by runtime MaxModelLen cap (BC-5)
++	ITL                 []int64  // List of inter-token latencies
++	OutputTokensCounted int64   // Output tokens already counted in TotalOutputTokens (survives preemption)
+ 	Priority         float64  // Scheduling priority score, recomputed each step by PriorityPolicy.
+ 	                          // Higher = more urgent. Set by Simulator.Step() and optionally by
+ 	                          // RoutingDecisionEvent as a one-shot cluster-level hint; read by schedulers.
+diff --git a/sim/simulator.go b/sim/simulator.go
+index febe7fb..b18b4c9 100644
+--- a/sim/simulator.go
++++ b/sim/simulator.go
+@@ -644,7 +644,11 @@ func (sim *Simulator) executeBatchStep(now int64) int64 {
+ 			// Also prevents phantom tokens from token budget exhaustion (pre-existing edge case).
+ 			if req.NumNewTokens > 0 {
+ 				req.ProgressIndex++
+-				sim.Metrics.TotalOutputTokens++
++				decodeProgress := req.ProgressIndex - util.Len64(req.InputTokens)
++				if decodeProgress > req.OutputTokensCounted {
++					sim.Metrics.TotalOutputTokens++
++					req.OutputTokensCounted = decodeProgress
++				}
+ 				req.ITL = append(req.ITL, currStepAdvance+sim.latencyModel.OutputTokenProcessingTime())
+ 			}
+ 		}
+diff --git a/sim/simulator_test.go b/sim/simulator_test.go
+index 5b438c2..b949692 100644
+--- a/sim/simulator_test.go
++++ b/sim/simulator_test.go
+@@ -2598,3 +2598,63 @@ func TestEnqueueDecodeSubRequest_SimClockAhead_StepEventAtSimClock(t *testing.T)
+ 			got, simClock, clusterTime)
+ 	}
+ }
++
++// TestPreemption_TotalOutputTokens_NoDoubleCount verifies that preempted requests
++// do not inflate TotalOutputTokens. When a request is preempted and rescheduled,
++// its output tokens must be counted exactly once.
++func TestPreemption_TotalOutputTokens_NoDoubleCount(t *testing.T) {
++	// GIVEN a KV cache small enough to force preemption when two requests compete.
++	// Block size 16, 4 blocks total = 64 token capacity.
++	// Each request needs ceil(48/16)=3 input blocks; both cannot fit simultaneously,
++	// so the second request's scheduling preempts the first.
++	cfg := SimConfig{
++		Horizon:             math.MaxInt64,
++		Seed:                42,
++		KVCacheConfig:       NewKVCacheConfig(4, 16, 0, 0, 0, 0),
++		BatchConfig:         NewBatchConfig(256, 2048, 0),
++		LatencyCoeffs:       NewLatencyCoeffs([]float64{1000, 10, 5}, []float64{100, 1, 100}),
++		ModelHardwareConfig: NewModelHardwareConfig(ModelConfig{}, HardwareCalib{}, "test-model", "H100", 1, "blackbox", 0),
++	}
++	sim := mustNewSimulator(t, cfg)
++
++	outputLen1 := 10
++	outputLen2 := 8
++	req1 := &Request{
++		ID:           "req_0",
++		ArrivalTime:  0,
++		InputTokens:  make([]int, 48),
++		OutputTokens: make([]int, outputLen1),
++		State:        StateQueued,
++	}
++	req2 := &Request{
++		ID:           "req_1",
++		ArrivalTime:  1,
++		InputTokens:  make([]int, 48),
++		OutputTokens: make([]int, outputLen2),
++		State:        StateQueued,
++	}
++
++	sim.InjectArrival(req1)
++	sim.InjectArrival(req2)
++	sim.Run()
++
++	// THEN both requests must complete
++	if sim.Metrics.CompletedRequests != 2 {
++		t.Fatalf("CompletedRequests: got %d, want 2", sim.Metrics.CompletedRequests)
++	}
++
++	// AND preemption must have occurred (precondition for this test)
++	if sim.Metrics.PreemptionCount == 0 {
++		t.Fatal("expected preemption_count > 0 — test precondition failed (KV cache not small enough)")
++	}
++
++	// AND TotalOutputTokens must match what a no-preemption run would produce.
++	// The completion threshold uses max(len(OutputTokens),1)-1, so each completed
++	// request contributes (outputLen - 1) tokens to TotalOutputTokens.
++	// Preemption must not inflate this count.
++	expectedOutput := (outputLen1 - 1) + (outputLen2 - 1)
++	if sim.Metrics.TotalOutputTokens != expectedOutput {
++		t.Errorf("TotalOutputTokens: got %d, want %d (preemption caused double-counting)",
++			sim.Metrics.TotalOutputTokens, expectedOutput)
++	}
++}

@@ -1,0 +1,28 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The two-phase adaptive search algorithm will find a Pareto front covering all reachable GPU-count tiers (1 through 8 GPUs) and spanning the full range of throughput (from ~7 rps at 1 GPU to ~32 rps at 8 GPUs) and TTFT within 200 evaluations. The discovered front will contain at least 20 non-dominated configurations.",
+      "observed": "Seed 42: 62 Pareto-optimal configs, tiers [1,2,3,4,5,6,7,8], max_rps=32.0, min_ttft_p99=27.5ms, wall_time=17.4s. Seed 123: 72 configs, all 8 tiers, max_rps=30.7, min_ttft_p99=27.6ms, 18.0s. Seed 999: 80 configs, all 8 tiers, max_rps=29.0, min_ttft_p99=27.6ms, 18.0s. All 3 seeds used exactly 200 evaluations (11.1% of 1800 total configs), completed in under 3 minutes wall time.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Prediction was 'at least 20 configs' \u2014 observed 62-80. Throughput range prediction (7-32 rps) confirmed: best was 32.0 rps at tp=8,i=1 (seed 42), single-GPU configs achieved ~7 rps. Wall-time budget (3 min) met comfortably at ~18s. All 8 GPU tiers represented in Pareto front across all seeds. Phase 2 neighbor expansion found 67+ new Pareto configs in a single iteration, demonstrating the phase structure effectively covers the search space."
+    },
+    {
+      "arm_type": "h-dose-response",
+      "predicted": "Increasing total_kv_blocks from 2000 to 10000 produces a saturating response for ttft_p99_ms: steep drop from ~9000ms to ~40ms between 2000-5000 blocks, then flat at ~39ms for 5000-10000 blocks.",
+      "observed": "kv=2000: ttft_p99=9252ms, preempt=152. kv=3000: ttft_p99=4776ms, preempt=108. kv=4000: ttft_p99=2682ms, preempt=21. kv=5000: ttft_p99=39.2ms, preempt=0. kv=7500: ttft_p99=39.2ms, preempt=0. kv=10000: ttft_p99=39.2ms, preempt=0. The response is perfectly saturating: 9252ms \u2192 4776ms \u2192 2682ms \u2192 39ms \u2192 39ms \u2192 39ms.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The saturating shape is confirmed exactly. The preemption threshold falls between kv=4000 (preempt=21) and kv=5000 (preempt=0), meaning the true boundary for tp=2, ni=2, rate=100 is around 4500-5000 blocks. The plateau at ~39ms is exactly the no-preemption TTFT (compute-bound prefill latency). The kv=4000 transition has only 21 preemptions vs 108 at kv=3000, showing the cache gradually reduces contention; the step from 4000 to 5000 is the final threshold crossing where zero preemptions occur."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed with no discrepancies. h-main: Pareto front was larger than predicted (62-80 vs >=20), wall time was well under budget (18s vs 3min limit). h-dose-response: saturating shape confirmed exactly as predicted; threshold between 4000-5000 blocks as predicted. No bundle amendments needed \u2014 verified_parameters matched observed behavior throughout.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": [
+    "search.py"
+  ]
+}

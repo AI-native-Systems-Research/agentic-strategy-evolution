@@ -1,0 +1,30 @@
+{
+  "itl_al_rate1": 12.260952755905512,
+  "itl_al_rate150": 19.888647375328084,
+  "itl_al_rate500": 21.40382175853018,
+  "itl_ad_rate1": 12.260952755905512,
+  "itl_ad_rate150": 18.20374220472441,
+  "itl_ad_rate500": 20.216576141732283,
+  "ttft_al_rate1": 29.899,
+  "ttft_al_rate500": 187.45991666666666,
+  "ttft_ad_rate1": 45.56,
+  "ttft_ad_rate500": 49.78541333333333,
+  "al_itl_plateau_ms": 21.40382175853018,
+  "ad_lower_itl_all_rates": true,
+  "fit_al_rmse_ms": 0.5269336796821278,
+  "fit_ad_rmse_ms": 0.3291009075138361,
+  "linear_al_rmse_ms": 0.3545330506658641,
+  "fit_al_params": {
+    "alpha": 27.4,
+    "W_tot": 3.1,
+    "C0": -14.6
+  },
+  "fit_ad_params": {
+    "alpha": 25.1,
+    "W_D": 2.7,
+    "C0": -12.5
+  },
+  "physical_W_tot_ms": 9.667776,
+  "physical_W_D_ms": 7.587776000000001,
+  "max_itl_diff_al_ad_ms": 1.6854641469816265
+}

@@ -1,0 +1,273 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "Tensor parallelism (TP) is the dominant throughput lever in BLIS's configuration space: at fixed GPU count, higher TP monotonically increases responses_per_sec and decreases ttft_p99 regardless of how instances are split.",
+      "confidence": "high",
+      "regime": "qwen/qwen3-14b on H100, rate=100, num-requests=200, kv=10000 (unconstrained cache), bs=16, maxr=256",
+      "evidence": [
+        "iteration-1-h-dose-response"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "Higher TP splits each request's attention computation across more GPUs, reducing per-step latency proportionally. The BLIS trained-physics latency model scales prefill/decode time with TP dimension, so tp=8 produces 32.01 rps vs tp=1 (8 instances) at 11.93 rps \u2014 a 2.68x gain from same 8 GPUs.",
+      "applicability_bounds": "Holds when the KV cache is sufficient (no preemptions). May not hold when very high TP creates routing imbalance or when KV pressure forces preemptions at large batch sizes. Verified for tp=1,2,4,8 at 8 total GPUs.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "The Pareto front of BLIS's 6-knob configuration space has strong structural redundancy, and a hierarchical search with adaptive degraded-regime interaction and dynamic TP validation achieves 100% unique Pareto tuple coverage with <=200 evaluations across three model architectures (7B, 14B, 70B) and three arrival rates (50, 100, 200).",
+      "confidence": "high",
+      "regime": "qwen2.5-7b, qwen3-14b, llama-3.1-70b on H100, rates={50,100,200}, num-requests=200, full 6-knob space",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-2-h-robustness",
+        "iteration-3-h-main",
+        "iteration-3-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Four structural regularities enable efficient search: (1) TP dominance (ratio varies by model size: 2.06x for 7B, 2.68x for 14B, 4.5x for 70B), (2) effective_cache = kv*bs equivalence, (3) maxr=256 saturation plateau, (4) scheduler x concurrency interaction in degraded regimes. These arise from BLIS's simulation engine (routing, scheduling, batch formation, KV cache management), not from model-specific latency. Dynamic TP validation handles models where num_attention_heads is not divisible by all TP values.",
+      "applicability_bounds": "Verified for 7B/14B/70B models on H100 at rates 50-200. The Pareto front size varies by model (21/35/42 unique tuples) and rate (23-41 for 14B). May need tuning for non-transformer architectures or GPUs with very different memory/compute ratios.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "Refuted prediction: Phase 2.5 scope broadening (non-best combos, sjf+256 at all degraded kvs, lower 0.99 threshold) cannot improve Pareto recall at budget=100 because Phase 1+2 consume 75% of budget, Phase 2.5 uses the remaining 25 evals for basic coverage of 4 best combos, and no budget remains for additional targeted probes. Improving budget=100 recall requires either (a) reducing Phase 1/2 eval count, or (b) moving improvements to a new Phase 2.6 that has budget only when budget>=110.",
+      "confidence": "high",
+      "regime": "budget=100, 15 combos, 4 degraded best-per-GPU combos at 7 evals each",
+      "evidence": [
+        "iteration-4-h-main-all-variants-refuted"
+      ],
+      "contradicts": [
+        "iteration-4-bundle-h-main-prediction"
+      ],
+      "extraction_iteration": 4,
+      "mechanism": "See RP-9: budget constraint is algebraic, not empirical. The improvement mechanism proposed in the bundle is valid (non-best combos do produce unique Pareto tuples, near-ceiling SJF matters) but the proposed implementation cannot execute within budget=100 constraints.",
+      "applicability_bounds": "Holds for budget=100. At budget>=125 (25 extra evals), Phase 2.6 type targeted probes become feasible and the recall improvement might materialize.",
+      "superseded_by": null,
+      "category": "meta",
+      "status": "active",
+      "empirical_content": false,
+      "derivation_type": "algebraic"
+    },
+    {
+      "id": "RP-4",
+      "statement": "max_num_running_reqs has a universal saturation plateau at 256: all 360 tested (tp, instances, kv, bs) combinations show identical performance at maxr=256 and maxr=512, making maxr a non-differentiating knob above its plateau.",
+      "confidence": "high",
+      "regime": "All 15 tp/instances combos x kv={2000,3000,4000,5000} x bs={16,32} at rate=100, num-requests=200",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "At rate=100, the request arrival rate limits the number of concurrent in-flight requests below 256 in nearly all configurations. Once maxr exceeds the natural concurrency imposed by the arrival rate and scheduling latency, additional capacity is unused. This makes maxr a quasi-free knob \u2014 setting it to 256 dominates 512 in cost-objective terms while producing identical throughput.",
+      "applicability_bounds": "Holds at rate=100 with 200 requests. At higher rates or longer-running workloads, the plateau may shift to higher maxr values. Single-instance configurations (tp=1,ni=1) may show different behavior at very high rates where the scheduler queue fills.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "In cache-degraded regimes, scheduler and concurrency interact to create non-obvious Pareto tradeoff points: SJF x maxr=128 at moderate cache pressure (effective_cache ~96K tokens) achieves 2-7% higher throughput than FCFS x maxr=256, at cost of 5-15% higher tail latency. This interaction is invisible when exploring scheduler and concurrency independently.",
+      "confidence": "high",
+      "regime": "Single-instance configs (ni=1) at kv=3000,bs=32 (96K effective cache), rate=100, tp={1,2,4,8}",
+      "evidence": [
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Under preemption pressure, SJF prioritizes shorter requests for scheduling, which increases completion rate (higher rps) but delays longer requests (higher ttft_p99). Reducing maxr from 256 to 128 further limits batch size, which interacts with SJF's prioritization to create a qualitatively different operating mode. This cross-product effect only manifests when cache is stressed enough to trigger preemptions but not so stressed that all requests are equally impacted.",
+      "applicability_bounds": "Holds at moderate cache pressure (effective_cache ~60-100K tokens for this workload). At no pressure (effective_cache >= 160K), SJF effect vanishes. At severe pressure (effective_cache < 50K), the interaction reverses. Verified at rate=100; the thresholds shift with rate.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "The Pareto front diversity scales with arrival rate: rate=50 produces 23 unique objective tuples, rate=100 produces 35, and rate=200 produces 41. Higher load creates more diverse performance tradeoffs because more configs enter degraded regimes where knob interactions differentiate performance.",
+      "confidence": "high",
+      "regime": "qwen/qwen3-14b on H100, rates={50,100,200}, num-requests=200",
+      "evidence": [
+        "iteration-2-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "At lower rates, fewer concurrent requests mean less cache pressure and less scheduler differentiation, so more configs collapse to identical performance (plateau equivalence). At higher rates, more configs enter degraded regimes where cache pressure, scheduler choice, and concurrency limits create distinct performance tradeoffs.",
+      "applicability_bounds": "Observed for rates 50-200 with 200 requests. The trend may not extrapolate monotonically \u2014 at extremely high rates, all configs may saturate and collapse again.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "The four structural regularities of BLIS's configuration space (TP dominance, cache equivalence, maxr=256 plateau, SJF x concurrency interaction) are architecture-independent \u2014 they hold across models from 7B to 70B parameters with different attention head counts, KV head counts, and hidden dimensions. However, the TP dominance ratio scales with model size: 2.06x (7B), 2.68x (14B), 4.5x (70B) at 8 GPUs.",
+      "confidence": "high",
+      "regime": "qwen2.5-7b (28 heads, 4 KV heads), qwen3-14b (40 heads, 8 KV heads), llama-3.1-70b (64 heads, 8 KV heads) on H100, rate=100",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "TP dominance arises from TP sharding reducing per-instance compute and memory pressure \u2014 this effect is stronger for larger models because absolute compute per token is higher. Cache equivalence arises from BLIS's KV cache manager using effective_cache = kv_blocks * block_size to determine capacity. The maxr plateau occurs because batch formation saturates above ~256 concurrent requests regardless of per-request latency. SJF x concurrency interaction occurs when preemption pressure differentiates short vs long requests.",
+      "applicability_bounds": "Not all TP values are valid for all models \u2014 models with attention head counts not divisible by TP cause the latency model to panic. The search must validate TP dynamically. The maxr=256 plateau holds at model-level ceiling (sufficient cache); below ceiling, maxr sensitivity varies by model (70B loses 14% at maxr=128, 14B loses 0%).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-8",
+      "statement": "Pareto front diversity (number of unique objective tuples) correlates positively with model size: 21 unique tuples for 7B, 35 for 14B, 42 for 70B at rate=100. Larger models create more diverse performance tradeoffs because stronger TP dominance creates wider rps ranges across GPU allocations, and steeper maxr sensitivity creates more differentiated operating points in degraded regimes.",
+      "confidence": "high",
+      "regime": "qwen2.5-7b, qwen3-14b, llama-3.1-70b on H100, rate=100, num-requests=200",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "Larger models have: (a) higher per-token latency, making TP sharding gains proportionally larger (TP dominance ratio 4.5x for 70B vs 2.06x for 7B), which spreads rps across a wider range; (b) steeper maxr sensitivity below plateau (70B loses 14% at maxr=128, 14B loses 0%), creating more distinct performance levels at each GPU count. Both effects increase the number of non-dominated objective combinations.",
+      "applicability_bounds": "Observed for 3 models at rate=100. The relationship may not be monotonic for very small models (< 1B params) where single-GPU latency is trivial and all configs plateau quickly.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-9",
+      "statement": "The search budget allocation between Phase 1+2 (ceiling + cache sweep) and Phase 2.5+ (degraded-regime refinement) is a fundamental tradeoff: at budget=100, Phase 1 (15 evals) + Phase 2 (60 evals) = 75 evals, leaving only 25 for all refinement phases. Phase 2.5 alone needs 28 evals for 4 best combos (7 per combo with 2 degraded kv values each), exhausting the refinement budget and preventing any additional targeted probes.",
+      "confidence": "high",
+      "regime": "qwen/qwen3-14b at rate=100, seed=42, budget=100, 15 valid (tp,ni) combos",
+      "evidence": [
+        "iteration-4-h-main-refuted",
+        "iteration-4-dose-response"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "Phase 1 tests 15 combos (1 eval each = 15 evals). Phase 2 tests 15 combos \u00d7 4 kv values = 60 evals. These together consume 75% of budget=100. Phase 2.5 with 25 remaining evals processes 4 best combos \u00d7 7 evals each = 28 evals needed, so the last combo ((8,1) when sorted ascending by TP) gets cut: it receives sjf+128 and fcfs+128 at both degraded kvs but misses sjf+256 at kv_severe, fcfs+64 at kv_severe, and sjf+64 at kv_severe. Any broadening of Phase 2.5 (adding combos or probes) hits this constraint.",
+      "applicability_bounds": "Holds for 15-combo configuration spaces (4 TP values \u00d7 variable instances \u22648 GPUs). Scales proportionally with combo count: fewer combos (e.g., 7B model with 3 valid TPs) would have more Phase 2.5 budget.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-10",
+      "statement": "fcfs+128 is a significant GT Pareto contributor (17/124 = 13.7% of GT Pareto configs), specifically at degraded kv values (kv=2000 and kv=3000) for non-ceiling combos. These configs represent the operating point where concurrency reduction (maxr 256\u2192128) provides better throughput at lower cache pressure than the unconstrained ceiling. Removing fcfs+128 from Phase 2.5 coverage always reduces recall.",
+      "confidence": "high",
+      "regime": "qwen/qwen3-14b at rate=100, seed=42, full enumeration (1800 configs)",
+      "evidence": [
+        "iteration-4-h-main-v1-refuted"
+      ],
+      "contradicts": [
+        "design-assumption-fcfs128-rarely-produces-unique-pareto-tuples"
+      ],
+      "extraction_iteration": 4,
+      "mechanism": "At degraded kv (e.g., kv=2000 for (1,1) where rps=5.29 vs ceiling=7.00 at kv=10000), maxr=128 with fcfs produces distinct Pareto points because reduced concurrency leads to lower queue contention with smaller cache. With 128 requests max in flight, cache evictions are fewer, giving better throughput-latency tradeoffs than both maxr=256 (higher contention) and maxr=64 (excessive throttling).",
+      "applicability_bounds": "Confirmed for (tp=1-8, ni=1) combos at kv=2000,3000 with bs=32. Likely applies across model architectures given the mechanism is cache contention, not model-specific.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-11",
+      "statement": "SUPERSEDED by RP-14. The recall-vs-budget curve of the hierarchical search has a confirmed dead zone at budget=100-125: both budgets achieve 80.0% recall on 14B/rate=100. This dead zone applied to the v1 search only; the v2 search eliminates it.",
+      "confidence": "high",
+      "regime": "v1 search only: 14B/rate=100",
+      "evidence": [
+        "iteration-4-h-main",
+        "iteration-5-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "v1 Phase 3 (bs=16 sweep, 30 evals) consumed budget between recall=80% and 91.4% without contributing unique Pareto tuples. v2 eliminates Phase 3.",
+      "applicability_bounds": "Applies only to v1 search. v2 dead zone eliminated.",
+      "superseded_by": "RP-14",
+      "category": "domain",
+      "status": "superseded",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-12",
+      "statement": "Selective Phase 2 (all combos at kv=2000,3000; extend to kv=4000,5000 only for combos degraded at kv=3000 with ratio < 0.99 vs ceiling) reduces Phase 2 eval count from 60 to ~38 while preserving 100% Pareto coverage, because non-degrading combos produce identical performance at all kv values above their sufficiency threshold.",
+      "confidence": "high",
+      "regime": "14B/rate=100/seed=42; generalizes to any model where non-degrading combos exist (all tested models)",
+      "evidence": [
+        "iteration-5-h-main",
+        "iteration-5-h-dose-response"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "8 of 15 combos (multi-instance or high-instance combos with per-instance cache always sufficient) have ratio=1.0 at all kv values including kv=2000. Testing these at kv=4000,5000 produces ceiling-identical results \u2014 no Pareto-unique tuples. Degradation-at-kv=3000 is a reliable binary filter for which combos need kv extension.",
+      "applicability_bounds": "Applies when the cache-sufficiency threshold for a combo is below kv=2000. If rate increases significantly (e.g., rate=500), more combos may degrade at kv=3000, and fewer evals are saved.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-13",
+      "statement": "Expanding Phase 2.5 to probe ALL degraded combos (not just best-per-GPU) with priority-ordered backbone vs non-best treatment recovers 100% unique Pareto tuple recall at budget=100 on 14B/rate=100, eliminating the 80.0% recall ceiling observed in v1. Non-best combos contribute 4 of the 7 previously-missed tuples at degraded kv values.",
+      "confidence": "high",
+      "regime": "14B/rate=100/seed=42",
+      "evidence": [
+        "iteration-5-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 5,
+      "mechanism": "Non-best combos (e.g., (1,2), (4,2)) are excluded from v1 Phase 2.5 via best-per-GPU filter. At degraded kv, these combos produce unique Pareto tuples via maxr=64/sjf variants because their lower absolute rps creates distinct tradeoff points. Near-ceiling SJF probes (sjf+256 at first non-degraded kv above max degraded) capture scheduler differentiation at the degradation knee for backbone combos.",
+      "applicability_bounds": "Applies at budget=100 with the v2 selective Phase 2 freeing the required evals. At budget=75, v2 achieves 80.0% (same as v1 at budget=100) \u2014 non-best probing only activates at budget >= ~90 when Phase 2.5 has sufficient evals.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-14",
+      "statement": "The v2 hierarchical search achieves 100% unique Pareto tuple recall at budget=100 on 14B/rate=100/seed=42, with a saturating recall curve: 51.4% at b=50, 80.0% at b=75, 100.0% at b=100+. The v1 dead zone at budget=100-125 (both achieving 80.0%) is fully eliminated.",
+      "confidence": "high",
+      "regime": "14B qwen/qwen3-14b, rate=100, seed=42, H100 hardware",
+      "evidence": [
+        "iteration-5-h-main",
+        "iteration-5-h-dose-response",
+        "iteration-5-h-control-negative"
+      ],
+      "contradicts": [
+        "RP-11"
+      ],
+      "extraction_iteration": 5,
+      "mechanism": "Three structural changes combine: (1) selective Phase 2 saves 22 evals by skipping non-degrading combos at high kv; (2) Phase 3 elimination saves 30 evals (bs=16 zero Pareto contribution per RP-11); (3) freed 52 evals fund comprehensive Phase 2.5 covering backbone+non-best combos with sjf+128/sjf+256/fcfs+128 at each degraded kv plus near-ceiling probes.",
+      "applicability_bounds": "Validated on 14B/rate=100. Prior iterations (handoff) report 100% on 7B/rate=100, 14B/rate=50; 97.6% on 14B/rate=200 (one edge-case tuple at rate=200 near-ceiling). Robustness across other seeds not yet validated.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

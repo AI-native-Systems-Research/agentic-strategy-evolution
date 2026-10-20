@@ -1,0 +1,26 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The improved search.py with adaptive ceiling detection (kv=max(KV_VALUES)=10000 in Phase 1) achieves >=90% Pareto coverage across all 4 regimes (qwen3-14b/rate=100, Llama-70B/rate=100, qwen3-14b/rate=200, qwen3-14b/rate=50) within 200 evaluations each.",
+      "observed": "100% coverage across ALL 4 regimes at seed=42. Specifically: qwen3-14b/rate=100: 26/26 reference configs found (100%); Llama-3.1-70B/rate=100: 28/28 found (100%); qwen3-14b/rate=200: 27/27 found (100%); qwen3-14b/rate=50: 18/18 found (100%). Search used exactly 200 evals in each run. The algorithm found 30-39 Pareto configs (vs 18-28 exhaustive reference), the surplus being dominated but not in the reference due to extra kv values tested.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The adaptive ceiling (Phase 1: kv=10000 instead of hardcoded kv=5000) generalizes perfectly. Llama-70B reference Pareto front is larger than expected (28 configs vs qwen3-14b's 26) \u2014 different topology/kv balance but all found. Rate changes slightly alter Pareto front size (18 at rate=50, 27 at rate=200) but the algorithm adapts to find all of them."
+    },
+    {
+      "arm_type": "h-robustness",
+      "predicted": "Pareto coverage remains >=85% when seed changes from 42 to 123, with difference <=10 percentage points across all 4 regimes.",
+      "observed": "100% coverage at seed=123 for ALL 4 regimes: qwen3-14b/rate=100: 28/28 (100%, note ref front grew from 26 to 28 at seed=123); Llama-70B/rate=100: 28/28 (100%); qwen3-14b/rate=200: 28/28 (100%); qwen3-14b/rate=50: 23/23 (100%). Coverage difference between seed=42 and seed=123: 0pp in all regimes. The algorithm finds 100% at both seeds.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Pareto front sizes change slightly between seeds (e.g., qwen3-14b/rate=100: 26 at seed=42 vs 28 at seed=123; rate=50: 18 at seed=42 vs 23 at seed=123), confirming seed affects metric values and front composition. Despite this, the search algorithm finds 100% of whichever reference front exists at each seed. Seed-robustness is stronger than predicted (predicted >=85%, observed 100%)."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both predictions confirmed with coverage exceeding the >=90% threshold (h-main) and >=85% threshold (h-robustness). All 8 conditions (4 regimes \u00d7 2 seeds) produced 100% coverage. The adaptive ceiling change (Phase 1: kv=max(KV_VALUES)=10000) makes the algorithm model-agnostic: Llama-70B's ceiling at kv=3000 is correctly identified by Phase 1's kv=10000 probe, and Phase 2 fills intermediate values at kv=3000/4000/5000 which are Pareto-optimal for multiple topologies.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

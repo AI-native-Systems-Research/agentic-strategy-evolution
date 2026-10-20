@@ -1,0 +1,126 @@
+{
+  "answer": "The paper's ITL formula ITL = α/(1 − λW) holds quantitatively in BLIS at low arrival rates (5–20 req/s, MAPE < 0.1%) but breaks down structurally at higher rates. The breakdown is caused by a shape mismatch: BLIS's trained-physics latency model produces concave (decelerating) ITL growth with rate due to sub-linear MoE expert scaling and KV-bandwidth nonlinearities in StepTime(), while the formula predicts convex (accelerating) growth. A linear fit (R² > 0.975) outperforms the best-fit 1/(1−ρ) formula (R² = 0.919 AL, 0.947 AD) across rates 5–150 req/s. The formula overpredicts by 108% (AL) and 50% (AD) at rate=150. Removing finite-horizon transients (Q2–Q3 quartile restriction) worsens the fit, proving the breakdown is structural, not transient. Directional predictions hold: Always-Disaggregate (AD) delivers strictly lower ITL than Always-Local (AL) at all tested rates (gap 0.06–1.69 ms), while paying strictly higher TTFT (penalty 4.4–9.6 ms), with the tradeoff improving at higher loads. Calibrated formula parameters confirm w_AL > w_AD (0.00471 > 0.00369), consistent with the paper's prediction.",
+  "deliverable": null,
+  "repro": "./blis run --model qwen/qwen3-14b --num-instances 4 --prefill-instances 2 --decode-instances 2 --num-requests 300 --prompt-tokens 512 --prompt-tokens-stdev 0 --output-tokens 128 --output-tokens-stdev 0 --routing-policy least-loaded --pd-decider never --rate 10 --seed 42 --metrics-path final/evidence/repro_al_rate10.json 2>/dev/null && ./blis run --model qwen/qwen3-14b --num-instances 4 --prefill-instances 2 --decode-instances 2 --num-requests 300 --prompt-tokens 512 --prompt-tokens-stdev 0 --output-tokens 128 --output-tokens-stdev 0 --routing-policy least-loaded --pd-decider always --rate 10 --seed 42 --metrics-path final/evidence/repro_ad_rate10.json 2>/dev/null",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "ITL formula MAPE at low rates (5–20 req/s, AL mode)",
+      "value": 0.074,
+      "condition": "AL mode, two-point calibration at rates 5 and 10, extrapolated to rate 20; 300 requests, 3 seeds averaged",
+      "evidence": "final/evidence/iter-3/findings.json"
+    },
+    {
+      "id": "c2",
+      "metric": "ITL formula R² (AL, best-fit 1/(1−wλ), rates 5–150)",
+      "value": 0.919,
+      "condition": "AL mode (pd-decider=never), rates 5–150 req/s, 300 requests, 3 seeds averaged",
+      "evidence": "final/evidence/iter-3/findings.json"
+    },
+    {
+      "id": "c3",
+      "metric": "ITL formula R² (AD, best-fit 1/(1−wλ), rates 5–150)",
+      "value": 0.947,
+      "condition": "AD mode (pd-decider=always), rates 5–150 req/s, 300 requests, 3 seeds averaged",
+      "evidence": "final/evidence/iter-3/findings.json"
+    },
+    {
+      "id": "c4",
+      "metric": "ITL linear fit R² (AL, rates 5–150)",
+      "value": 0.976,
+      "condition": "AL mode, ITL = a + b*rate, rates 5–150 req/s, 300 requests, 3 seeds averaged",
+      "evidence": "final/evidence/iter-3/findings.json"
+    },
+    {
+      "id": "c5",
+      "metric": "ITL linear fit R² (AD, rates 5–150)",
+      "value": 0.985,
+      "condition": "AD mode, ITL = a + b*rate, rates 5–150 req/s, 300 requests, 3 seeds averaged",
+      "evidence": "final/evidence/iter-3/findings.json"
+    },
+    {
+      "id": "c6",
+      "metric": "Formula overprediction % at rate=150 (AL)",
+      "value": 108.64,
+      "condition": "AL mode, two-point calibration at rates 5/10, extrapolated to rate=150",
+      "evidence": "final/evidence/iter-3/findings.json"
+    },
+    {
+      "id": "c7",
+      "metric": "Formula overprediction % at rate=150 (AD)",
+      "value": 49.9,
+      "condition": "AD mode, two-point calibration at rates 5/10, extrapolated to rate=150",
+      "evidence": "final/evidence/iter-3/findings.json"
+    },
+    {
+      "id": "c8",
+      "metric": "Calibrated w_AL (formula parameter)",
+      "value": 0.00471,
+      "condition": "Two-point calibration at rates 5 and 10, AL mode (pd-decider=never)",
+      "evidence": "final/evidence/iter-3/findings.json"
+    },
+    {
+      "id": "c9",
+      "metric": "Calibrated w_AD (formula parameter)",
+      "value": 0.00369,
+      "condition": "Two-point calibration at rates 5 and 10, AD mode (pd-decider=always)",
+      "evidence": "final/evidence/iter-3/findings.json"
+    },
+    {
+      "id": "c10",
+      "metric": "ITL gap AL−AD at rate=5 (seed-averaged, ms)",
+      "value": 0.058,
+      "condition": "rate=5 req/s, 300 requests, seeds 42/43/44 averaged",
+      "evidence": "final/evidence/iter-3/results/h-main/mode_never_rate_5_seed_42.json"
+    },
+    {
+      "id": "c11",
+      "metric": "ITL gap AL−AD at rate=150 (seed-averaged, ms)",
+      "value": 1.687,
+      "condition": "rate=150 req/s, 300 requests, seeds 42/43/44 averaged",
+      "evidence": "final/evidence/iter-3/results/h-main/mode_never_rate_150_seed_42.json"
+    },
+    {
+      "id": "c12",
+      "metric": "TTFT penalty AD−AL at rate=5 (seed-averaged, ms)",
+      "value": 9.61,
+      "condition": "rate=5 req/s, 300 requests, seeds 42/43/44 averaged",
+      "evidence": "final/evidence/iter-2/findings.json"
+    },
+    {
+      "id": "c13",
+      "metric": "TTFT penalty AD−AL at rate=120 (seed-averaged, ms)",
+      "value": 4.43,
+      "condition": "rate=120 req/s, 300 requests, seeds 42/43/44 averaged",
+      "evidence": "final/evidence/iter-2/findings.json"
+    },
+    {
+      "id": "c14",
+      "metric": "R² drop with Q2–Q3 restriction (AL)",
+      "value": 0.044,
+      "condition": "AL mode, R²_full=0.919 minus R²_Q2Q3=0.875; proves structural not transient mismatch",
+      "evidence": "final/evidence/iter-4/findings.json"
+    },
+    {
+      "id": "c15",
+      "metric": "R² drop with Q2–Q3 restriction (AD)",
+      "value": 0.023,
+      "condition": "AD mode, R²_full=0.947 minus R²_Q2Q3=0.923; proves structural not transient mismatch",
+      "evidence": "final/evidence/iter-4/findings.json"
+    },
+    {
+      "id": "c16",
+      "metric": "Peak intra-run ITL spread (AL, %)",
+      "value": 12.15,
+      "condition": "AL mode, rate=80 req/s, (max quartile mean − min quartile mean)/overall mean",
+      "evidence": "final/evidence/iter-4/findings.json"
+    },
+    {
+      "id": "c17",
+      "metric": "Peak intra-run ITL spread (AD, %)",
+      "value": 10.47,
+      "condition": "AD mode, rate=100 req/s, (max quartile mean − min quartile mean)/overall mean",
+      "evidence": "final/evidence/iter-4/findings.json"
+    }
+  ]
+}

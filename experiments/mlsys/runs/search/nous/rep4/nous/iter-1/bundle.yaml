@@ -1,0 +1,62 @@
+metadata:
+  iteration: 1
+  family: "pareto-search-structure"
+  research_question: "What is the structure of the BLIS 6-knob configuration space's Pareto front, and can a hierarchical search find near-complete coverage with at most 200 out of 1800 evaluations?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism — hierarchical search exploiting TP dominance and cache equivalence"
+
+# Arms chosen: h-main (search effectiveness), h-dose-response (knob sensitivity).
+# h-control-negative omitted — a random baseline is naturally embedded in the analysis.
+# h-tradeoff captures the core rps-vs-kv tradeoff the Pareto front reveals.
+
+arms:
+  - type: h-main
+    prediction: "A hierarchical search that exploits space structure (TP dominance, effective cache equivalence, maxr plateau) will find ≥80% of the unique Pareto objective tuples while evaluating only 200 of 1800 configurations (11.1% of the space), with ≥95% of returned configs being truly Pareto-optimal."
+    mechanism: "The configuration space has strong structural regularity: (1) effective_cache = kv_blocks × block_size_in_tokens determines cache regime — configs with identical effective cache perform identically regardless of which (kv, bs) pair produces it (verified: kv=2000,bs=32 matches kv=4000,bs=16 exactly at sim/metrics.go:127). (2) max_num_running_reqs plateaus at 256 — 100% of configs show maxr=256 ≡ maxr=512. (3) TP is the dominant throughput knob (tp=8,i=1 gives 2.7× the rps of tp=1,i=8 at same GPU count). These regularities allow a hierarchical search to prune redundant regions and focus on Pareto-relevant dimensions."
+    diagnostic: "If coverage < 80%, check whether missing Pareto configs come from: (a) intermediate kv values (4000, 7500) not tested with certain tp/instances combos, (b) sjf scheduler variants not explored, or (c) configs where maxr < 256 produces different performance (violating the plateau assumption)."
+
+  - type: h-dose-response
+    prediction: "Increasing tp (1→2→4→8) at fixed GPU count will produce monotone_increasing responses_per_sec and monotone_decreasing ttft_p99_ms, with diminishing marginal gains at higher tp values."
+    mechanism: "Higher tensor parallelism splits each request's attention computation across more GPUs, reducing per-request latency proportionally (sim/latency model trained-physics coefficients scale with TP). This directly increases throughput. The effect is verified: at 8 GPUs, tp=8,i=1 gives 32.01 rps vs tp=4,i=2 at 26.78 rps vs tp=1,i=8 at 11.93 rps."
+    diagnostic: "If the dose-response is non-monotone, check whether higher TP increases per-instance memory pressure beyond the cache capacity, causing preemptions that offset the throughput gain."
+    knob: "tp"
+    values: [1, 2, 4, 8]
+    metric: "responses_per_sec"
+    expected_shape: "monotone_increasing"
+
+  - type: h-tradeoff
+    prediction: "Reducing total_kv_blocks (the cache-cost objective) will decrease responses_per_sec, with the degradation staying below 50% when kv_blocks ≥ 3000 with block_size=32 (effective cache ≥ 96K tokens)."
+    mechanism: "Smaller KV cache triggers preemptions (sim/kvstore eviction path), forcing running requests to restart. This directly reduces effective throughput. The effect is regime-dependent: above a per-configuration threshold, the cache is sufficient and reducing it further has no effect (plateau). Below the threshold, each additional preemption compounds TTFT and reduces rps. With block_size=32, kv=3000 gives 96K tokens which is near the threshold for single-instance configs at rate=100."
+    diagnostic: "If degradation exceeds 50% even at kv=3000,bs=32, check whether the workload's effective token footprint (prefix_tokens=512 + output) requires more cache than expected."
+    metric: "responses_per_sec"
+    secondary_metric: "total_kv_blocks"
+    secondary_budget: 8000
+    secondary_direction: "decrease"
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    rate: 100
+    prefix_tokens: 512
+    seed: 42
+    max_num_scheduled_tokens: 4096
+    long_prefill_token_threshold: 0
+    admission_policy: "always-admit"
+    preemption_policy: "fcfs"
+    routing_policy: "round-robin"
+    gpu_memory_utilization: 0.9
+  unlocked_parameters_audit:
+    - name: "max-output-len"
+      default_value: "model default"
+      justification: "Output length is drawn from the workload distribution; the system default max is sufficient for 200-request runs."
+    - name: "enable-chunked-prefill"
+      default_value: "false"
+      justification: "Not varied in this experiment; chunked prefill would add a 7th knob beyond the research question's scope."
+    - name: "swap-space"
+      default_value: "0"
+      justification: "CPU offload disabled; the experiment studies KV cache pressure without the confound of swap tier."

@@ -1,0 +1,163 @@
+{
+  "analysis": {
+    "AL": {
+      "rates": [
+        1,
+        5,
+        10,
+        20,
+        30,
+        50,
+        70,
+        90,
+        110,
+        130,
+        140,
+        150
+      ],
+      "itl_mean_ms": [
+        12.261,
+        12.4917,
+        12.8002,
+        13.4356,
+        14.1033,
+        15.4975,
+        16.8416,
+        17.9678,
+        18.8376,
+        19.451,
+        19.6856,
+        19.89
+      ],
+      "marginal_deltas": [
+        0.057688,
+        0.061705,
+        0.063542,
+        0.066769,
+        0.069706,
+        0.067205,
+        0.056313,
+        0.043491,
+        0.03067,
+        0.023458,
+        0.020437
+      ],
+      "r2_linear": 0.981855,
+      "r2_queueing": 0.938635,
+      "r2_saturating": 0.996997,
+      "linear_params": [
+        12.4885,
+        0.053847
+      ],
+      "queueing_params": [
+        13.0595,
+        0.002495
+      ],
+      "saturating_params": [
+        11.9882,
+        0.0878,
+        0.004153
+      ],
+      "linear_beats_queueing": true,
+      "marginals_decreasing_from": 50.0,
+      "residuals_queueing_low_mid_high": [
+        -0.6168,
+        0.6772,
+        -0.1011
+      ],
+      "dose_response_shape": "saturating",
+      "dose_response_peak_rate_pair": "30->50",
+      "dose_response_monotone_after_peak": true
+    },
+    "AD": {
+      "rates": [
+        1,
+        5,
+        10,
+        20,
+        30,
+        50,
+        70,
+        90,
+        110,
+        130,
+        140,
+        150
+      ],
+      "itl_mean_ms": [
+        12.261,
+        12.4338,
+        12.6716,
+        13.153,
+        13.6511,
+        14.6678,
+        15.65,
+        16.5101,
+        17.2162,
+        17.7694,
+        18.0026,
+        18.203
+      ],
+      "marginal_deltas": [
+        0.04321,
+        0.047569,
+        0.048136,
+        0.049809,
+        0.050836,
+        0.049108,
+        0.043007,
+        0.035302,
+        0.02766,
+        0.023321,
+        0.020046
+      ],
+      "r2_linear": 0.988634,
+      "r2_queueing": 0.959545,
+      "r2_saturating": 0.998452,
+      "linear_params": [
+        12.3957,
+        0.04149
+      ],
+      "queueing_params": [
+        12.7443,
+        0.002157
+      ],
+      "saturating_params": [
+        12.0903,
+        0.0616,
+        0.003222
+      ],
+      "linear_beats_queueing": true,
+      "marginals_decreasing_from": 50.0,
+      "residuals_queueing_low_mid_high": [
+        -0.37,
+        0.4353,
+        -0.083
+      ],
+      "dose_response_shape": "saturating",
+      "dose_response_peak_rate_pair": "30->50",
+      "dose_response_monotone_after_peak": true
+    }
+  },
+  "summary": {
+    "AL_linear_R2": 0.981855,
+    "AL_queueing_R2": 0.938635,
+    "AL_saturating_R2": 0.996997,
+    "AD_linear_R2": 0.988634,
+    "AD_queueing_R2": 0.959545,
+    "AD_saturating_R2": 0.998452,
+    "AL_linear_beats_queueing": true,
+    "AD_linear_beats_queueing": true,
+    "AL_dose_response_shape": "saturating",
+    "AD_dose_response_shape": "saturating",
+    "h_main_confirmed": true,
+    "h_dose_response_confirmed": true,
+    "notes": [
+      "Saturating (Michaelis-Menten) model outperforms both linear and queueing for both modes",
+      "Linear beats queueing (alpha/(1-rho)) for both AL and AD as predicted",
+      "Queueing residuals pattern: negative at low rates, positive at mid rates, negative at high rates (opposite to bundle prediction, but linear>queueing is confirmed)",
+      "Dose-response shape: saturating confirmed; marginals peak at rate 30-50, then monotone decreasing",
+      "Saturation onset at ~50 req/s, not ~20 req/s as predicted, but shape classification is same"
+    ]
+  }
+}

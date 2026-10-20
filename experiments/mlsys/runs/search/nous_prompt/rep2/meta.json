@@ -1,0 +1,32 @@
+{
+ "task": "search",
+ "arm": "nous_prompt",
+ "rep": 2,
+ "slot": 2,
+ "max_iterations": 5,
+ "ceiling": 140.0,
+ "nous_commit": "f9fbdd97a01c84089c258f45fd0c7c3f89f81d60",
+ "claude_cli": "2.1.301 (Claude Code)",
+ "started": "2026-10-19 20:40:03",
+ "status": "done",
+ "declared_done": true,
+ "iterations_used": 1,
+ "hit_ceiling": false,
+ "returncode": 0,
+ "cost_usd": 5.1165,
+ "cost": {
+  "total": 5.1165,
+  "transcripts": 5.1165,
+  "direct_llm": 0.0,
+  "by_model": {
+   "claude-opus-4-6": 5.1165
+  },
+  "n_replies": 60
+ },
+ "wall_min": 25.5,
+ "finished": "2026-10-19 21:05:34",
+ "transcripts": [
+  "/Users/toslali/mlsys_runs/runs/search/nous_prompt/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-search-nous-prompt-rep2-ws/f311f59a-a68e-4d47-b622-ca110aa8b247.jsonl",
+  "/Users/toslali/mlsys_runs/runs/search/nous_prompt/rep2/logs/session-1.jsonl"
+ ]
+}

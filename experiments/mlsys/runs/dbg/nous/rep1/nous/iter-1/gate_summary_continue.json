@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 fully resolved the primary research question: KV cache preemptions caused a 9% inflation in total_output_tokens (114,630 vs. correct 105,082 at 265 preemptions) due to double-counting of decoded tokens after request restart. The fix eliminates the inflation exactly (post-fix: 105,082 in all tested KV cache configurations), has zero side effects in the preemption-free regime, and passes all existing tests plus a new regression test.",
+  "key_points": [
+    "Bug confirmed and fixed: total_output_tokens inflated by 9.09% (9,548 extra tokens) under 265 preemptions; after patching sim/batch_formation.go and sim/simulator.go, the metric matches the preemption-free control exactly (105,082).",
+    "Three metrics were affected by the same root cause \u2014 TotalOutputTokens, AllITLs (extra entries), and TTFTSum (re-added on restart); per-request maps (RequestTTFTs, RequestITLs) self-correct via overwrite and were not modified.",
+    "What remains unknown: (1) whether extremely high preemption 'thrashing' rates could expose edge cases (e.g., near-zero or negative token counts), (2) whether other aggregate metrics such as scheduling delay are re-recorded on restart in a similar pattern \u2014 a secondary audit is suggested but not required to close the primary question.",
+    "recommendation: stop"
+  ],
+  "recommendation": "stop"
+}

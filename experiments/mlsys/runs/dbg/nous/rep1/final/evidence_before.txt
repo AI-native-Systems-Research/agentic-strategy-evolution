@@ -1,0 +1,4 @@
+Before fix evidence:
+60000 blocks (0 preemptions): total_output_tokens=105082
+6000 blocks (72 preemptions): total_output_tokens=106385
+600 blocks (265 preemptions): total_output_tokens=114630

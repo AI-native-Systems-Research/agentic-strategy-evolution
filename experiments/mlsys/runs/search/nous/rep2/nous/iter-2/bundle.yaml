@@ -1,0 +1,72 @@
+metadata:
+  iteration: 2
+  family: "pareto-search-improvement"
+  research_question: "Can an improved Pareto search algorithm — informed by iter-1's structural discoveries (RP-1 through RP-4) — achieve >=92% coverage of the true 4-objective Pareto front within 200 evaluations of the BLIS 6-knob configuration space?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — single mechanism (search strategy) + dose-response on budget knob; iter-1 refuted the 5-phase approach at >=80% coverage threshold"
+
+arms:
+  # Arms chosen:
+  # - h-main: Tests whether the improved search strategy achieves >=92% Pareto coverage,
+  #   directly addressing the iter-1 REFUTE of the 5-phase approach.
+  # - h-dose-response: Characterizes the budget-coverage relationship to understand
+  #   diminishing returns and inform optimal budget allocation. This is practically
+  #   useful for the deliverable (search.py takes --budget).
+  # Skipped: h-control-negative (iter-1 84.6% baseline already serves as control),
+  #   h-ablation (could test removing preemption-regime exploration but dose-response
+  #   on budget is more informative — a budget=50 run naturally ablates later phases).
+
+  - type: h-main
+    prediction: "Improved search algorithm using ceiling+cheapest scan followed by adaptive boundary mapping will find >=92% (>=24 of 26) reference Pareto front configs within 200 evaluations, up from 84.6% (22/26) with the iter-1 algorithm, because the 4 missed configs are all at mid-range kv_blocks values (3000, 4000) that the improved Phase 2 boundary mapping explicitly explores."
+    mechanism: "The iter-1 search missed 4 Pareto configs: tp=8/inst=1 at kv={3000,4000}/bs=32, and tp=4/inst=2 at kv={2000,3000}/bs=32. These were missed because Phase 2 (cache minimization) searches from low-kv upward and stops at the first ceiling match, never testing intermediate values. The improved algorithm fixes this by: (1) testing both ceiling (kv=5000) and cheapest (kv=2000) per topology in Phase 1, (2) adaptively testing kv=3000 and kv=4000 when preemptions are detected in Phase 2. This covers all 4 kv values × 15 topologies × bs=32 = 60 core configs within ~75 evals, with remaining budget for sensitivity and fill."
+    diagnostic: "If coverage is below 92%, check: (a) whether the reference Pareto front shifted (different kv values now Pareto-optimal), (b) whether Phase 2 boundary mapping missed a topology that needed intermediate kv exploration, (c) whether bs=16 or non-256 maxrun configs contribute Pareto points not in the reference."
+    code_changes:
+      - file: "search.py"
+        intent: "Replace the 5-phase search strategy with a 4-phase strategy: Phase 1 scans all 15 topologies at both ceiling (kv=5000/bs=32) and cheapest (kv=2000/bs=32); Phase 2 adaptively maps the preemption boundary at kv=3000 and kv=4000 for topologies with preemptions; Phase 3 tests sensitivity (maxrun, sjf, bs=16); Phase 4 fills remaining budget with strategic exploration of untested (topology, kv, bs) combinations, prioritizing topologies with existing Pareto candidates rather than lexicographic enumeration."
+        rationale: "The iter-1 search's Phase 2 stops at first ceiling match and Phase 5 fills lexicographically starting from tp=1 — both design choices cause it to miss mid-range kv configs at high-GPU topologies. The improved algorithm ensures every topology gets at least 4 kv values tested (2000, 3000, 4000, 5000) at bs=32 before spending budget on sensitivity and fill."
+
+  - type: h-dose-response
+    knob: "search_budget"
+    values: [50, 100, 150, 200]
+    metric: "pareto_coverage_pct"
+    expected_shape: "saturating"
+    prediction: "Pareto coverage follows a saturating curve as search budget increases from 50 to 200: large gains from 50->100 as core topologies are mapped (Phase 1+2 complete), diminishing returns from 150->200 as sensitivity testing adds few new Pareto points. Expected coverage: ~60% at budget=50, ~85% at budget=100, ~90% at budget=150, ~96% at budget=200."
+    mechanism: "The improved search front-loads topology and cache exploration in Phases 1-2 (~75 evals), which covers the 60-config core subspace (15 topologies × 4 kv × bs=32) containing all reference Pareto configs. Phases 3-4 (sensitivity + fill) use the remaining budget for maxrun/scheduler/bs=16 variations that rarely contribute new Pareto points. Therefore, most coverage gain occurs in the first ~100 evals."
+    diagnostic: "If shape is not saturating (e.g., linear), the Pareto front may depend more on sensitivity knobs (maxrun, scheduler) than expected, indicating the iter-1 principles RP-1/RP-2 about scheduler/maxrun irrelevance don't hold for all topologies."
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    rate: 100
+    prefix_tokens: 512
+    seed: 42
+    max_num_scheduled_tokens: 4096
+    long_prefill_token_threshold: 0
+    admission_policy: "always-admit"
+    preemption_policy: "fcfs"
+    routing_policy: "round-robin"
+    gpu_memory_utilization: 0.9
+  unlocked_parameters_audit:
+    - name: "scheduler"
+      default_value: "fcfs"
+      justification: "Iter-1 RP-3 showed scheduler (fcfs vs sjf) has mean rps difference of 0.19 — negligible for Pareto front structure. Search defaults to fcfs with sjf sensitivity checks."
+    - name: "max_num_running_reqs"
+      default_value: 256
+      justification: "Iter-1 showed 128, 256, and 512 produce identical results for most configs. Search defaults to 256 with sensitivity checks at 32, 64, 128."
+    - name: "block_size_in_tokens"
+      default_value: 32
+      justification: "Reference Pareto front shows only 1/26 configs uses bs=16 and it's dominated by identical bs=32 config. Search explores bs=32 primarily with bs=16 sensitivity checks."
+  rehearsal_subset:
+    seeds: [42]
+    arms: [h-main, h-dose-response]
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      single_eval: 0.15
+      search_200_evals: 30
+      reference_180_evals: 27
+    observation_method: "timed during iter-2 design probes"

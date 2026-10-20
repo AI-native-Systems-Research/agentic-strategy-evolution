@@ -1,0 +1,74 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "KV cache capacity (total_kv_blocks * block_size_in_tokens) has a saturating effect on throughput: below a critical effective token capacity, preemptions cause severe TTFT degradation and throughput reduction; above it, performance plateaus with byte-identical results.",
+    "confidence": "high",
+    "regime": "BLIS, qwen3-14b, H100, rate=100, tp=4, num_instances=1, fcfs, maxrun=128; observed threshold ~120k effective tokens (7500 blocks * 16 tokens/block)",
+    "evidence": [
+      "iteration-1-h-dose-response"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "mechanism": "The KV cache in sim/kvcache/ allocates blocks per active request. When total effective token capacity is below the working set of concurrent requests, the scheduler must preempt running requests to free blocks, triggering re-computation. The saturation threshold equals the working set size: number of concurrent requests * mean (input+output) token length / block_size. Above the threshold, blocks are never exhausted, and additional capacity has zero effect.",
+    "applicability_bounds": "Threshold shifts with: (1) workload rate and request length distribution, (2) block_size_in_tokens (higher block size = fewer blocks needed for same effective capacity), (3) max_num_running_reqs (controls concurrency). Does not apply to multi-instance configurations where per-instance load is lower.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Within a fixed GPU budget, tensor parallelism (tp) consistently outperforms instance parallelism (num_instances) for throughput: tp=N,inst=1 achieves 1.5-4x higher rps than tp=1,inst=N at the same GPU count.",
+    "confidence": "high",
+    "regime": "BLIS, qwen3-14b, H100, rate=100, seed=42, kv_blocks=5000, block_size=32; observed across all GPU counts 1-8",
+    "evidence": [
+      "iteration-1-h-tradeoff"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "mechanism": "Higher TP reduces per-token computation latency (ITL) by parallelizing attention and FFN across more GPUs. Lower ITL means each request completes faster, reducing the queue backlog and allowing more requests per second. With more instances (low TP), each instance processes its own requests independently with slower per-token speed, and the throughput gain from parallelism is limited to the reduction in per-instance queue depth.",
+    "applicability_bounds": "Holds under fixed round-robin routing. May differ under prefix-affinity routing where cache locality favors more instances. At very high request rates where queueing dominates, instance parallelism may become competitive by distributing queue depth.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  },
+  {
+    "id": "RP-3",
+    "statement": "A topology-first adaptive Pareto search of the BLIS 6-knob space finds only ~41% of performance tiers with a simple 5-phase strategy, because the Pareto front includes preemption-regime configs (high TTFT, low kv_blocks) and non-power-of-2 GPU topologies that topology-first enumeration misses.",
+    "confidence": "high",
+    "regime": "BLIS 6-knob space: tp in {1,2,4,8}, num_instances in {1..8} with tp*inst<=8, scheduler {fcfs,sjf}, maxrun {64,128,256,512}, kv_blocks {2000,5000,10000}, block_size {16,32}",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "mechanism": "The Pareto front in a 4-objective space (maximize rps, minimize ttft, minimize GPUs, minimize kv_blocks) includes configs that are dominated in performance metrics but not in resource metrics. A config with high TTFT and low kv_blocks is Pareto-optimal if no other config achieves both lower kv_blocks AND lower TTFT simultaneously. A topology-first search that prunes preemption-regime configs therefore misses resource-efficient Pareto points.",
+    "applicability_bounds": "Applies specifically to multi-objective Pareto search where resource cost (kv_blocks, GPU count) is an objective alongside performance. A single-objective throughput search would not have this gap. The missed topologies (3, 5, 6, 7 GPUs) are a search enumeration bug, not a fundamental limitation.",
+    "superseded_by": null,
+    "category": "meta",
+    "status": "active"
+  },
+  {
+    "id": "RP-4",
+    "statement": "GPU count is not a monotone predictor of BLIS throughput: the best achievable rps at 4 GPUs (tp=4,inst=1: 19.56 rps) exceeds the best at 8 GPUs with poor topology (tp=1,inst=8: 11.93 rps), making topology selection more important than raw GPU count.",
+    "confidence": "high",
+    "regime": "BLIS, qwen3-14b, H100, rate=100, seed=42; confirmed across all 10 tested topologies",
+    "evidence": [
+      "iteration-1-h-tradeoff"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "mechanism": "Throughput depends on the product of (per-token speed) * (concurrency), not just GPU count. Higher TP reduces per-token latency, enabling more completions per second even with fewer instances. Instance parallelism reduces per-instance queue depth but does not improve per-token speed. The TP advantage dominates at moderate to high request rates where the bottleneck is compute speed rather than queue depth.",
+    "applicability_bounds": "This finding holds for moderate request rates (rate=100 with 200 requests). At extreme overload where queueing dominates over compute, instance parallelism becomes more competitive. Also model-dependent: models with larger attention heads may benefit differently from TP.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active"
+  }
+]

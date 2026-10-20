@@ -1,0 +1,74 @@
+{
+  "iteration": 4,
+  "bundle_ref": "runs/iter-4/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "R\u00b2_full - R\u00b2_Q2Q3 >= 0.02 for at least one mode when fitting 1/(1-w*lambda) to Q2-Q3 means vs full-run means. Removing transients should WORSEN the formula fit because Q2-Q3 data is more concave than full-run data.",
+      "observed": "AL: R\u00b2_full=0.9187, R\u00b2_Q2Q3=0.8749, diff=0.0438 (exceeds threshold of 0.02). AD: R\u00b2_full=0.9465, R\u00b2_Q2Q3=0.9234, diff=0.0231 (exceeds threshold of 0.02). For reference, linear R\u00b2 (full) = 0.9759 (AL), 0.9846 (AD); linear R\u00b2 (Q2Q3) = 0.9555 (AL), 0.9735 (AD). Q2-Q3 quartile means at high rates are substantially above full-run means: AL rate=80: Q2Q3=18.258ms vs full=17.436ms (+4.7%); AL rate=100: Q2Q3=19.192ms vs full=18.434ms (+4.1%). Consistent across all 3 seeds (variance < 0.01ms). Best-fit formula params: AL full: alpha=13.10, w=0.00252; AL Q2Q3: alpha=13.10, w=0.00269.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Both modes confirm the prediction with R\u00b2 differences well above 0.02. The formula breakdown is structural: BLIS's nonlinear batch-size terms (sumCtx in tDcKv, MoE nEff scaling) produce sub-linear ITL growth with batch size, making the data concave while the 1/(1-rho) formula is convex. Removing transients amplifies this structural mismatch."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "At rates <= 10, Q2-Q3 diff vs full-run mean ITL < 0.2%, and ITL spread < 0.5% for both AL and AD modes across all seeds.",
+      "observed": "AL rate=5: diff=0.021%, spread=0.053%. AL rate=10: diff=0.094%, spread=0.236%. AD rate=5: diff=0.016%, spread=0.034%. AD rate=10: diff=0.071%, spread=0.156%. All values well below 0.2% threshold for diff and 0.5% for spread. The inverted-U pattern is absent at low rates \u2014 Q1-Q4 quartile means are nearly identical (e.g., AL rate=5: Q1=12.489, Q2=12.495, Q3=12.494, Q4=12.489ms).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Low-rate regime confirms negligible transient effects. The ramp-up/drain phases at rate=5 occupy negligible time (300 requests / 5 req/s = 60s simulation; service time ~1.6s means steady-state is reached within the first few requests). The formula's steady-state assumption is operationally valid at these rates."
+    },
+    {
+      "arm_type": "h-dose-response",
+      "predicted": "The ITL intra-run spread follows an inverted-U shape across rates 5-150 req/s for both AL and AD modes, peaking between rates 80-120.",
+      "observed": "AL spreads: rate=5:0.05%, rate=10:0.24%, rate=20:1.03%, rate=40:4.65%, rate=60:8.99%, rate=80:12.15%, rate=100:12.09%, rate=120:10.79%, rate=150:9.24%. Peak at rate=80 (12.15%). AD spreads: rate=5:0.03%, rate=10:0.16%, rate=20:0.66%, rate=40:3.11%, rate=60:7.00%, rate=80:9.65%, rate=100:10.47%, rate=120:9.89%, rate=150:8.19%. Peak at rate=100 (10.47%). Both modes confirmed inverted-U: peak in middle, high-rate decline, low-rate below peak. AL peaks at rate=80, AD peaks at rate=100 \u2014 both within predicted 80-120 range.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The inverted-U shape confirms the ramp-up/drain transient model. AL and AD differ in peak location (80 vs 100) because AD's dedicated decode instances have lower per-instance arrival rate, shifting saturation higher. At rate=150, the system is heavily loaded even during transient phases, compressing the spread relative to the peak.",
+      "observed_shape": "inverted_u",
+      "shape_match": true,
+      "dose_points": [
+        {
+          "value": 5,
+          "metric": 0.05
+        },
+        {
+          "value": 10,
+          "metric": 0.24
+        },
+        {
+          "value": 20,
+          "metric": 1.03
+        },
+        {
+          "value": 40,
+          "metric": 4.65
+        },
+        {
+          "value": 60,
+          "metric": 8.99
+        },
+        {
+          "value": 80,
+          "metric": 12.15
+        },
+        {
+          "value": 100,
+          "metric": 12.09
+        },
+        {
+          "value": 120,
+          "metric": 10.79
+        },
+        {
+          "value": 150,
+          "metric": 9.24
+        }
+      ]
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "All three arms confirmed. Core finding: the formula breakdown is structural, not transient-driven. Removing ramp-up/drain transients (Q2-Q3 analysis) worsens the formula fit (R\u00b2 drops by 0.044 for AL, 0.023 for AD), because quasi-steady-state ITL is MORE concave than the convex 1/(1-rho) formula. The linear fit consistently outperforms the formula (R\u00b2=0.976-0.985 vs 0.919-0.947). The transient effect itself follows an inverted-U pattern peaking at rates 80-100 req/s.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

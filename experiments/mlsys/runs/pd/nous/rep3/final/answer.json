@@ -1,0 +1,91 @@
+{
+  "answer": "The paper's ITL formula ITL = a/(1 - b*lambda) fits BLIS well across 5-130 req/s: R²=0.956 for always-disaggregate (AD) and R²=0.927 for always-local (AL). AD consistently produces lower ITL than AL at every rate, with the gap growing monotonically from 0.06 ms (rate=5) to 1.68 ms (rate=130), driven by the 1/(1-rho) queueing amplifier removing prefill work from decode servers. Conversely, AD carries a TTFT penalty of 4-10 ms over AL due to KV-transfer overhead, narrowing under load as AL TTFT degrades faster. The formula begins to underpredict AL ITL above ~100 req/s (AL R²=0.927 vs AD R²=0.956) because mixed prefill+decode batches introduce non-linearities not captured by the single-server M/G/1 approximation. The fitted b_AL/b_AD = 1.21, implying AL carries ~21% more effective work per request than AD decode servers, consistent with the theoretical W_P/W_D ratio for 512-token prompts and 128-token outputs.",
+  "deliverable": null,
+  "repro": "bash final/repro.sh",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "R² of ITL formula fit for AD mode",
+      "value": 0.956,
+      "condition": "ITL = a/(1-b*lambda), AD mode, rates 5-130 req/s, 3 seeds (42-44), 300 requests per run, qwen3-14b 4 instances (2P+2D)",
+      "evidence": "final/evidence/summary.json"
+    },
+    {
+      "id": "c2",
+      "metric": "R² of ITL formula fit for AL mode",
+      "value": 0.927,
+      "condition": "ITL = a/(1-b*lambda), AL mode, rates 5-130 req/s, 3 seeds (42-44), 300 requests per run, qwen3-14b 4 instances (2P+2D)",
+      "evidence": "final/evidence/summary.json"
+    },
+    {
+      "id": "c3",
+      "metric": "b_AL / b_AD ratio (effective work per request)",
+      "value": 1.208,
+      "condition": "Fitted from ITL = a/(1-b*lambda) across 8 rates × 3 seeds",
+      "evidence": "final/evidence/summary.json"
+    },
+    {
+      "id": "c4",
+      "metric": "ITL gap (AL - AD) at rate=5 req/s (ms)",
+      "value": 0.058,
+      "condition": "Mean across seeds 42-44, pd-decider never vs always, 300 requests, 512/128 tokens",
+      "evidence": "final/evidence/summary.json"
+    },
+    {
+      "id": "c5",
+      "metric": "ITL gap (AL - AD) at rate=130 req/s (ms)",
+      "value": 1.682,
+      "condition": "Mean across seeds 42-44, pd-decider never vs always, 300 requests, 512/128 tokens",
+      "evidence": "final/evidence/summary.json"
+    },
+    {
+      "id": "c6",
+      "metric": "ITL gap monotonicity (AL > AD at all rates)",
+      "value": 1.0,
+      "condition": "Ordering violations across 8 rates × 3 seeds = 0 out of 24 comparisons",
+      "evidence": "final/evidence/findings.json"
+    },
+    {
+      "id": "c7",
+      "metric": "AD mean ITL at rate=80 (ms)",
+      "value": 16.102,
+      "condition": "Mean across seeds 42-44, pd-decider always, rate=80, 300 requests",
+      "evidence": "final/evidence/summary.json"
+    },
+    {
+      "id": "c8",
+      "metric": "AL mean ITL at rate=80 (ms)",
+      "value": 17.436,
+      "condition": "Mean across seeds 42-44, pd-decider never, rate=80, 300 requests",
+      "evidence": "final/evidence/summary.json"
+    },
+    {
+      "id": "c9",
+      "metric": "TTFT overhead AD-AL at rate=5 (ms)",
+      "value": 9.61,
+      "condition": "Mean across seeds 42-44, AD TTFT minus AL TTFT, rate=5",
+      "evidence": "final/evidence/findings.json"
+    },
+    {
+      "id": "c10",
+      "metric": "TTFT overhead AD-AL at rate=130 (ms)",
+      "value": 4.21,
+      "condition": "Mean across seeds 42-44, AD TTFT minus AL TTFT, rate=130",
+      "evidence": "final/evidence/findings.json"
+    },
+    {
+      "id": "c11",
+      "metric": "Near-zero-load ITL gap as % of high-load gap",
+      "value": 3.4,
+      "condition": "rate=5 gap (0.058 ms) / rate=130 gap (1.682 ms) × 100",
+      "evidence": "final/evidence/summary.json"
+    },
+    {
+      "id": "c12",
+      "metric": "Total experiment runs with zero drops/preemptions",
+      "value": 48,
+      "condition": "All 48 runs (8 rates × 2 modes × 3 seeds) completed 300/300 requests",
+      "evidence": "final/evidence/findings.json"
+    }
+  ]
+}

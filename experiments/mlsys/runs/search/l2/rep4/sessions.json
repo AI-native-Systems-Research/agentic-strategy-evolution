@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "All evidence verified. Here's a summary of the findings:\n\n## Space Structure\n\nThe 1800-config space has strong structure that reduces it to ~120 effective configs:\n\n1. **block_size=32 always dominates 16** \u2014 larger blocks provide 27% better throughput and 54% better tail latency at the same kv_blocks setting (more usable capacity per block)\n\n2. **Scheduler is a minor knob** \u2014 sjf gives ~5% better throughput but ~13% worse tail latency vs fcfs. This creates a genuine Pareto trade-off, but only for single-instance configs under memory pressure.\n\n3. **max_num_running_reqs has a threshold at 128** \u2014 values 128, 256, 512 are identical. Values 32 and 64 cause queuing that hurts all metrics. maxr=64 occasionally matches 128 for well-provisioned multi-instance configs.\n\n4. **The dominant axis is TP vs instances** \u2014 at 8 GPUs: tp=8x1 gets 2.54x the throughput of tp=1x8, but with 24x worse tail latency (1122ms vs 47ms). Higher TP always wins on throughput; more instances wins on tail latency.\n\n5. **KV blocks have per-config thresholds** \u2014 below threshold, preemptions degrade performance sharply. The Pareto front selects the minimum KV (2000-4000 blocks) that achieves each performance level.\n\n## Search Algorithm\n\n`search.py` uses 200 evaluations (~14 seconds) to find 30-35 Pareto-optimal configs. The algorithm: (1) survey all 15 tp/inst combos at ceiling, (2) sweep kv\u00d7maxr for each, (3) test sjf for single-instance configs. Cross-seed stability: 74-87% overlap between different seeds.\n\n## Deliverables\n- `search.py` \u2014 the search script\n- `final/answer.json` \u2014 structured answer with 9 quantitative claims\n- `final/done.json` \u2014 marks iteration complete",
+  "cli_cost": 3.5210790000000003,
+  "subtype": "success",
+  "wall": 1067.7,
+  "num_turns": 45,
+  "n": 1
+ }
+]

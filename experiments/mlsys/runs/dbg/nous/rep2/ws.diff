@@ -1,0 +1,259 @@
+diff --git a/.nous/repo/build.yaml b/.nous/repo/build.yaml
+new file mode 100644
+index 0000000..168df93
+--- /dev/null
++++ b/.nous/repo/build.yaml
+@@ -0,0 +1,4 @@
++schema_version: '1'
++build_command: go build -o blis main.go
++run_command: ./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed
++  42 --total-kv-blocks 60000
+diff --git a/.nous/repo/exploration.md b/.nous/repo/exploration.md
+new file mode 100644
+index 0000000..1bf5f63
+--- /dev/null
++++ b/.nous/repo/exploration.md
+@@ -0,0 +1,74 @@
++# Handoff Snapshot — Iteration 1
++
++## Goal
++
++Find and fix the metrics bug where `total_output_tokens` and `tokens_per_sec` are inflated when KV cache preemptions occur. Apply the fix, verify it works, and add a regression test.
++
++## Key Discoveries
++
++1. **Root cause confirmed:** `sim/batch_formation.go:232` resets `ProgressIndex = 0` on preemption, causing the request to re-enter decode and re-increment `TotalOutputTokens` at `sim/simulator.go:647`. The same output tokens are counted multiple times (once per scheduling round).
++
++2. **Inflation scales with preemption count:** Pre-fix measurements:
++   - 0 preemptions (60k blocks): `total_output_tokens = 105082`
++   - 72 preemptions (6k blocks): `total_output_tokens = 106385` (+1303)
++   - 265 preemptions (600 blocks): `total_output_tokens = 114630` (+9548)
++
++3. **Three related metrics are affected by preemption double-counting:**
++   - `TotalOutputTokens` (directly reported, user's complaint)
++   - `TTFTSum` (incremented each time prefill completes — not checked by TTFTSet guard)
++   - `ITL` array (not reset, so entries from preempted rounds accumulate)
++
++4. **Fix approach:** Store `OutputTokensGenerated` in `PreemptedRequest` before `ProgressIndex` reset; subtract in simulator's preemption handler. Also reset `TTFTSet` and `ITL` on preemption.
++
++5. **Post-fix verification:** `total_output_tokens = 105082` for ALL KV cache sizes (600, 6000, 60000 blocks), confirming the fix eliminates the inflation.
++
++6. **All existing tests pass** including golden dataset tests and all sim/ package tests.
++
++## System Interface
++
++- **Build:** `go build -o blis main.go`
++- **Run baseline:** `./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 60000`
++- **Output format:** JSON to stdout after `=== Simulation Metrics ===` header
++- **Baseline result:** `total_output_tokens = 105082` with 0 preemptions
++
++## Code Map
++
++- `sim/batch_formation.go:42-44` — `PreemptedRequest` struct. Added `OutputTokensGenerated` field.
++- `sim/batch_formation.go:201-244` — `preemptForTokens()`. Line 232: `ProgressIndex = 0` reset. New code computes `OutputTokensGenerated` before the reset.
++- `sim/simulator.go:584-598` — Preemption metrics handler in `scheduleBatch()`. New code subtracts `OutputTokensGenerated`, resets `TTFTSet` and `ITL`.
++- `sim/simulator.go:647` — `TotalOutputTokens++` in decode loop of `executeBatchStep()`.
++- `sim/simulator.go:651-656` — TTFT recording (affected by double-counting when TTFTSet not checked).
++- `sim/simulator_test.go:2601+` — New regression test `TestSimulator_PreemptionDoesNotInflateTotalOutputTokens`.
++
++## Code Targets
++
++### h-main arm: Fix double-counting
++1. `sim/batch_formation.go:42-44` — Add `OutputTokensGenerated int64` to `PreemptedRequest`
++2. `sim/batch_formation.go:217-219` — Compute output tokens before ProgressIndex reset in `preemptForTokens`
++3. `sim/simulator.go:584-588` — Subtract output tokens and reset TTFTSet/ITL in preemption handler
++4. `sim/simulator_test.go` — Add regression test
++
++## What I Tried That Didn't Work
++
++- Nothing failed; the exploration path was direct. The bug was identified from the first code read.
++
++## What I Excluded and Why
++
++- **E2E latency double-counting**: ITL duplication also inflates E2E latency (`lat = FirstTokenTime + itlSum + overhead`). The ITL reset in the fix addresses this. Not explicitly tested because the user's report focused on `total_output_tokens`.
++- **Per-request TTFT accuracy**: `RequestTTFTs[req.ID]` is overwritten (not accumulated) so per-request TTFT is correct. Only the aggregate `TTFTSum` was double-counted.
++- **Cluster-level metrics**: `sim/cluster/cluster.go:1274` aggregates `TTFTSum` across instances. The per-instance fix propagates correctly.
++
++## Evolution of Thinking
++
++Initially considered counting output tokens at completion time instead of incrementally. Rejected because: (1) it would miss in-flight requests at simulation end, (2) it's a larger change. The subtraction-at-preemption approach is minimal and correct for all cases.
++
++## Current Status
++
++- **Validated:** Fix works for 0, 72, and 265 preemptions. All tests pass. Regression test added.
++- **Uncertain:** Whether `AllITLs` (used for percentile computation) is also affected — ITL reset should fix it but not explicitly tested at the aggregate level.
++- **Suggested next:** If further investigation needed, examine whether the ITL percentile metrics (P90, P95, P99) are now correct under preemption, and whether cluster-level TTFTSum aggregation handles the fix correctly.
++
++## Warnings & Constraints
++
++- The `cmd` package has a pre-existing test failure in `TestFetchHFConfig_Success` (httptest server panic). This is unrelated to the fix.
++- The golden dataset tests in `sim/simulator_test.go:TestSimulator_GoldenDataset` passed, meaning the fix doesn't change behavior for test cases without preemptions.
+\ No newline at end of file
+diff --git a/.nous/repo/knobs.yaml b/.nous/repo/knobs.yaml
+new file mode 100644
+index 0000000..efb6978
+--- /dev/null
++++ b/.nous/repo/knobs.yaml
+@@ -0,0 +1,2 @@
++schema_version: '1'
++knobs: []
+diff --git a/.nous/repo/metrics.yaml b/.nous/repo/metrics.yaml
+new file mode 100644
+index 0000000..f8698c1
+--- /dev/null
++++ b/.nous/repo/metrics.yaml
+@@ -0,0 +1,2 @@
++schema_version: '1'
++metrics: []
+diff --git a/sim/batch_formation.go b/sim/batch_formation.go
+index a14f13d..adffe91 100644
+--- a/sim/batch_formation.go
++++ b/sim/batch_formation.go
+@@ -40,7 +40,8 @@ type ScheduledRequest struct {
+ 
+ // PreemptedRequest carries metadata about a preempted request.
+ type PreemptedRequest struct {
+-	Request *Request
++	Request               *Request
++	OutputTokensGenerated int64 // decode tokens already counted in TotalOutputTokens before preemption
+ }
+ 
+ // BatchResult describes the outcome of batch formation.
+@@ -213,8 +214,16 @@ func (v *VLLMBatchFormation) preemptForTokens(req *Request, numNewTokens int64,
+ 			logrus.Warnf("[tick %07d] preemption: evicting %s to make room", ctx.Now, preemptedRequest.ID)
+ 			result.RunningBatch.Requests = result.RunningBatch.Requests[:len(result.RunningBatch.Requests)-1]
+ 
++			// Capture output tokens generated before ProgressIndex reset (#metrics-preemption-fix).
++			// These were already counted in TotalOutputTokens by executeBatchStep;
++			// the simulator subtracts them to prevent double-counting on re-schedule.
++			var outputGenerated int64
++			if preemptedRequest.ProgressIndex > util.Len64(preemptedRequest.InputTokens) {
++				outputGenerated = preemptedRequest.ProgressIndex - util.Len64(preemptedRequest.InputTokens)
++			}
+ 			result.Preempted = append(result.Preempted, PreemptedRequest{
+-				Request: preemptedRequest,
++				Request:               preemptedRequest,
++				OutputTokensGenerated: outputGenerated,
+ 			})
+ 
+ 			// Defensive: restore token budget if preempted request was already
+diff --git a/sim/simulator.go b/sim/simulator.go
+index febe7fb..d52baaf 100644
+--- a/sim/simulator.go
++++ b/sim/simulator.go
+@@ -581,10 +581,20 @@ func (sim *Simulator) scheduleBatch(now int64) {
+ 	// Apply result: update running batch
+ 	sim.RunningBatch = batchResult.RunningBatch
+ 
+-	// Record preemption metrics and emit debug log for each preempted request
++	// Record preemption metrics and correct double-counted metrics.
++	// When a request is preempted, its ProgressIndex is reset to 0 and it
++	// re-enters prefill+decode from scratch. Output tokens and TTFT recorded
++	// during the previous scheduling round would be counted again, so we
++	// subtract them here to keep TotalOutputTokens and TTFTSum accurate.
+ 	for _, p := range batchResult.Preempted {
+ 		logrus.Debugf("<< Preemption: %s at %d ticks", p.Request.ID, now)
+ 		sim.Metrics.PreemptionCount++
++		sim.Metrics.TotalOutputTokens -= int(p.OutputTokensGenerated)
++		if p.Request.TTFTSet {
++			sim.Metrics.TTFTSum -= p.Request.FirstTokenTime
++			p.Request.TTFTSet = false
++		}
++		p.Request.ITL = nil
+ 	}
+ 
+ 	// Schedule events for newly scheduled requests and record scheduling metrics
+diff --git a/sim/simulator_test.go b/sim/simulator_test.go
+index 5b438c2..bc0fafb 100644
+--- a/sim/simulator_test.go
++++ b/sim/simulator_test.go
+@@ -2598,3 +2598,89 @@ func TestEnqueueDecodeSubRequest_SimClockAhead_StepEventAtSimClock(t *testing.T)
+ 			got, simClock, clusterTime)
+ 	}
+ }
++
++// TestSimulator_PreemptionDoesNotInflateTotalOutputTokens is a regression test for
++// the metrics double-counting bug: when a request is preempted and rescheduled,
++// its output tokens were counted again during the re-decode, inflating
++// TotalOutputTokens beyond the actual number of output tokens generated.
++//
++// GIVEN two configurations: one with ample KV cache (no preemptions) and one with
++//
++//	a tight KV cache (forcing preemptions)
++//
++// WHEN the same requests are run to completion under both configurations
++// THEN TotalOutputTokens must be identical, because the same requests produce the
++//
++//	same output tokens regardless of preemptions.
++func TestSimulator_PreemptionDoesNotInflateTotalOutputTokens(t *testing.T) {
++	// Use requests with substantial output tokens to amplify any double-counting.
++	// All arrive at time 0 to force concurrent scheduling and KV contention.
++	makeRequests := func() []*Request {
++		var reqs []*Request
++		for i := 0; i < 10; i++ {
++			reqs = append(reqs, &Request{
++				ID:           fmt.Sprintf("req_%d", i),
++				ArrivalTime:  0,               // all arrive simultaneously
++				InputTokens:  make([]int, 64),  // 64 input tokens = ceil(64/16) = 4 blocks
++				OutputTokens: make([]int, 32),  // 32 output tokens = ceil(32/16) = 2 blocks
++				State:        StateQueued,
++			})
++		}
++		return reqs
++	}
++
++	// Run with ample KV cache — no preemptions expected
++	cfgLarge := SimConfig{
++		Horizon:             math.MaxInt64,
++		Seed:                42,
++		KVCacheConfig:       NewKVCacheConfig(10000, 16, 0, 0, 0, 0), // plenty of KV blocks
++		BatchConfig:         NewBatchConfig(256, 2048, 0),
++		LatencyCoeffs:       NewLatencyCoeffs([]float64{1000, 10, 5}, []float64{100, 1, 100}),
++		ModelHardwareConfig: NewModelHardwareConfig(ModelConfig{}, HardwareCalib{}, "test", "H100", 1, "blackbox", 0),
++	}
++	simLarge := mustNewSimulator(t, cfgLarge)
++	injectRequests(simLarge, makeRequests())
++	simLarge.Run()
++
++	if simLarge.Metrics.PreemptionCount != 0 {
++		t.Fatalf("large-KV sanity check: expected 0 preemptions, got %d", simLarge.Metrics.PreemptionCount)
++	}
++
++	// Run with tight KV cache — forces preemptions.
++	// Each request needs ~6 blocks (4 input + 2 output). 10 requests at once
++	// need 60 blocks. With only 12 blocks, heavy preemption is guaranteed.
++	cfgTight := SimConfig{
++		Horizon:             math.MaxInt64,
++		Seed:                42,
++		KVCacheConfig:       NewKVCacheConfig(12, 16, 0, 0, 0, 0), // tight KV → preemptions
++		BatchConfig:         NewBatchConfig(256, 2048, 0),
++		LatencyCoeffs:       NewLatencyCoeffs([]float64{1000, 10, 5}, []float64{100, 1, 100}),
++		ModelHardwareConfig: NewModelHardwareConfig(ModelConfig{}, HardwareCalib{}, "test", "H100", 1, "blackbox", 0),
++	}
++	simTight := mustNewSimulator(t, cfgTight)
++	injectRequests(simTight, makeRequests())
++	simTight.Run()
++
++	if simTight.Metrics.PreemptionCount == 0 {
++		t.Fatal("tight-KV sanity check: expected preemptions but got 0")
++	}
++
++	// Both must complete all requests (precondition)
++	if simLarge.Metrics.CompletedRequests != 10 || simTight.Metrics.CompletedRequests != 10 {
++		t.Fatalf("completion mismatch: large=%d tight=%d, both should be 10",
++			simLarge.Metrics.CompletedRequests, simTight.Metrics.CompletedRequests)
++	}
++
++	// Core assertion: TotalOutputTokens must match — no inflation from preemptions
++	if simLarge.Metrics.TotalOutputTokens != simTight.Metrics.TotalOutputTokens {
++		t.Errorf("TotalOutputTokens inflated by preemptions: large-KV=%d (0 preemptions), tight-KV=%d (%d preemptions)",
++			simLarge.Metrics.TotalOutputTokens, simTight.Metrics.TotalOutputTokens, simTight.Metrics.PreemptionCount)
++	}
++
++	// Verify the value is positive and consistent
++	if simLarge.Metrics.TotalOutputTokens <= 0 {
++		t.Errorf("TotalOutputTokens should be positive, got %d", simLarge.Metrics.TotalOutputTokens)
++	}
++	t.Logf("TotalOutputTokens: large-KV=%d (0 preemptions), tight-KV=%d (%d preemptions)",
++		simLarge.Metrics.TotalOutputTokens, simTight.Metrics.TotalOutputTokens, simTight.Metrics.PreemptionCount)
++}

@@ -1,0 +1,144 @@
+metadata:
+  iteration: 1
+  family: "pd-latency-model-validation"
+  research_question: "Do the paper's ITL and TTFT predictions for AL and AD hold inside BLIS, over what range of arrival rates, and where and why do they break down?"
+  complexity_tier: 1
+  tier_justification: "Iter 1, single mechanism (P/D disaggregation), single treatment knob (pd-decider), treatment vs control across rate conditions."
+
+# Arm selection rationale:
+# - h-main: Tests the core prediction — AD lowers ITL and raises TTFT vs AL,
+#   with the ITL gap growing as arrival rate increases. This is the paper's
+#   central claim about the disaggregation tradeoff.
+# - h-control-negative: At near-zero load (rate=5), the disaggregation effect
+#   on ITL should vanish, validating that the mechanism is load-dependent
+#   (driven by batch interference under queueing) rather than architectural.
+
+arms:
+  - type: h-main
+    prediction: >
+      Across arrival rates 5-130 req/s, AD (pd-decider=always) will produce
+      lower mean ITL than AL (pd-decider=never) at every rate, with the
+      absolute ITL gap (ITL_AL - ITL_AD) increasing monotonically with rate.
+      Simultaneously, AD will produce higher mean TTFT than AL at every rate.
+      The ITL-vs-rate curve for each mode will fit the paper's queueing form
+      ITL = a/(1 - b*lambda) + c with R-squared > 0.95, where b_AL > b_AD
+      reflects the higher per-request work term when prefill and decode share
+      a server. Test at rates [5, 10, 20, 40, 60, 80, 100, 130] with
+      pd-decider in [never, always] and seeds [42, 43, 44].
+    mechanism: >
+      Under AL, decode instances process both prefill and decode phases,
+      contributing total work W_tot = W_P + W_D per request to the batch.
+      Under AD, decode instances process only decode work W_D per request,
+      with prefill offloaded to dedicated prefill instances. Since W_D < W_tot,
+      the decode utilization rho_D is lower under AD, yielding a smaller
+      T_iter_D = alpha/(1-rho_D) and hence lower ITL (paper Eq. 17). The ITL
+      gap grows with rate because the 1/(1-rho) factor amplifies the
+      utilization difference at higher load. The TTFT penalty under AD arises
+      from the prefill pipeline overhead: TTFT_disagg includes prefill server
+      queueing (Q_P), prefill iteration time (T_iter_P), and KV transfer
+      duration (c), which are absent in the local path (paper Eq. 18 vs 19).
+      In BLIS, this is implemented at sim/cluster/cluster.go:1694-1705 where
+      newTTFT = prefillTTFT + transferDuration + firstDecodeStep.
+    diagnostic: >
+      If ITL ordering is wrong (AD ITL > AL ITL at some rate): check whether
+      KV transfer contention (sim/cluster/pd_events.go:224-231) or decode-side
+      KV reservation failures (sim/cluster/pd_events.go:168) are adding
+      overhead. Inspect per-instance metrics to see if load is imbalanced.
+      If the ITL formula fit is poor (R-squared < 0.95): check for chunked
+      prefill effects (paper Remark 1) or token budget constraints (Eq. 11)
+      that introduce nonlinearity beyond the simple 1/(1-rho) model.
+    metadata:
+      rates: [5, 10, 20, 40, 60, 80, 100, 130]
+      pd_deciders: ["never", "always"]
+      seeds: [42, 43, 44]
+
+  - type: h-control-negative
+    prediction: >
+      At rate=5 req/s (near-zero load), the mean ITL gap between AL and AD
+      will be less than 0.5 ms, significantly smaller than the gap at rate=130
+      (observed approximately 1.7 ms in probes). This confirms that the
+      disaggregation advantage is driven by load-dependent batch interference,
+      not by an inherent architectural difference in single-request decode
+      latency. Test at rate=5 with pd-decider in [never, always] and seeds
+      [42, 43, 44].
+    mechanism: >
+      At near-zero load, rho_D is approximately 0 for both AL and AD, so
+      T_iter_D is approximately alpha for both modes. The 1/(1-rho) amplifier
+      is approximately 1, eliminating the utilization-driven ITL difference.
+      The residual gap (if any) reflects only minor architectural differences
+      in how BLIS handles the decode pipeline in each mode (e.g., batch
+      formation with/without prefill requests present), not the queueing
+      effect the paper models.
+    diagnostic: >
+      If the ITL gap at rate=5 exceeds 0.5 ms: investigate whether there is
+      a fixed per-iteration overhead in AL mode (e.g., prefill chunks always
+      present in the batch even at low load) that creates a constant ITL
+      floor difference independent of load. Check batch composition at
+      rate=5 to see if prefill work is present in decode iterations.
+    metadata:
+      rates: [5]
+      pd_deciders: ["never", "always"]
+      seeds: [42, 43, 44]
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  fanout_template: >
+    ./blis run --model qwen/qwen3-14b --num-instances 4 --prefill-instances 2
+    --decode-instances 2 --num-requests 300 --prompt-tokens 512
+    --prompt-tokens-stdev 0 --output-tokens 128 --output-tokens-stdev 0
+    --routing-policy least-loaded --pd-decider {PD_DECIDER}
+    --rate {RATE} --seed {SEED} --metrics-path {OUTPUT_PATH}
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    num_instances: 4
+    prefill_instances: 2
+    decode_instances: 2
+    num_requests: 300
+    prompt_tokens: 512
+    prompt_tokens_stdev: 0
+    output_tokens: 128
+    output_tokens_stdev: 0
+    routing_policy: "least-loaded"
+
+  unlocked_parameters_audit:
+    - name: "max-model-len"
+      default_value: 0
+      justification: "Unlimited; all requests have 512+128=640 tokens, well within any model limit."
+    - name: "max-num-running-reqs"
+      default_value: 256
+      justification: "At max rate 130 with 2 decode instances, peak concurrency is ~40 requests per instance; 256 is not binding."
+    - name: "max-num-scheduled-tokens"
+      default_value: 2048
+      justification: "Token budget M in the paper's model; default 2048 is sufficient for 512-token prompts and affects chunking behavior but is part of the default configuration we are validating against."
+    - name: "pd-transfer-bandwidth-gbps"
+      default_value: "12.5 (100 Gbps NVLink)"
+      justification: "Default transfer bandwidth; affects TTFT_disagg but not the ITL comparison, which is the primary prediction."
+    - name: "pd-transfer-base-latency-ms"
+      default_value: 0.0
+      justification: "Zero base latency; only bandwidth-limited transfer. Affects TTFT overhead magnitude but not the direction of the AL vs AD comparison."
+    - name: "snapshot-refresh-interval"
+      default_value: 50000
+      justification: "50ms refresh interval (llm-d parity); routing decisions use slightly stale snapshots but this affects both AL and AD symmetrically."
+    - name: "latency-model"
+      default_value: "trained-physics"
+      justification: "Default latency model; provides the α, β, γ hardware parameters that feed into the paper's work formulas."
+    - name: "block-size"
+      default_value: 16
+      justification: "KV cache block size in tokens; affects KV transfer sizing for AD but not the AL vs AD ITL comparison direction."
+    - name: "gpu-memory-utilization"
+      default_value: 0.9
+      justification: "Default KV cache sizing; with 300 requests of 640 tokens each, KV capacity is not the bottleneck (0 drops observed at all rates)."
+    - name: "pd-transfer-contention"
+      default_value: false
+      justification: "Contention off by default; no fair-share bandwidth division among concurrent transfers. Conservative for AD TTFT but does not affect ITL comparison."
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      AL_rate5: 3
+      AL_rate130: 5
+      AD_rate5: 3
+      AD_rate130: 5
+    observation_method: "Wall-clock measurement of probe runs during exploration (300 requests each)"

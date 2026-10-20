@@ -1,0 +1,147 @@
+{
+  "answer": "The paper's P/D disaggregation latency model holds qualitatively but breaks down quantitatively in BLIS, and we can trace the breakdown to three precise mechanisms. (1) QUALITATIVE: The paper's predictions are fully confirmed — AD always has lower ITL than AL (max diff 1.685ms at rate=140), AD always has higher TTFT than AL (pipeline overhead 4-16ms), and AD wins on E2E at all tested rates. (2) QUANTITATIVE ITL FORMULA: ITL = alpha/(1-rho) fits within 0.5% for rho < 0.10 (rates 1-20), but overpredicts by 6% at rho=0.29 (rate=60), 28% at rho=0.48 (rate=100), and 122% at rho=0.73 (rate=150). The paper predicts instability at lambda_max=207 req/s, but BLIS runs stably at 150 req/s with ITL=19.9ms vs the predicted 44.2ms. (3) BREAKDOWN MECHANISM: The paper's formula derives steady-state batch size B_ss via Little's law, requiring B_ss = lambda*(n_c+o)*T_iter. At rate=150, B_ss=424 per instance — but only 150 requests arrive, so the batch reaches at most 102 (24% of steady state). The finite 300-request horizon prevents the self-reinforcing feedback loop that drives the 1/(1-rho) blowup. (4) CORRECTED MODEL: A transient batch-dynamics simulation that tracks discrete request lifecycles (prefill/decode), computes batch-size-weighted ITL (matching BLIS's AllITLs metric), and uses deterministic arrivals (matching BLIS's least-loaded routing) reproduces BLIS within 0.05% RMSE across ALL rates 1-150 for both AL and AD. The three key corrections over the paper's formula: (a) finite-horizon batch dynamics instead of Little's law steady state, (b) batch-size-weighted ITL instead of simple step-time average (7% bias at high rates), (c) BLIS's least-loaded routing produces effectively deterministic per-instance arrivals, not Poisson.",
+  "deliverable": "final/iter3_final_analysis.py",
+  "repro": "bash final/repro.sh",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "Corrected transient model RMSE for AL ITL (% over rates 1-150)",
+      "value": 0.02,
+      "condition": "Deterministic arrivals, batch-weighted ITL, 127 decode steps, exact BLIS params",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c2",
+      "metric": "Corrected transient model RMSE for AD ITL (% over rates 1-150)",
+      "value": 0.01,
+      "condition": "Same corrections as AL, decode-only instances",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c3",
+      "metric": "Corrected transient model max error (% for AL)",
+      "value": 0.05,
+      "condition": "Over 22 rate points 1-150",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c4",
+      "metric": "Paper SS formula RMSE (% over rates 1-150)",
+      "value": 38.98,
+      "condition": "ITL = alpha/(1-rho) + alpha2 with physical W_tot, alpha from BLIS coefficients",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c5",
+      "metric": "Paper SS formula max error at rate=150 (%)",
+      "value": 122.2,
+      "condition": "rho=0.725, predicts 44.2ms vs measured 19.9ms",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c6",
+      "metric": "Paper SS formula max error for rho < 0.10 (%)",
+      "value": 0.5,
+      "condition": "Rates 1-20, where steady-state assumption approximately holds",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c7",
+      "metric": "AD ITL < AL ITL at all tested rates",
+      "value": true,
+      "condition": "Rates 1-150, pd-decider=always vs never, seed=42",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c8",
+      "metric": "Max ITL difference AL-AD (ms)",
+      "value": 1.685,
+      "condition": "Occurs at rate=140, AL=19.686ms vs AD=18.002ms",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c9",
+      "metric": "AD TTFT > AL TTFT at all tested rates (pipeline overhead)",
+      "value": true,
+      "condition": "Rates 1-150, overhead range 4.0-15.7ms",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c10",
+      "metric": "AD E2E < AL E2E at all tested rates",
+      "value": true,
+      "condition": "Rates 1-150, max E2E advantage of AD = 254.8ms",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c11",
+      "metric": "ITL_AL at rate=1 (zero-load baseline, ms)",
+      "value": 12.261,
+      "condition": "pd-decider=never, rate=1, 4 instances (2P+2D), 512/128 tokens, seed=42",
+      "evidence": "final/data/sweep_results.csv"
+    },
+    {
+      "id": "c12",
+      "metric": "ITL_AL at rate=150 (ms)",
+      "value": 19.889,
+      "condition": "pd-decider=never, rate=150, same config",
+      "evidence": "final/data/sweep_results.csv"
+    },
+    {
+      "id": "c13",
+      "metric": "ITL_AD at rate=150 (ms)",
+      "value": 18.204,
+      "condition": "pd-decider=always, rate=150, same config",
+      "evidence": "final/data/sweep_results.csv"
+    },
+    {
+      "id": "c14",
+      "metric": "alpha_BLIS per-iteration overhead (us)",
+      "value": 12157.2,
+      "condition": "qwen3-14b H100 TP=1: beta3*T_weight + beta5*L + beta7",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c15",
+      "metric": "W_tot total per-request work (us)",
+      "value": 9661.0,
+      "condition": "W_P_STEP (2133.9) + W_D 127 decode steps (7527.1)",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c16",
+      "metric": "Paper stability limit lambda_max for AL (req/s)",
+      "value": 207,
+      "condition": "lambda_max = N_D * 1e6 / W_tot = 2 * 1e6 / 9661",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c17",
+      "metric": "Batch-size weighting bias at rate=150 (ms)",
+      "value": 1.38,
+      "condition": "Weighted minus unweighted ITL, 7% of total ITL at high rates",
+      "evidence": "final/data/iter3_evidence.json"
+    },
+    {
+      "id": "c18",
+      "metric": "Steady-state batch size vs actual at rate=150",
+      "value": 0.24,
+      "condition": "B_eff/B_ss = 102/424 = 0.24 (batch reaches only 24% of steady state)",
+      "evidence": "final/data/iter3_final_evidence.json"
+    },
+    {
+      "id": "c19",
+      "metric": "Multi-seed ITL CV at rate=100 AL (%)",
+      "value": 0.01,
+      "condition": "10 seeds (42-51), pd-decider=never, rate=100",
+      "evidence": "final/data/iter3"
+    },
+    {
+      "id": "c20",
+      "metric": "Transient model exactly matches BLIS at rate=1 (ms)",
+      "value": 12.260953,
+      "condition": "Single-request 127 decode steps with exact BLIS parameters, zero rounding error",
+      "evidence": "final/data/iter3_final_evidence.json"
+    }
+  ]
+}

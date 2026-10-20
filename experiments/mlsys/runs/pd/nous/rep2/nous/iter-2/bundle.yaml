@@ -1,0 +1,128 @@
+metadata:
+  iteration: 2
+  family: "pd-disagg-itl-curve-shape"
+  research_question: >
+    Over the extended rate range 1-150 req/s, does the ITL-rate curve follow the
+    convex alpha/(1-rho) shape predicted by the paper, or a concave saturating shape?
+    What mechanism in BLIS's step-time model causes the deviation?
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (batch-size overhead amortization) + dose-response on one knob (rate). Iter-1 confirmed directions at tier 1; now characterizing the shape requires finer sampling."
+
+# Arms note: Tier 2 — h-main tests the model comparison hypothesis (linear beats
+# alpha/(1-rho) over extended range), h-dose-response characterizes the ITL-rate
+# curve shape. Both arms share the same 72 runs (12 rates x 2 modes x 3 seeds).
+# No ablation needed because the mechanism (overhead amortization) is directly
+# observable in the step-time formula structure — it's architectural, not tunable.
+
+arms:
+  - type: h-main
+    prediction: >
+      Over the rate range 1-150 req/s (12 rate points), a linear model
+      (ITL = a + b*rate) will achieve higher R-squared than the paper's
+      alpha/(1-rho) model (ITL = alpha/(1 - W*rate)) for both AL and AD.
+      Specifically, linear R-squared will exceed 0.97 for both modes while
+      alpha/(1-rho) R-squared will remain below 0.96 for AL. The alpha/(1-rho)
+      model will show a systematic residual pattern consistent with fitting a
+      convex function to concave data: positive residuals at low and high rates,
+      negative residuals at mid rates. This demonstrates that the paper's queueing
+      formula is an adequate but inferior approximation in BLIS — the true ITL-rate
+      relationship is concave due to batch-size-dependent overhead amortization.
+    mechanism: >
+      BLIS's step-time formula (sim/latency/trained_physics_model.go:321-328)
+      includes fixed per-step costs: weight loading (beta_3 * tWeight, line 323),
+      per-layer overhead (beta_5 * L, line 325), and per-step constant
+      (beta_7, line 327). These costs are incurred once per simulation step
+      regardless of batch size. At higher arrival rates, more decode requests
+      batch together in each step, so the fixed overhead is amortized over more
+      tokens. Per-token ITL = stepTime(B)/B = (F + c*B)/B = F/B + c, where
+      F is fixed overhead and c is per-token marginal cost. As B grows with rate,
+      F/B decreases, producing a concave (saturating) ITL-rate curve approaching
+      floor c. The paper's alpha/(1-rho) model treats alpha as a constant
+      independent of batch size, missing this amortization effect. The paper
+      correctly models the queueing delay but not the hardware's batch efficiency.
+    diagnostic: >
+      If linear does NOT beat alpha/(1-rho): the overhead amortization effect may
+      be too small relative to queueing effects. Check whether fixed per-step costs
+      (tWeight, beta_5*L, beta_7) are negligible compared to batch-scaling terms.
+      If R-squared for alpha/(1-rho) exceeds 0.96 for AL: the extended rate range
+      (including very low rates like 1-5) may have improved the fit by anchoring the
+      low-rho asymptote. Re-examine residual pattern at high rates specifically.
+
+  - type: h-dose-response
+    knob: "rate"
+    values: [1, 5, 10, 20, 30, 50, 70, 90, 110, 130, 140, 150]
+    metric: "itl_mean_ms"
+    expected_shape: "saturating"
+    prediction: >
+      ITL as a function of arrival rate follows a saturating (concave) shape for
+      both AL and AD modes across 12 rate points from 1 to 150 req/s. The marginal
+      ITL increment per unit rate (delta_ITL / delta_rate) will decrease monotonically
+      for rates above approximately 20 req/s. The curve approaches a ceiling rather
+      than exploding toward infinity as the paper's 1/(1-rho) form predicts. Both AL
+      and AD will exhibit the same qualitative shape, with AD's curve shifted lower
+      (per RP-1) and growing more slowly (per the lower effective utilization from
+      disaggregation).
+    mechanism: >
+      Same batch-size overhead amortization as h-main. At low rates (1-10 req/s),
+      batch sizes are close to 1, so fixed overhead dominates and ITL is near its
+      minimum (the isolated-request step time, approximately 12.26ms for AL). As
+      rate increases to 20-50, batches grow and overhead begins to amortize, but
+      the additional decode tokens per step also add work — net ITL rises. At high
+      rates (100-150), batch sizes are large enough that fixed overhead per token
+      is negligible; the marginal cost of adding one more decode token approaches
+      the pure per-token compute+bandwidth cost, so ITL growth decelerates and the
+      curve flattens (saturates).
+    diagnostic: >
+      If the shape is monotone_increasing but NOT saturating (i.e., marginal rate
+      increases rather than decreases): the queueing delay component may dominate
+      the overhead amortization at the rates tested. This would mean the paper's
+      model is more accurate than expected in BLIS. Check batch sizes at the highest
+      rates — if they're still small (< 5), the amortization effect would be minimal.
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  fanout_template: >
+    ./blis run --model qwen/qwen3-14b --num-instances 4 --prefill-instances 2
+    --decode-instances 2 --num-requests 300 --prompt-tokens 512 --prompt-tokens-stdev 0
+    --output-tokens 128 --output-tokens-stdev 0 --routing-policy least-loaded
+    --pd-decider {PD_DECIDER} --rate {RATE} --seed {SEED}
+    --metrics-path {OUTPUT_PATH}
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    num_instances: 4
+    prefill_instances: 2
+    decode_instances: 2
+    num_requests: 300
+    prompt_tokens: 512
+    prompt_tokens_stdev: 0
+    output_tokens: 128
+    output_tokens_stdev: 0
+    routing_policy: "least-loaded"
+  unlocked_parameters_audit:
+    - name: "max-num-scheduled-tokens"
+      default_value: 2048
+      justification: "Default token budget M. Not varied; research question focuses on ITL-rate curve shape, not budget sensitivity."
+    - name: "max-num-running-reqs"
+      default_value: 256
+      justification: "Default batch cap; not binding at our rate range (batch sizes remain well below 256). Safe at default."
+    - name: "pd-transfer-bandwidth"
+      default_value: 25.0
+      justification: "Default 25 GB/s RDMA bandwidth. Affects TTFT but not ITL dose-response shape."
+    - name: "pd-transfer-base-latency"
+      default_value: 0.05
+      justification: "Default 50us; negligible. Not varied."
+    - name: "pd-transfer-contention"
+      default_value: false
+      justification: "Disabled; constant-c model matches paper assumption. Not varied."
+    - name: "latency-model"
+      default_value: "trained-physics"
+      justification: "Default; required for the beta-coefficient overhead amortization mechanism under test."
+    - name: "scheduler"
+      default_value: "fcfs"
+      justification: "Default FCFS; matches paper's continuous-batching assumption."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      never: 2.5
+      always: 3.0
+    observation_method: "Timed probe runs at rate=50 and rate=140 during exploration; each completed in 1-4s wall time."

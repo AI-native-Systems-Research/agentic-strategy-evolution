@@ -1,0 +1,63 @@
+{
+  "answer": "The BLIS configuration space Pareto front has 35 unique objective vectors among 124 non-dominated configs out of 1800 total. The space has bimodal structure: single-instance configs (saturated) where all 6 knobs interact via KV-cache threshold effects, and multi-instance configs (unconstrained) where only tp and num_instances matter. TP is the dominant knob (1.5-1.8x throughput per doubling); KV blocks have sharp threshold effects; scheduler and block_size are secondary. A structured phased search exploiting this regime knowledge achieves 100% coverage of unique Pareto objective vectors using 200 evaluations (11.1% of the space), completing in ~25 seconds.",
+  "deliverable": "search.py",
+  "repro": "python3 search.py --model qwen/qwen3-14b --rate 100 --budget 200 --seed 42 --out final/pareto_front.json",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "Pareto front objective vector coverage",
+      "value": 100.0,
+      "condition": "200-eval budget search vs full 1800-config enumeration, qwen3-14b, rate=100, seed=42",
+      "evidence": "runs/iter-1/results/coverage_analysis.json"
+    },
+    {
+      "id": "c2",
+      "metric": "unique Pareto objective vectors in true front",
+      "value": 35,
+      "condition": "full enumeration of all 1800 configs with 4 objectives",
+      "evidence": "runs/iter-1/results/coverage_analysis.json"
+    },
+    {
+      "id": "c3",
+      "metric": "total configs in true Pareto front",
+      "value": 124,
+      "condition": "full enumeration of all 1800 configs with 4 objectives",
+      "evidence": "runs/iter-1/results/true_pareto_front.json"
+    },
+    {
+      "id": "c4",
+      "metric": "best responses_per_sec",
+      "value": 32.01,
+      "condition": "tp=8, ni=1, fcfs, mrr=256, kvb=4000, bs=32 (8 GPUs)",
+      "evidence": "runs/iter-1/results/coverage_analysis.json"
+    },
+    {
+      "id": "c5",
+      "metric": "best ttft_p99_ms at 1 GPU",
+      "value": 92.6,
+      "condition": "tp=1, ni=1, fcfs, mrr=256, kvb=5000, bs=32 (7.0 rps)",
+      "evidence": "runs/iter-1/results/coverage_analysis.json"
+    },
+    {
+      "id": "c6",
+      "metric": "TP scaling factor (tp=1 to tp=8)",
+      "value": 4.65,
+      "condition": "single-instance, fcfs, mrr=128, kvb=5000, bs=16: tp=1 gives 5.72 rps, tp=8 gives 26.61 rps",
+      "evidence": "runs/iter-1/results/exploration_summary.json"
+    },
+    {
+      "id": "c7",
+      "metric": "search evaluations used",
+      "value": 200,
+      "condition": "budget=200, seed=42",
+      "evidence": "runs/iter-1/results/search_output_v7.json"
+    },
+    {
+      "id": "c8",
+      "metric": "search wall-clock time (seconds)",
+      "value": 25,
+      "condition": "budget=200 on qwen3-14b rate=100",
+      "evidence": "runs/iter-1/results/search_output_v7.json"
+    }
+  ]
+}

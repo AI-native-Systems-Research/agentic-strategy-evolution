@@ -1,0 +1,42 @@
+{
+  "answer": "Yes, this is a real bug. Root cause: sim/batch_formation.go preemptForTokens() resets ProgressIndex=0 on preempted requests, causing sim/simulator.go executeBatchStep() to re-count output tokens already generated before preemption. With 265 preemptions (--total-kv-blocks 600), total_output_tokens was inflated by 9,548 tokens (9.1%) from 105,082 to 114,630. The fix stores OutputTokensGenerated in PreemptedRequest before the ProgressIndex reset and subtracts it in the preemption handler. It also resets TTFTSet/FirstTokenTime and ITL to prevent TTFT and ITL double-counting. Post-fix, total_output_tokens=105,082 for all KV cache sizes. Regression test TestSimulator_PreemptionDoesNotInflateTotalOutputTokens added.",
+  "deliverable": "final/fix.patch",
+  "repro": "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 2>/dev/null | grep total_output_tokens && ./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 60000 2>/dev/null | grep total_output_tokens",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "total_output_tokens (pre-fix, 600 blocks, 265 preemptions)",
+      "value": 114630,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 (before fix)",
+      "evidence": "final/evidence_before.txt"
+    },
+    {
+      "id": "c2",
+      "metric": "total_output_tokens (baseline, 60000 blocks, 0 preemptions)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 60000",
+      "evidence": "final/evidence/postfix_60000blocks.json"
+    },
+    {
+      "id": "c3",
+      "metric": "total_output_tokens (post-fix, 600 blocks, 265 preemptions)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 (after fix)",
+      "evidence": "final/evidence/postfix_600blocks.json"
+    },
+    {
+      "id": "c4",
+      "metric": "preemption_count (600 blocks)",
+      "value": 265,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600",
+      "evidence": "final/evidence/postfix_600blocks.json"
+    },
+    {
+      "id": "c5",
+      "metric": "inflation magnitude (pre-fix)",
+      "value": 9548,
+      "condition": "600 blocks vs 60000 blocks before fix: 114630 - 105082",
+      "evidence": "final/evidence_before.txt"
+    }
+  ]
+}

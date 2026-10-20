@@ -1,0 +1,1 @@
+{"done": true, "why": "The research question is fully answered: the paper's ITL formula holds in BLIS with <1% error at rates 1-50, <4% (AD) and <7% (AL) with converged data up to rate 100, breaking down for AL at rate >130 due to batch capping; all qualitative predictions (ITL_AD < ITL_AL, TTFT_AD > TTFT_AL) confirmed."}

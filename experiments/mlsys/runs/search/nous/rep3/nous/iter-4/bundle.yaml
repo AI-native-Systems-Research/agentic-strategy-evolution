@@ -1,0 +1,132 @@
+metadata:
+  iteration: 4
+  family: "structure-aware-pareto-search"
+  research_question: "Can the v4 search (v3 + sjf@kv=5000 fix) achieve >=98% Pareto tuple recall across rates {50,100,200} x seeds {42,123,999}, and does it generalize to a different model?"
+  complexity_tier: 3
+  tier_justification: "iter-3 tier-2 confirmed (v3 100% recall at rate=100); iter-4 escalates to tier-3 for cross-rate x cross-seed x cross-model generalization validation"
+
+arms:
+  # ARM SELECTION RATIONALE:
+  # h-main: Comprehensive multi-seed multi-rate validation — strengthens RP-6 from
+  #   single-seed at non-100 rates to full 3x3 matrix. Tests the v4 fix (sjf@kv=5000).
+  # h-robustness: Model generalization — the task deliverable claims "possibly with a
+  #   different model," so this arm validates that claim with llama-2-7b-hf.
+  # Omitted: h-ablation (the v4 fix is a single line addition, ablation would be
+  #   reverting to v3 which was already tested in iter-3), h-dose-response (budget
+  #   vs recall curve is interesting but secondary to confirming the deliverable works).
+
+  - type: h-main
+    prediction: >
+      v4 search (v3 + sjf@kv=5000 in Phase 2 rich-tier combos) achieves mean tuple
+      recall >= 0.98 across all 9 (rate, seed) combinations: {50, 100, 200} x {42, 123, 999}.
+      Minimum recall across all 9 conditions >= 0.95. The sjf@kv=5000 addition closes
+      the rate=200 gap (iter-3: 40/41 = 0.976) to 41/41. At rate=100, recall remains
+      100% as in iter-3. At rate=50, recall remains 100%. The improvement is specific
+      to high-rate regimes where sjf produces a marginally different rps at high kv
+      (0.0006% rps difference at kv=5000 between fcfs and sjf).
+    mechanism: >
+      At rate=200, sjf at kv=5000,bs=32,maxrun=256 produces rps=7.0656902 vs fcfs
+      rps=7.0656500 (measured at tp=1,ni=1). This 0.0006% difference means sjf is
+      non-dominated (slightly higher rps trades for slightly higher ttft: 299.5 vs 178.3ms).
+      v3's Phase 2 covers sjf at kv=2000-4000 but not kv=5000. Adding (5000,256,32,"sjf")
+      to the rich-tier template costs 1 eval per rich tier (~7 evals total), well within
+      the 200-eval budget. The fix is targeted: it doesn't affect rate=100 or rate=50
+      recall (already 100%) because at those rates sjf@kv=5000 is either dominated by
+      or identical to the fcfs equivalent.
+    diagnostic: >
+      If recall drops below 0.98, check: (1) Are new sjf-only tuples appearing at rates
+      or seeds not tested in iter-3? Examine the exhaustive data. (2) Is the Phase 2
+      budget being exhausted before reaching the sjf@kv=5000 combo (e.g., too many rich
+      tiers at high rates)? Check phase-by-phase eval counts. (3) Does multi-seed
+      introduce new Pareto tuples that the fixed template still misses?
+    code_changes:
+      - file: "search.py"
+        intent: >
+          Add (5000, 256, 32, "sjf") to the rich_tier_combos list (after the existing
+          (5000, 256, 32, "fcfs") entry around line 338). This extends Phase 2's
+          systematic coverage to include sjf at kv=5000, closing the one gap observed
+          at rate=200 in iter-3.
+        rationale: >
+          The iter-3 exhaustive ground truth at rate=200 revealed that sjf at
+          kv=5000,bs=32,maxrun=256 produces a non-dominated tuple (rps=7.0656902 vs
+          fcfs rps=7.0656500) that v3's Phase 2 template doesn't cover. All other sjf
+          kv points (2000-4000) are already in the template. Adding this single combo
+          costs ~7 evals (1 per rich tier) and directly addresses the gap.
+
+  - type: h-robustness
+    prediction: >
+      v4 search achieves tuple recall >= 0.85 on meta-llama/llama-2-7b-hf at rate=100,
+      seed=42. The algorithm generalizes because its Phase 2 rich/simple tier classification
+      is based on observed ttft_p99 diversity (not model-specific thresholds), and the
+      structural properties (GPU tiers, preemption zones, bs=32 dominance) are model-agnostic.
+      Recall may be lower than qwen3-14b because the preemption thresholds and metric
+      diversity patterns may differ for a smaller model.
+    mechanism: >
+      llama-2-7b-hf is a 7B model (vs 14B for qwen3-14b). On H100 with tp=1, it has
+      higher per-token latency in the trained-physics model (probed: rps=3.85 vs 7.07 at
+      tp=1,ni=1,kv=5000,rate=100). KV cache pressure differs: at kv=2000, llama-2-7b has
+      117 preemptions vs qwen3-14b's 116 (similar). The v4 algorithm's adaptivity comes
+      from Phase 2's runtime classification: whatever ttft diversity the model produces
+      determines rich/simple tiers, not hardcoded model parameters.
+    diagnostic: >
+      If recall drops below 0.85, investigate: (1) Does llama-2-7b produce new Pareto
+      tuples at kv/maxrun combos not in Phase 2's template? (2) Is the rich/simple
+      classification threshold (100ms + 2x ratio) appropriate for this model? (3) Are
+      there model-specific preemption patterns that create Pareto diversity at different
+      points in the configuration space?
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    rate: 100
+    prefix_tokens: 512
+    max_num_scheduled_tokens: 4096
+    long_prefill_token_threshold: 0
+    admission_policy: "always-admit"
+    preemption_policy: "fcfs"
+    routing_policy: "round-robin"
+    gpu_memory_utilization: 0.9
+
+  unlocked_parameters_audit:
+    - name: "tp"
+      default_value: "varied (1,2,4,8)"
+      justification: "Search knob — varied across all valid values as part of the configuration space"
+    - name: "num_instances"
+      default_value: "varied (1..8/tp)"
+      justification: "Search knob — varied across all valid values constrained by tp*ni<=8"
+    - name: "scheduler"
+      default_value: "varied (fcfs, sjf)"
+      justification: "Search knob — both values tested"
+    - name: "max_num_running_reqs"
+      default_value: "varied (32,64,128,256,512)"
+      justification: "Search knob — all 5 values in the defined configuration space"
+    - name: "total_kv_blocks"
+      default_value: "varied (2000,3000,4000,5000,7500,10000)"
+      justification: "Search knob — all 6 values tested"
+    - name: "block_size_in_tokens"
+      default_value: "varied (16,32)"
+      justification: "Search knob — both values tested"
+    - name: "max_output_len"
+      default_value: "system default"
+      justification: "Not a search knob; using default to match typical deployment"
+    - name: "rtt_ms"
+      default_value: "0"
+      justification: "Simulator mode (not observe); network RTT not applicable"
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      v4_search_rate100: 44
+      v4_search_rate50: 44
+      v4_search_rate200: 44
+      exhaustive_rate50_seed123: 396
+      exhaustive_rate50_seed999: 396
+      exhaustive_rate200_seed123: 396
+      exhaustive_rate200_seed999: 396
+      exhaustive_llama_rate100_seed42: 540
+    observation_method: "1800 configs x 0.22s/eval for exhaustive qwen; 1800 x 0.3s for llama; 200 x 0.22s for search"

@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 4 confirmed 100% Pareto coverage (vs. \u226590% threshold) on two new architectures \u2014 the MoE model Llama-4-Scout-17B-16E and the small dense model qwen2.5-7b \u2014 across both random seeds, bringing the validated track record to 10/10 seed\u00d7model combinations across 4 iterations. The algorithm handles architecture-specific edge cases (MoE KV ceiling at kv=3000, qwen2.5-7b tp=8 crash, Phase 2 no-op when no preemptions occur) without any code changes.",
+  "key_points": [
+    "MoE model (Llama-4-Scout-17B-16E): coverage=100% on seed 42 (23/23 Pareto configs found) and seed 123 (24/24 found). Phase 2 boundary mapping engaged as predicted (preemptions at kv=2000, ceiling plateau at kv=3000 \u2014 same as Llama-70B).",
+    "Small dense model (qwen2.5-7b): coverage=100% on seed 42 (15/15 found) and seed 123 (20/20 found). Phase 2 consumed budget but added zero new configs (no preemptions at any kv), confirming the algorithm degrades gracefully to a topology-only search. tp=8 panic (28 heads not divisible by 8) was caught silently by the exception handler.",
+    "Across all 4 iterations the algorithm has achieved \u226590% coverage in every test: 5 model regimes (qwen3-14b, Llama-70B, Llama-4-Scout MoE, qwen2.5-7b), 3 rate levels, 2 seeds each \u2014 the research question appears fully answered.",
+    "Still unknown / not yet tested: behavior under extremely tight budgets (<50 evals) where Phase 3+4 may not sample enough topology combinations, and whether budget efficiency degrades gracefully in KV-insensitive regimes where Phase 2 consumes ~45 evals with zero return.",
+    "Recommended next step (iter-5, if approved): finalize answer.json with cross-architecture claims and close the campaign; no code changes are needed. An additional iteration could probe budget-coverage curves for the KV-insensitive (qwen2.5-7b) regime to characterize Phase 2 waste, but this is optional given the already-confirmed coverage at budget=200."
+  ],
+  "recommendation": "stop"
+}

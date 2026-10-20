@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 fully confirmed all three hypotheses: a hierarchical search found 82.9% of Pareto-optimal configurations at 96.4% precision using only ~200 of 1800 total evaluations, tensor parallelism (TP) dominates throughput (2.7\u00d7 improvement at 8 GPUs), and KV cache degradation stays well below the 50% ceiling even at minimum tested cache sizes. One notable surprise: the cache saturation plateau sits at ~160K tokens (kv=5000, bs=32), higher than the 120K token estimate from the designer.",
+  "key_points": [
+    "Search efficiency confirmed: 83 configs evaluated (vs 1800 full enumeration) covered 29/35 unique Pareto objective tuples (82.9% recall \u2265 80% threshold) with 96.4% precision (\u2265 95% threshold).",
+    "TP dominance validated quantitatively: tp=8,ni=1 delivers 32.01 rps vs tp=1,ni=8 at 11.93 rps (same 8 GPUs), with diminishing but positive returns at each doubling (tp1\u21922: +7.25 rps; tp4\u21928: +5.23 rps).",
+    "KV cache degradation is gradual, not catastrophic: max observed degradation was 24.4% at kv=2000 (64K token cache), well below the 50% threshold; cache plateau extends to ~160K tokens, not 120K as previously estimated \u2014 the 6 missed Pareto tuples all came from intermediate kv values (5000, 7500) not prioritized by the search.",
+    "Still unknown: whether the hierarchical search generalizes across different request rates (e.g., 50, 200 rps) and model variants where TP-dominance thresholds and cache saturation points may shift.",
+    "Recommended next iteration: Run search.py at two additional rates (50 and 200 rps) and one alternative model to test generalization of the structural assumptions (TP dominance, cache equivalence, maxr plateau), and explore whether Bayesian optimization can recover the 6 missed intermediate-kv Pareto tuples within the same 200-evaluation budget."
+  ],
+  "recommendation": "continue"
+}

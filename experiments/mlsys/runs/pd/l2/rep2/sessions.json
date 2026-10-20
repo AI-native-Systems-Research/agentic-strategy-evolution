@@ -1,0 +1,22 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "## Summary of Findings (Iteration 1)\n\n### Does the paper's P/D model hold in BLIS?\n\n**Qualitatively: Yes, perfectly.** All directional predictions confirmed across 27 rate points (1-150 req/s):\n- AD ITL < AL ITL at every rate (by 0-1.7 ms)\n- AD TTFT > AL TTFT at every rate (by 4-16 ms)\n- AD has higher capacity (456 vs 395 implied req/s)\n- AD wins on E2E at all rates (ITL savings \u00d7 128 tokens >> TTFT penalty)\n\n**Quantitatively: Moderate fit with systematic deviation.**\n- The M/G/1 formula `ITL = \u03b1/(1-\u03bbW)` fits with R\u00b2=0.92 (AL) / 0.95 (AD) and MAPE ~2.5-3.9%\n- A quadratic fits dramatically better: R\u00b2=0.998, MAPE < 0.7%\n- The deviation is **concave** (ITL grows slower than 1/(1-\u03c1)), opposite to M/G/1's predicted convex growth\n\n**Root cause of breakdown:** With 300 requests, the system never reaches M/G/1 steady state at high rates. At rate=150, the experiment lasts only 2 seconds but the batch ramp-up would take >2s to reach theoretical steady-state size. The ITL growth rate falls to <10% of M/G/1 predictions above rate=65. BLIS's step-time model IS linear in batch size (confirmed by code inspection), so the deviation is methodological (finite sample), not structural.\n\n### What to investigate next\n1. **Seed robustness**: Verify findings hold across multiple seeds\n2. **TTFT two-queue formula**: Quantitatively test TTFT_AD = T_P/(1-\u03c1_P) + W_P + c + T_D/(1-\u03c1_D)\n3. **Higher rates**: Push beyond 150 to approach saturation and test the asymptotic M/G/1 blowup\n4. **Longer experiments**: If constraints allow, more requests would reduce transient effects",
+  "cli_cost": 4.8192485,
+  "subtype": "success",
+  "wall": 1150.5,
+  "num_turns": 41,
+  "n": 1
+ },
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "## Iteration 2 Summary\n\n### Key findings building on iteration 1:\n\n**1. Seed robustness (confirmed):** Max CV = 0.009% across 4 seeds \u2014 BLIS is deterministic given the same arrival process structure. All directional predictions hold identically across all seeds.\n\n**2. ITL formula validity range pinpointed:**\n- **Rates 1-30**: Excellent fit (R\u00b2>0.999, MAPE<0.08%). The M/G/1 model is essentially exact.\n- **Rates 1-60**: Good fit (R\u00b2>0.997, MAPE<0.44%). Still reliable.\n- **Rates 1-150**: Moderate fit (R\u00b2=0.92-0.95, MAPE=2.5-3.9%). Systematic S-shaped residuals.\n- **Rates 1-400**: Poor fit (R\u00b2=0.66-0.73). ITL approaches a ceiling (~21.4ms) rather than diverging to infinity as M/G/1 predicts.\n\n**3. Root cause of breakdown identified:** Two mechanisms:\n- **Batch size cap** (`max_num_running_reqs=256`): The paper's M/G/1 assumes unbounded batch growth (B=\u03bbWT_iter \u2192 \u221e as \u03c1\u21921), but BLIS caps the batch at 256, creating a ceiling.\n- **Non-linear step time**: BLIS's trained-physics model computes step time via `max(compute, memory)` depending on sum-of-context-lengths, not simply batch count. This means \u03b4 (marginal cost per request) varies with batch composition, violating the paper's constant-\u03b4 assumption (Eq 9).\n\n**4. New finding \u2014 TTFT crossover at rate\u2248250:**\n- At rates 1-150: TTFT_AD > TTFT_AL (paper prediction holds, gap 4-16ms)\n- At rate\u2248250: TTFT_AL catches up and surpasses TTFT_AD\n- At rate=400: TTFT_AL = 119ms vs TTFT_AD = 50ms (AD's TTFT is *lower*)\n- Mechanism: AD's prefill pool is isolated from decode load, keeping TTFT nearly constant. AL's shared instances force prefill to wait behind large decode batches.\n\n**5. All directional predictions hold at rates 1-400:** ITL_AD < ITL_AL (always), E2E_AD < E2E_AL (always). TTFT_AD > TTFT_AL holds only up to rate\u2248250.",
+  "cli_cost": 5.73421,
+  "subtype": "success",
+  "wall": 1032.7,
+  "num_turns": 76,
+  "n": 2
+ }
+]

@@ -1,0 +1,179 @@
+metadata:
+  iteration: 3
+  family: "pd-disagg-corrected-model-and-tradeoff"
+  research_question: >
+    Does a physics-corrected ITL model accounting for batch-size-dependent overhead
+    amortization (from the step-time formula at sim/latency/trained_physics_model.go:321-328)
+    outperform the paper's alpha/(1-rho) model across the full 1-150 req/s range?
+    How does TTFT vary with rate for AL vs AD? And does AD's E2E advantage over AL
+    hold across all rates despite the TTFT penalty?
+  complexity_tier: 3
+  tier_justification: >
+    iter 3 — tier 1 confirmed directions (iter-1), tier 2 characterized dose-response
+    shape and model fits (iter-2). Escalating to tier 3 for multi-mechanism analysis:
+    (1) corrected ITL model with physics interpretation, (2) TTFT dose-response shape,
+    (3) joint ITL-TTFT tradeoff characterization.
+
+# Arms note: Three arms testing complementary aspects of the research question.
+# h-main tests the corrected ITL model against the paper model (extends iter-2's
+# shape analysis with physics interpretation). h-dose-response characterizes TTFT
+# shape (new dimension not studied in iter-1/2). h-tradeoff captures the joint
+# behavior (new: whether AD's E2E advantage holds across all rates).
+# All three arms share the same 72 runs — no additional compute cost.
+
+arms:
+  - type: h-main
+    prediction: >
+      A physics-corrected saturating model ITL = a + b*rate/(1+d*rate) [3 params],
+      derived from the batch-size-dependent overhead amortization in the step-time
+      formula, will achieve higher R-squared than the paper's alpha/(1-rho) model
+      [2 params] for both AL and AD across all three seeds. The corrected model's
+      maximum absolute residual will be smaller than the paper model's maximum absolute
+      residual at every tested rate. The paper model's mean absolute error will be at
+      least twice the corrected model's MAE for both modes, because the paper model
+      systematically overshoots at low rates and undershoots at mid-high rates due to
+      its convex functional form mismatching the data's concave shape.
+    mechanism: >
+      The step-time formula (sim/latency/trained_physics_model.go:321-328) sums terms
+      that scale differently with batch size B:
+      - Fixed per-step: beta_3*tWeight (~constant), beta_5*L=32.1*40=1284µs,
+        beta_7=126µs. These are amortized over B tokens.
+      - Linear in B: beta_6*B=4.4*B µs (per-request scheduling overhead) plus the
+        decode bandwidth term beta_10*tDcKv which scales as B*ctx_avg.
+      Per-token ITL = (fixed + linear*B) / B = linear + fixed/B.
+      As rate increases, B grows (more concurrent decode requests), so fixed/B shrinks
+      and ITL decelerates toward the linear floor. The paper's alpha/(1-rho) treats
+      alpha as constant (independent of B), missing this amortization effect. The
+      corrected model's three parameters map to physics: 'a' = isolated-request ITL
+      (F+c at B=1), 'b/d' = asymptotic additional ITL at infinite rate, and 'd' =
+      inverse batch-growth rate constant.
+    diagnostic: >
+      If corrected model does NOT beat paper model: (a) check whether seed-to-seed
+      variance is larger than expected, inflating paper model R² by adding noise that
+      the corrected model also cannot explain, (b) check whether the 4-parameter full
+      physics model (amortization + queueing) achieves a meaningful improvement over
+      the 3-parameter corrected model — if so, queueing effects are non-negligible and
+      the corrected model is insufficient, (c) examine residual pattern at rates 1-10
+      where batch size transitions from 1 to >1.
+
+  - type: h-dose-response
+    knob: "rate"
+    values: [1, 5, 10, 20, 30, 50, 70, 90, 110, 130, 140, 150]
+    metric: "ttft_mean_ms"
+    expected_shape: "saturating"
+    prediction: >
+      TTFT as a function of rate follows a saturating (concave) shape for both AL
+      and AD. AD's TTFT growth over the full range will be less than one-third of
+      AL's growth (probe: AD grows ~4.3ms vs AL grows ~15.6ms). AD's TTFT marginals
+      will be monotonically decreasing above rate ~30, while AL's will show a less
+      clean monotone pattern due to prefill-decode resource contention on shared
+      instances. The qualitative difference arises because AD's dedicated prefill
+      instances see only prefill traffic (no decode competition), while AL's instances
+      multiplex both phases.
+    mechanism: >
+      TTFT = scheduling_delay + prefill_step_time [AL] or
+      TTFT = prefill_scheduling + prefill_step + KV_transfer + first_decode_step [AD].
+      In AL mode, prefill and decode share the same instances, so as rate increases,
+      decode batches grow, making each step longer, which delays the prefill step of
+      new requests. The scheduling delay also grows with queue depth. Both effects
+      contribute to TTFT growth, but both saturate as the batch-size amortization
+      caps per-step time. In AD mode, prefill instances only handle prefill (one at a
+      time per instance since each prefill occupies most of the token budget), so
+      TTFT is nearly constant — dominated by the fixed KV transfer (~3.4ms) and
+      the prefill step time (~14ms). The small growth in AD TTFT comes from prefill
+      queueing as more prefill requests arrive per unit time.
+    diagnostic: >
+      If AD TTFT shows significant growth (> 8ms across range): check whether
+      prefill instances are developing meaningful queues at high rates. If AL TTFT
+      shape is accelerating rather than saturating: prefill-decode contention on
+      shared instances may be more severe than the amortization effect, possibly
+      because prefill chunking at token_budget=2048 creates per-step variability.
+
+  - type: h-tradeoff
+    metric: "itl_mean_ms"
+    secondary_metric: "ttft_mean_ms"
+    secondary_budget: 20.0
+    secondary_direction: "increase"
+    prediction: >
+      AD mode trades a TTFT increase (secondary_metric) for an ITL decrease
+      (primary metric). The TTFT penalty (AD_ttft - AL_ttft) decreases with rate
+      (from ~15.7ms at rate=1 to ~4.4ms at rate=150), while the ITL benefit
+      (AL_itl - AD_itl) increases with rate (from 0ms at rate=1 to ~1.7ms at
+      rate=150). These opposing trends mean the net E2E tradeoff strongly favors
+      AD at higher rates: E2E_benefit = AL_e2e - AD_e2e grows monotonically with
+      rate, from ~29ms at rate=1 to ~255ms at rate=150. AD achieves lower E2E than
+      AL at ALL tested rates. The TTFT penalty never exceeds 20ms (the
+      secondary_budget), confirming that disaggregation is favorable across the
+      entire 1-150 req/s range for this workload configuration.
+    mechanism: >
+      The converging tradeoff has two causal components:
+      (1) ITL benefit grows because AD's decode instances avoid prefill interference.
+      In AL mode, prefill requests consume large chunks of the 2048-token budget
+      (512 prompt tokens = 25% of budget per prefill), reducing the decode batch
+      size and increasing per-token overhead. AD's decode instances use the full
+      budget for decode, achieving larger batches and better overhead amortization.
+      At higher rates, this batch-size advantage compounds.
+      (2) TTFT penalty shrinks because AL's TTFT grows faster than AD's. AL instances
+      multiplex prefill and decode, so TTFT suffers from decode-induced delays.
+      AD's dedicated prefill instances see only prefill traffic, keeping TTFT nearly
+      flat. At high rates, AL's TTFT catches up toward AD's fixed overhead baseline.
+    diagnostic: >
+      If AD does NOT have lower E2E at all rates: check the E2E decomposition —
+      the relationship E2E = TTFT + 127*ITL + postDecodeOverhead may have an
+      additional component in AD mode (scheduling delay at decode instance) that
+      grows with rate. If TTFT penalty exceeds secondary_budget (20ms) at any rate:
+      recheck the rate=1 probe where the penalty is highest (probed: 15.7ms).
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  fanout_template: >
+    ./blis run --model qwen/qwen3-14b --num-instances 4 --prefill-instances 2
+    --decode-instances 2 --num-requests 300 --prompt-tokens 512
+    --prompt-tokens-stdev 0 --output-tokens 128 --output-tokens-stdev 0
+    --routing-policy least-loaded --pd-decider {MODE} --rate {RATE} --seed {SEED}
+    --metrics-path {OUTPUT_PATH}
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    num_instances: 4
+    prefill_instances: 2
+    decode_instances: 2
+    num_requests: 300
+    prompt_tokens: 512
+    prompt_tokens_stdev: 0
+    output_tokens: 128
+    output_tokens_stdev: 0
+    routing_policy: "least-loaded"
+    rates: [1, 5, 10, 20, 30, 50, 70, 90, 110, 130, 140, 150]
+    seeds: [42, 43, 44]
+    modes: ["never", "always"]
+
+  unlocked_parameters_audit:
+    - name: "max_model_len"
+      default_value: "auto (from HF config)"
+      justification: "Default covers 512+128=640 tokens per request; no truncation risk."
+    - name: "token_budget"
+      default_value: 2048
+      justification: "Default M=2048 is sufficient for our workload (512 prompt + 128 output). Varying M would change batch formation dynamics, which is a separate hypothesis."
+    - name: "latency_model"
+      default_value: "trained-physics"
+      justification: "Default backend uses physics-informed coefficients (beta, alpha) from iter29 training. This is the model we are characterizing."
+    - name: "scheduling_policy"
+      default_value: "fcfs"
+      justification: "FCFS is the default vLLM scheduling. Alternative policies would change batch composition but not the fundamental overhead amortization mechanism."
+    - name: "gpu_memory_utilization"
+      default_value: 0.9
+      justification: "Default 0.9 provides sufficient KV cache blocks. No drops observed at rate=150, so cache pressure is not a factor."
+    - name: "kv_transfer_bandwidth"
+      default_value: "25 GB/s"
+      justification: "Default PCIe Gen4 bandwidth. Affects AD TTFT by ~3.4ms constant term. Not varied because the research question is about ITL-rate shape, not transfer overhead magnitude."
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      never_rate1: 8
+      never_rate150: 2
+      always_rate1: 8
+      always_rate150: 2
+    observation_method: "Wall-clock from design probes. 72 runs total, ~3 min estimated."

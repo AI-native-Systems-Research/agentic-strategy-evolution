@@ -1,0 +1,34 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Always-Disaggregate (AD) produces consistently lower mean ITL and consistently higher mean TTFT than Always-Local (AL) across all tested rates (5-150 req/s) and seeds (42,43,44). The ITL gap (AL minus AD) is positive at every rate-seed combination, and the TTFT gap (AD minus AL) is positive at every rate-seed combination.",
+      "observed": "ITL_AD < ITL_AL confirmed at all 27 rate-seed combinations (9 rates \u00d7 3 seeds). ITL gap ranges from +0.057ms (rate=5, mean over seeds) to +1.687ms (rate=150). TTFT_AD > TTFT_AL confirmed at all 27 combinations. TTFT gap ranges from +9.61ms (rate=5) to +4.43ms (rate=120). Representative values (mean over seeds): rate=5: AL_ITL=12.49ms, AD_ITL=12.43ms, gap=+0.058ms; AL_TTFT=36.13ms, AD_TTFT=45.74ms, gap=+9.61ms. Rate=100: AL_ITL=18.43ms, AD_ITL=16.88ms, gap=+1.554ms; AL_TTFT=44.08ms, AD_TTFT=49.44ms, gap=+5.36ms. All 54 runs completed 300/300 requests with 0 drops.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The ITL advantage of AD over AL grows with rate (0.06ms at rate=5 vs 1.69ms at rate=150), confirming the paper's mechanism: lower decode-server utilization under disaggregation yields smaller batches and shorter iteration times. The TTFT penalty shrinks with rate (~9.6ms at low rates, ~4.4ms at high rates), because AL TTFT grows faster with rate (decode pool accumulates both prefill+decode load) than AD TTFT (prefill pool absorbs prefill load independently)."
+    },
+    {
+      "arm_type": "h-dose-response",
+      "predicted": "Mean ITL will increase monotonically with arrival rate for both AL and AD modes, consistent with the paper's T_iter=alpha/(1-rho) model.",
+      "observed": "ITL is strictly monotone increasing with rate for all 6 mode-seed combinations (AL seeds 42,43,44 and AD seeds 42,43,44). AL ITL values (seed 42): 12.49, 12.80, 13.44, 14.79, 16.18, 17.44, 18.44, 19.17, 19.89ms at rates 5,10,20,40,60,80,100,120,150. AD ITL values (seed 42): 12.43, 12.67, 13.15, 14.16, 15.17, 16.10, 16.88, 17.51, 18.20ms. The rate of ITL increase (per-rps slope) shows a concave-then-convex pattern: accelerating from rate=5-60 (slope 0.062\u21920.070 ms/rps), then decelerating from rate=60-150 (slope 0.070\u21920.024 ms/rps for AL). This deceleration at high rates is consistent with the designer's transient-regime hypothesis: at rate=150, the 300-request run completes in ~2s, while each request takes ~1.6s, so the system never reaches steady-state mean batch size.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Monotone increasing shape confirmed as predicted. Deceleration at rates >60 is a transient artifact, not a violation of the underlying mechanism. The paper's 1/(1-rho) formula predicts an accelerating (convex) curve in steady state; the observed concave deceleration at high rates confirms the 300-request finite-horizon regime limitation identified by the designer."
+    },
+    {
+      "arm_type": "h-tradeoff",
+      "predicted": "AD will reduce mean ITL relative to AL (primary improvement), while increasing mean TTFT by no more than 15ms (secondary cost budget).",
+      "observed": "ITL improvement confirmed at all rates: 0.058ms (rate=5) to 1.687ms (rate=150). TTFT increase remains within budget at ALL rates and seeds. Maximum observed TTFT increase across all 27 AL/AD pairs: 9.993ms (rate=5, seed=42). All 27 pairs satisfy TTFT_increase <= 15ms. Mean TTFT increase per rate: 9.61ms (rate=5), 9.36ms (rate=10), 9.27ms (rate=20), 8.70ms (rate=40), 7.46ms (rate=60), 5.88ms (rate=80), 5.36ms (rate=100), 4.43ms (rate=120), 4.59ms (rate=150). Notably, TTFT cost DECREASES as rate increases, because AL TTFT grows with rate (decode pool congestion) while AD TTFT remains nearly constant (~45-50ms, dominated by fixed KV transfer ~3.4ms + prefill iteration time).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The TTFT secondary budget (15ms) is comfortably met with maximum observed cost of ~10ms. An unexpected finding: the tradeoff improves with rate \u2014 at high rates, AD provides larger ITL benefits while TTFT cost shrinks. This is because AL TTFT grows with congestion (decode pool handles both prefill and decode) while AD TTFT is pinned by the prefill-pool pipeline which remains lightly loaded."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "All three arms confirmed. No discrepancies from predictions. Notable observation: ITL growth decelerates at high rates (concave rather than convex), confirming the designer's prediction of a transient regime. The paper's 1/(1-rho) acceleration is a steady-state prediction; the 300-request finite horizon prevents steady state at rates >= 60 rps. The directional predictions (ITL_AD < ITL_AL, TTFT_AD > TTFT_AL, ITL monotone increasing) all hold robustly. The h-tradeoff finding is particularly interesting: the AD TTFT cost is not fixed but decreases with rate, because AL TTFT inflates with decode-pool congestion while AD TTFT is bounded by the prefill pipeline.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

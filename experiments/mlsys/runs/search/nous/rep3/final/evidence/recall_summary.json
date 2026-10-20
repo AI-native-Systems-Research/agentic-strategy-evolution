@@ -1,0 +1,108 @@
+{
+  "h_main_mean_recall": 1.0,
+  "h_main_min_recall": 1.0,
+  "h_main_all_100": true,
+  "h_robustness_recall": 0.9714285714285714,
+  "all_conditions": [
+    {
+      "arm": "h-main",
+      "model": "qwen/qwen3-14b",
+      "rate": 50,
+      "seed": 42,
+      "recall": 1.0,
+      "found": 23,
+      "total": 23,
+      "missed": 0
+    },
+    {
+      "arm": "h-main",
+      "model": "qwen/qwen3-14b",
+      "rate": 50,
+      "seed": 123,
+      "recall": 1.0,
+      "found": 26,
+      "total": 26,
+      "missed": 0
+    },
+    {
+      "arm": "h-main",
+      "model": "qwen/qwen3-14b",
+      "rate": 50,
+      "seed": 999,
+      "recall": 1.0,
+      "found": 38,
+      "total": 38,
+      "missed": 0
+    },
+    {
+      "arm": "h-main",
+      "model": "qwen/qwen3-14b",
+      "rate": 100,
+      "seed": 42,
+      "recall": 1.0,
+      "found": 35,
+      "total": 35,
+      "missed": 0
+    },
+    {
+      "arm": "h-main",
+      "model": "qwen/qwen3-14b",
+      "rate": 100,
+      "seed": 123,
+      "recall": 1.0,
+      "found": 35,
+      "total": 35,
+      "missed": 0
+    },
+    {
+      "arm": "h-main",
+      "model": "qwen/qwen3-14b",
+      "rate": 100,
+      "seed": 999,
+      "recall": 1.0,
+      "found": 39,
+      "total": 39,
+      "missed": 0
+    },
+    {
+      "arm": "h-main",
+      "model": "qwen/qwen3-14b",
+      "rate": 200,
+      "seed": 42,
+      "recall": 1.0,
+      "found": 41,
+      "total": 41,
+      "missed": 0
+    },
+    {
+      "arm": "h-main",
+      "model": "qwen/qwen3-14b",
+      "rate": 200,
+      "seed": 123,
+      "recall": 1.0,
+      "found": 33,
+      "total": 33,
+      "missed": 0
+    },
+    {
+      "arm": "h-main",
+      "model": "qwen/qwen3-14b",
+      "rate": 200,
+      "seed": 999,
+      "recall": 1.0,
+      "found": 43,
+      "total": 43,
+      "missed": 0
+    },
+    {
+      "arm": "h-robustness",
+      "model": "meta-llama/llama-2-7b-hf",
+      "rate": 100,
+      "seed": 42,
+      "recall": 0.9714285714285714,
+      "found": 34,
+      "total": 35,
+      "missed": 1
+    }
+  ]
+}

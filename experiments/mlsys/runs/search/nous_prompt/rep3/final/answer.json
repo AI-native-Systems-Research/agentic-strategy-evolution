@@ -1,0 +1,56 @@
+{
+  "answer": "The BLIS configuration space's Pareto front has 35 distinct objective-value points across 1800 total configs. TP (tensor parallelism) is the dominant knob for throughput (scaling from 7 rps at tp=1 to 32 rps at tp=8), while num_instances controls the saturation boundary. Block_size=32 is almost universally Pareto-dominant over 16. Scheduler (fcfs vs sjf) and max_num_running_reqs matter only in the saturated regime and produce minor differences. The front is structured by GPU-count tiers: within each tier, the tradeoff is between throughput/latency and KV cache cost. A structured search algorithm that tests all single-instance combos with 2 schedulers x 2 mrr values x 6 kvb values (at bst=32), plus multi-instance combos with a smaller grid, recovers 100% of the true Pareto front using only 200 evaluations (11.1% of the full space).",
+  "deliverable": "search.py",
+  "repro": "python3 search.py --model qwen/qwen3-14b --rate 100 --budget 200 --seed 42 --out final/pareto_front.json",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "Pareto front size (distinct objective-value points)",
+      "value": 35,
+      "condition": "Exhaustive enumeration of all 1800 configs with model=qwen/qwen3-14b, rate=100, seed=42",
+      "evidence": "runs/iter-1/results/true_pareto.json"
+    },
+    {
+      "id": "c2",
+      "metric": "Search coverage (fraction of true Pareto found)",
+      "value": 1.0,
+      "condition": "search.py with budget=200, seed=42, model=qwen/qwen3-14b, rate=100",
+      "evidence": "final/pareto_front.json"
+    },
+    {
+      "id": "c3",
+      "metric": "Search evaluations used",
+      "value": 200,
+      "condition": "search.py with budget=200, seed=42",
+      "evidence": "final/pareto_front.json"
+    },
+    {
+      "id": "c4",
+      "metric": "Best throughput (responses_per_sec)",
+      "value": 32.01,
+      "condition": "tp=8, ni=1, fcfs, mrr=256, kvb=4000, bst=32, 8 GPUs",
+      "evidence": "runs/iter-1/results/exhaustive/e_8_1_fcfs_256_4000_32.json"
+    },
+    {
+      "id": "c5",
+      "metric": "Best ttft_p99_ms at 8 GPUs",
+      "value": 27.5,
+      "condition": "tp=8, ni=1, fcfs, mrr=256, kvb=4000, bst=32",
+      "evidence": "runs/iter-1/results/exhaustive/e_8_1_fcfs_256_4000_32.json"
+    },
+    {
+      "id": "c6",
+      "metric": "Best 1-GPU throughput (responses_per_sec)",
+      "value": 7.0,
+      "condition": "tp=1, ni=1, fcfs, mrr=256, kvb=5000, bst=32",
+      "evidence": "runs/iter-1/results/exhaustive/e_1_1_fcfs_256_5000_32.json"
+    },
+    {
+      "id": "c7",
+      "metric": "Total configuration space size",
+      "value": 1800,
+      "condition": "All valid combinations of 6 knobs with tp*instances<=8",
+      "evidence": "runs/iter-1/results/exhaustive_all.json"
+    }
+  ]
+}

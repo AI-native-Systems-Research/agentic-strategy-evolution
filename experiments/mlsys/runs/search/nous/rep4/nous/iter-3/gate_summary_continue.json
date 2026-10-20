@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "Across three iterations, the hierarchical Pareto search algorithm has achieved 100% recall (well above targets of 90%/80%) on all three tested model sizes \u2014 14B, 70B, and 7B \u2014 using exactly 200 evaluations each. The dynamic TP validation added in iteration 3 correctly handles architecture constraints (e.g., qwen2.5-7b crashing at tp=8). The core research question of model generalization is now fully answered.",
+  "key_points": [
+    "All hypotheses confirmed with margin: 70B achieved 42/42 unique Pareto tuple recall (100%, target \u226590%); 7B achieved 21/21 (100%, target \u226580%); 14B regression check still 35/35 (100%).",
+    "Four structural regularities hold across all model sizes: TP dominance (ratio scales with model size: 2.06x at 7B, 2.68x at 14B, 4.5x at 70B), cache equivalence, maxr=256 plateau, and SJF\u00d7concurrency interaction at degraded cache \u2014 though magnitudes differ quantitatively.",
+    "Dynamic TP validation works correctly: probing detects tp=8 as invalid for qwen2.5-7b (28 attention heads not divisible by 8), restricts search to tp={1,2,4}, and the search still achieves perfect recall within the 200-evaluation budget.",
+    "Pareto front complexity scales with model size: 21 unique tuples (7B), 35 (14B), 42 (70B) \u2014 the search's hierarchical phase structure handles all three without modification.",
+    "What remains unknown: whether \u226590% recall can be achieved with a compressed budget (e.g., 100 evaluations), and whether the algorithm holds under workload variation (different arrival rates, prefix lengths). Suggested next iteration: budget compression study targeting \u226590% recall at budget=100."
+  ],
+  "recommendation": "continue"
+}

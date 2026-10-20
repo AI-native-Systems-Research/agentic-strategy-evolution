@@ -1,0 +1,62 @@
+{
+  "iteration": 4,
+  "bundle_ref": "runs/iter-4/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Broadened Phase 2.5 achieves >=88.6% unique Pareto tuple recall at budget=100 (31/35 or better), up from 80.0%",
+      "observed": "Three implementation variants all achieved <=80% recall at budget=100. v1 (fcfs+128 trimmed, sjf+256 per kv, broadened combos): 25/35 = 71.4%. v2 (fcfs+128 restored, sjf+256 per kv, broadened combos): 26/35 = 74.3%. v3 (Phase 2.5 preserved + Phase 2.6 targeted gap-filler): 28/35 = 80.0% (identical to baseline). No improvement over baseline achieved.",
+      "status": "REFUTED",
+      "error_type": "regime",
+      "diagnostic_note": "The design hypothesis had two incorrect assumptions: (1) 'fcfs+128 rarely produces unique Pareto tuples' \u2014 the GT enumeration shows 17/124 GT Pareto configs use fcfs+128. Removing fcfs+128 from Phase 2.5 loses critical coverage. (2) Budget arithmetic is too tight: Phase 1 (15 evals) + Phase 2 (60 evals) = 75 evals, leaving 25 for Phase 2.5. Phase 2.5 needs 28 evals for 4 best combos (7 evals each with 2 degraded kvs), so any broadening exhausts budget before covering existing combos. Any Phase 2.6 targeted gap-filler has zero budget left at budget=100."
+    },
+    {
+      "arm_type": "h-dose-response",
+      "predicted": "Recall-vs-budget curve is monotone increasing and saturating, reaching >=88.6% by budget=100. Dead zone at budget=100-125 is eliminated by improved Phase 2.5.",
+      "observed": "Recall curve on original (unmodified) search: budget=50 -> 25.7%, budget=75 -> 57.1%, budget=100 -> 80.0%, budget=125 -> 80.0%, budget=150 -> 91.4%, budget=200 -> 94.3%. Curve shape is monotone increasing and saturating (shape prediction CONFIRMED). However, the absolute threshold >=88.6% by budget=100 is NOT reached (only 80.0%). Dead zone at budget=100-125 is confirmed present \u2014 not eliminated since h-main was refuted.",
+      "status": "PARTIALLY_CONFIRMED",
+      "error_type": "magnitude",
+      "diagnostic_note": "The saturating shape is correctly predicted. However, the absolute values at budget=100 and budget=125 do not meet the >=88.6% threshold because h-main was refuted. The dead zone (same recall at 100 and 125) is confirmed as real \u2014 Phase 3 (bs=16 sweep) adds zero unique Pareto tuples. The inflection from 80% to 91.4% occurs at budget=150 when Phases 4-5 (SJF and concurrency exploration) execute.",
+      "observed_shape": "saturating",
+      "shape_match": true,
+      "dose_points": [
+        {
+          "value": 50,
+          "metric": 0.257
+        },
+        {
+          "value": 75,
+          "metric": 0.571
+        },
+        {
+          "value": 100,
+          "metric": 0.8
+        },
+        {
+          "value": 125,
+          "metric": 0.8
+        },
+        {
+          "value": 150,
+          "metric": 0.914
+        },
+        {
+          "value": 200,
+          "metric": 0.943
+        }
+      ]
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "Unmodified search at budget=100 achieves <=82% unique Pareto tuple recall",
+      "observed": "Baseline search at budget=100 achieves 28/35 = 80.0% recall. 7 missed tuples: 3 from (1,2) non-best combo, 1 from (4,2) non-best combo, 1 from sjf+256 at kv=3000 for (8,1), 2 from near-ceiling kv=4000 SJF tuples.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "80.0% is within the predicted <=82% range. The 7 missed tuples have three distinct root causes (non-best combos: 4 tuples; sjf+256 at non-severe kv: 1 tuple; near-ceiling threshold too strict: 2 tuples) as characterized in the design phase."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "h-main REFUTED due to incorrect design assumptions: (1) fcfs+128 produces 17/124 GT Pareto tuples and cannot be trimmed; (2) budget arithmetic at budget=100 is already exhausted by Phase 1+2+2.5, leaving no room for Phase 2.6. h-dose-response shape is correctly predicted as saturating (PARTIALLY_CONFIRMED \u2014 shape correct but absolute values don't meet the threshold tied to the refuted h-main). h-control-negative is cleanly CONFIRMED at 80.0%. Key finding: the search's budget efficiency bottleneck is Phase 1+2 eval allocation (75/100 evals), not Phase 2.5 scope.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

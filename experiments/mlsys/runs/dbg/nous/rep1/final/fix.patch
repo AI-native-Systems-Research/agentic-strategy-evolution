@@ -1,0 +1,176 @@
+diff --git a/sim/batch_formation.go b/sim/batch_formation.go
+index a14f13d..9f19b1d 100644
+--- a/sim/batch_formation.go
++++ b/sim/batch_formation.go
+@@ -40,7 +40,9 @@ type ScheduledRequest struct {
+ 
+ // PreemptedRequest carries metadata about a preempted request.
+ type PreemptedRequest struct {
+-	Request *Request
++	Request       *Request
++	DecodedTokens int64 // Output tokens generated before preemption (for metric correction)
++	HadTTFT       bool  // Whether TTFT was recorded before preemption (for TTFTSum correction)
+ }
+ 
+ // BatchResult describes the outcome of batch formation.
+@@ -213,8 +215,18 @@ func (v *VLLMBatchFormation) preemptForTokens(req *Request, numNewTokens int64,
+ 			logrus.Warnf("[tick %07d] preemption: evicting %s to make room", ctx.Now, preemptedRequest.ID)
+ 			result.RunningBatch.Requests = result.RunningBatch.Requests[:len(result.RunningBatch.Requests)-1]
+ 
++			// Compute output tokens generated before preemption (for metric correction).
++			// Must be calculated before ProgressIndex is reset to 0.
++			inputLen := util.Len64(preemptedRequest.InputTokens)
++			var decodedTokens int64
++			if preemptedRequest.ProgressIndex > inputLen {
++				decodedTokens = preemptedRequest.ProgressIndex - inputLen
++			}
++
+ 			result.Preempted = append(result.Preempted, PreemptedRequest{
+-				Request: preemptedRequest,
++				Request:       preemptedRequest,
++				DecodedTokens: decodedTokens,
++				HadTTFT:       preemptedRequest.TTFTSet,
+ 			})
+ 
+ 			// Defensive: restore token budget if preempted request was already
+@@ -230,6 +242,10 @@ func (v *VLLMBatchFormation) preemptForTokens(req *Request, numNewTokens int64,
+ 
+ 			preemptedRequest.State = StateQueued
+ 			preemptedRequest.ProgressIndex = 0
++			// Clear decode-phase metrics accumulated before preemption; they
++			// will be re-recorded when the request is rescheduled and re-decoded.
++			preemptedRequest.ITL = nil
++			preemptedRequest.TTFTSet = false
+ 			ctx.KVCache.ReleaseKVBlocks(preemptedRequest)
+ 			delete(ctx.ComputedTokens, preemptedRequest.ID)
+ 			ctx.WaitQ.PrependFront(preemptedRequest)
+diff --git a/sim/simulator.go b/sim/simulator.go
+index febe7fb..b739993 100644
+--- a/sim/simulator.go
++++ b/sim/simulator.go
+@@ -581,10 +581,17 @@ func (sim *Simulator) scheduleBatch(now int64) {
+ 	// Apply result: update running batch
+ 	sim.RunningBatch = batchResult.RunningBatch
+ 
+-	// Record preemption metrics and emit debug log for each preempted request
++	// Record preemption metrics and emit debug log for each preempted request.
++	// Correct TotalOutputTokens and TTFTSum for metrics that were already counted
++	// during decode steps but will be re-generated after the request is rescheduled
++	// (ProgressIndex is reset to 0 on preemption, causing re-prefill and re-decode).
+ 	for _, p := range batchResult.Preempted {
+ 		logrus.Debugf("<< Preemption: %s at %d ticks", p.Request.ID, now)
+ 		sim.Metrics.PreemptionCount++
++		sim.Metrics.TotalOutputTokens -= int(p.DecodedTokens)
++		if p.HadTTFT {
++			sim.Metrics.TTFTSum -= p.Request.FirstTokenTime
++		}
+ 	}
+ 
+ 	// Schedule events for newly scheduled requests and record scheduling metrics
+diff --git a/sim/simulator_test.go b/sim/simulator_test.go
+index 5b438c2..0bf9a67 100644
+--- a/sim/simulator_test.go
++++ b/sim/simulator_test.go
+@@ -2598,3 +2598,102 @@ func TestEnqueueDecodeSubRequest_SimClockAhead_StepEventAtSimClock(t *testing.T)
+ 			got, simClock, clusterTime)
+ 	}
+ }
++
++// TestPreemption_TotalOutputTokens_NoDoubleCount verifies that TotalOutputTokens
++// is not inflated by preemption. When a request is preempted and rescheduled, its
++// previously-generated output tokens must not be counted again.
++//
++// Regression test: before the fix, preempted requests had their ProgressIndex
++// reset to 0 but TotalOutputTokens was not adjusted, causing double-counting
++// of output tokens upon reschedule.
++func TestPreemption_TotalOutputTokens_NoDoubleCount(t *testing.T) {
++	// Use a small KV cache to force preemptions.
++	// 30 blocks × 16 tokens/block = 480 token capacity. With 5 requests of
++	// 64 input + 50 output = 114 tokens (~8 blocks each), initial scheduling fits ~3
++	// requests but decode-phase growth causes eviction of later requests.
++	smallCacheCfg := SimConfig{
++		Horizon:             200_000_000,
++		Seed:                42,
++		KVCacheConfig:       NewKVCacheConfig(30, 16, 0, 0, 0, 0),
++		BatchConfig:         NewBatchConfig(256, 2048, 0),
++		LatencyCoeffs:       NewLatencyCoeffs([]float64{1000, 1, 1}, []float64{0, 0, 0}),
++		ModelHardwareConfig: NewModelHardwareConfig(ModelConfig{}, HardwareCalib{}, "", "", 0, "blackbox", 0),
++	}
++	simSmall := mustNewSimulator(t, smallCacheCfg)
++	rng := simSmall.WorkloadRNG()
++
++	// Use a large KV cache so no preemptions occur (control)
++	largeCacheCfg := SimConfig{
++		Horizon:             200_000_000,
++		Seed:                42,
++		KVCacheConfig:       NewKVCacheConfig(5000, 16, 0, 0, 0, 0),
++		BatchConfig:         NewBatchConfig(256, 2048, 0),
++		LatencyCoeffs:       NewLatencyCoeffs([]float64{1000, 1, 1}, []float64{0, 0, 0}),
++		ModelHardwareConfig: NewModelHardwareConfig(ModelConfig{}, HardwareCalib{}, "", "", 0, "blackbox", 0),
++	}
++	simLarge := mustNewSimulator(t, largeCacheCfg)
++
++	// Inject identical requests into both simulators.
++	type reqTemplate struct {
++		id     string
++		input  []int
++		output []int
++		arrive int64
++	}
++	// 5 requests arriving at time 0; each needs ~8 blocks, cache holds ~30 blocks
++	templates := make([]reqTemplate, 5)
++	for i := range templates {
++		templates[i] = reqTemplate{
++			id:     fmt.Sprintf("req_%d", i),
++			input:  GenerateRandomTokenIDs(rng, 64),
++			output: GenerateRandomTokenIDs(rng, 50),
++			arrive: 0, // all arrive at time 0 to force contention
++		}
++	}
++
++	for _, tmpl := range templates {
++		simSmall.InjectArrival(&Request{
++			ID:           tmpl.id,
++			InputTokens:  slices.Clone(tmpl.input),
++			OutputTokens: slices.Clone(tmpl.output),
++			MaxOutputLen: 100,
++			ArrivalTime:  tmpl.arrive,
++			State:        StateQueued,
++		})
++		simLarge.InjectArrival(&Request{
++			ID:           tmpl.id,
++			InputTokens:  slices.Clone(tmpl.input),
++			OutputTokens: slices.Clone(tmpl.output),
++			MaxOutputLen: 100,
++			ArrivalTime:  tmpl.arrive,
++			State:        StateQueued,
++		})
++	}
++
++	simSmall.Run()
++	simLarge.Run()
++
++	// Verify preemptions actually occurred in the small-cache run
++	if simSmall.Metrics.PreemptionCount == 0 {
++		t.Fatal("test setup: expected preemptions with small cache, got 0")
++	}
++
++	// Both must complete all requests
++	if simSmall.Metrics.CompletedRequests != len(templates) {
++		t.Fatalf("small cache: completed %d, want %d", simSmall.Metrics.CompletedRequests, len(templates))
++	}
++	if simLarge.Metrics.CompletedRequests != len(templates) {
++		t.Fatalf("large cache: completed %d, want %d", simLarge.Metrics.CompletedRequests, len(templates))
++	}
++
++	// Key assertion: TotalOutputTokens must be identical regardless of preemptions.
++	// Before the fix, preempted requests had ProgressIndex reset to 0 without
++	// adjusting TotalOutputTokens, causing output tokens to be counted again
++	// when the request was rescheduled.
++	if simSmall.Metrics.TotalOutputTokens != simLarge.Metrics.TotalOutputTokens {
++		t.Errorf("TotalOutputTokens: small_cache=%d (preemptions=%d), large_cache=%d (preemptions=%d); "+
++			"preemption should not inflate output token count",
++			simSmall.Metrics.TotalOutputTokens, simSmall.Metrics.PreemptionCount,
++			simLarge.Metrics.TotalOutputTokens, simLarge.Metrics.PreemptionCount)
++	}
++}

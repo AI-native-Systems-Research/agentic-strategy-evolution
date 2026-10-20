@@ -1,0 +1,70 @@
+{
+  "answer": "The BLIS configuration space has strong structure that enables efficient search. The 6-knob space (1800 configs) reduces to an effective space of ~120 configs because: (1) block_size=32 always dominates 16 — larger blocks waste less memory per allocation, giving 27% better rps and 54% better ttft_p99 at kv=3000; (2) scheduler is a minor knob — sjf gives ~5% better throughput but ~13% worse tail latency vs fcfs, creating a genuine but small Pareto trade-off only under single-instance contention; (3) max_num_running_reqs has a threshold at 128 above which performance is identical; below it (32, 64) causes queuing that hurts all metrics. The dominant axis is the TP-vs-instances trade-off: at 8 GPUs, tp=8×1 achieves 30.24 rps but 1122ms ttft_p99, while tp=4×2 achieves 26.78 rps with just 29.57ms ttft_p99 — a 2.7× throughput-for-latency trade-off. Higher TP always gives better throughput per GPU but concentrates load onto fewer instances, causing tail latency to spike. KV blocks show a per-config threshold effect: below threshold, preemptions degrade both rps and ttft; above it, extra blocks are wasted. The Pareto front has ~30-35 configs spanning GPU counts 1-8, KV blocks 2000-4000, and both schedulers. A 200-evaluation search (11% of the space) finds this front by: (a) surveying all 15 tp/inst combos at ceiling, (b) sweeping kv×maxr for each combo, (c) testing sjf for single-instance configs where it creates trade-offs.",
+  "deliverable": "search.py",
+  "repro": "python3 search.py --model qwen/qwen3-14b --rate 100 --budget 200 --seed 42 --out final/search_results.json",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "best_throughput_rps",
+      "value": 31.24,
+      "condition": "tp=8, instances=1, sjf, maxr=128, kv=4000, bs=32, rate=100",
+      "evidence": "experiments/evidence_best_rps.json"
+    },
+    {
+      "id": "c2",
+      "metric": "best_ttft_p99_ms_at_8gpu",
+      "value": 29.57,
+      "condition": "tp=4, instances=2, fcfs, maxr=128, kv=3000, bs=32, rate=100",
+      "evidence": "experiments/evidence_best_ttft.json"
+    },
+    {
+      "id": "c3",
+      "metric": "bs32_rps_vs_bs16_improvement",
+      "value": 1.27,
+      "condition": "tp=4, instances=1, kv=3000, maxr=128, fcfs — bs=32 gives 18.48 rps vs bs=16 gives 14.52 rps (ratio 1.27)",
+      "evidence": "experiments/evidence_bs32.json"
+    },
+    {
+      "id": "c4",
+      "metric": "sjf_rps_improvement_over_fcfs",
+      "value": 1.052,
+      "condition": "tp=4, instances=1, kv=4000, maxr=128, bs=32 — sjf 20.58 rps vs fcfs 19.56 rps (ratio 1.052)",
+      "evidence": "experiments/evidence_sched_sjf.json"
+    },
+    {
+      "id": "c5",
+      "metric": "fcfs_ttft_improvement_over_sjf",
+      "value": 0.882,
+      "condition": "tp=4, instances=1, kv=4000, maxr=128, bs=32 — fcfs 2655ms vs sjf 3011ms (ratio 0.882)",
+      "evidence": "experiments/evidence_sched_fcfs.json"
+    },
+    {
+      "id": "c6",
+      "metric": "tp8_vs_tp1_rps_at_8gpu",
+      "value": 2.54,
+      "condition": "8 GPUs, kv=5000, maxr=128, bs=32, fcfs — tp=8×1 gives 30.24 rps vs tp=1×8 gives 11.93 rps (ratio 2.54)",
+      "evidence": "experiments/evidence_tp8i1.json"
+    },
+    {
+      "id": "c7",
+      "metric": "pareto_front_size",
+      "value": 35,
+      "condition": "200-eval search, model=qwen/qwen3-14b, rate=100, seed=42",
+      "evidence": "final/search_results.json"
+    },
+    {
+      "id": "c8",
+      "metric": "search_time_seconds",
+      "value": 14.2,
+      "condition": "200 evaluations on qwen/qwen3-14b at rate=100, seed=42",
+      "evidence": "final/search_results.json"
+    },
+    {
+      "id": "c9",
+      "metric": "pareto_cross_seed_overlap_fraction",
+      "value": 0.74,
+      "condition": "seed=42 finds 35 configs, seed=123 finds 30, with 26 overlap (26/35=0.74)",
+      "evidence": "final/search_seed123.json"
+    }
+  ]
+}

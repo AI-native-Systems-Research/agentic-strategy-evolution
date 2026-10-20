@@ -1,0 +1,73 @@
+metadata:
+  iteration: 2
+  family: "adaptive-degraded-regime-search"
+  research_question: "Can an improved search algorithm that adaptively explores scheduler x concurrency interactions in cache-degraded regimes achieve >=90% unique Pareto tuple recall (up from 82.9%) with <=200 evaluations, and does it generalize across arrival rates?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (degraded-regime interaction) + multi-knob cross-product + robustness across rates"
+
+# Arm selection rationale:
+# - h-main: Tests the core improvement hypothesis (adaptive degraded-regime interaction phase)
+# - h-robustness: Tests whether the improved search generalizes to different arrival rates (50, 200)
+# Skipped h-control-negative: iter-1 already established the baseline (82.9% recall without the new phase)
+# Skipped h-dose-response: not testing a single knob's shape, but a search strategy
+# Skipped h-ablation: the improvement IS the single new phase; removing it is just iter-1's search
+
+arms:
+  - type: h-main
+    prediction: "Adding an adaptive degraded-regime interaction phase that explores SJF x {64, 128} at cache-constrained configs will increase unique Pareto tuple recall from 82.9% to >=90% (>=32/35 tuples) while maintaining >=95% precision, using <=200 evaluations. The mechanism is that scheduler x concurrency interactions in degraded cache regimes create Pareto tradeoff points (higher rps at cost of higher ttft) invisible to independent knob exploration."
+    mechanism: "In cache-degraded regimes (effective_cache < 160K tokens), preemption pressure makes SJF+low-maxr produce different performance tradeoffs than FCFS+high-maxr. SJF prioritizes shorter requests, which under preemption pressure leads to higher completion rates (rps) at the cost of longer tail latency (ttft_p99). This interaction is invisible when exploring scheduler and concurrency independently because: (1) SJF tested on existing Pareto configs (which have maxr=256) shows <1% effect, (2) low maxr tested on FCFS Pareto configs misses SJF-specific gains. The cross-product SJF x maxr=128 at kv=3000,bs=32 yields rps improvements of 2-7% over FCFS x maxr=256 at the same cache level, verified across all 4 TP values."
+    diagnostic: "If recall does not reach 90%: (1) Check whether the adaptive phase correctly identifies degraded configs — the 95% ceiling threshold may be too tight or too loose. (2) Check whether there are additional Pareto tuples from knob interactions NOT involving SJF x maxr (e.g., SJF x kv=5000 x bs=16). (3) Check whether the remaining missed tuples require a third-order interaction (scheduler x maxr x kv) not covered by the cross-product phase."
+    code_changes:
+      - file: "search.py"
+        intent: "Add Phase 2.5 (adaptive degraded-regime interaction): after Phase 2 cache sweep, identify configs where rps < 95% of ceiling for that tp/ni combo, then test SJF x {64, 128} at the same kv/bs values. Rebalance later phases to fit within 200-eval budget."
+        rationale: "Directly targets the root cause of the 6 missed Pareto tuples: all 6 involve SJF and/or low maxr in cache-degraded regimes. The adaptive identification ensures this generalizes to different rates where degradation thresholds shift."
+
+  - type: h-robustness
+    prediction: "The improved search will maintain >=80% unique Pareto tuple recall when applied at rate=50 and rate=200, despite the Pareto front structure potentially differing. The structural assumptions (TP dominance, cache equivalence, maxr plateau) will remain directionally valid across rates, though specific thresholds may shift."
+    mechanism: "The search's structural assumptions are architecture-driven, not rate-driven: TP dominance comes from the latency model's TP scaling (sim/latency.go), cache equivalence comes from the KV block accounting (sim/kvcache.go), and maxr plateau comes from natural concurrency limits. These mechanisms operate regardless of arrival rate. The adaptive degraded-regime phase further improves robustness by using data-driven detection of degradation rather than hardcoded thresholds."
+    diagnostic: "If recall drops below 80% at rate=50 or rate=200: (1) Check whether the Pareto front structure changes qualitatively — does it have more unique tuples (harder to cover) or different knob importance ordering? (2) Check whether the maxr=256 plateau shifts (at rate=200, natural concurrency may exceed 256). (3) Check whether cache degradation thresholds shift significantly (at rate=50, less concurrent pressure means less cache stress)."
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    prefix_tokens: 512
+    seed: 42
+    max_num_scheduled_tokens: 4096
+    long_prefill_token_threshold: 0
+    admission_policy: "always-admit"
+    preemption_policy: "fcfs"
+    routing_policy: "round-robin"
+    gpu_memory_utilization: 0.9
+  unlocked_parameters_audit:
+    - name: "rate"
+      default_value: 100
+      justification: "Rate is an experimental variable — tested at 50, 100, and 200 in h-robustness arm. 100 is the primary rate from campaign specification."
+    - name: "tp"
+      default_value: "varies (1,2,4,8)"
+      justification: "TP is a search knob, not a fixed parameter. All valid values explored by the search."
+    - name: "num_instances"
+      default_value: "varies (1..8/tp)"
+      justification: "Instance count is a search knob. All valid values explored."
+    - name: "scheduler"
+      default_value: "varies (fcfs, sjf)"
+      justification: "Scheduler is a search knob. Both values explored."
+    - name: "max_num_running_reqs"
+      default_value: "varies (32,64,128,256,512)"
+      justification: "Concurrency limit is a search knob. All values explored."
+    - name: "total_kv_blocks"
+      default_value: "varies (2000-10000)"
+      justification: "KV cache size is a search knob. All values explored."
+    - name: "block_size_in_tokens"
+      default_value: "varies (16, 32)"
+      justification: "Block size is a search knob. Both values explored."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      single_blis_eval: 0.06
+      search_200_evals: 15
+      full_enumeration_1800: 120
+    observation_method: "Timed during iter-1 and iter-2 probe runs"

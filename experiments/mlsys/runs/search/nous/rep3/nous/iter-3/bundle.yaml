@@ -1,0 +1,131 @@
+metadata:
+  iteration: 3
+  family: "structure-aware-pareto-search"
+  research_question: "Can a structure-aware deterministic search achieve >90% Pareto tuple recall within 200 evaluations of the BLIS 6-knob space, and does it generalize across arrival rates?"
+  complexity_tier: 2
+  tier_justification: "iter-2 tier-2 confirmed (v2 recall improvement); iter-3 stays tier-2 — same single mechanism (search algorithm improvement) plus robustness test at different rates"
+
+arms:
+  # ARM SELECTION RATIONALE:
+  # h-main: Core claim — v3 search achieves dramatically higher recall than v2 (target >90%, v2=0.579).
+  # h-robustness: Task specifies search.py may run with "a different model or rate" — testing
+  #   rate generalization validates the deliverable's practical utility.
+  # Omitted: h-control-negative (random baseline already established in iter-2 at 0.312 mean recall),
+  #   h-ablation (v3 has 3 key changes but they're tightly coupled — ablating one would require
+  #   a separate v3-minus-X script per change, which is tier-3 complexity).
+
+  - type: h-main
+    prediction: >
+      v3 search (deterministic Phase 1 + diversity-directed Phase 2 + neighbor expansion Phase 3)
+      achieves mean tuple recall > 0.90 across seeds 42, 123, 999 at rate=100, and minimum recall
+      across seeds > 0.85, up from v2's mean of 0.579. The improvement comes from eliminating
+      Phase 1 shuffling (deterministic coverage of every tier) and directing Phase 2 budget to
+      "rich" tiers where partial preemption creates metric diversity, rather than expanding
+      uniformly from all Pareto neighbors.
+    mechanism: >
+      v2's recall gap has two sources: (1) Phase 1 shuffling can omit critical tier×kv combos
+      (see RP-5: v1 seed 999 recall fell below random), and (2) Phase 2's uniform neighbor expansion
+      wastes budget exploring equivalent configs at "simple" tiers (ni>=3 where all kv values give
+      identical metrics). v3 fixes both: deterministic Phase 1 guarantees every tier gets exactly
+      5 configs spanning the kv range, and diversity-directed Phase 2 allocates budget proportionally
+      to tiers showing metric variation (range of ttft_p99 > 100ms threshold). At rich tiers
+      (ni=1, ni=2 with cache pressure), Phase 2 systematically tests maxrun × kv × scheduler
+      combinations in the partial-preemption zone (kv=2000-4000, bs=32). This exploits the
+      structural discovery that bs=32 is strictly Pareto-dominant (halves kv_blocks for same
+      total cache tokens) and that metric diversity lives in the partial-preemption zone where
+      different maxrun values create different preemption patterns.
+    diagnostic: >
+      If recall is below 0.90, check: (1) Are there new Pareto tuples at kv/maxrun combos
+      not covered by Phase 2's expansion set? Add them. (2) Is the rich/simple tier
+      classification failing? Check the 100ms ttft threshold. (3) Is Phase 3 neighbor expansion
+      reaching configs Phase 2 missed? If not, increase Phase 3 budget allocation.
+    code_changes:
+      - file: "search.py"
+        intent: >
+          Rewrite the search algorithm with three phases: (1) Deterministic Phase 1 evaluating
+          5 fixed configs per GPU tier (no shuffling): (kv=2000,bs=32,maxrun=128,fcfs),
+          (kv=2000,bs=32,maxrun=64,fcfs), (kv=3000,bs=32,maxrun=128,fcfs),
+          (kv=5000,bs=16,maxrun=128,fcfs), (kv=4000,bs=32,maxrun=256,fcfs).
+          (2) Diversity-directed Phase 2 that classifies tiers by metric variance, then
+          expands rich tiers with systematic maxrun×kv×scheduler combos at kv=2000-4000 bs=32,
+          and simple tiers with 2 minimum-kv configs.
+          (3) Standard neighbor expansion Phase 3 from Pareto front.
+        rationale: >
+          Eliminates the two sources of v2's recall gap: Phase 1 shuffling instability
+          (RP-5) and uniform Phase 2 budget allocation that wastes evals on simple tiers.
+          The deterministic Phase 1 plus directed Phase 2 is grounded in the structural
+          discovery that Pareto diversity lives in the partial-preemption zone of rich
+          (low-instance-count) tiers.
+
+  - type: h-robustness
+    prediction: >
+      v3 search achieves tuple recall > 0.80 at rate=50 and rate=200 (seed=42),
+      demonstrating that the structure-aware algorithm generalizes across arrival rates.
+      The algorithm should adapt because its Phase 2 tier classification (rich vs simple)
+      is based on observed metric diversity, not hardcoded rate-specific thresholds.
+      At rate=50 (less cache pressure), more tiers will be "simple" and Phase 2 will
+      allocate more budget to the fewer rich tiers. At rate=200 (more cache pressure),
+      more tiers will be "rich" and Phase 2 will spread budget across them.
+    mechanism: >
+      The v3 algorithm's diversity-directed Phase 2 is rate-adaptive by construction:
+      it classifies tiers based on Phase 1's observed ttft range, which shifts with rate.
+      The deterministic Phase 1 always covers every tier at kv=2000-5000, providing
+      sufficient signal for classification regardless of rate. This rate-adaptivity
+      was not designed-in but emerges from the algorithm's structure.
+    diagnostic: >
+      If recall drops below 0.80 at rate=50 or rate=200, investigate: (1) Does the
+      Pareto front structure change qualitatively with rate? (e.g., new tiers become
+      rich). (2) Is the Phase 2 budget allocation suboptimal for the new rate?
+      (3) Are there rate-specific kv threshold shifts that Phase 2's expansion set
+      doesn't reach?
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    rate: 100
+    prefix_tokens: 512
+    max_num_scheduled_tokens: 4096
+    long_prefill_token_threshold: 0
+    admission_policy: "always-admit"
+    preemption_policy: "fcfs"
+    routing_policy: "round-robin"
+    gpu_memory_utilization: 0.9
+
+  unlocked_parameters_audit:
+    - name: "tp"
+      default_value: "varied (1,2,4,8)"
+      justification: "Search knob — varied across all valid values as part of the configuration space"
+    - name: "num_instances"
+      default_value: "varied (1..8/tp)"
+      justification: "Search knob — varied across all valid values constrained by tp*ni<=8"
+    - name: "scheduler"
+      default_value: "varied (fcfs, sjf)"
+      justification: "Search knob — both values tested"
+    - name: "max_num_running_reqs"
+      default_value: "varied (32,64,128,256,512)"
+      justification: "Search knob — all 5 values in the defined configuration space"
+    - name: "total_kv_blocks"
+      default_value: "varied (2000,3000,4000,5000,7500,10000)"
+      justification: "Search knob — all 6 values tested"
+    - name: "block_size_in_tokens"
+      default_value: "varied (16,32)"
+      justification: "Search knob — both values tested"
+    - name: "max_output_len"
+      default_value: "system default"
+      justification: "Not a search knob; using default to match typical deployment"
+    - name: "rtt_ms"
+      default_value: "0"
+      justification: "Simulator mode (not observe); network RTT not applicable"
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      v3_search_rate100: 44
+      exhaustive_rate50: 396
+      exhaustive_rate200: 396
+    observation_method: "1800 configs × 0.22s/eval for exhaustive; 200 configs × 0.22s/eval for search"

@@ -1,0 +1,69 @@
+metadata:
+  iteration: 2
+  family: "preemption-output-token-double-count"
+  research_question: "Does the iter-1 fix (subtracting OutputTokensLost on preemption + clearing ITL) hold robustly across 5 seeds and 3 KV cache pressure levels, confirming total_output_tokens is independent of preemption count?"
+  complexity_tier: 2
+  tier_justification: "iter 2 — iter-1 confirmed the mechanism at tier 1 (single seed, treatment vs control); escalating to tier 2 for multi-seed robustness across 3 cache regimes"
+
+# Arms chosen:
+# - h-main: Multi-seed validation of the fix under high preemption (5 seeds × 2 cache sizes).
+#   This is the primary falsifiable test at full scale.
+# - h-control-negative: Intermediate cache (moderate preemption) across 5 seeds.
+#   Validates the fix is correct in the moderate-preemption regime where some requests
+#   are preempted during prefill (OutputTokensLost=0) vs decode (OutputTokensLost>0).
+# Skipped: h-ablation (not meaningful — the "ablation" would be the unfixed code, which
+# is the before-state already compared), h-dose-response (preemption count varies with
+# cache size but total_output_tokens should be flat — this is tested implicitly by
+# comparing across 3 cache sizes), h-robustness (covered by multi-seed design).
+
+arms:
+  - type: h-main
+    prediction: "For each of 5 seeds (42, 123, 456, 789, 1337), total_output_tokens with --total-kv-blocks 600 (high preemption, 265-348 preemptions) will exactly equal total_output_tokens with --total-kv-blocks 60000 (zero preemption). This holds for all 5 seeds with zero deviation."
+    mechanism: "The fix in sim/batch_formation.go:219 computes outputTokensLost = max(0, ProgressIndex - len(InputTokens)) before resetting ProgressIndex to 0 at line 238. sim/simulator.go:590 subtracts this from TotalOutputTokens. Each decode token is thus counted exactly once: the final generation after the last preemption. ITL slices are cleared at line 239, preventing duplicate entries."
+    diagnostic: "If any seed shows a mismatch: (1) check whether that seed triggers a code path not covered by the fix (e.g., a preemption during prefill that somehow sets ProgressIndex > len(InputTokens)), (2) check for integer overflow in OutputTokensLost subtraction, (3) verify the regression test still passes at that seed."
+    code_changes:
+      - file: "sim/batch_formation.go"
+        intent: "Add OutputTokensLost field to PreemptedRequest struct. Compute outputTokensLost = max(0, ProgressIndex - len(InputTokens)) before resetting ProgressIndex to 0 in preemptForTokens. Clear ITL[:0] on preemption."
+        rationale: "Captures decode tokens already counted in TotalOutputTokens that will be re-generated after rescheduling. Clearing ITL prevents duplicate inter-token latency entries."
+      - file: "sim/simulator.go"
+        intent: "In scheduleBatch, subtract p.OutputTokensLost from sim.Metrics.TotalOutputTokens for each preempted request."
+        rationale: "Reverses premature counting so tokens are only counted once — when generated for the final time."
+      - file: "sim/simulator_test.go"
+        intent: "Add TestPreemption_TotalOutputTokens_NoDoubleCount regression test comparing same workload under large (no preemption) and small (forced preemption) KV caches."
+        rationale: "Ensures the invariant: total_output_tokens equals sum of actual output lengths regardless of preemption count."
+
+  - type: h-control-negative
+    prediction: "For each of 5 seeds, total_output_tokens with --total-kv-blocks 6000 (moderate preemption, ~50-90 preemptions) will exactly equal total_output_tokens with --total-kv-blocks 60000 (zero preemption). The moderate regime exercises both prefill-stage preemptions (OutputTokensLost=0) and decode-stage preemptions (OutputTokensLost>0)."
+    mechanism: "At 6000 blocks, KV cache is large enough to avoid most preemptions but small enough that some still occur. The fix correctly handles both cases: prefill-preempted requests have ProgressIndex <= len(InputTokens) so OutputTokensLost=0 (nothing to subtract); decode-preempted requests have OutputTokensLost > 0 and the subtraction fires."
+    diagnostic: "If moderate-cache mismatches but high-preemption matches, the fix may have an edge case when preemptions occur early in the request lifecycle. Inspect the specific request that causes the mismatch."
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    rate: 20
+    num_requests: 200
+    seeds: [42, 123, 456, 789, 1337]
+    total_kv_blocks_high_preemption: 600
+    total_kv_blocks_moderate_preemption: 6000
+    total_kv_blocks_no_preemption: 60000
+  unlocked_parameters_audit:
+    - name: "block_size_tokens"
+      default_value: 16
+      justification: "Block size affects when preemption triggers but not the counting bug; the fix is invariant to block size."
+    - name: "max_num_running_reqs"
+      default_value: 256
+      justification: "Batch size limit is orthogonal; preemption is triggered by KV cache pressure, not batch limits."
+    - name: "max_scheduled_tokens"
+      default_value: 2048
+      justification: "Token budget per step does not affect whether preempted tokens are double-counted."
+    - name: "latency_model"
+      default_value: "blackbox"
+      justification: "Latency model affects timing but not token counting or preemption logic."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      small_cache_600: 3
+      moderate_cache_6000: 3
+      large_cache_60000: 3
+    observation_method: "Measured during iter-2 design probes; each run completes in ~2-3 seconds wall time"

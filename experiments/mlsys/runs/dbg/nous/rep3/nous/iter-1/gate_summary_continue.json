@@ -1,0 +1,10 @@
+{
+  "gate_type": "continue",
+  "summary": "The core bug is fully fixed and validated: preemption was causing total_output_tokens and tokens_per_sec to be inflated by up to 9.1% (9,548 tokens with 265 preemptions) due to double-counting re-generated tokens. A three-line fix eliminates the inflation entirely, confirmed by exact match to the no-preemption ground truth of 105,082 tokens, with zero impact on the no-preemption code path.",
+  "key_points": [
+    "Bug confirmed and fixed: total_output_tokens dropped from 114,630 to 105,082 after the fix, matching ground truth exactly. The fix is a strict no-op when no preemptions occur (byte-identical output confirmed by diff).",
+    "Fix scope: compute OutputTokensLost before resetting ProgressIndex to 0 on preemption, subtract from Metrics.TotalOutputTokens in scheduleBatch, and clear ITL slice on preemption to prevent duplicate inter-token latency entries. Regression test passes with 47 preemptions.",
+    "Still unknown: whether the cluster-level metric merging path (sim/cluster/cluster.go around line 1274) has an analogous double-counting issue when cross-instance preemptions occur. The next iteration should audit cluster-level preemption handling for the same pattern."
+  ],
+  "recommendation": "continue"
+}

@@ -1,0 +1,76 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "Under always-disaggregate (AD) mode in BLIS, mean ITL is consistently lower than under always-local (AL) mode at every arrival rate (5-130 req/s), with the ITL gap (ITL_AL - ITL_AD) growing monotonically from 0.06 ms at rate=5 to 1.68 ms at rate=130.",
+      "confidence": "high",
+      "regime": "qwen/qwen3-14b, 4 instances (2 prefill + 2 decode), 300 requests, prompt_tokens=512, output_tokens=128, Poisson arrivals at rates 5-130 req/s, no drops/preemptions.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "AD offloads prefill work from decode servers, reducing decode-side utilization rho_D = lambda*W_D < lambda*W_tot (AL). Lower rho_D yields smaller T_iter_D = alpha/(1-rho_D) and hence lower per-token iteration time. Implemented in sim/cluster/pd_events.go:90-283 (KV transfer pipeline) and sim/cluster/cluster.go:1694-1705 (TTFT rewrite). The 1/(1-rho) factor amplifies the utilization difference at higher loads, explaining the monotonically growing gap.",
+      "applicability_bounds": "Holds when decode capacity is the bottleneck (i.e., arrivals are well within capacity \u2014 0 drops observed at all rates). May not hold when prefill servers become the bottleneck, or when KV transfer contention significantly increases AD overhead. Also applies specifically to fixed-length workloads; variable-length workloads may show different magnitude gaps.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Under always-disaggregate (AD) mode in BLIS, mean TTFT is consistently higher than under always-local (AL) mode at every arrival rate (5-130 req/s), with the TTFT overhead (TTFT_AD - TTFT_AL) starting at ~9.6 ms at rate=5 and narrowing to ~4.2 ms at rate=130.",
+      "confidence": "high",
+      "regime": "Same as RP-1.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "AD TTFT includes the prefill pipeline overhead: prefill server queue wait + prefill iteration time + KV transfer duration + first decode step, versus AL TTFT which only includes the local decode server queue wait and prefill iteration. The gap narrows at higher rates because AL TTFT grows faster than AD TTFT \u2014 under AL, the shared decode server's increasing batch interference slows the prefill phase, while under AD the dedicated prefill server is more lightly loaded. Implemented at sim/cluster/cluster.go:1694-1705.",
+      "applicability_bounds": "Same as RP-1. The narrowing gap pattern may reverse if the prefill server reaches saturation (not observed in this experiment). The absolute TTFT overhead magnitude depends on KV transfer bandwidth (default 12.5 GB/s = 100 Gbps NVLink) and base latency.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "The disaggregation ITL advantage is almost entirely load-driven: at near-zero load (rate=5 req/s), the ITL gap (AL-AD) is only 0.058 ms, representing 3.4% of the gap at rate=130 (1.68 ms).",
+      "confidence": "high",
+      "regime": "Same as RP-1, specifically at rate=5 req/s (near-zero load).",
+      "evidence": [
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "At near-zero load, rho_D \u2248 0 for both AL and AD, so T_iter_D \u2248 alpha for both modes. The 1/(1-rho) amplifier \u2248 1, eliminating utilization-driven ITL differences. The residual 0.058 ms gap reflects only minor architectural differences in batch formation when prefill requests are absent from the decode batch.",
+      "applicability_bounds": "Specific to the low-load regime. The gap threshold of 0.5 ms is conservative \u2014 actual gap is ~10x smaller. Applies to fixed-length uniform workloads; variable arrivals may create measurable gaps even at low mean rates due to bursty queue buildup.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-4",
+      "statement": "The paper's queueing formula ITL = a/(1-b*lambda) + c fits BLIS simulation data with R\u00b2=0.956 for AD mode and R\u00b2=0.927 for AL mode. The fitted b parameter satisfies b_AL/b_AD = 1.21, consistent with AL carrying ~21% more effective work per request than AD (prefill+decode vs decode-only).",
+      "confidence": "medium",
+      "regime": "Same as RP-1. Fit over rates [5, 10, 20, 40, 60, 80, 100, 130] req/s, averaged across seeds [42, 43, 44].",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The 1/(1-rho) form follows from M/G/1 queueing theory, where rho = lambda * W and W is the mean work per request. AD has W_AD = W_D (decode only); AL has W_AL = W_P + W_D (prefill + decode). The ratio b_AL/b_AD = W_AL/W_D = 1.21 implies W_P/W_D \u2248 0.21, i.e., prefill work is about 21% of decode work in BLIS for the qwen3-14b model with 512 prompt tokens and 128 output tokens.",
+      "applicability_bounds": "The formula fit is better for AD (clean M/D/1-like regime with dedicated decode server) than AL (mixed-server batch has both prefill and decode tokens, introducing non-linearity). Fit quality degrades for AL at extreme rates where chunked prefill behavior may kick in. The W_P/W_D ratio is specific to this model, prompt length, and output length.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

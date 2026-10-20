@@ -1,0 +1,60 @@
+[
+  {
+    "id": "RP-7",
+    "statement": "The 4-phase adaptive Pareto search algorithm achieves 100% coverage across model regimes (qwen3-14b, Llama-3.1-70B-Instruct) and arrival rates (50, 100, 200 req/s) within 200 evaluations, demonstrating that the algorithm generalizes across LLM model architectures and load levels.",
+    "confidence": "high",
+    "regime": "BLIS 4D Pareto search; H100 hardware; 15 GPU topologies (tp*inst<=8); kv_values=[2000,3000,4000,5000,7500,10000]; budget=200",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "The adaptive ceiling in Phase 1 (kv=max(KV_VALUES)=10000) guarantees the true performance plateau is discovered for any model, regardless of where it lies. Phase 2 fills intermediate kv values (3000,4000,5000) covering the preemption boundary wherever it appears. This structure makes the algorithm data-driven rather than threshold-specific.",
+    "applicability_bounds": "Applies to models where the KV ceiling is at or below max(KV_VALUES). If a model required kv>10000 for plateau, Phase 1 would still find the kv=10000 point but might miss the true ceiling. The algorithm's robustness is also bounded by the KV_VALUES and BS_VALUES constants \u2014 models requiring significantly different ranges would need those updated.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-8",
+    "statement": "The Pareto front structure is seed-robust: coverage difference between seeds (42 vs 123) is 0 percentage points across all tested regimes. Seed changes affect Pareto front SIZE (\u00b12-5 configs) but not the algorithm's ability to find all configs in the front.",
+    "confidence": "high",
+    "regime": "BLIS Pareto search; seeds 42 and 123; 4 regimes; budget=200",
+    "evidence": [
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "The search algorithm's evaluation ORDER is deterministic (same topologies \u00d7 kv \u00d7 bs probed in same sequence regardless of seed). Seed changes affect the workload realization (which specific requests arrive when), which shifts individual metric values and changes which configs are Pareto-optimal. However, the algorithm covers the full relevant config space (30-39 unique configs at 200 evals), which encompasses any seed's Pareto front (18-28 configs).",
+    "applicability_bounds": "The seed-robustness holds because the budget (200) substantially exceeds the reference Pareto front size (18-28). If the front grew to approach the budget (e.g., 180+ configs), seed variation in front composition could cause misses.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "The 4-phase adaptive Pareto search algorithm with adaptive ceiling (kv=max(KV_VALUES)) achieves 100% Pareto coverage across multiple models (qwen3-14b, Llama-70B) and arrival rates (50-200 req/s) within 200 evaluations. The ceiling-cheapest-boundary strategy succeeds because the Pareto front concentrates in a low-kv/high-tp subspace discovered by Phase 1+2.",
+    "confidence": "high",
+    "regime": "BLIS 4D Pareto search; H100 hardware; 15 GPU topologies; KV_VALUES=[2000..10000]; budget=200; seeds=[42,123]",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main",
+      "iteration-3-h-main",
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "The algorithm's structural properties: (1) Phase 1 tests max kv (adaptive ceiling) for all topologies, finding best-case performance; (2) Phase 2 fills intermediate kv values based on preemption detection; (3) Phase 3+4 cover secondary knobs (maxrun, bs, scheduler). Together, these cover the full Pareto-relevant subspace in 200 evaluations vs 180 exhaustive.",
+    "applicability_bounds": "Validated for H100 hardware, models up to 70B parameters, arrival rates 50-200 req/s, tp*instances<=8 GPUs. Broader generalization (MoE models, different hardware) is a next-iteration question.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

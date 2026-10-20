@@ -1,0 +1,11 @@
+{
+  "gate_type": "continue",
+  "summary": "The v3 search algorithm achieves perfect or near-perfect Pareto tuple recall (100% at rate=100 across 3 seeds, 100% at rate=50, 97.6% at rate=200) within 200 evaluations \u2014 up from v2's mean of 57.9%. Both hypotheses were confirmed, exceeding all targets. The remaining open question is whether performance generalizes across different LLM models.",
+  "key_points": [
+    "h-main CONFIRMED: v3 achieved 100% recall (35/35 tuples, 3 seeds) at rate=100, well above the >90% target and up from v2's 57.9% mean. The improvement came from eliminating Phase 1 shuffling and concentrating Phase 2 budget on 'rich' GPU tiers where metric diversity is highest.",
+    "h-robustness CONFIRMED: v3 achieved 100% recall at rate=50 and 97.6% at rate=200, both exceeding the 0.80 threshold. The one missed tuple at rate=200 (tp=1,ni=1,sjf,kv=5000,bs=32) is an edge case not covered by Phase 2's rich-tier template \u2014 a minor, well-understood gap.",
+    "What's still unknown: whether v3 generalizes to a different LLM model (e.g., a model with different memory/compute characteristics that could shift the Pareto structure). The next iteration should run exhaustive ground truth plus v3 search against a second model to test this.",
+    "The algorithm is now fully deterministic and structure-aware: Phase 1 guarantees all 15 GPU tiers are sampled, Phase 2 targets the partial-preemption zone at rich tiers, and Phase 3 fills gaps. This design is rate-adaptive because tier classification uses relative ttft diversity, not hardcoded thresholds."
+  ],
+  "recommendation": "continue"
+}

@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "## Summary\n\n**Bug confirmed.** `total_output_tokens` was inflated when preemptions occurred.\n\n**Root cause**: `sim/simulator.go:647` \u2014 `TotalOutputTokens++` fired during every decode step in `executeBatchStep()`. When a request was preempted (`sim/batch_formation.go:232` resets `ProgressIndex` to 0), it re-entered the batch and re-decoded from scratch. Each re-decode step incremented `TotalOutputTokens` again for the same logical output tokens.\n\n**Evidence**: Same 200 requests with seed 42:\n- Large KV (0 preemptions): 105,082 output tokens\n- Small KV (265 preemptions, before fix): 114,630 output tokens (+9,548 inflated)\n- Small KV (265 preemptions, after fix): 105,082 output tokens (matches)\n\n**Fix** (2 lines changed in `sim/simulator.go`):\n1. Removed inline `sim.Metrics.TotalOutputTokens++` from `executeBatchStep`\n2. Added `sim.Metrics.TotalOutputTokens += int(req.ProgressIndex - util.Len64(req.InputTokens))` in `recordRequestCompletion()` \u2014 immune to preemption because `ProgressIndex` is reset to 0 on preemption, so it only reflects the final attempt's progress.\n\n**Regression test** added in `sim/simulator_preempt_test.go`: runs identical requests with large vs small KV cache and asserts `TotalOutputTokens` matches. All existing tests pass.",
+  "cli_cost": 3.7507692499999994,
+  "subtype": "success",
+  "wall": 629.0,
+  "num_turns": 47,
+  "n": 1
+ }
+]

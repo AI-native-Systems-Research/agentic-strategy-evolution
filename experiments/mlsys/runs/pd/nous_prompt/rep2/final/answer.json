@@ -1,0 +1,91 @@
+{
+  "answer": "The paper's ITL formula ITL = α₀/(1 − λ·W/N_D) holds well in BLIS across rates 1–150 req/s for both always-local (AL, MAPE 3.76%, max error 7.24%) and always-disaggregate (AD, MAPE 2.44%, max error 4.70%). All directional predictions are confirmed: AD consistently lowers ITL (by 0–8.5%) and raises TTFT (by 4.4–15.7 ms) relative to AL, and the fitted W_AD/W_AL = 0.863, confirming disaggregation reduces decode-server work by ~14%. The model exhibits a systematic S-shaped residual (2 sign changes) caused by BLIS's roofline latency model having concave step-time scaling with batch size (weight amortization), which the paper's linear T_iter = α + B·δ does not capture. The fit is tightest at moderate rates (30–120 req/s, <2% error) and worst at the extremes (rate=1 and rate=150, ~5–7% error). No saturation was reached (max utilization ~38%), so the near-capacity regime remains untested.",
+  "deliverable": "runs/iter-1/inputs/sweep.py",
+  "repro": "go build -o blis main.go && python3 -I runs/iter-1/inputs/sweep.py && python3 -I runs/iter-1/inputs/final_analysis.py",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "AL ITL model fit MAPE (%)",
+      "value": 3.76,
+      "condition": "--pd-decider never, rates 1-150, N_D=2 decode instances, 512/128 tokens, 300 requests, 3 seeds, fit: ITL = 13.115/(1 - λ·0.005090/2)",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    },
+    {
+      "id": "c2",
+      "metric": "AD ITL model fit MAPE (%)",
+      "value": 2.44,
+      "condition": "--pd-decider always, rates 1-150, N_D=2 decode instances, 512/128 tokens, 300 requests, 3 seeds, fit: ITL = 12.781/(1 - λ·0.004392/2)",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    },
+    {
+      "id": "c3",
+      "metric": "AL fitted α₀ (ms, zero-load decode step time)",
+      "value": 13.115,
+      "condition": "--pd-decider never, fit of ITL = α₀/(1 - λ·W/N_D)",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    },
+    {
+      "id": "c4",
+      "metric": "AD fitted α₀ (ms, zero-load decode step time)",
+      "value": 12.781,
+      "condition": "--pd-decider always, fit of ITL = α₀/(1 - λ·W/N_D)",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    },
+    {
+      "id": "c5",
+      "metric": "W_AD / W_AL (effective work ratio)",
+      "value": 0.863,
+      "condition": "W_AD=0.004392, W_AL=0.005090, per-instance marginal work from model fit",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    },
+    {
+      "id": "c6",
+      "metric": "AL max relative error (%)",
+      "value": 7.24,
+      "condition": "--pd-decider never, worst-case rate in 1-150 range",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    },
+    {
+      "id": "c7",
+      "metric": "AD max relative error (%)",
+      "value": 4.70,
+      "condition": "--pd-decider always, worst-case rate in 1-150 range",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    },
+    {
+      "id": "c8",
+      "metric": "AD ITL reduction at rate=100 (%)",
+      "value": 8.43,
+      "condition": "rate=100, AL ITL=18.434ms, AD ITL=16.880ms",
+      "evidence": "runs/iter-1/results/sweep_results.json"
+    },
+    {
+      "id": "c9",
+      "metric": "AD TTFT overhead at rate=1 (ms)",
+      "value": 15.66,
+      "condition": "rate=1, AL TTFT=29.9ms, AD TTFT=45.6ms",
+      "evidence": "runs/iter-1/results/sweep_results.json"
+    },
+    {
+      "id": "c10",
+      "metric": "AD TTFT overhead at rate=150 (ms)",
+      "value": 4.44,
+      "condition": "rate=150, AL TTFT=45.4ms, AD TTFT=49.9ms",
+      "evidence": "runs/iter-1/results/sweep_results.json"
+    },
+    {
+      "id": "c11",
+      "metric": "Zero-load ITL (batch=1, ms)",
+      "value": 12.261,
+      "condition": "rate=1, both AL and AD identical",
+      "evidence": "runs/iter-1/results/sweep_results.json"
+    },
+    {
+      "id": "c12",
+      "metric": "Residual sign changes (nonlinearity indicator)",
+      "value": 2,
+      "condition": "Both AL and AD show S-shaped residual: under-over-under prediction pattern",
+      "evidence": "runs/iter-1/results/final_analysis.json"
+    }
+  ]
+}

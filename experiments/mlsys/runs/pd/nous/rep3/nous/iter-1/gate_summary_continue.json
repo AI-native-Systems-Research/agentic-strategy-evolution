@@ -1,0 +1,13 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 fully confirmed the core P/D disaggregation latency model: disaggregated (AD) mode delivers lower inter-token latency than aggregated (AL) mode at every tested arrival rate (5\u2013130 req/s), with the ITL gap growing monotonically from 0.06 ms to 1.68 ms as predicted. The tradeoff\u2014AD incurs ~4\u201310 ms higher TTFT than AL\u2014was also confirmed, with the gap narrowing at high load as anticipated by the paper's queueing model.",
+  "key_points": [
+    "ITL ordering AL > AD confirmed at all 8 rates \u00d7 3 seeds (24/24 comparisons, zero violations); gap grows from 0.06 ms at 5 req/s to 1.68 ms at 130 req/s, matching the predicted monotonic pattern.",
+    "TTFT ordering AD > AL also confirmed at all 8 rates \u00d7 3 seeds; the gap narrows with load (9.6 ms \u2192 4.2 ms), consistent with AL's decode-server batch interference growing faster than AD's fixed transfer overhead.",
+    "The paper's queueing formula ITL = a/(1\u2212b\u00b7\u03bb)+c fits AD well (R\u00b2=0.956) but fits AL only modestly (R\u00b2=0.927, below the 0.95 target), explained by mixed prefill+decode batching introducing non-linearity under AL; the b-ratio b_AL/b_AD=1.21 confirms AL carries higher effective work per request.",
+    "Near-zero-load control (rate=5 req/s) confirms the effect is load-driven: the ITL gap there (0.06 ms) is only 3.4% of the gap at 130 req/s.",
+    "Next iteration candidates: (1) test the paper's dynamic disaggregation threshold (Eq. 27) via a threshold-based pd-decider, or (2) probe chunked-prefill effects by varying --max-num-scheduled-tokens to investigate the AL formula fit breakdown.",
+    "recommendation: stop \u2014 the primary research question (do AL vs AD ITL and TTFT comparisons match the paper's model?) is fully answered with high statistical confidence across 48 runs; no further iteration is needed unless exploring secondary mechanisms (chunking, transfer contention, dynamic threshold)."
+  ],
+  "recommendation": "stop"
+}

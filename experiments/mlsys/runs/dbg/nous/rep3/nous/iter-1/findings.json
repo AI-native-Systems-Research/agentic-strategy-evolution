@@ -1,0 +1,26 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "After applying the fix, total_output_tokens with --total-kv-blocks 600 (265 preemptions) will equal total_output_tokens with --total-kv-blocks 60000 (0 preemptions), both at 105082. Before the fix, the small-cache run reports 114630 (9.1% inflation).",
+      "observed": "BEFORE FIX: total_output_tokens=114630, preemption_count=265 (9.1% inflation over ground truth 105082). AFTER FIX: total_output_tokens=105082, preemption_count=265 \u2014 exactly matching the no-preemption ground truth. Regression test TestPreemption_TotalOutputTokens_NoDoubleCount PASSED with 47 preemptions in unit test regime.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The fix correctly computes outputTokensLost = max(0, ProgressIndex - len(InputTokens)) before resetting ProgressIndex to 0, stores it in PreemptedRequest.OutputTokensLost, and subtracts it from sim.Metrics.TotalOutputTokens in scheduleBatch. ITL slice is also cleared on preemption to prevent duplicate inter-token latency entries."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "With --total-kv-blocks 60000 (no preemptions), the fix produces byte-identical output to the unfixed code.",
+      "observed": "Fixed large-cache output is byte-identical to unfixed large-cache output: total_output_tokens=105082, tokens_per_sec=5629.82373972408, preemption_count=0. diff returned empty (IDENTICAL).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The subtraction loop in scheduleBatch never executes when batchResult.Preempted is empty, confirming the fix is a strict no-op in the zero-preemption regime."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed exactly as predicted. The bug was a missing correction in the preemption path: sim/simulator.go:scheduleBatch incremented Metrics.PreemptionCount for each preempted request but did not subtract the decode tokens already counted in Metrics.TotalOutputTokens. The three-line fix (OutputTokensLost field, computation before ProgressIndex reset, subtraction in scheduleBatch) fully eliminates the inflation. The regression test exercises the same invariant at unit-test scale with 47 preemptions and confirms the fix holds.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

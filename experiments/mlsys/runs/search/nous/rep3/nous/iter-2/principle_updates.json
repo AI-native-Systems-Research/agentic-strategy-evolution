@@ -1,0 +1,58 @@
+[
+  {
+    "id": "RP-4",
+    "statement": "Balanced block_size={16,32} Phase 1 coverage across all GPU tiers improves Pareto recall by 72% relative (0.337\u21920.579 mean tuple recall) and reduces seed-to-seed variance by 8.6\u00d7 (std 0.172\u21920.020), versus a Phase 1 that is 96% bs=16-biased.",
+    "confidence": "high",
+    "regime": "BLIS 6-knob space (tp\u00d7ni\u00d7sched\u00d7max_run\u00d7kv_blocks\u00d7bs), 200 budget from 1800 configs, rate=100, qwen/qwen3-14b H100",
+    "evidence": [
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "block_size=32 halves the KV blocks needed to cross the preemption threshold (critical quantity is total cache tokens = blocks\u00d7block_size). v1 Phase 1 has only 3.8% bs=32 configs covering 3 of 15 GPU tiers; shuffling can exclude bs=32-critical tiers from Phase 1, forcing Phase 2 to rely on multi-step neighbor chains to discover them. v2 explicitly seeds all 15 tiers with bs=32 profiles at threshold-appropriate kv_blocks values, enabling Phase 2 to expand directly from these seeds.",
+    "applicability_bounds": "Applies when the search space contains multiple block_size values and the Pareto front includes configs where block_size is the differentiating factor for KV threshold crossing. Does not apply if the search uses total_cache_tokens as a single dimension (which would eliminate the separate bs dimension).",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "Structured Pareto search with seed-unstable Phase 1 sampling can produce recall BELOW random sampling for specific seeds (v1 seed 999: 0.154 vs random 0.308), because shuffling may drop critical tier coverage; balanced Phase 1 coverage eliminates this failure mode (v2 min recall across seeds: 0.564).",
+    "confidence": "high",
+    "regime": "BLIS structured search with shuffled Phase 1 sampling, budget 200 from 1800",
+    "evidence": [
+      "iteration-2-h-control-negative",
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "v1 Phase 1 generates 78 configs (4 profiles \u00d7 15 tiers + 15 sjf + 3 bs=32) and shuffles/truncates to 40% budget. For certain seeds, the shuffle can heavily undersample specific GPU tiers or block_size values. When bs=32 tiers are dropped from Phase 1, Phase 2's neighbor expansion may not recover them within 5 rounds. Random sampling distributes more uniformly across the space and has lower variance, preventing catastrophic misses.",
+    "applicability_bounds": "Applies when Phase 1's configuration pool is larger than its allocated budget, requiring truncation/shuffling. If Phase 1 budget covers the full candidate pool or if configs are deterministically ordered, this instability does not occur.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "A two-phase adaptive search (structured sampling + neighbor expansion) finds a near-complete Pareto front for the BLIS 6-knob space within 11% of the total configuration budget (200 of 1800 configs), covering all GPU tiers, in under 20 seconds wall time.",
+    "confidence": "medium",
+    "regime": "BLIS 6-knob space (tp\u00d7ni\u00d7sched\u00d7max_run\u00d7kv_blocks\u00d7bs), 200 budget from 1800 configs",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Confirmed in iter-1 that search works; iter-2 reveals 'near-complete' is an overstatement \u2014 v2 at 200 budget achieves only 58% distinct-tuple recall against exhaustive ground truth, not near-complete. The search finds all major GPU tiers and threshold transitions, but cannot enumerate all metric combinations within each tier.",
+    "applicability_bounds": "The search efficiently covers the GPU-tier and threshold-crossing structure, but 200 configs is insufficient to exhaustively represent all 4D metric combinations. 'Near-complete' should be understood as 'covering all major trade-off dimensions' rather than 'capturing all distinct metric tuples'.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical",
+    "revision_note": "Confidence reduced from 'high' to 'medium' \u2014 iter-2 exhaustive ground truth shows actual recall of 0.337 (v1) and 0.579 (v2), not the near-complete coverage claimed in iter-1. The 'near-complete' claim was based on Pareto size relative comparisons without ground truth validation."
+  }
+]

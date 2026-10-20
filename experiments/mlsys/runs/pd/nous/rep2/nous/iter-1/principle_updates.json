@@ -1,0 +1,56 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "In BLIS, always-disaggregate (AD) yields consistently lower mean inter-token latency (ITL) than always-local (AL) across all tested arrival rates (10-130 req/s), with the ITL advantage growing monotonically from 0.13ms at rate=10 to 1.68ms at rate=130.",
+    "confidence": "high",
+    "regime": "qwen3-14b, 4 instances (2 prefill + 2 decode), 300 requests, fixed 512 prompt / 128 output tokens, Poisson arrivals, rates 10-130 req/s, least-loaded routing, default token budget (M=2048)",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "AD routes prefill to dedicated prefill instances, so decode instances only process decode sub-requests (output tokens only). This reduces per-instance decode utilization rho_D relative to AL where decode instances handle both prefill and decode. Lower rho_D yields lower per-iteration step time via the paper's T_iter = alpha/(1-rho) model, directly reducing ITL. Confirmed by b-parameter fit: AL b=0.0027, AD b=0.0023, ratio 1.174, meaning AD operates at ~14.8% lower utilization per unit rate.",
+    "applicability_bounds": "Holds when prefill instances are dedicated and idle in AL mode (--pd-decider=never routes zero traffic to them). May differ with shared instances or different prefill/decode ratios. Measured in moderate-load regime (rho < 0.4); effect expected to amplify at higher loads approaching saturation.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "In BLIS, always-disaggregate (AD) incurs consistently higher mean TTFT than always-local (AL) across all tested arrival rates, with a penalty of 4.2-9.4ms due to KV transfer overhead (~3.4ms at 25 GB/s) plus prefill server queueing.",
+    "confidence": "high",
+    "regime": "qwen3-14b, 4 instances (2 prefill + 2 decode), 300 requests, fixed 512 prompt / 128 output tokens, Poisson arrivals, rates 10-130 req/s, pd-transfer-bandwidth=25 GB/s",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "AD adds a KV transfer step after prefill completes: the prefill instance sends KV cache blocks to the decode instance. At 25 GB/s bandwidth with 512 prompt tokens and qwen3-14b KV dimensions, this costs ~3.4ms base transfer. Additional prefill server queueing at higher loads further increases TTFT. In AL mode, TTFT only depends on local scheduling delay. The TTFT penalty narrows slightly at higher rates (9.4ms at rate=10, 4.2ms at rate=130) because AL TTFT grows faster with load than AD TTFT.",
+    "applicability_bounds": "TTFT penalty scales with KV transfer bandwidth (--pd-transfer-bandwidth). At higher bandwidth the penalty shrinks; at lower bandwidth it grows. The 4-9ms range is specific to the default 25 GB/s setting. For rate ranges tested here, the TTFT penalty is always present regardless of load.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "In BLIS, both AL and AD ITL follow a concave, monotonically increasing function of arrival rate consistent with the paper's alpha/(1-rho) model. The model fits with R2=0.94 (AL) and R2=0.96 (AD) over rates 10-130 req/s, with rho remaining below 0.36 throughout (moderate-load regime).",
+    "confidence": "medium",
+    "regime": "qwen3-14b, 4 instances (2 prefill + 2 decode), fixed 512 prompt / 128 output tokens, rates 10-130 req/s",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "The 1/(1-rho) nonlinearity in M/G/1 queueing theory predicts that ITL increases sub-linearly at low utilization and accelerates near saturation. BLIS implements this via the step-time model (sim/latency/trained_physics_model.go) which accumulates batch work and estimates per-step latency. The fitted b-parameter reflects per-unit-rate utilization: b_AL=0.0027 means each req/s adds 0.27% utilization per instance (2 decode instances, each handling rate/2).",
+    "applicability_bounds": "Fit quality (R2=0.94-0.96) is for the moderate-load regime. The nonlinearity is not yet dramatic at rho<0.36; the formula should fit better and the curve should be sharper at higher loads (rates > 200 req/s for this configuration). The algebraic formula itself is theory (not empirical); the empirical content here is that BLIS data fits this form at R2>0.94.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

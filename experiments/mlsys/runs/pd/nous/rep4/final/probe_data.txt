@@ -1,0 +1,25 @@
+# Probe data from design phase (100 requests, seed=42)
+# All measurements: qwen/qwen3-14b, 4 instances (2P+2D), routing=least-loaded
+# prompt_tokens=512 (stdev=0), output_tokens=128 (stdev=0)
+
+# Format: rate, AL_ITL_ms, AD_ITL_ms, AL_TTFT_ms, AD_TTFT_ms, AL_E2E_ms, AD_E2E_ms
+5,   12.49, 12.43, 35.63, 45.73, 1622.07, 1586.22
+10,  12.74, 12.63, 36.84, 45.92, 1655.31, 1611.53
+20,  13.32, 13.08, 36.44, 46.34, 1728.90, 1667.90
+40,  14.19, 13.77, 37.46, 46.84, 1841.00, 1757.14
+60,  14.68, 14.21, 37.48, 46.96, 1902.49, 1811.32
+80,  13.71, 13.50, 37.58, 46.22, 1779.48, 1723.14
+100, 15.06, 14.59, 39.29, 46.94, 1952.30, 1859.87
+120, 15.15, 14.69, 40.34, 46.93, 1965.19, 1872.54
+150, 15.25, 14.78, 40.40, 46.93, 1977.36, 1884.10
+
+# Note: rate=80 used 50 requests (initial smoke test), others used 100 requests
+# Full experiment (300 requests, 3 seeds) will be run by executor
+
+# Key observations:
+# 1. ITL_AD < ITL_AL at all rates (confirmed)
+# 2. TTFT_AD > TTFT_AL at all rates (confirmed)
+# 3. TTFT_AD is nearly constant (~46ms), while TTFT_AL increases with rate (36→40ms)
+# 4. KV transfer duration = 3406us (constant, fixed prompt size)
+# 5. No drops at any rate (all requests complete)
+# 6. ITL growth decelerates at high rates (transient regime)

@@ -1,0 +1,37 @@
+{
+ "task": "dbg",
+ "arm": "nous",
+ "rep": 1,
+ "slot": 2,
+ "max_iterations": 3,
+ "ceiling": 60.0,
+ "nous_commit": "f9fbdd97a01c84089c258f45fd0c7c3f89f81d60",
+ "claude_cli": "2.1.301 (Claude Code)",
+ "started": "2026-10-19 20:06:39",
+ "status": "done",
+ "declared_done": true,
+ "iterations_used": 1,
+ "hit_ceiling": false,
+ "returncode": 0,
+ "nous_work": "/Users/toslali/mlsys_runs/runs/dbg/nous/rep1/nous_work/dbg-nous-rep1",
+ "package_rc": 1,
+ "cost_usd": 6.8683,
+ "cost": {
+  "total": 6.8683,
+  "transcripts": 6.793,
+  "direct_llm": 0.0753,
+  "by_model": {
+   "claude-sonnet-4-6": 1.6119,
+   "claude-opus-4-6": 5.1811
+  },
+  "n_replies": 153
+ },
+ "wall_min": 29.0,
+ "finished": "2026-10-19 20:35:40",
+ "transcripts": [
+  "/Users/toslali/mlsys_runs/runs/dbg/nous/rep1/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-dbg-nous-rep1-ws--nous-experiments-iter-1-4ba1917e/1e1d561d-cef6-41d2-8093-dc7686229c11.jsonl",
+  "/Users/toslali/mlsys_runs/runs/dbg/nous/rep1/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-dbg-nous-rep1-ws/e9cea7f5-d497-4e6b-99b2-1fbe1630bc02.jsonl",
+  "/Users/toslali/mlsys_runs/runs/dbg/nous/rep1/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-dbg-nous-rep1-ws/ec56e732-3644-4f47-9343-c0854e7815b9.jsonl",
+  "/Users/toslali/mlsys_runs/runs/dbg/nous/rep1/logs/package.jsonl"
+ ]
+}

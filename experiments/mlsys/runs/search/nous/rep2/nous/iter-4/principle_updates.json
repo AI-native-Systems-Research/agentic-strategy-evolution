@@ -1,0 +1,39 @@
+[
+  {
+    "id": "RP-9",
+    "statement": "The 4-phase adaptive Pareto search algorithm achieves 100% coverage across all tested model architectures: dense models (qwen3-14b, Llama-70B, qwen2.5-7b) and MoE models (Llama-4-Scout-17B-16E). This includes architecturally distinct edge cases: KV-insensitive regime (no preemptions, Phase 2 no-op), TP divisibility failures (tp=8 panic handled by exception handler), and MoE compute path differences.",
+    "confidence": "high",
+    "regime": "H100, rate=100 req/s, budget=200, num_requests=200, prefix_tokens=512, max_num_scheduled_tokens=4096, seeds=[42,123]",
+    "evidence": [
+      "iteration-4-h-main",
+      "iteration-4-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "The algorithm's Phase 1 adaptive ceiling (kv=max(KV_VALUES)=10000) universally finds the performance plateau regardless of model architecture. Phase 2 boundary mapping self-disables when preemptions don't occur (KV-insensitive regime) without harming coverage. Phase 3+4 cover topology x maxrun x scheduler variations that constitute the entire Pareto front for KV-insensitive models. Exception handling in search.py's evaluate() returns None for invalid TP configurations without breaking the search loop.",
+    "applicability_bounds": "Validated for dense and MoE architectures. Both models tested at rate=100 only in this iteration. Generalization to rate=50, 200 for new models is supported by RP-7 (cross-rate robustness) but not directly verified here.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-10",
+    "statement": "KV cache sensitivity is architecture-independent in its effect on the Pareto search algorithm: small dense models (qwen2.5-7b) enter a KV-insensitive regime (zero preemptions at all kv values) that causes Phase 2 to be a no-op, but the algorithm still achieves 100% Pareto coverage because the Pareto front for such models is purely topology-driven and covered by Phases 1+3+4.",
+    "confidence": "high",
+    "regime": "qwen2.5-7b-instruct, H100, rate=100, seeds=[42,123]",
+    "evidence": [
+      "iteration-4-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "qwen2.5-7b has much smaller KV memory footprint than larger models. At rate=100 with 200 requests, even kv=2000 (smallest tested) provides sufficient KV capacity for the 15-topology space. Phase 2 evaluates kv=3000,4000,5000 for each topology but finds no preemptions -> no new Pareto points. Phase 3 sensitivity testing and Phase 4 strategic fill still cover the full topology x maxrun x scheduler space.",
+    "applicability_bounds": "Specific to small dense models where KV cache is not the binding resource. For larger models (14B, 70B) or higher rates where KV pressure occurs, Phase 2 is critical. This principle defines when Phase 2 is safely skippable.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

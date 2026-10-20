@@ -1,0 +1,91 @@
+{
+  "answer": "The BLIS 6-knob configuration space has a Pareto front concentrated in a low-GPU, high-TP, moderate-KV subspace. Tensor parallelism (tp) and topology selection are the dominant knobs: tp=4,inst=1 (4 GPUs, 19.56 rps) outperforms tp=1,inst=8 (8 GPUs, 11.93 rps). KV cache capacity has a saturating dose-response — below a model-dependent threshold (~120k effective tokens for qwen3-14b), preemptions cause severe TTFT spikes; above it, performance plateaus with byte-identical results. Secondary knobs (scheduler, max_num_running_reqs, block_size_in_tokens) provide refinements but rarely change the Pareto front structure. A 4-phase adaptive search algorithm (ceiling+cheapest scan, boundary mapping, sensitivity testing, strategic fill) achieves 100% Pareto coverage within ~100 evaluations (well within the 200-eval budget), with a sharply saturating budget-coverage curve (57.7% at 50 evals, 100% at 100 evals). The algorithm generalizes across dense models (7B-70B), MoE models (Llama-4-Scout-17B-16E), arrival rates (50-200 req/s), and random seeds — 100% coverage in all 12 model x rate x seed combinations tested.",
+  "deliverable": "search.py",
+  "repro": "python3 -I search.py --model qwen/qwen3-14b --rate 100 --budget 200 --seed 42 --out final/search_pareto.json",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "pareto_coverage_pct (qwen3-14b, rate=100, seed=42, budget=200)",
+      "value": 100.0,
+      "condition": "4-phase search, 200 evals, qwen3-14b, H100, rate=100, seed=42 vs exhaustive 26-config reference",
+      "evidence": "final/evidence/iter3_coverage/coverage_qwen14b_rate100_s42.json"
+    },
+    {
+      "id": "c2",
+      "metric": "pareto_coverage_pct at budget=50",
+      "value": 57.7,
+      "condition": "4-phase search truncated to 50 evals, qwen3-14b, H100, rate=100, seed=42",
+      "evidence": "final/evidence/dose_response_summary.json"
+    },
+    {
+      "id": "c3",
+      "metric": "pareto_coverage_pct at budget=100",
+      "value": 100.0,
+      "condition": "4-phase search truncated to 100 evals, qwen3-14b, H100, rate=100, seed=42",
+      "evidence": "final/evidence/dose_response_summary.json"
+    },
+    {
+      "id": "c4",
+      "metric": "pareto_coverage_pct (Llama-70B, rate=100, seed=42, budget=200)",
+      "value": 100.0,
+      "condition": "4-phase search, 200 evals, Llama-3.1-70B-Instruct, H100, rate=100, seed=42 vs 28-config reference",
+      "evidence": "final/evidence/iter3_coverage/coverage_llama70b_rate100_s42.json"
+    },
+    {
+      "id": "c5",
+      "metric": "pareto_coverage_pct (qwen3-14b, rate=50, seed=42, budget=200)",
+      "value": 100.0,
+      "condition": "4-phase search, 200 evals, qwen3-14b, H100, rate=50, seed=42 vs 18-config reference",
+      "evidence": "final/evidence/iter3_coverage/coverage_qwen14b_rate50_s42.json"
+    },
+    {
+      "id": "c6",
+      "metric": "pareto_coverage_pct (qwen3-14b, rate=200, seed=42, budget=200)",
+      "value": 100.0,
+      "condition": "4-phase search, 200 evals, qwen3-14b, H100, rate=200, seed=42 vs 27-config reference",
+      "evidence": "final/evidence/iter3_coverage/coverage_qwen14b_rate200_s42.json"
+    },
+    {
+      "id": "c7",
+      "metric": "pareto_coverage_pct (Llama-4-Scout MoE, rate=100, seed=42, budget=200)",
+      "value": 100.0,
+      "condition": "4-phase search, 200 evals, Llama-4-Scout-17B-16E-Instruct-FP8-dynamic, H100, rate=100, seed=42 vs 23-config reference",
+      "evidence": "final/evidence/iter4_moe_seed42/coverage.json"
+    },
+    {
+      "id": "c8",
+      "metric": "pareto_coverage_pct (qwen2.5-7b, rate=100, seed=42, budget=200)",
+      "value": 100.0,
+      "condition": "4-phase search, 200 evals, qwen2.5-7b-instruct, H100, rate=100, seed=42 vs 15-config reference",
+      "evidence": "final/evidence/iter4_qwen7b_seed42/coverage.json"
+    },
+    {
+      "id": "c9",
+      "metric": "seed_coverage_difference_pp (max across all regimes)",
+      "value": 0.0,
+      "condition": "Coverage difference in percentage points between seed=42 and seed=123 across all 8 regime x seed combinations in iter-3",
+      "evidence": "final/evidence/findings_iter3.json"
+    },
+    {
+      "id": "c10",
+      "metric": "pareto_configs_found (qwen3-14b, rate=100, seed=42, budget=200)",
+      "value": 38,
+      "condition": "Non-dominated configs found by search.py with 200 evals (vs 26 in exhaustive reference)",
+      "evidence": "final/evidence/dose_response_summary.json"
+    },
+    {
+      "id": "c11",
+      "metric": "reference_pareto_size (qwen3-14b, rate=100, seed=42)",
+      "value": 26,
+      "condition": "Exhaustive evaluation of all 180 configs, 4-objective Pareto-filtered",
+      "evidence": "final/evidence/iter3_coverage/coverage_qwen14b_rate100_s42.json"
+    },
+    {
+      "id": "c12",
+      "metric": "total_test_conditions_with_100pct_coverage",
+      "value": 12,
+      "condition": "12 of 12 model x rate x seed combinations tested across iterations 2-4 achieved 100% Pareto coverage",
+      "evidence": "final/evidence/findings_iter4.json"
+    }
+  ]
+}

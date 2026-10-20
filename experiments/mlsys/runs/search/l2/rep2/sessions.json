@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "## Summary\n\n### What I learned about the space\n\nThe 1800-config space collapses to just **35 unique Pareto-optimal objective vectors** due to massive redundancy. Three structural properties govern the Pareto front:\n\n1. **Preemption boundary** \u2014 A sharp KV-cache capacity threshold below which performance degrades severely (preemptions cause TTFT to spike from ~50ms to 10,000ms+). `block_size=32` effectively doubles capacity vs 16, so bs=32 dominates in all practical cases.\n\n2. **mrr=256 phase transition** \u2014 On single-instance configs, max_running_reqs=256 eliminates queueing delay entirely. Example: tp=1,i=1 TTFT p99 drops from 11,974ms (mrr=128) to 93ms (mrr=256) \u2014 a **129x improvement**. This was initially missed because the sensitivity test used a KV-bottlenecked config.\n\n3. **tp vs instances trade-off** \u2014 Higher tp maximizes per-request throughput (tp=8: 32 rps). More instances minimize tail latency and KV requirements (tp=1,i=8: 12 rps, 48ms TTFT, kv=2000 sufficient). Scheduler choice (fcfs vs sjf) is nearly irrelevant.\n\n### Search algorithm\n\n`search.py` uses a phased approach: ceiling scan \u2192 bottom-up KV boundary search \u2192 low-mrr exploration \u2192 sjf sensitivity \u2192 gap filling. It achieves **100% Pareto objective recall with 186 evaluations** (10.3% of the space), well within the 200 budget.\n\n### Deliverables\n\n- `search.py` \u2014 the search script\n- `final/answer.json` \u2014 findings with 9 verified claims\n- `final/pareto.json` \u2014 the 68 Pareto-optimal configurations found\n- `final/done.json` \u2014 marked complete",
+  "cli_cost": 3.6583905000000003,
+  "subtype": "success",
+  "wall": 1104.9,
+  "num_turns": 52,
+  "n": 1
+ }
+]

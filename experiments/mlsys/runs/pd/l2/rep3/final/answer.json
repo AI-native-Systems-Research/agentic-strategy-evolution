@@ -1,0 +1,112 @@
+{
+  "answer": "The paper's qualitative ITL and TTFT predictions hold in BLIS: AD always has lower ITL than AL (0-8.7% advantage) and higher TTFT (+4 to +16ms), with the ITL gap widening and the TTFT gap narrowing under load, exactly as the paper predicts. However, the paper's quantitative ITL formula ITL = alpha/(1 - lambda*W) + C_0 fits BLIS with only moderate accuracy (MAPE 3.9% AL, 2.5% AD over rates 1-150 req/s). A simple linear model ITL = a + b*rate fits better (MAPE 1.9% AL, 1.2% AD). The breakdown mechanism is that the paper assumes constant per-request marginal cost delta, but BLIS's trained-physics latency model has DECREASING marginal cost (75 us/req at batch=1 down to 14 us/req at batch=191) because fixed costs like weight loading amortize over larger batches. This makes ITL growth approximately linear rather than hyperbolic in the tested range (utilization 0-38%). The 1/(1-rho) divergence would emerge only near saturation (estimated at ~395 req/s AL, ~456 req/s AD with 2 decode instances), which we could not reach within the rate=150 constraint. Neither mode saturated at rate=150; all 300 requests completed in every experiment.",
+  "deliverable": "final/run_experiments.sh",
+  "repro": "bash final/run_experiments.sh && python3 final/analyze.py",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "ITL formula fit MAPE for AL (2-param, ITL=A/(1-B*rate))",
+      "value": 3.89,
+      "condition": "pd-decider=never, rates 1-150, 2 decode instances, prompt=512, output=128",
+      "evidence": "final/data/analysis_summary.json"
+    },
+    {
+      "id": "c2",
+      "metric": "ITL formula fit MAPE for AD (2-param, ITL=A/(1-B*rate))",
+      "value": 2.52,
+      "condition": "pd-decider=always, rates 1-150, 2 decode instances, prompt=512, output=128",
+      "evidence": "final/data/analysis_summary.json"
+    },
+    {
+      "id": "c3",
+      "metric": "Linear fit MAPE for AL (ITL=a+b*rate)",
+      "value": 1.88,
+      "condition": "pd-decider=never, rates 1-150, 2 decode instances",
+      "evidence": "final/data/analysis_summary.json"
+    },
+    {
+      "id": "c4",
+      "metric": "Linear fit MAPE for AD (ITL=a+b*rate)",
+      "value": 1.21,
+      "condition": "pd-decider=always, rates 1-150, 2 decode instances",
+      "evidence": "final/data/analysis_summary.json"
+    },
+    {
+      "id": "c5",
+      "metric": "AD ITL advantage range (%)",
+      "value": 8.67,
+      "condition": "Maximum ITL advantage of AD over AL, at rate=120 (AL ITL=19.172, AD ITL=17.510)",
+      "evidence": "final/data/analysis_summary.json"
+    },
+    {
+      "id": "c6",
+      "metric": "AD TTFT penalty at rate=1 (ms)",
+      "value": 15.661,
+      "condition": "TTFT_AD - TTFT_AL at rate=1 req/s",
+      "evidence": "final/data/always_rate1.json"
+    },
+    {
+      "id": "c7",
+      "metric": "AD TTFT penalty at rate=150 (ms)",
+      "value": 4.384,
+      "condition": "TTFT_AD - TTFT_AL at rate=150 req/s",
+      "evidence": "final/data/always_rate150.json"
+    },
+    {
+      "id": "c8",
+      "metric": "Implied AL saturation rate from 2-param fit (req/s)",
+      "value": 394.5,
+      "condition": "Fitted 1/B from ITL=A/(1-B*rate), pd-decider=never, 4 instances (2 decode)",
+      "evidence": "final/data/analysis_summary.json"
+    },
+    {
+      "id": "c9",
+      "metric": "Implied AD saturation rate from 2-param fit (req/s)",
+      "value": 455.7,
+      "condition": "Fitted 1/B from ITL=A/(1-B*rate), pd-decider=always, 4 instances (2 prefill + 2 decode)",
+      "evidence": "final/data/analysis_summary.json"
+    },
+    {
+      "id": "c10",
+      "metric": "Marginal ITL cost per request at batch~1 (us)",
+      "value": 74.5,
+      "condition": "AL mode, rate=1 to rate=2 (batch transition ~0.8 to ~1.6)",
+      "evidence": "final/data/all_results.json"
+    },
+    {
+      "id": "c11",
+      "metric": "Marginal ITL cost per request at batch~191 (us)",
+      "value": 14.0,
+      "condition": "AL mode, rate=140 to rate=150 (batch transition ~176 to ~191)",
+      "evidence": "final/data/all_results.json"
+    },
+    {
+      "id": "c12",
+      "metric": "Max absolute residual of 1/(1-rho) fit for AL (ms)",
+      "value": 1.505,
+      "condition": "At rate=150, model predicts 21.39ms but BLIS gives 19.89ms (overestimates by 7.6%)",
+      "evidence": "final/data/analysis_summary.json"
+    },
+    {
+      "id": "c13",
+      "metric": "AL ITL at rate=1 (ms, baseline)",
+      "value": 12.261,
+      "condition": "pd-decider=never, rate=1, seed=42",
+      "evidence": "final/data/never_rate1.json"
+    },
+    {
+      "id": "c14",
+      "metric": "AL ITL at rate=150 (ms)",
+      "value": 19.889,
+      "condition": "pd-decider=never, rate=150, seed=42",
+      "evidence": "final/data/never_rate150.json"
+    },
+    {
+      "id": "c15",
+      "metric": "AD ITL at rate=150 (ms)",
+      "value": 18.204,
+      "condition": "pd-decider=always, rate=150, seed=42",
+      "evidence": "final/data/always_rate150.json"
+    }
+  ]
+}

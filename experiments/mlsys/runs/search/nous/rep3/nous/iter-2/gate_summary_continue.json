@@ -1,0 +1,10 @@
+{
+  "gate_type": "continue",
+  "summary": "The v2 search algorithm (balanced block_size=32 Phase 1 coverage across all GPU tiers) is confirmed to outperform v1, raising mean Pareto tuple recall from 0.337 to 0.579 and eliminating the severe instability seen in v1 at seed 999 (0.154 \u2192 0.564). However, absolute recall remains moderate at ~58%, meaning roughly 4 in 10 true Pareto-optimal trade-offs are still being missed within the 200-config budget.",
+  "key_points": [
+    "CONFIRMED: v2 strictly dominates v1 at all 3 seeds (42, 123, 999). Mean tuple recall: v2=0.579 vs v1=0.337 (+72% relative improvement). v1 seed 999 was a near-failure (0.154), exposing high seed-variance (std\u22480.172); v2 is stable across seeds (std\u22480.020).",
+    "SURPRISE: Random sampling (mean recall=0.312) beat v1 at seed 999 (0.308 vs 0.154), revealing that v1's structured search can be worse than random when Phase 1 shuffling happens to miss bs=32-critical GPU tiers. v2 outperforms random at all seeds.",
+    "STILL UNKNOWN: How to close the remaining ~42% recall gap. The 4D Pareto space is complex (~35\u201339 distinct metric tuples out of 1800 configs), and the 200-config budget (11% of space) limits coverage even with good structure. Next iteration should investigate smarter search strategies\u2014such as using total cache tokens (kv_blocks \u00d7 block_size) as a single search dimension\u2014and test whether increasing the budget or using an adaptive/Bayesian approach can push recall above 80%.",
+    "recommendation: continue"
+  ]
+}

@@ -1,0 +1,26 @@
+{
+  "iteration": 3,
+  "bundle_ref": "runs/iter-3/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "v3 search achieves mean tuple recall > 0.90 across seeds 42, 123, 999 at rate=100, and minimum recall > 0.85, up from v2's mean of 0.579. The improvement comes from eliminating Phase 1 shuffling and directing Phase 2 budget to rich tiers.",
+      "observed": "Perfect recall across all 3 seeds at rate=100. seed42: 1.000 (35/35 tuples, 12/12 tiers covered). seed123: 1.000 (35/35 tuples, 12/12 tiers covered). seed999: 1.000 (39/39 tuples, 12/12 tiers covered). Mean recall = 1.000, min recall = 1.000. Compared to v2 mean recall of 0.579. Budget: 200 evals per seed, ~16s wall time per run. The v3 algorithm found 100% of distinct Pareto metric tuples using exactly 200 evaluations with fully deterministic behavior (no shuffling in Phases 1 and 2).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    },
+    {
+      "arm_type": "h-robustness",
+      "predicted": "v3 search achieves tuple recall > 0.80 at rate=50 and rate=200 (seed=42), demonstrating generalization across arrival rates.",
+      "observed": "rate=50: recall=1.000 (23/23 tuples, 9/9 tiers covered). rate=200: recall=0.976 (40/41 tuples, 12/12 tiers covered). Both rates exceed the 0.80 threshold. At rate=50, the Pareto front has 23 distinct tuples (fewer tiers are 'rich'). At rate=200, the Pareto front has 41 distinct tuples; the one missed tuple is (rps=7.07, ttft=299.5, gpu=1, kv=5000) from tp=1,ni=1,sched=sjf,kv=5000,bs=32 \u2014 an edge case at the high-kv boundary that Phase 2 does not systematically cover. Tier coverage is 12/12 at both rates.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "At rate=200, one tuple missed (tp=1,ni=1,sjf,kv=5000,bs=32) \u2014 Phase 2's rich-tier combos cover kv=2000-5000 but the sjf at kv=5000 combo is not in the rich-tier template. This is a minor gap (97.6% recall) well above the 0.80 threshold."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms CONFIRMED. h-main exceeded prediction (100% vs >90% target). h-robustness exceeded prediction (100% at rate=50, 97.6% at rate=200, both above 0.80 threshold). The v3 algorithm's deterministic Phase 1 + diversity-directed Phase 2 + neighbor expansion Phase 3 achieved perfect or near-perfect recall within 200 evaluations across all tested conditions. The mechanism (no shuffling + targeted rich-tier expansion) worked exactly as designed: Phase 1 guaranteed every GPU tier was sampled at 5 representative kv/maxrun points, Phase 2 systematically explored the partial-preemption zone at rich tiers, and Phase 3 filled gaps. The algorithm is fully deterministic \u2014 identical results for the same seed regardless of run order.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

@@ -1,0 +1,56 @@
+[
+  {
+    "id": "RP-9",
+    "statement": "The paper's ITL formula 1/(1-w*lambda) is structurally mismatched with BLIS's trained-physics latency model. The formula is convex (accelerating growth) but BLIS produces concave (decelerating) ITL growth with rate, yielding R\u00b2=0.919 (AL) and R\u00b2=0.947 (AD) vs linear R\u00b2=0.976 (AL) and R\u00b2=0.985 (AD) across rates 5-150 req/s.",
+    "confidence": "high",
+    "regime": "BLIS trained-physics latency model, qwen/qwen3-14b, 4-instance cluster (2 prefill, 2 decode), 300 requests, prompt=512 fixed, decode=128 fixed",
+    "evidence": [
+      "iteration-4-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "BLIS's StepTime() (sim/latency/trained_physics_model.go:238) computes decode KV bandwidth as proportional to sumCtx (sum of context lengths across batch), and uses sub-linear MoE expert scaling nEff=min(N,max(k,B*k)) at line 248. These nonlinear terms make per-request ITL grow sub-linearly with batch size, while the paper assumes linear W (ITL proportional to batch size). This produces concave ITL vs rate curves that the convex 1/(1-rho) formula cannot capture.",
+    "applicability_bounds": "Applies to BLIS's trained-physics model. May differ under --latency-model roofline. Does not invalidate the monotone-increasing directional trend of ITL with rate (confirmed by RP-1); only concerns the functional form.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-10",
+    "statement": "Removing finite-horizon transients (Q2-Q3 quartile restriction) WORSENS the formula fit: R\u00b2_full - R\u00b2_Q2Q3 = 0.044 (AL) and 0.023 (AD). This proves the formula breakdown is caused by structural latency model mismatch, not by transient ramp-up/drain effects.",
+    "confidence": "high",
+    "regime": "Same as RP-9. Quartile boundaries: Q1=requests[0:75], Q2=[75:150], Q3=[150:225], Q4=[225:300], sorted by arrival time.",
+    "evidence": [
+      "iteration-4-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "Q2-Q3 restriction removes the ramp-up (Q1: low ITL) and drain (Q4: low ITL) phases. At high rates, Q2-Q3 means are 3-5% higher than full-run means (AL rate=80: +4.72%, rate=100: +4.11%). This raises high-rate data points without affecting low-rate data points, making the aggregate curve MORE concave \u2014 amplifying the mismatch with the convex formula. At low rates, Q2-Q3 \u2248 full-run (diff < 0.1%), confirming the transient effect only manifests at moderate-to-high rates.",
+    "applicability_bounds": "Holds for any formula with a convex (accelerating) functional form when the underlying data is concave. Linear formula R\u00b2 also decreases with Q2-Q3 (0.976\u21920.956 for AL), but by a smaller margin, because a linear fit is more tolerant of shape changes.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-11",
+    "statement": "The ITL intra-run spread (max quartile mean - min quartile mean) / overall mean follows an inverted-U pattern with arrival rate, peaking at rate=80 (AL: 12.15%) and rate=100 (AD: 10.47%), and declining at both lower and higher rates.",
+    "confidence": "high",
+    "regime": "Same as RP-9. Rates 5-150 req/s, confirmed across both P/D modes.",
+    "evidence": [
+      "iteration-4-h-dose-response"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "At low rates, the system reaches near-steady-state quickly (service_time << 1/rate), so quartile means are nearly uniform. At moderate-high rates (80-100), the ramp-up batch-building and drain batch-shrinking phases create maximal contrast with the quasi-steady-state middle. At very high rates (120-150), even transient phases have substantial batching (arrivals are so fast that batch never fully drains), compressing the spread. AL and AD peak at different rates (80 vs 100) because AD's dedicated decode instances have lower per-instance arrival rate, shifting saturation to higher total rates.",
+    "applicability_bounds": "Specific to the inverted-U shape at these parameter settings (300 requests, fixed token lengths). With longer runs (e.g., 3000 requests), the transient fraction shrinks and the peak spread would decrease. With variable token lengths, the pattern would be more complex.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

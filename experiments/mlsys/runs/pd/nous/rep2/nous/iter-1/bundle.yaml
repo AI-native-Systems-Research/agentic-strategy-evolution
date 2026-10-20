@@ -1,0 +1,90 @@
+metadata:
+  iteration: 1
+  family: "pd-disagg-latency-model"
+  research_question: >
+    Do the paper's ITL and TTFT predictions for always-local (AL) vs always-disaggregate (AD)
+    hold inside BLIS, over what range of arrival rates, and where do they break down?
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (PD disaggregation), single knob (pd-decider), treatment vs control"
+
+# Arms note: Tier 1 — one h-main arm testing the paper's core directional prediction
+# (AD lowers ITL but raises TTFT). No additional arms needed at this stage because
+# the prediction is clean and falsifiable. If confirmed, iter 2 can add dose-response
+# for the 1/(1-rho) formula shape.
+
+arms:
+  - type: h-main
+    prediction: >
+      Always-disaggregate (AD, --pd-decider=always) will yield consistently lower mean ITL
+      and consistently higher mean TTFT than always-local (AL, --pd-decider=never) across
+      all tested arrival rates (10-130 req/s) and all seeds. The ITL gap between AL and AD
+      will widen as rate increases, because the decode utilization reduction from disaggregation
+      becomes more impactful at higher load. Both AL and AD ITL will follow a monotonically
+      increasing, concave (saturating) relationship with arrival rate, consistent with the
+      paper's alpha/(1-rho) form.
+    mechanism: >
+      In AL mode (pd-decider=never), only the 2 decode instances handle traffic; each performs
+      both prefill and decode within the same batch. The per-iteration work includes prefill
+      tokens (512 per new request chunk) competing with decode tokens for the step time,
+      yielding higher decode utilization rho_D = lambda * W_tot. In AD mode (pd-decider=always),
+      prefill runs on dedicated prefill instances, and the decode instances only process decode
+      sub-requests (output tokens = 128 each). This reduces decode utilization to
+      rho_D = lambda * W_D where W_D < W_tot. By equation (10) in the paper,
+      T_iter = alpha/(1-rho), so lower rho yields lower iteration time and thus lower ITL
+      (eq 17). However, AD adds KV transfer latency (~3.4ms at default 25 GB/s bandwidth)
+      plus prefill server queueing time, increasing TTFT (eq 19 vs 18). The gap widens with
+      rate because the 1/(1-rho) nonlinearity amplifies the difference in rho at higher load.
+      Code path: sim/disaggregation.go:56 (AlwaysDisaggregate.Decide returns true),
+      sim/cluster/cluster.go:394-398 (wires decider based on PDDecider config field),
+      sim/latency/trained_physics_model.go:154-330 (StepTime computes iteration latency
+      from batch composition).
+    diagnostic: >
+      If AD does NOT show lower ITL: check whether BLIS's batch formation treats disaggregated
+      decode sub-requests differently than expected (sim/batch_formation.go:162 IsDecodeSubRequest
+      flag). If TTFT difference is not observed: check whether KV transfer latency is negligible
+      at default bandwidth (examine PD Metrics KV Transfer Duration in stdout). If the ITL-rate
+      relationship is linear rather than concave: the system may not be reaching utilizations
+      where the 1/(1-rho) nonlinearity is visible; would need higher rates or fewer instances.
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  fanout_template: >
+    ./blis run --model qwen/qwen3-14b --num-instances 4 --prefill-instances 2
+    --decode-instances 2 --num-requests 300 --prompt-tokens 512 --prompt-tokens-stdev 0
+    --output-tokens 128 --output-tokens-stdev 0 --routing-policy least-loaded
+    --pd-decider {PD_DECIDER} --rate {RATE} --seed {SEED}
+    --metrics-path {OUTPUT_PATH}
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    num_instances: 4
+    prefill_instances: 2
+    decode_instances: 2
+    num_requests: 300
+    prompt_tokens: 512
+    prompt_tokens_stdev: 0
+    output_tokens: 128
+    output_tokens_stdev: 0
+    routing_policy: "least-loaded"
+  unlocked_parameters_audit:
+    - name: "max-num-scheduled-tokens"
+      default_value: 2048
+      justification: "Default token budget; paper's model parameter M. Not varied because research question focuses on PD decider effect, not budget sensitivity."
+    - name: "max-num-running-reqs"
+      default_value: 256
+      justification: "Default batch cap; not binding at our rate range (batch sizes < 30 observed). Safe to leave at default."
+    - name: "pd-transfer-bandwidth"
+      default_value: 25.0
+      justification: "Default RDMA bandwidth (25 GB/s); produces ~3.4ms KV transfer. Paper's 'c' parameter. Not varied because we test PD decider effect at fixed transfer cost."
+    - name: "pd-transfer-base-latency"
+      default_value: 0.05
+      justification: "Default 50us base latency; negligible compared to transfer time. Not varied."
+    - name: "pd-transfer-contention"
+      default_value: false
+      justification: "Contention disabled; each transfer gets full bandwidth. Simplifies analysis to match paper's constant-c model."
+    - name: "latency-model"
+      default_value: "trained-physics"
+      justification: "Default latency model; trained-physics gives best accuracy. Not varied."
+    - name: "scheduler"
+      default_value: "fcfs"
+      justification: "Default FCFS scheduler; matches paper's continuous-batching model assumption."

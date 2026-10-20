@@ -1,0 +1,26 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "After applying the fix (subtracting previously-counted output tokens at preemption time, resetting TTFTSet and ITL), total_output_tokens with tight KV cache (600 blocks, 265 preemptions) will equal total_output_tokens with large KV cache (60000 blocks, 0 preemptions), both producing 105082 for the same 200-request workload.",
+      "observed": "CONFIRMED. Pre-fix with 600 blocks: total_output_tokens=114630 (preemption_count=265, inflation=9548, +9.1%). Post-fix with 600 blocks: total_output_tokens=105082 (preemption_count=265). Post-fix with 6000 blocks: total_output_tokens=105082 (preemption_count=72). All three KV cache sizes produce identical total_output_tokens=105082 after the fix. Regression test TestSimulator_PreemptionDoesNotInflateTotalOutputTokens passes (11 preemptions observed). All sim/... tests pass.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "With large KV cache (60000 blocks), preemption_count is 0 and total_output_tokens equals 105082. Since there are no preemptions, the fix has no effect and the output is identical to the unfixed code.",
+      "observed": "CONFIRMED. Before fix with 60000 blocks: total_output_tokens=105082, preemption_count=0. After fix with 60000 blocks: total_output_tokens=105082, preemption_count=0. Outputs are identical; the fix's subtraction code path is never reached when preemption_count=0.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "All predictions confirmed. The h-main arm confirmed the bug (9.1% token inflation with 265 preemptions pre-fix) and the fix (0 inflation post-fix, verified across 600 and 6000 KV blocks). The h-control-negative arm confirmed the fix is inert in the no-preemption regime. The mechanism is exactly as predicted: ProgressIndex reset to 0 in sim/batch_formation.go:preemptForTokens causes TotalOutputTokens re-counting in sim/simulator.go:647. The fix stores OutputTokensGenerated before the reset and subtracts it in the preemption handler.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

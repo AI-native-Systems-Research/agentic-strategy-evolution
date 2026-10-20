@@ -1,0 +1,179 @@
+{
+  "iterations": [
+    {
+      "iteration": 0,
+      "family": "baseline",
+      "timestamp": "1970-01-01T00:00:00Z",
+      "candidate_id": "baseline",
+      "h_main_result": null,
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": null,
+      "principles_extracted": [],
+      "frontier_update": null
+    },
+    {
+      "iteration": 1,
+      "family": "pareto-search-structure",
+      "timestamp": "2026-10-20T04:13:35.750078+00:00",
+      "candidate_id": "iter-1",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 3,
+        "arms_total": 3,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-1",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-2",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-3",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-4",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 2,
+      "family": "adaptive-degraded-regime-search",
+      "timestamp": "2026-10-20T05:11:39.117151+00:00",
+      "candidate_id": "iter-2",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": "CONFIRMED",
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-2",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-5",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-6",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 3,
+      "family": "model-generalization",
+      "timestamp": "2026-10-20T05:53:00.294057+00:00",
+      "candidate_id": "iter-3",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": null,
+      "robustness_result": "CONFIRMED",
+      "prediction_accuracy": {
+        "arms_correct": 2,
+        "arms_total": 2,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-2",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-7",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-8",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 4,
+      "family": "budget-efficiency",
+      "timestamp": "2026-10-20T07:17:02.838589+00:00",
+      "candidate_id": "iter-4",
+      "h_main_result": "REFUTED",
+      "ablation_results": {},
+      "control_result": "CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 1,
+        "arms_total": 3,
+        "accuracy_pct": 33.3
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-3",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-9",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-10",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-11",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    },
+    {
+      "iteration": 5,
+      "family": "budget-reallocation-selective-phase2",
+      "timestamp": "2026-10-20T08:11:52.259966+00:00",
+      "candidate_id": "iter-5",
+      "h_main_result": "CONFIRMED",
+      "ablation_results": {},
+      "control_result": "CONFIRMED",
+      "robustness_result": null,
+      "prediction_accuracy": {
+        "arms_correct": 3,
+        "arms_total": 3,
+        "accuracy_pct": 100.0
+      },
+      "principles_extracted": [
+        {
+          "id": "RP-11",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-12",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-13",
+          "action": "INSERT"
+        },
+        {
+          "id": "RP-14",
+          "action": "INSERT"
+        }
+      ],
+      "frontier_update": null
+    }
+  ]
+}

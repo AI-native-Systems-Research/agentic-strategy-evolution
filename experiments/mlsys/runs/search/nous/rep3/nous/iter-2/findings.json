@@ -1,0 +1,26 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "v2 search (balanced bs=32 Phase 1 coverage across all GPU tiers) achieves strictly higher Pareto recall (fraction of true Pareto distinct metric tuples found) than v1, consistently across seeds 42, 123, 999",
+      "observed": "v1 tuple recall: 0.371, 0.486, 0.154 (seeds 42, 123, 999); mean=0.337. v2 tuple recall: 0.571, 0.600, 0.564 (seeds 42, 123, 999); mean=0.579. v2 strictly dominates v1 at ALL 3 seeds. Tier recall also improved: v1 mean=0.722, v2 mean=0.806. Notably v1 seed 999 showed extreme degradation (0.154) which v2 corrected to 0.564, suggesting v1's Phase 1 coverage is unstable under seed variation while v2's balanced bs=32 Phase 1 provides robust coverage. GT Pareto sizes: 124 (s42), 125 (s123), 132 (s999); distinct metric tuples: 35, 35, 39.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The mechanism is confirmed: v2's balanced bs=32 Phase 1 directly seeds all 15 GPU tiers with threshold-appropriate bs=32 configs, enabling Phase 2 to expand from these seeds rather than requiring multi-step neighbor chains. The improvement is particularly stark at seed 999 (0.154\u21920.564) where v1's shuffled Phase 1 happened to miss many bs=32-critical tiers. Per-tier analysis shows v2 covers more tiers at ground-truth min-kv (seed 42: 10/12 vs 8/12 for v1). Absolute recall levels remain moderate (0.579 mean for v2), indicating the 4D Pareto space is complex and a budget of 200 configs from 1800 total (11%) limits coverage even with good structure."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "Uniform random sampling of 200 configs produces lower recall than both v1 and v2 consistently across all seeds",
+      "observed": "random tuple recall: 0.314, 0.314, 0.308 (seeds 42, 123, 999); mean=0.312. Comparison: seed 42: random=0.314 < v1=0.371 < v2=0.571 \u2713; seed 123: random=0.314 < v1=0.486 < v2=0.600 \u2713; seed 999: random=0.308 > v1=0.154 at seed 999 (random beats v1!), but random=0.308 < v2=0.564 \u2713. Tier recall: random mean=0.583, v1 mean=0.722, v2 mean=0.806.",
+      "status": "PARTIALLY_CONFIRMED",
+      "error_type": "regime",
+      "diagnostic_note": "Random sampling is consistently below v2 (prediction confirmed for v2 comparison). However, random sampling BEATS v1 at seed 999 (0.308 vs 0.154), violating the 'strictly lower than both v1 and v2' prediction. This reveals that v1's structured search is unstable: its shuffled Phase 1 can occasionally produce very poor coverage (seed 999), making it worse than random. The v1 instability is the failure mode diagnosed in the bundle: 'Phase 2's neighbor expansion may already be sufficient... but requires multi-step chains... which may not reach all tiers within the expansion rounds' \u2014 at seed 999, the shuffling caused many important bs=32 tiers to be dropped from Phase 1, and Phase 2 couldn't recover. Random sampling, by contrast, provides consistent (if mediocre) recall across all seeds. The core prediction (random < v2) is confirmed; the secondary prediction (random < v1) fails at one seed."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "h-main: CONFIRMED. v2 strictly dominates v1 at all 3 seeds (mean recall 0.579 vs 0.337). The bs=32 Phase 1 improvement is real and consistent \u2014 it addresses the instability in v1 where random shuffling of Phase 1 can drop bs=32-critical tiers. h-control-negative: PARTIALLY_CONFIRMED. Random < v2 at all seeds (confirmed), but random > v1 at seed 999 (unexpected, 0.308 vs 0.154). This reveals v1's structured search has high seed-variance. v2 improvement raises mean recall and reduces variance (v1 std\u22480.172 vs v2 std\u22480.020).",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

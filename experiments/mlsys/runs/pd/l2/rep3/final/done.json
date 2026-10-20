@@ -1,0 +1,1 @@
+{"done": true, "why": "All qualitative and quantitative predictions tested across 27 rates x 2 modes; paper's ITL formula fits at ~3-4% MAPE but linear model outperforms, and the root cause (decreasing marginal cost from weight loading amortization) is identified and quantified."}

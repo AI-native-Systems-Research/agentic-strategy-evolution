@@ -1,0 +1,167 @@
+metadata:
+  iteration: 4
+  family: "pd-disagg-statistical-robustness"
+  research_question: >
+    Are the corrected ITL model's superiority (R²=0.997 vs paper's 0.939) and the
+    AL-AD mechanism (batch-size amortization at sim/latency/trained_physics_model.go:321-328)
+    statistically robust across 5 seeds and generalizable via cross-validation?
+    Does the mechanism correctly predict zero ITL benefit at rate=1 (B=1)?
+  complexity_tier: 4
+  tier_justification: >
+    iter 4 — tiers 1-3 confirmed across iters 1-3 (directions, dose-response,
+    multi-mechanism tradeoff). Escalating to tier 4 for robustness across seeds
+    (5 vs 3) and cross-validation generalization, the standard tier-4 use case.
+
+# Arms note: Three arms testing distinct facets of robustness for the research
+# question's definitive answer. h-main extends the 3-seed R² comparison to 5
+# seeds with confidence intervals (statistical power). h-robustness tests
+# generalization via leave-one-rate-out cross-validation (overfitting check).
+# h-control-negative validates the mechanism at B=1 where amortization is absent
+# (mechanism specificity). All three share the same 120 runs (12 rates × 2
+# modes × 5 seeds) — analysis-only differentiation, no additional compute.
+
+arms:
+  - type: h-main
+    prediction: >
+      With 5 seeds, the corrected model ITL = a + b·rate/(1+d·rate) achieves
+      mean R² > 0.995 for both AL and AD, while the paper model α/(1−λW) achieves
+      mean R² < 0.960 for both. The 95% confidence interval for the per-seed R²
+      difference (corrected − paper) has lower bound > 0.03 for both modes,
+      confirming the corrected model's superiority is statistically significant
+      and not an artifact of seed selection. Per-seed corrected model R² standard
+      deviation is < 0.001 (extreme stability — the fit quality does not depend
+      on the specific Poisson realization). The corrected model's MAE is
+      consistently 4–5× smaller than the paper model's across all 5 seeds.
+    mechanism: >
+      The step-time formula (sim/latency/trained_physics_model.go:321-328) has
+      fixed per-step costs (β₅·L = 32.1×40 = 1284µs, β₇ = 126µs, plus
+      β₃·tWeight ~ several ms for weight loading) that are amortized over batch
+      size B. As arrival rate increases, B grows via continuous batching
+      (sim/batch_formation.go:73-280), so per-token ITL = fixed/B + linear
+      decelerates toward an asymptote. The paper model treats α as constant
+      (B-independent), producing a convex curve that cannot match the concave
+      data. The corrected model captures the F/B+c structure: parameter 'a' is
+      the isolated-request ITL at B=1 (~12.0ms), 'b/d' is the asymptotic
+      ceiling above 'a' (~21ms for AL, ~19ms for AD), and 'd' controls how
+      fast batch size grows with rate. The R² values are seed-invariant because
+      with deterministic token lengths (stdev=0) and 300 requests, the mean ITL
+      at each rate is dominated by the batching dynamics, not arrival-time jitter.
+    diagnostic: >
+      If 5-seed R² variance is larger than expected (σ > 0.001): check whether
+      seeds 45/46 produce different routing patterns from 42-44 (unlikely with
+      least-loaded routing and symmetric instances). If the paper model R² exceeds
+      0.960 with some seeds: check whether those seeds produce unusually linear
+      ITL curves that happen to match the paper's convex shape in the mid-rate
+      region.
+
+  - type: h-robustness
+    prediction: >
+      Leave-one-rate-out cross-validation: for each of the 12 rates, fit the
+      corrected model on the remaining 11, predict the held-out rate. The
+      corrected model's mean cross-validated absolute error is < 0.30ms for
+      both AL and AD. The paper model's mean cross-validated absolute error is
+      > 0.50ms for both modes. The corrected model has lower cross-validated
+      error at every one of the 12 held-out rates for both AL and AD (12/12
+      wins). This demonstrates the corrected model generalizes to unseen rates
+      rather than overfitting the 12-point grid.
+    mechanism: >
+      The corrected model's 3 parameters map directly to physical quantities
+      in the step-time formula, constraining the fit to a physically meaningful
+      surface. Even with one rate removed, the remaining 11 rates sample the
+      full dynamic range (B=1 to B~10), providing sufficient information to
+      recover the amortization curve. The paper model's convex functional form
+      is structurally mismatched to the data's concave shape — removing any
+      single rate cannot fix this fundamental mismatch, so cross-validated
+      errors remain large.
+    diagnostic: >
+      If the corrected model's cross-validated error exceeds 0.30ms: check
+      whether removing rate=1 (the B=1 anchor) or rate=150 (the near-asymptote
+      anchor) degrades the fit disproportionately — these are the most
+      informative points for the 3-parameter model. If the paper model wins at
+      any held-out rate: that rate likely falls near the paper model's zero-
+      crossing (~rate=30), where the convex and concave curves happen to
+      intersect.
+
+  - type: h-control-negative
+    prediction: >
+      At rate=1, AL and AD produce identical ITL (difference = 0.000ms) for
+      all 5 seeds. The ITL value is exactly 12.260953ms (to 6 decimal places)
+      for both modes and all seeds, because at rate=1 the inter-arrival time
+      (1s) far exceeds per-request latency (~1.6s / 2 instances = 0.8s effective),
+      so batch size is always 1 and disaggregation has no effect. At all rates
+      ≥ 5, the ITL difference (AL − AD) is consistently > 0 across all 5 seeds,
+      growing monotonically with rate. The transition from zero benefit (rate=1)
+      to positive benefit (rate ≥ 5) confirms the causal mechanism: the ITL
+      advantage of disaggregation requires concurrent requests to create batching,
+      which requires arrival rate to exceed the single-request service rate.
+    mechanism: >
+      At rate=1 req/s with 2 decode instances, the mean inter-arrival time per
+      instance is 2s. Each request takes ~1.59s (E2E) for AL or ~1.56s for AD.
+      Since 2s > 1.59s, requests never overlap, so batch size is always 1. With
+      B=1, the fixed costs are NOT amortized (fixed/1 = fixed), so both AL and
+      AD have identical per-token step times. The disaggregation structure (split
+      prefill/decode instances vs shared) only affects ITL when B > 1, because
+      only then do prefill requests on shared instances reduce the effective
+      decode batch size. At rate ≥ 5 (inter-arrival per instance ≤ 0.4s),
+      requests begin to overlap, B > 1, and the amortization mechanism engages.
+    diagnostic: >
+      If ITL differs between AL and AD at rate=1: check whether some requests
+      happen to overlap (Poisson can produce short inter-arrivals even at low
+      rates). With 300 requests and 2 instances, the probability of any two
+      consecutive requests overlapping at rate=1 is negligible but non-zero.
+      If the difference is non-zero but < 0.001ms, it's likely a floating-point
+      artifact from rare overlaps in the Poisson stream.
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  fanout_template: >
+    ./blis run --model qwen/qwen3-14b --num-instances 4 --prefill-instances 2
+    --decode-instances 2 --num-requests 300 --prompt-tokens 512
+    --prompt-tokens-stdev 0 --output-tokens 128 --output-tokens-stdev 0
+    --routing-policy least-loaded --pd-decider {MODE} --rate {RATE} --seed {SEED}
+    --metrics-path {OUTPUT_PATH}
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    num_instances: 4
+    prefill_instances: 2
+    decode_instances: 2
+    num_requests: 300
+    prompt_tokens: 512
+    prompt_tokens_stdev: 0
+    output_tokens: 128
+    output_tokens_stdev: 0
+    routing_policy: "least-loaded"
+    rates: [1, 5, 10, 20, 30, 50, 70, 90, 110, 130, 140, 150]
+    seeds: [42, 43, 44, 45, 46]
+    modes: ["never", "always"]
+
+  unlocked_parameters_audit:
+    - name: "max_model_len"
+      default_value: "auto (from HF config)"
+      justification: "Default covers 512+128=640 tokens per request; no truncation risk."
+    - name: "token_budget"
+      default_value: 2048
+      justification: "Default M=2048 is sufficient for workload (512+128). Varying M is a separate hypothesis."
+    - name: "latency_model"
+      default_value: "trained-physics"
+      justification: "Default backend provides the step-time formula we are characterizing."
+    - name: "scheduling_policy"
+      default_value: "fcfs"
+      justification: "FCFS is vLLM default. Alternative policies change batch composition but not the fundamental overhead amortization."
+    - name: "gpu_memory_utilization"
+      default_value: 0.9
+      justification: "Default 0.9 provides ample KV cache. No drops at rate=150 across all seeds."
+    - name: "kv_transfer_bandwidth"
+      default_value: "25 GB/s"
+      justification: "Default PCIe Gen4. Affects AD TTFT by ~3.4ms constant term. Not varied."
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      never_rate1: 8
+      never_rate150: 2
+      always_rate1: 8
+      always_rate150: 2
+    observation_method: "Wall-clock from iter-3 and design probes. 120 runs total, ~5 min estimated."

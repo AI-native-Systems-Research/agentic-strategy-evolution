@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 3 confirmed that the improved search.py with adaptive KV ceiling detection (Phase 1 probing kv=10000 instead of hardcoded kv=5000) achieves 100% Pareto coverage across all 4 tested regimes (qwen3-14b at rates 50/100/200, Llama-3.1-70B at rate=100) and both seeds (42 and 123), exceeding the \u226590%/\u226585% thresholds predicted. The algorithm is now validated as model-agnostic and rate-agnostic within the tested space.",
+  "key_points": [
+    "CONFIRMED (h-main): 100% Pareto coverage at seed=42 across all 4 regimes \u2014 qwen3-14b/rate=100: 26/26, Llama-70B/rate=100: 28/28, qwen3-14b/rate=200: 27/27, qwen3-14b/rate=50: 18/18 \u2014 all within the 200-eval budget.",
+    "CONFIRMED (h-robustness): 100% coverage at seed=123 for all 4 regimes (vs. predicted \u226585%), with zero percentage-point gap between seeds despite Pareto front sizes shifting slightly between seeds (e.g., qwen3-14b/rate=50 grew from 18 configs at seed=42 to 23 at seed=123).",
+    "Key insight consolidated: KV ceiling is model-dependent and rate-independent \u2014 Llama-70B's ceiling is kv=3000 (lower than qwen3-14b's kv=5000 due to lower effective batch size), but the adaptive Phase 1 probe at kv=10000 correctly identifies both ceilings automatically.",
+    "Still unknown: Generalization to MoE architectures (e.g., Llama-4-Scout), which have structurally different KV cache behavior and were explicitly excluded from this campaign.",
+    "Recommended next iteration (iter-4): Test search.py against a MoE model (Llama-4-Scout) to determine whether MoE-specific KV cache structure breaks the adaptive ceiling detection or Pareto coverage guarantees. If that passes, the research question is fully answered and the campaign can stop."
+  ],
+  "recommendation": "continue"
+}

@@ -1,0 +1,42 @@
+{
+  "answer": "Yes, this is a real bug. Root cause: when a request is preempted (sim/batch_formation.go:preemptForTokens), its ProgressIndex is reset to 0 and KV blocks are released, but the decode tokens already counted in sim.Metrics.TotalOutputTokens (sim/simulator.go:executeBatchStep, line 650) are not subtracted. When the request is rescheduled and re-generates those tokens, TotalOutputTokens is incremented again — double-counting every decode token generated before preemption. The fix adds an OutputTokensLost field to PreemptedRequest (computed as max(0, ProgressIndex - len(InputTokens)) before ProgressIndex reset), then subtracts it from TotalOutputTokens in scheduleBatch. Additionally, ITL entries are cleared on preemption since they will be re-generated. After the fix, total_output_tokens is 105082 regardless of KV cache size (was inflated to 114630 with 600 blocks and 265 preemptions). Validated across 5 seeds x 3 cache levels with exact equality.",
+  "deliverable": "final/fix.patch",
+  "repro": "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 2>/dev/null | grep total_output_tokens && ./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 60000 2>/dev/null | grep total_output_tokens",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "total_output_tokens (fixed, small cache, 600 blocks, 265 preemptions)",
+      "value": 105082,
+      "condition": "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 (after fix)",
+      "evidence": "final/evidence/fixed-small-cache-s42.json"
+    },
+    {
+      "id": "c2",
+      "metric": "total_output_tokens (large cache, 60000 blocks, 0 preemptions)",
+      "value": 105082,
+      "condition": "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 60000",
+      "evidence": "final/evidence/baseline-large-cache-s42.json"
+    },
+    {
+      "id": "c3",
+      "metric": "total_output_tokens (before fix, small cache, inflated by double-counting)",
+      "value": 114630,
+      "condition": "Before fix: ./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 (265 preemptions, 9.1% inflation)",
+      "evidence": "final/evidence/buggy-small-cache-s42.json"
+    },
+    {
+      "id": "c4",
+      "metric": "inflation_tokens (buggy minus ground truth)",
+      "value": 9548,
+      "condition": "114630 - 105082 = 9548 tokens double-counted across 265 preemptions at seed 42",
+      "evidence": "final/evidence/buggy-small-cache-s42.json"
+    },
+    {
+      "id": "c5",
+      "metric": "cross-seed deviation after fix (small vs large cache)",
+      "value": 0,
+      "condition": "Seeds 42/123/456/789/1337, 600 vs 60000 blocks — all produce identical total_output_tokens after fix",
+      "evidence": "final/evidence/iter2-findings.json"
+    }
+  ]
+}

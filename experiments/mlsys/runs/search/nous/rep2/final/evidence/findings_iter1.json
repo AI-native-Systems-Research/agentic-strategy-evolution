@@ -1,0 +1,34 @@
+{
+  "iteration": 1,
+  "bundle_ref": "runs/iter-1/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "5-phase adaptive search finds >=80% of 17 distinct performance tiers using <=200 evaluations, because hierarchical knob structure allows topology-first search to cover most of the Pareto space cheaply.",
+      "observed": "Search used 71 evaluations (budget=200, well under limit) completing in 5.3 seconds. However, the search found only 7/17 distinct performance tiers (41.2% coverage), far below the 80% threshold. The search correctly identified the highest-throughput tier (32.0 rps, tp=8 inst=1) and several mid-range tiers, but missed 10 tiers entirely. Missed tiers included: (a) topologies not in the search's enumeration (tp=1 inst=3, tp=2 inst=3 which are valid tp*inst<=8 configs), (b) preemption-regime configs that are Pareto-optimal because they trade high TTFT for very low kv_blocks cost (e.g., tp=1 inst=1 kv=2000 rps=5.3 ttft=20695ms), and (c) intermediate GPU counts that were skipped because the search only scanned 10 topologies not all 15. The 5-phase search architecture is sound but incomplete: it missed topologies where tp*inst is a non-power-of-2 product (3, 5, 6, 7 GPUs) and did not consider preemption-regime configs as valid Pareto candidates.",
+      "status": "REFUTED",
+      "error_type": "magnitude",
+      "diagnostic_note": "The failure has two root causes: (1) The topology enumeration missed non-power-of-2 GPU counts (3,5,6,7 GPUs use configurations like tp=1,inst=3 or tp=2,inst=3 that the search skipped); (2) The search's Phase 2 cache-minimization always sought zero-preemption configs, ignoring that preemption-regime points (high TTFT, low kv_blocks) can be genuinely Pareto-optimal when kv_blocks is a cost objective. The mechanism hypothesis (hierarchical structure) is correct but the implementation missed two important regime classes."
+    },
+    {
+      "arm_type": "h-dose-response",
+      "predicted": "Increasing total_kv_blocks from 2000 to 10000 produces a saturating curve in responses_per_sec: large gains from 2000->5000 as preemptions are eliminated, then plateau from 5000->10000.",
+      "observed": "Saturating curve confirmed across 6 kv_blocks values (tp=4, inst=1, fcfs, maxrun=128, bs=16): kv=2000: rps=11.31, ttft_p99=11441.7ms, preempt=157; kv=3000: rps=14.52, ttft_p99=7056.0ms, preempt=111; kv=4000: rps=16.39, ttft_p99=5350.9ms, preempt=103; kv=5000: rps=17.58, ttft_p99=4271.0ms, preempt=96; kv=7500: rps=19.56, ttft_p99=2655.2ms, preempt=0; kv=10000: rps=19.56, ttft_p99=2655.2ms, preempt=0. RPS increases monotonically from 11.31 to 19.56 and then plateaus exactly at kv=7500 where preemptions drop to zero. TTFT_p99 drops 77% from 11441ms to 2655ms. The plateau at kv=7500 and kv=10000 is byte-identical (same simulation result), confirming complete saturation. Note: the saturation threshold with bs=16 is at kv=7500 (effective 120k tokens), not kv=5000 as predicted from the bs=32 probe. The shape is saturating as predicted.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Saturation threshold shifted slightly relative to designer prediction (kv=7500 with bs=16 vs kv=5000 with bs=32), but shape is as predicted. The kv*bs effective capacity matters: 7500*16=120k tokens = 5000*32/2*16 \u2014 both reach ~120k effective tokens at the saturation point."
+    },
+    {
+      "arm_type": "h-tradeoff",
+      "predicted": "Increasing GPU count from 1 to 8 monotonically increases responses_per_sec from ~7 to ~32 rps with diminishing returns above 4 GPUs; rps_per_gpu decreases as more GPUs are added.",
+      "observed": "Throughput increases monotonically with GPU count BUT the relationship is highly non-monotone: the best topology at each GPU count depends critically on the tp vs num_instances split. Best rps per GPU count: 1 GPU (tp=1 inst=1): 6.26 rps; 2 GPUs: tp=2,inst=1 achieves 11.45 rps (5.72/GPU) while tp=1,inst=2 only achieves 9.09 rps (4.55/GPU); 4 GPUs: tp=4,inst=1 achieves 19.56 rps (4.89/GPU) while tp=1,inst=4 only achieves 10.87 rps (2.72/GPU); 8 GPUs: tp=8,inst=1 achieves 30.24 rps (3.78/GPU) while tp=1,inst=8 only achieves 11.93 rps (1.49/GPU). The GPU count constraint (secondary_budget=8) is respected throughout. Monotonic increase in best-achievable rps: CONFIRMED. Diminishing rps_per_gpu: CONFIRMED (6.26 \u2192 5.72 \u2192 4.89 \u2192 3.78 from 1\u21922\u21924\u21928 GPUs for best topology). However, the tradeoff is more nuanced than predicted: within the same GPU count, the tp:inst ratio creates a 2-4\u00d7 performance spread, making topology selection the primary decision not raw GPU count.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Directional predictions confirmed: rps increases with GPUs, rps_per_gpu decreases. Key nuance: tp=N,inst=1 consistently outperforms tp=1,inst=N for the same GPU count because higher TP provides faster per-token computation (lower ITL), which increases throughput even at the same total GPU allocation."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "h-main was REFUTED due to incomplete topology enumeration (missing tp*inst=3,5,6,7 configurations) and the search algorithm's assumption that preemption-regime configs are never Pareto-optimal. The mechanism hypothesis (hierarchical knob structure) is correct but the search implementation missed two important regime classes. h-dose-response and h-tradeoff were both CONFIRMED with nuances: the KV saturation curve is saturating as predicted but the threshold depends on effective token capacity (kv_blocks*block_size) not just kv_blocks alone; the GPU tradeoff shows monotone rps increase but topology (tp:inst ratio) matters as much as raw GPU count.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

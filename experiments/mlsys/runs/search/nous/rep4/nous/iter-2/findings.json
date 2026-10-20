@@ -1,0 +1,26 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Adding an adaptive degraded-regime interaction phase that explores SJF x {64, 128} at cache-constrained configs will increase unique Pareto tuple recall from 82.9% to >=90% (>=32/35 tuples) while maintaining >=95% precision, using <=200 evaluations.",
+      "observed": "The improved search achieved 35/35 = 100.0% unique Pareto tuple recall (up from 29/35 = 82.9%) with 100.0% precision (81/81 truly Pareto-optimal) using exactly 200 evaluations. All 6 previously-missed Pareto tuples are now found: SJF x maxr=128 at kv=3000,bs=32 for tp={1,2,4,8} single-instance, and {fcfs,sjf} x maxr=64 at kv=2000,bs=32 for tp=1,ni=2. The adaptive degradation detection correctly identified cache-stressed configs and the cross-product exploration of scheduler x concurrency revealed the interaction effects.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Both success criteria exceeded: 100% >= 90% recall target, 100% >= 95% precision target. The improvement is larger than predicted because the adaptive phase not only found the 6 known misses but also prevented loss of other Pareto points through better budget allocation (reserving 30 evals for later phases)."
+    },
+    {
+      "arm_type": "h-robustness",
+      "predicted": "The improved search will maintain >=80% unique Pareto tuple recall when applied at rate=50 and rate=200.",
+      "observed": "Rate=50: 23/23 = 100.0% recall, 65 Pareto configs, 100% precision. GT has 81 Pareto configs / 23 unique tuples (fewer than rate=100's 35 \u2014 less loaded system has fewer interesting tradeoffs). Rate=200: 41/41 = 100.0% recall, 87 Pareto configs, 100% precision. GT has 133 Pareto configs / 41 unique tuples (more loaded system creates more diverse tradeoff points). The structural assumptions (TP dominance, cache equivalence, degraded-regime interactions) hold across all three rates. The adaptive degradation detection correctly adapts to rate-dependent thresholds.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Both rate=50 and rate=200 show 100% recall, far exceeding the 80% threshold. Key structural observation: the Pareto front grows from 23 unique tuples (rate=50) to 35 (rate=100) to 41 (rate=200), showing that higher load creates more diversity in performance tradeoffs. The search handles all three regimes with the same algorithm and budget."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms strongly confirmed. h-main: recall improved from 82.9% to 100.0%, exceeding the 90% target. The key mechanism \u2014 scheduler x concurrency interactions in cache-degraded regimes \u2014 is validated. h-robustness: the search achieves 100% recall at both rate=50 and rate=200, demonstrating that the adaptive degradation detection generalizes across arrival rates without hardcoded thresholds. The Pareto front structure changes with rate (23\u219235\u219241 unique tuples) but the search adapts automatically.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

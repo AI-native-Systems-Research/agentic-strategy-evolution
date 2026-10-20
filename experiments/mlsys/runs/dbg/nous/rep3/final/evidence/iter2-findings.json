@@ -1,0 +1,26 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "For each of 5 seeds (42, 123, 456, 789, 1337), total_output_tokens with --total-kv-blocks 600 (high preemption, 265-348 preemptions) will exactly equal total_output_tokens with --total-kv-blocks 60000 (zero preemption). This holds for all 5 seeds with zero deviation.",
+      "observed": "All 5 seeds MATCH exactly. seed42: 105082==105082 (265 preemptions). seed123: 101487==101487 (327 preemptions). seed456: 104845==104845 (307 preemptions). seed789: 107287==107287 (348 preemptions). seed1337: 107392==107392 (331 preemptions). Regression test TestPreemption_TotalOutputTokens_NoDoubleCount PASSED (47 preemptions in unit regime).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The fix (OutputTokensLost field + subtraction in scheduleBatch + ITL clearing) holds robustly across all 5 seeds with 265-348 preemptions each. No seed exhibits the double-counting bug."
+    },
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "For each of 5 seeds, total_output_tokens with --total-kv-blocks 6000 (moderate preemption, ~50-90 preemptions) will exactly equal total_output_tokens with --total-kv-blocks 60000 (zero preemption).",
+      "observed": "All 5 seeds MATCH exactly. seed42: 105082==105082 (72 preemptions). seed123: 101487==101487 (50 preemptions). seed456: 104845==104845 (51 preemptions). seed789: 107287==107287 (48 preemptions). seed1337: 107392==107392 (47 preemptions). The moderate regime exercises both prefill-stage preemptions (OutputTokensLost=0) and decode-stage preemptions (OutputTokensLost>0); both are handled correctly.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The fix correctly handles the mixed-regime case. At 6000 blocks, requests preempted during prefill contribute OutputTokensLost=0 (max(0, ProgressIndex - len(InputTokens)) = 0 when ProgressIndex <= len(InputTokens)). Requests preempted during decode contribute OutputTokensLost > 0 and the subtraction fires. Total output tokens remain correct in both sub-cases."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed with zero deviation across all 5 seeds and 3 cache-pressure levels. The fix is robust: (1) high-preemption regime (265-348 preemptions per run) shows no inflation; (2) moderate-preemption regime (47-72 preemptions per run) shows no inflation; (3) regression test exercises the invariant at unit scale (47 preemptions). The mechanism is fully validated: outputTokensLost = max(0, ProgressIndex - len(InputTokens)) computed before ProgressIndex reset in sim/batch_formation.go, subtracted from sim.Metrics.TotalOutputTokens in sim/simulator.go:scheduleBatch.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

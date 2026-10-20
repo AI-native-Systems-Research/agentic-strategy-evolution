@@ -1,0 +1,152 @@
+diff --git a/sim/batch_formation.go b/sim/batch_formation.go
+index a14f13d..adffe91 100644
+--- a/sim/batch_formation.go
++++ b/sim/batch_formation.go
+@@ -40,7 +40,8 @@ type ScheduledRequest struct {
+ 
+ // PreemptedRequest carries metadata about a preempted request.
+ type PreemptedRequest struct {
+-	Request *Request
++	Request               *Request
++	OutputTokensGenerated int64 // decode tokens already counted in TotalOutputTokens before preemption
+ }
+ 
+ // BatchResult describes the outcome of batch formation.
+@@ -213,8 +214,16 @@ func (v *VLLMBatchFormation) preemptForTokens(req *Request, numNewTokens int64,
+ 			logrus.Warnf("[tick %07d] preemption: evicting %s to make room", ctx.Now, preemptedRequest.ID)
+ 			result.RunningBatch.Requests = result.RunningBatch.Requests[:len(result.RunningBatch.Requests)-1]
+ 
++			// Capture output tokens generated before ProgressIndex reset (#metrics-preemption-fix).
++			// These were already counted in TotalOutputTokens by executeBatchStep;
++			// the simulator subtracts them to prevent double-counting on re-schedule.
++			var outputGenerated int64
++			if preemptedRequest.ProgressIndex > util.Len64(preemptedRequest.InputTokens) {
++				outputGenerated = preemptedRequest.ProgressIndex - util.Len64(preemptedRequest.InputTokens)
++			}
+ 			result.Preempted = append(result.Preempted, PreemptedRequest{
+-				Request: preemptedRequest,
++				Request:               preemptedRequest,
++				OutputTokensGenerated: outputGenerated,
+ 			})
+ 
+ 			// Defensive: restore token budget if preempted request was already
+diff --git a/sim/simulator.go b/sim/simulator.go
+index febe7fb..d52baaf 100644
+--- a/sim/simulator.go
++++ b/sim/simulator.go
+@@ -581,10 +581,20 @@ func (sim *Simulator) scheduleBatch(now int64) {
+ 	// Apply result: update running batch
+ 	sim.RunningBatch = batchResult.RunningBatch
+ 
+-	// Record preemption metrics and emit debug log for each preempted request
++	// Record preemption metrics and correct double-counted metrics.
++	// When a request is preempted, its ProgressIndex is reset to 0 and it
++	// re-enters prefill+decode from scratch. Output tokens and TTFT recorded
++	// during the previous scheduling round would be counted again, so we
++	// subtract them here to keep TotalOutputTokens and TTFTSum accurate.
+ 	for _, p := range batchResult.Preempted {
+ 		logrus.Debugf("<< Preemption: %s at %d ticks", p.Request.ID, now)
+ 		sim.Metrics.PreemptionCount++
++		sim.Metrics.TotalOutputTokens -= int(p.OutputTokensGenerated)
++		if p.Request.TTFTSet {
++			sim.Metrics.TTFTSum -= p.Request.FirstTokenTime
++			p.Request.TTFTSet = false
++		}
++		p.Request.ITL = nil
+ 	}
+ 
+ 	// Schedule events for newly scheduled requests and record scheduling metrics
+diff --git a/sim/simulator_test.go b/sim/simulator_test.go
+index 5b438c2..bc0fafb 100644
+--- a/sim/simulator_test.go
++++ b/sim/simulator_test.go
+@@ -2598,3 +2598,89 @@ func TestEnqueueDecodeSubRequest_SimClockAhead_StepEventAtSimClock(t *testing.T)
+ 			got, simClock, clusterTime)
+ 	}
+ }
++
++// TestSimulator_PreemptionDoesNotInflateTotalOutputTokens is a regression test for
++// the metrics double-counting bug: when a request is preempted and rescheduled,
++// its output tokens were counted again during the re-decode, inflating
++// TotalOutputTokens beyond the actual number of output tokens generated.
++//
++// GIVEN two configurations: one with ample KV cache (no preemptions) and one with
++//
++//	a tight KV cache (forcing preemptions)
++//
++// WHEN the same requests are run to completion under both configurations
++// THEN TotalOutputTokens must be identical, because the same requests produce the
++//
++//	same output tokens regardless of preemptions.
++func TestSimulator_PreemptionDoesNotInflateTotalOutputTokens(t *testing.T) {
++	// Use requests with substantial output tokens to amplify any double-counting.
++	// All arrive at time 0 to force concurrent scheduling and KV contention.
++	makeRequests := func() []*Request {
++		var reqs []*Request
++		for i := 0; i < 10; i++ {
++			reqs = append(reqs, &Request{
++				ID:           fmt.Sprintf("req_%d", i),
++				ArrivalTime:  0,               // all arrive simultaneously
++				InputTokens:  make([]int, 64),  // 64 input tokens = ceil(64/16) = 4 blocks
++				OutputTokens: make([]int, 32),  // 32 output tokens = ceil(32/16) = 2 blocks
++				State:        StateQueued,
++			})
++		}
++		return reqs
++	}
++
++	// Run with ample KV cache — no preemptions expected
++	cfgLarge := SimConfig{
++		Horizon:             math.MaxInt64,
++		Seed:                42,
++		KVCacheConfig:       NewKVCacheConfig(10000, 16, 0, 0, 0, 0), // plenty of KV blocks
++		BatchConfig:         NewBatchConfig(256, 2048, 0),
++		LatencyCoeffs:       NewLatencyCoeffs([]float64{1000, 10, 5}, []float64{100, 1, 100}),
++		ModelHardwareConfig: NewModelHardwareConfig(ModelConfig{}, HardwareCalib{}, "test", "H100", 1, "blackbox", 0),
++	}
++	simLarge := mustNewSimulator(t, cfgLarge)
++	injectRequests(simLarge, makeRequests())
++	simLarge.Run()
++
++	if simLarge.Metrics.PreemptionCount != 0 {
++		t.Fatalf("large-KV sanity check: expected 0 preemptions, got %d", simLarge.Metrics.PreemptionCount)
++	}
++
++	// Run with tight KV cache — forces preemptions.
++	// Each request needs ~6 blocks (4 input + 2 output). 10 requests at once
++	// need 60 blocks. With only 12 blocks, heavy preemption is guaranteed.
++	cfgTight := SimConfig{
++		Horizon:             math.MaxInt64,
++		Seed:                42,
++		KVCacheConfig:       NewKVCacheConfig(12, 16, 0, 0, 0, 0), // tight KV → preemptions
++		BatchConfig:         NewBatchConfig(256, 2048, 0),
++		LatencyCoeffs:       NewLatencyCoeffs([]float64{1000, 10, 5}, []float64{100, 1, 100}),
++		ModelHardwareConfig: NewModelHardwareConfig(ModelConfig{}, HardwareCalib{}, "test", "H100", 1, "blackbox", 0),
++	}
++	simTight := mustNewSimulator(t, cfgTight)
++	injectRequests(simTight, makeRequests())
++	simTight.Run()
++
++	if simTight.Metrics.PreemptionCount == 0 {
++		t.Fatal("tight-KV sanity check: expected preemptions but got 0")
++	}
++
++	// Both must complete all requests (precondition)
++	if simLarge.Metrics.CompletedRequests != 10 || simTight.Metrics.CompletedRequests != 10 {
++		t.Fatalf("completion mismatch: large=%d tight=%d, both should be 10",
++			simLarge.Metrics.CompletedRequests, simTight.Metrics.CompletedRequests)
++	}
++
++	// Core assertion: TotalOutputTokens must match — no inflation from preemptions
++	if simLarge.Metrics.TotalOutputTokens != simTight.Metrics.TotalOutputTokens {
++		t.Errorf("TotalOutputTokens inflated by preemptions: large-KV=%d (0 preemptions), tight-KV=%d (%d preemptions)",
++			simLarge.Metrics.TotalOutputTokens, simTight.Metrics.TotalOutputTokens, simTight.Metrics.PreemptionCount)
++	}
++
++	// Verify the value is positive and consistent
++	if simLarge.Metrics.TotalOutputTokens <= 0 {
++		t.Errorf("TotalOutputTokens should be positive, got %d", simLarge.Metrics.TotalOutputTokens)
++	}
++	t.Logf("TotalOutputTokens: large-KV=%d (0 preemptions), tight-KV=%d (%d preemptions)",
++		simLarge.Metrics.TotalOutputTokens, simTight.Metrics.TotalOutputTokens, simTight.Metrics.PreemptionCount)
++}

@@ -1,0 +1,26 @@
+{
+  "iteration": 4,
+  "bundle_ref": "runs/iter-4/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "The search algorithm achieves >=90% Pareto coverage on the MoE model (Llama-4-Scout-17B-16E-Instruct-FP8-dynamic) at rate=100, budget=200, across seeds 42 and 123.",
+      "observed": "seed42: ref_size=23, search_size=36, found=23, coverage=1.000 (100%). seed123: ref_size=24, search_size=37, found=24, coverage=1.000 (100%). Phase breakdown: Phase1=30 evals, Phase2=75 total, Phase3=116 total, Phase4=200 total. MoE model follows KV ceiling at kv=3000 (byte-identical results at kv=3000, 5000, 10000), same as Llama-70B. Phase2 engaged (preemptions at kv=2000 for high-GPU topologies). tp > instances throughput pattern confirmed.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "100% coverage on both seeds, exceeding >=90% threshold. The algorithm's adaptive ceiling (kv=max=10000) captures MoE plateau correctly. Phase 2 boundary mapping fills kv=3000, 4000, 5000 for topologies with preemptions, covering all Pareto-relevant kv values. Search Pareto front (36-37 configs) is larger than reference (23-24) because search includes non-dominant configs from maxrun/scheduler variations that Phase 3 adds but exhaustive reference (fcfs, maxrun=256 only) doesn't."
+    },
+    {
+      "arm_type": "h-robustness",
+      "predicted": "The search algorithm achieves >=90% Pareto coverage on qwen2.5-7b-instruct at rate=100, budget=200, across seeds 42 and 123, despite tp=8 panic and zero preemptions (Phase 2 no-op).",
+      "observed": "seed42: ref_size=15, search_size=28, found=15, coverage=1.000 (100%). seed123: ref_size=20, search_size=32, found=20, coverage=1.000 (100%). Exhaustive: 168/180 configs succeeded (12 tp=8 configs failed with panic). Phase breakdown: Phase1=30 evals, Phase2=75 total (evals consumed but no new configs added), Phase3=105-110 total, Phase4=200 total. No preemptions at any kv value confirmed. tp=8 panic handled gracefully by search.py exception handler.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "100% coverage on both seeds. The KV-insensitive regime (zero preemptions, all kv values identical per topology) causes Phase 2 to consume budget evals but discover no new Pareto points \u2014 yet the algorithm still achieves 100% coverage. The reference Pareto front is purely topology-driven (different kv values dominate differently only via kv cost dimension). The algorithm's Phase 3+4 coverage of topology x maxrun x scheduler combinations is sufficient. Note: seed123 ref front (20 configs) is larger than seed42 (15 configs) \u2014 qwen2.5-7b at rate=100 is rate-limited for low-throughput topologies (tp=1,inst=1 rps=11.17 with ttft_p99=8760ms), causing seed-dependent Pareto structure."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms confirmed at 100% coverage, well above the >=90% threshold. No discrepancies. The MoE model (h-main) engages Phase 2 boundary mapping (preemptions at kv=2000), as predicted. The small dense model (h-robustness) exercises Phase 2 as a no-op (no preemptions), as predicted. Both demonstrate graceful handling of architecture-specific edge cases (MoE compute paths, tp=8 TP divisibility constraint). Algorithm generalizes across 5 total model regimes tested across iterations 1-4: qwen3-14b (iter-1/2), Llama-70B (iter-3), Llama-4-Scout-17B-16E MoE (iter-4 h-main), qwen2.5-7b (iter-4 h-robustness). Coverage is 100% in all 10 seed x model combinations tested.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

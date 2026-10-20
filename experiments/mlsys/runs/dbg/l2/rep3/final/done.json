@@ -1,0 +1,1 @@
+{"done": true, "why": "Root cause identified, fix implemented with 3-part correction (output token counting moved to completion, ITL cleared on preemption, TTFT reversed on preemption), regression test added, all existing tests pass."}

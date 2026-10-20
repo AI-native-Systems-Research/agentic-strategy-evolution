@@ -1,0 +1,59 @@
+metadata:
+  iteration: 3
+  family: "model-generalization"
+  research_question: "Does the hierarchical Pareto search algorithm generalize to different model architectures (70B and 7B) with different latency characteristics and TP constraints?"
+  complexity_tier: 2
+  tier_justification: "iter 3 — iter-1 established single-mechanism search (tier 1), iter-2 added robustness across rates (tier 2 confirmed), iter-3 tests same mechanism across models (tier 2)"
+
+arms:
+  - type: h-main
+    prediction: "The search algorithm, after adding dynamic TP validation, will achieve >=90% unique Pareto tuple recall on meta-llama/llama-3.1-70b-instruct (a 5x larger model with stronger TP dominance and steeper maxr sensitivity) using <=200 evaluations, because the four structural regularities (TP dominance, cache equivalence, maxr=256 plateau, scheduler×concurrency interaction) are architecture-independent properties of BLIS's scheduling and caching mechanisms."
+    mechanism: "The structural regularities exploited by the search arise from BLIS's simulation engine, not from model-specific latency characteristics. TP dominance comes from TP sharding reducing per-instance workload (sim/cluster.go). Cache equivalence comes from effective_cache = kv_blocks * block_size determining KV capacity (sim/kvcache.go). The maxr=256 plateau comes from the batch formation bottleneck (sim/batch_formation.go). The SJF×concurrency interaction comes from scheduler priority under preemption pressure (sim/scheduler.go). These mechanisms operate identically regardless of model size."
+    diagnostic: "If recall < 90%, examine which Pareto tuples are missed. If they involve maxr values below 256, the steeper maxr sensitivity of 70B may create Pareto points not found by the search's phase structure. If they involve different (kv,bs) combinations, the larger per-request KV footprint of 70B may shift degradation thresholds beyond the 95% ceiling detection."
+    code_changes:
+      - file: "search.py"
+        intent: "Add dynamic TP validation: before the main search, probe each TP value in {1,2,4,8} by attempting a minimal BLIS evaluation. If the eval fails (e.g., panic from NumHeads not divisible by TP), remove that TP value from the search space. Update get_tp_instance_combos() to use only validated TP values. Handle the evaluate() method gracefully if a TP value fails mid-search."
+        rationale: "The current search.py hardcodes TP_VALUES = [1, 2, 4, 8], which crashes on models where NumHeads is not divisible by all TP values (e.g., qwen2.5-7b has 28 heads, not divisible by 8). Dynamic validation makes the search robust to arbitrary model architectures."
+
+  - type: h-robustness
+    prediction: "The search algorithm will achieve >=80% unique Pareto tuple recall on qwen/qwen2.5-7b-instruct (a smaller model where tp=8 is invalid, reducing the valid configuration space from 1800 to 1680) using <=200 evaluations. The reduced TP range (max TP=4) weakens the TP dominance effect but the other three structural regularities still hold, keeping the search effective."
+    mechanism: "With tp=8 invalid, the maximum TP is 4, giving a max GPU allocation of tp=4,ni=2. The TP dominance ratio is smaller (2.06x for 7B at 8 GPUs vs 4.5x for 70B), meaning more configurations have competitive throughput. This could create a denser Pareto front. However, the cache equivalence, maxr plateau, and degraded-regime interactions still hold because they don't depend on TP range."
+    diagnostic: "If recall < 80%, check whether the reduced TP range creates qualitatively different Pareto structure. If the 7B model's Pareto front has many more unique tuples (because more TP/instance combos are competitive), the 200-eval budget may be insufficient. If many missed tuples involve maxr<256 at ceiling, the 7B model may not have the same maxr plateau as 14B/70B."
+
+# Arm selection rationale: h-main tests model generalization on a larger model where
+# structural assumptions should transfer strongly. h-robustness tests an edge case
+# (invalid TP values) that requires a code change and tests the algorithm's adaptability
+# to a different valid configuration subspace. h-control-negative is omitted because
+# there's no meaningful "null regime" for model generalization — if the regularities
+# don't transfer, the h-main arm itself serves as the test.
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  verified_parameters:
+    model_70b: "meta-llama/llama-3.1-70b-instruct"
+    model_7b: "qwen/qwen2.5-7b-instruct"
+    rate: 100
+    budget: 200
+    seed: 42
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    prefix_tokens: 512
+    gpu_memory_utilization: 0.9
+    max_num_scheduled_tokens: 4096
+
+  unlocked_parameters_audit:
+    - name: "preemption-policy"
+      default_value: "fcfs"
+      justification: "Campaign locks this as fcfs; no per-arm variation needed"
+    - name: "admission-policy"
+      default_value: "always-admit"
+      justification: "Campaign locks this as always-admit; admission policy is not under study"
+    - name: "routing-policy"
+      default_value: "round-robin"
+      justification: "Campaign locks this as round-robin; routing policy is not under study"
+    - name: "long-prefill-token-threshold"
+      default_value: 0
+      justification: "Campaign locks this at 0; chunked prefill threshold not under study"

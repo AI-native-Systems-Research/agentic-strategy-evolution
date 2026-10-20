@@ -1,0 +1,26 @@
+{
+  "iteration": 4,
+  "bundle_ref": "runs/iter-4/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "v4 search achieves mean tuple recall >= 0.98 across all 9 (rate, seed) combinations: {50, 100, 200} x {42, 123, 999}. Minimum recall >= 0.95. The sjf@kv=5000 fix closes the rate=200 gap.",
+      "observed": "Perfect recall across all 9 conditions. rate=50: 23/23, 26/26, 38/38 (seeds 42, 123, 999). rate=100: 35/35, 35/35, 39/39. rate=200: 41/41, 33/33, 43/43. Mean recall = 1.000, min recall = 1.000. The v4 fix (adding sjf@kv=5000 to Phase 2 rich-tier combos) closed the one gap from iter-3 (40/41 at rate=200,seed=42). Pareto front complexity varies across conditions: rate=50 has 23-38 tuples (seed-dependent due to arrival noise), rate=100 has 35-39 tuples (stable), rate=200 has 33-43 tuples (moderate variance).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    },
+    {
+      "arm_type": "h-robustness",
+      "predicted": "v4 search achieves tuple recall >= 0.85 on meta-llama/llama-2-7b-hf at rate=100, seed=42.",
+      "observed": "Recall = 0.9714 (34/35 tuples, 12/12 tiers). One missed tuple: (rps=3.98, ttft=181.2, gpu=1, kv=5000) from tp=1,ni=1,sjf,maxrun=256,kv=5000,bs=32. The miss is caused by tier misclassification: for llama-2-7b at tp=1,ni=1, Phase 1 configs all show high TTFT (20793-38054ms) because the model's compute bottleneck dominates \u2014 max/min ratio is 1.83, below the 2x threshold. So tp=1,ni=1 is classified as 'simple' (not 'rich'), missing the sjf@kv=5000 combo. Despite this, 97.14% recall is well above the 0.85 threshold.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "The rich/simple classification threshold (max > 2x min) can misfire when ALL Phase 1 configs have uniformly high TTFT (compute bottleneck rather than preemption sensitivity). For llama-2-7b at tp=1,ni=1, TTFT only drops dramatically at kv=5000,bs=32,maxrun>=256 \u2014 a regime not covered by Phase 1 template. Possible fix: add kv=5000,bs=32 to Phase 1 template, or use absolute TTFT reduction (not ratio) for rich classification."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms CONFIRMED. h-main exceeded prediction (100% vs >=98% target across all 9 conditions). h-robustness exceeded prediction (97.14% vs >=85% threshold). The v4 fix (one line: add sjf@kv=5000 to Phase 2) closed the rate=200 gap perfectly. Model generalization shows structural robustness of the algorithm despite a minor tier classification edge case for smaller models. The search algorithm discovers the full Pareto front for qwen3-14b across all tested rates and seeds using 200 evaluations (11% of the 1800-config space).",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

@@ -1,0 +1,80 @@
+[
+  {
+    "id": "RP-9",
+    "statement": "The search budget allocation between Phase 1+2 (ceiling + cache sweep) and Phase 2.5+ (degraded-regime refinement) is a fundamental tradeoff: at budget=100, Phase 1 (15 evals) + Phase 2 (60 evals) = 75 evals, leaving only 25 for all refinement phases. Phase 2.5 alone needs 28 evals for 4 best combos (7 per combo with 2 degraded kv values each), exhausting the refinement budget and preventing any additional targeted probes.",
+    "confidence": "high",
+    "regime": "qwen/qwen3-14b at rate=100, seed=42, budget=100, 15 valid (tp,ni) combos",
+    "evidence": [
+      "iteration-4-h-main-refuted",
+      "iteration-4-dose-response"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "Phase 1 tests 15 combos (1 eval each = 15 evals). Phase 2 tests 15 combos \u00d7 4 kv values = 60 evals. These together consume 75% of budget=100. Phase 2.5 with 25 remaining evals processes 4 best combos \u00d7 7 evals each = 28 evals needed, so the last combo ((8,1) when sorted ascending by TP) gets cut: it receives sjf+128 and fcfs+128 at both degraded kvs but misses sjf+256 at kv_severe, fcfs+64 at kv_severe, and sjf+64 at kv_severe. Any broadening of Phase 2.5 (adding combos or probes) hits this constraint.",
+    "applicability_bounds": "Holds for 15-combo configuration spaces (4 TP values \u00d7 variable instances \u22648 GPUs). Scales proportionally with combo count: fewer combos (e.g., 7B model with 3 valid TPs) would have more Phase 2.5 budget.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-10",
+    "statement": "fcfs+128 is a significant GT Pareto contributor (17/124 = 13.7% of GT Pareto configs), specifically at degraded kv values (kv=2000 and kv=3000) for non-ceiling combos. These configs represent the operating point where concurrency reduction (maxr 256\u2192128) provides better throughput at lower cache pressure than the unconstrained ceiling. Removing fcfs+128 from Phase 2.5 coverage always reduces recall.",
+    "confidence": "high",
+    "regime": "qwen/qwen3-14b at rate=100, seed=42, full enumeration (1800 configs)",
+    "evidence": [
+      "iteration-4-h-main-v1-refuted"
+    ],
+    "contradicts": [
+      "design-assumption-fcfs128-rarely-produces-unique-pareto-tuples"
+    ],
+    "extraction_iteration": 4,
+    "mechanism": "At degraded kv (e.g., kv=2000 for (1,1) where rps=5.29 vs ceiling=7.00 at kv=10000), maxr=128 with fcfs produces distinct Pareto points because reduced concurrency leads to lower queue contention with smaller cache. With 128 requests max in flight, cache evictions are fewer, giving better throughput-latency tradeoffs than both maxr=256 (higher contention) and maxr=64 (excessive throttling).",
+    "applicability_bounds": "Confirmed for (tp=1-8, ni=1) combos at kv=2000,3000 with bs=32. Likely applies across model architectures given the mechanism is cache contention, not model-specific.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-11",
+    "statement": "The recall-vs-budget curve of the hierarchical search has a confirmed dead zone at budget=100-125: both budgets achieve 80.0% recall on 14B/rate=100. Phase 3 (bs=16 sweep at 30 evals) adds zero unique Pareto tuples. The inflection from 80% to 91.4% occurs at budget=150 when Phases 4-5 (SJF on Pareto configs + concurrency exploration) execute.",
+    "confidence": "high",
+    "regime": "qwen/qwen3-14b at rate=100, seed=42, budgets 50-200",
+    "evidence": [
+      "iteration-4-h-dose-response",
+      "iteration-3-recall-curve"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "Phase 3 tests fcfs+256 at kv=[2000,3000] with bs=16. Since effective cache = kv\u00d7bs, bs=16 at kv=2000 gives effective=32K tokens vs bs=32 at kv=2000 gives 64K. However, the GT Pareto tuples at these parameter combinations are dominated by the bs=32 variants already tested in Phase 2. Phase 4-5 add SJF scheduling and concurrency variations that create genuinely new Pareto points (RP-5: SJF\u00d7concurrency interaction in degraded regimes).",
+    "applicability_bounds": "Confirmed for 14B model. Likely holds for other model sizes where Phase 3 does not test scheduler/concurrency variations. The dead zone size may differ if Phase 3 accidentally tests configs that Phase 4-5 would also test.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-3",
+    "statement": "Refuted prediction: Phase 2.5 scope broadening (non-best combos, sjf+256 at all degraded kvs, lower 0.99 threshold) cannot improve Pareto recall at budget=100 because Phase 1+2 consume 75% of budget, Phase 2.5 uses the remaining 25 evals for basic coverage of 4 best combos, and no budget remains for additional targeted probes. Improving budget=100 recall requires either (a) reducing Phase 1/2 eval count, or (b) moving improvements to a new Phase 2.6 that has budget only when budget>=110.",
+    "confidence": "high",
+    "regime": "budget=100, 15 combos, 4 degraded best-per-GPU combos at 7 evals each",
+    "evidence": [
+      "iteration-4-h-main-all-variants-refuted"
+    ],
+    "contradicts": [
+      "iteration-4-bundle-h-main-prediction"
+    ],
+    "extraction_iteration": 4,
+    "mechanism": "See RP-9: budget constraint is algebraic, not empirical. The improvement mechanism proposed in the bundle is valid (non-best combos do produce unique Pareto tuples, near-ceiling SJF matters) but the proposed implementation cannot execute within budget=100 constraints.",
+    "applicability_bounds": "Holds for budget=100. At budget>=125 (25 extra evals), Phase 2.6 type targeted probes become feasible and the recall improvement might materialize.",
+    "superseded_by": null,
+    "category": "meta",
+    "status": "active",
+    "empirical_content": false,
+    "derivation_type": "algebraic"
+  }
+]

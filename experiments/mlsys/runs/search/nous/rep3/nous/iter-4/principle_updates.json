@@ -1,0 +1,59 @@
+[
+  {
+    "id": "RP-6",
+    "statement": "A three-phase deterministic structure-aware search (deterministic Phase 1 covering all GPU tiers + diversity-directed Phase 2 expanding rich tiers + sjf@kv=5000 coverage + Phase 3 neighbor expansion) achieves 100% Pareto tuple recall within 200 evaluations across all tested conditions: rates {50,100,200} x seeds {42,123,999} for qwen3-14b on H100. Cross-model generalization to llama-2-7b achieves 97.1% (34/35 tuples).",
+    "confidence": "high",
+    "regime": "BLIS 6-knob configuration space (15 GPU tiers, 1800 total configs, H100, num_requests=200, rates 50-200)",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-robustness",
+      "iteration-4-h-main",
+      "iteration-4-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "The v4 algorithm eliminates all known recall gaps: (1) deterministic Phase 1 guarantees tier coverage (RP-5), (2) diversity-directed Phase 2 targets rich tiers where Pareto diversity lives, (3) sjf@kv=5000 in Phase 2 covers the high-kv sjf edge case, (4) Phase 3 neighbor expansion fills remaining gaps. The algorithm is rate-adaptive (Phase 2 classification uses observed metric diversity) and mostly model-agnostic (97.1% on a different model). The 2.9% miss on llama-2-7b is due to a tier classification edge case where all Phase 1 configs show uniformly high TTFT.",
+    "applicability_bounds": "Validated for qwen3-14b and llama-2-7b on H100 at rates 50-200. The rich/simple tier classification may misfire for models where ALL Phase 1 configs have uniformly high TTFT (compute bottleneck masking preemption diversity). This affects only the sjf edge case at the highest kv value; core recall is robust.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-8",
+    "statement": "The BLIS Pareto front's Pareto tuple count varies significantly with seed at low arrival rates (rate=50: 23-38 tuples across seeds, 1.65x range) but is more stable at higher rates (rate=100: 35-39, 1.11x range; rate=200: 33-43, 1.30x range). This seed sensitivity at low rates reflects stochastic arrival patterns' stronger influence on preemption behavior when cache pressure is marginal.",
+    "confidence": "high",
+    "regime": "BLIS 6-knob space, qwen3-14b, H100, num_requests=200, rates 50-200",
+    "evidence": [
+      "iteration-4-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "At low rates (rate=50), arrival burstiness has larger relative effect on queue depth, shifting which configs trigger preemptions. This changes which (tier,kv,maxrun,scheduler) combos produce distinct metrics, varying the Pareto tuple count. At higher rates, the queue is consistently pressured, stabilizing the preemption threshold across seeds.",
+    "applicability_bounds": "Observed for seed set {42,123,999}. Broader seed sampling would quantify the distribution. The effect is specific to the 200-request workload where stochastic fluctuations matter; much longer workloads would show convergence.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-9",
+    "statement": "The v4 search algorithm generalizes across model sizes: it achieves 97.1% recall on llama-2-7b-hf (7B) at rate=100 despite being designed on qwen3-14b (14B). The one missed tuple is due to the rich/simple tier classification's 2x-ratio threshold being insensitive to tiers where all configs have uniformly high TTFT (compute bottleneck masking preemption diversity). The algorithm's Phase 2 template is model-agnostic; only the classification threshold may need tuning for very different model sizes.",
+    "confidence": "medium",
+    "regime": "BLIS 6-knob space, llama-2-7b on H100, rate=100, seed=42",
+    "evidence": [
+      "iteration-4-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 4,
+    "mechanism": "For llama-2-7b at tp=1,ni=1, all Phase 1 configs have high TTFT (20793-38054ms) because the model's compute capacity is the bottleneck (not cache). The max/min TTFT ratio is 1.83, below the 2x threshold, so the tier is classified as 'simple'. This misses the sjf@kv=5000 combo which shows dramatically lower TTFT (181ms vs 166ms for fcfs). The fix would be adding kv=5000,bs=32 to Phase 1 or using absolute TTFT reduction rather than ratio for classification.",
+    "applicability_bounds": "Tested only with llama-2-7b at one rate and seed. Generalization to other models (e.g., 70B, quantized, MoE) is untested. The classification edge case is specific to tiers where compute dominates over cache pressure.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

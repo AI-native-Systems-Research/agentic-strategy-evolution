@@ -1,0 +1,91 @@
+{
+  "answer": "The BLIS 6-knob configuration space has a hierarchically structured Pareto front governed by four architecture-independent regularities: (1) TP dominance — higher tensor parallelism always yields better throughput at fixed GPU count, with the ratio scaling by model size (2.06x for 7B, 2.68x for 14B, 4.5x for 70B). (2) Effective cache equivalence — performance depends on kv_blocks × block_size, making block_size=16 strictly dominated by block_size=32 at same kv_blocks. (3) maxr=256 saturation plateau — maxr=512 never improves over 256. (4) Scheduler × concurrency interaction in degraded cache regimes only — SJF with reduced maxr creates distinct Pareto tradeoffs (2-7% higher rps at cost of higher tail latency) when cache pressure triggers preemptions. A v2 hierarchical search exploiting these regularities achieves 100% unique Pareto tuple recall at budget=100 (out of 1800 configs) on qwen3-14B/rate=100/seed=42, up from the v1 baseline of 80.0%. Three structural changes: selective Phase 2 (skip non-degrading combos at high kv, saves ~22 evals), eliminated Phase 3 (block_size=16 sweep, zero Pareto impact, saves 30 evals), expanded Phase 2.5 (probe all degraded combos including non-best-per-GPU). The v1 dead zone (80% recall at both budget=100 and 125) is eliminated. Pareto diversity scales with model size (21/35/42 tuples for 7B/14B/70B) and arrival rate (23/35/41 tuples at rate=50/100/200).",
+  "deliverable": "search.py",
+  "repro": "python3 search.py --model qwen/qwen3-14b --rate 100 --budget 100 --seed 42 --out final/search_results.json",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "v2 search recall (unique Pareto tuples) at budget=100",
+      "value": 1.0,
+      "condition": "qwen/qwen3-14b, rate=100, seed=42, 35/35 unique tuples found in 100 evaluations",
+      "evidence": "final/evidence/iter5_findings.json"
+    },
+    {
+      "id": "c2",
+      "metric": "v1 baseline recall at budget=100",
+      "value": 0.8,
+      "condition": "qwen/qwen3-14b, rate=100, seed=42, 28/35 unique tuples",
+      "evidence": "final/evidence/iter4_findings.json"
+    },
+    {
+      "id": "c3",
+      "metric": "v2 Pareto-optimal configurations found at budget=100",
+      "value": 49,
+      "condition": "qwen/qwen3-14b, rate=100, seed=42, 100 evaluations",
+      "evidence": "final/evidence/v2_budget100_s42.json"
+    },
+    {
+      "id": "c4",
+      "metric": "ground truth unique Pareto tuples (14B, rate=100)",
+      "value": 35,
+      "condition": "full enumeration of 1800 configs, qwen/qwen3-14b, rate=100, seed=42",
+      "evidence": "final/evidence/ground_truth_pareto.json"
+    },
+    {
+      "id": "c5",
+      "metric": "total configuration space size (14B)",
+      "value": 1800,
+      "condition": "6 knobs: tp in {1,2,4,8}, instances in {1..8/tp}, scheduler in {fcfs,sjf}, maxr in {32,64,128,256,512}, kv in {2000,3000,4000,5000,7500,10000}, bs in {16,32}",
+      "evidence": "final/evidence/full_enumeration.json"
+    },
+    {
+      "id": "c6",
+      "metric": "v2 recall at budget=50",
+      "value": 0.514,
+      "condition": "qwen/qwen3-14b, rate=100, seed=42, 18/35 unique tuples",
+      "evidence": "final/evidence/v2_budget50_s42.json"
+    },
+    {
+      "id": "c7",
+      "metric": "v2 recall at budget=75",
+      "value": 0.8,
+      "condition": "qwen/qwen3-14b, rate=100, seed=42, 28/35 unique tuples",
+      "evidence": "final/evidence/v2_budget75_s42.json"
+    },
+    {
+      "id": "c8",
+      "metric": "v1 dead zone confirmed (Phase 3 zero Pareto contribution)",
+      "value": 0.8,
+      "condition": "v1 search: budget=100 -> 80.0%, budget=125 -> 80.0%; Phase 3 bs=16 sweep adds zero unique Pareto tuples between budget 100-125",
+      "evidence": "final/evidence/iter4_findings.json"
+    },
+    {
+      "id": "c9",
+      "metric": "TP dominance ratio at 8 GPUs (14B)",
+      "value": 2.68,
+      "condition": "tp=8,ni=1 (32.01 rps) vs tp=1,ni=8 (11.93 rps), qwen/qwen3-14b, rate=100",
+      "evidence": "final/evidence/full_enumeration.json"
+    },
+    {
+      "id": "c10",
+      "metric": "Pareto front size varies with model size",
+      "value": 35,
+      "condition": "14B at rate=100; also 7B=21 tuples, 70B=42 tuples (from cross-model validation)",
+      "evidence": "final/evidence/report.md"
+    },
+    {
+      "id": "c11",
+      "metric": "Pareto front size varies with arrival rate",
+      "value": 35,
+      "condition": "14B at rate=100; also rate=50 -> 23 tuples, rate=200 -> 41 tuples",
+      "evidence": "final/evidence/report.md"
+    },
+    {
+      "id": "c12",
+      "metric": "v2 recall at budget=200",
+      "value": 1.0,
+      "condition": "qwen/qwen3-14b, rate=100, seed=42, 35/35 unique tuples, 102 Pareto configs found",
+      "evidence": "final/evidence/v2_budget200_s42.json"
+    }
+  ]
+}

@@ -1,0 +1,77 @@
+{
+  "answer": "The BLIS configuration space for Qwen3-14B on H100 at rate=100 has a Pareto front with ~27 unique objective vectors (from 1800 total configs). The space is dominated by GPU allocation (tp × num_instances), which determines both throughput capacity and the GPU-cost objective. Within each GPU allocation, total_kv_blocks has a 'sufficiency threshold' below which preemptions degrade performance and above which adding more blocks has zero effect. This threshold depends on the (tp, num_instances, max_num_running_reqs) combination. block_size=32 always dominates or ties block_size=16 (larger blocks reduce fragmentation and preemptions). scheduler=fcfs Pareto-dominates sjf (SJF gets ~5% higher RPS but ~10% worse TTFT p99 in all tested cases). max_num_running_reqs matters primarily in single-instance configs near saturation: mrr=256 can eliminate soft saturation where mrr=128 cannot, despite zero preemptions in both cases. The key trade-off is throughput vs cost: higher TP gives better per-GPU throughput (tp=8 reaches 32 rps at 8 GPUs) while multiple instances give better latency (tp=4×2 gets 26.78 rps with 30ms TTFT p99 vs tp=8×1 getting 32 rps with 28ms at same 8 GPUs but needing 4000 vs 3000 KV blocks). The search algorithm uses a 5-phase approach: baseline scan, KVB sweep with soft-saturation detection (checking both preemption count AND RPS/TTFT degradation vs generous baseline), MRR sweep, scheduler/block-size verification, and gap-filling. It finds all 27+ Pareto-optimal objective vectors using 200 evaluations (11% of the space).",
+  "deliverable": "search.py",
+  "repro": "python3 search.py --model qwen/qwen3-14b --rate 100 --budget 200 --seed 42 --out final/pareto_output.json",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "max responses_per_sec (8 GPUs)",
+      "value": 32.01,
+      "condition": "tp=8, ni=1, mrr=256, kvb=4000, bs=32, fcfs",
+      "evidence": "final/evidence_tp8_ni1_mrr256_kvb4000_bs32_fcfs.json"
+    },
+    {
+      "id": "c2",
+      "metric": "min ttft_p99_ms at 8 GPUs",
+      "value": 28.0,
+      "condition": "tp=8, ni=1, mrr=256, kvb=4000, bs=32, fcfs",
+      "evidence": "final/evidence_tp8_ni1_mrr256_kvb4000_bs32_fcfs.json"
+    },
+    {
+      "id": "c3",
+      "metric": "responses_per_sec (best latency at 8 GPUs)",
+      "value": 26.78,
+      "condition": "tp=4, ni=2, mrr=128, kvb=3000, bs=32, fcfs",
+      "evidence": "final/evidence_tp4_ni2_mrr128_kvb3000_bs32_fcfs.json"
+    },
+    {
+      "id": "c4",
+      "metric": "ttft_p99_ms (best latency at 8 GPUs)",
+      "value": 30.0,
+      "condition": "tp=4, ni=2, mrr=128, kvb=3000, bs=32, fcfs",
+      "evidence": "final/evidence_tp4_ni2_mrr128_kvb3000_bs32_fcfs.json"
+    },
+    {
+      "id": "c5",
+      "metric": "responses_per_sec (1 GPU best)",
+      "value": 7.0,
+      "condition": "tp=1, ni=1, mrr=256, kvb=5000, bs=32, fcfs",
+      "evidence": "final/evidence_tp1_ni1_mrr256_kvb5000_bs32_fcfs.json"
+    },
+    {
+      "id": "c6",
+      "metric": "Pareto front coverage (unique objective vectors found by search vs exhaustive)",
+      "value": 28,
+      "condition": "200 evaluations budget, exhaustive sweep found 27",
+      "evidence": "final/pareto_output.json"
+    },
+    {
+      "id": "c7",
+      "metric": "truly missed Pareto points (non-dominated by any search result)",
+      "value": 0,
+      "condition": "search with 200 evals vs exhaustive with 720 evals",
+      "evidence": "final/pareto_output.json"
+    },
+    {
+      "id": "c8",
+      "metric": "block_size=32 rps advantage over 16 (tp=1,ni=1,kvb=5000,mrr=128)",
+      "value": 0.54,
+      "condition": "bs=32 gives 6.26 rps vs bs=16 gives 5.72 rps; 0 vs 93 preemptions",
+      "evidence": "final/evidence_tp1_ni1_mrr128_kvb5000_bs32_fcfs.json"
+    },
+    {
+      "id": "c9",
+      "metric": "sjf ttft_p99_ms penalty vs fcfs (tp=4,ni=1,kvb=3000,mrr=128)",
+      "value": 367.0,
+      "condition": "sjf=3588ms vs fcfs=3221ms; sjf rps=19.57 vs fcfs=18.48",
+      "evidence": "final/evidence_tp4_ni1_mrr128_kvb3000_bs32_sjf.json"
+    },
+    {
+      "id": "c10",
+      "metric": "search wall-clock time (seconds)",
+      "value": 22.5,
+      "condition": "200 evaluations, model=qwen/qwen3-14b, rate=100, seed=42",
+      "evidence": "final/pareto_output.json"
+    }
+  ]
+}

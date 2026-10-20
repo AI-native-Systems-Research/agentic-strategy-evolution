@@ -1,0 +1,4 @@
+=== Before fix (original binary) ===
+With preemptions (600 blocks): total_output_tokens=114630, preemption_count=265
+No preemptions (60000 blocks): total_output_tokens=105082, preemption_count=0
+

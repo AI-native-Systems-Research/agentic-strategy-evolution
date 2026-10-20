@@ -1,0 +1,32 @@
+{
+ "task": "dbg",
+ "arm": "nous_prompt",
+ "rep": 3,
+ "slot": 0,
+ "max_iterations": 3,
+ "ceiling": 60.0,
+ "nous_commit": "f9fbdd97a01c84089c258f45fd0c7c3f89f81d60",
+ "claude_cli": "2.1.301 (Claude Code)",
+ "started": "2026-10-19 22:31:05",
+ "status": "done",
+ "declared_done": true,
+ "iterations_used": 1,
+ "hit_ceiling": false,
+ "returncode": 0,
+ "cost_usd": 4.0788,
+ "cost": {
+  "total": 4.0788,
+  "transcripts": 4.0788,
+  "direct_llm": 0.0,
+  "by_model": {
+   "claude-opus-4-6": 4.0788
+  },
+  "n_replies": 73
+ },
+ "wall_min": 13.0,
+ "finished": "2026-10-19 22:44:06",
+ "transcripts": [
+  "/Users/toslali/mlsys_runs/runs/dbg/nous_prompt/rep3/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-dbg-nous-prompt-rep3-ws/6e572e1b-c701-411c-bf4c-461f996cce88.jsonl",
+  "/Users/toslali/mlsys_runs/runs/dbg/nous_prompt/rep3/logs/session-1.jsonl"
+ ]
+}

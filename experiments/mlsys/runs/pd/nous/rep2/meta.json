@@ -1,0 +1,43 @@
+{
+ "task": "pd",
+ "arm": "nous",
+ "rep": 2,
+ "slot": 0,
+ "max_iterations": 4,
+ "ceiling": 75.0,
+ "nous_commit": "f9fbdd97a01c84089c258f45fd0c7c3f89f81d60",
+ "claude_cli": "2.1.301 (Claude Code)",
+ "started": "2026-10-19 20:40:03",
+ "status": "crashed",
+ "declared_done": false,
+ "iterations_used": 4,
+ "hit_ceiling": false,
+ "returncode": 0,
+ "nous_work": "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/nous_work/pd-nous-rep2",
+ "package_rc": 0,
+ "cost_usd": 20.7898,
+ "cost": {
+  "total": 20.7898,
+  "transcripts": 20.5961,
+  "direct_llm": 0.1937,
+  "by_model": {
+   "claude-sonnet-4-6": 5.6968,
+   "claude-opus-4-6": 14.8993
+  },
+  "n_replies": 307
+ },
+ "wall_min": 88.6,
+ "finished": "2026-10-19 22:08:39",
+ "transcripts": [
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-pd-nous-rep2-ws--nous-experiments-iter-3-f5b3fad6/a5c6e6ff-848d-45ca-bb84-3a29f0ec05d8.jsonl",
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-pd-nous-rep2-ws--nous-experiments-iter-4-847082c6/7f6ed390-ffd3-426c-ae97-83b4546d3edf.jsonl",
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-pd-nous-rep2-ws/205b74f3-57f3-4d8d-b072-879e8f0f4049.jsonl",
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-pd-nous-rep2-ws/07c6f18a-3982-4920-bbb0-1cd721456a9f.jsonl",
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-pd-nous-rep2-ws/656e6970-c102-4718-9c6d-74074c1a5e2e.jsonl",
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-pd-nous-rep2-ws/4095413f-96b2-4a3b-991b-77b152e5a170.jsonl",
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-pd-nous-rep2-ws/60180c9b-fee0-4295-8453-d4e7bd2e245b.jsonl",
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-pd-nous-rep2-ws--nous-experiments-iter-2-7f543e15/d0c62f1c-7376-4094-a67d-51bd6f9e4d08.jsonl",
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/claude_cfg/projects/-Users-toslali-mlsys-runs-runs-pd-nous-rep2-ws--nous-experiments-iter-1-502a0d18/d52efeba-353a-47a4-ad8e-9b723724b7cb.jsonl",
+  "/Users/toslali/mlsys_runs/runs/pd/nous/rep2/logs/package.jsonl"
+ ]
+}

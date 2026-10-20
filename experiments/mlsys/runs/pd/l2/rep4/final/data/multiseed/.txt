@@ -1,0 +1,20 @@
+  "ttft_p95_ms": 53.8571,
+  "ttft_p99_ms": 54.239,
+  "itl_mean_ms": 18.203545354330707,
+  "itl_p90_ms": 20.673,
+  "itl_p95_ms": 20.93,
+  "itl_p99_ms": 21.018,
+  "scheduling_delay_p99_ms": 15.563,
+  "preemption_count": 0,
+  "dropped_unservable": 0,
+  "length_capped_requests": 0,
+  "timed_out_requests": 0
+}
+=== PD Metrics ===
+Disaggregated Requests: 300
+Dropped at Decode KV: 0
+Prefill Throughput: 70.9940 sub-req/s
+Decode Throughput: 70.9940 sub-req/s
+Load Imbalance Ratio: 1.0000
+Parent TTFT (us): mean=49855.7 p50=49797.0 p95=53857.1 p99=54239.0
+KV Transfer Duration (us): mean=3406.0 p50=3406.0 p95=3406.0 p99=3406.0

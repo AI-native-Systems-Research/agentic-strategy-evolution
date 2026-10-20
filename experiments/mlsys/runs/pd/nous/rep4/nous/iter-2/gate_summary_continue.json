@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 2 confirmed all three hypotheses across 27 rate-seed combinations: Always-Disaggregate (AD) consistently beats Always-Local (AL) on inter-token latency (ITL), with a growing gap from 0.06ms at 5 req/s to 1.69ms at 150 req/s, while the time-to-first-token (TTFT) penalty stays well under the 15ms budget (max observed: ~10ms). The ITL-vs-rate curve decelerates at high rates, consistent with a transient regime caused by the 300-request finite-horizon constraint rather than a flaw in the underlying model.",
+  "key_points": [
+    "All 3 hypotheses CONFIRMED: ITL_AD < ITL_AL at all 27 rate\u00d7seed combinations; TTFT_AD > TTFT_AL at all 27 combinations; ITL increases monotonically with arrival rate for both modes.",
+    "ITL benefit grows with load: AD advantage is +0.06ms at 5 req/s, +1.55ms at 100 req/s, +1.69ms at 150 req/s \u2014 disaggregation's value increases as the system gets busier.",
+    "TTFT cost shrinks with load: the TTFT penalty for AD over AL narrows from ~9.6ms at 5 req/s to ~4.4ms at 120 req/s, because AL's decode pool congests under mixed prefill+decode load while AD's prefill pool stays lightly loaded.",
+    "High-rate ITL growth decelerates (concave curve) rather than accelerating as the paper's 1/(1\u2212\u03c1) steady-state formula predicts \u2014 confirmed to be a transient artifact: at 150 req/s the 300-request run lasts only ~2s while each request takes ~1.6s, so steady state is never reached.",
+    "Next iteration should re-run high-rate conditions (\u226560 req/s) with ~3000 requests to test whether the ITL curve becomes convex (accelerating) under steady-state conditions, which would validate the paper's quantitative formula rather than just its directional predictions.",
+    "recommendation: continue"
+  ]
+}

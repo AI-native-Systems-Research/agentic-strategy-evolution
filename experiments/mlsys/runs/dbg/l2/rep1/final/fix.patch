@@ -1,0 +1,104 @@
+diff --git a/sim/simulator.go b/sim/simulator.go
+index febe7fb..2b0097f 100644
+--- a/sim/simulator.go
++++ b/sim/simulator.go
+@@ -489,6 +489,7 @@ func (sim *Simulator) recordRequestCompletion(req *Request) {
+ 	// The destination is the sole completion site. Skipping CompletedRequests++ here
+ 	// would cause the request to vanish from conservation accounting entirely.
+ 	sim.Metrics.CompletedRequests++
++	sim.Metrics.TotalOutputTokens += int(req.ProgressIndex - util.Len64(req.InputTokens))
+ 
+ 	var itlSum int64
+ 	for _, v := range req.ITL {
+@@ -644,7 +645,6 @@ func (sim *Simulator) executeBatchStep(now int64) int64 {
+ 			// Also prevents phantom tokens from token budget exhaustion (pre-existing edge case).
+ 			if req.NumNewTokens > 0 {
+ 				req.ProgressIndex++
+-				sim.Metrics.TotalOutputTokens++
+ 				req.ITL = append(req.ITL, currStepAdvance+sim.latencyModel.OutputTokenProcessingTime())
+ 			}
+ 		}
+diff --git a/sim/simulator_preempt_test.go b/sim/simulator_preempt_test.go
+index c37efb3..3fe5b87 100644
+--- a/sim/simulator_preempt_test.go
++++ b/sim/simulator_preempt_test.go
+@@ -1,6 +1,7 @@
+ package sim
+ 
+ import (
++	"math"
+ 	"testing"
+ )
+ 
+@@ -129,3 +130,71 @@ func TestPreempt_InsufficientBlocks_EvictsAllThenReturnsFalse(t *testing.T) {
+ 		}
+ 	}
+ }
++
++// TestPreemption_TotalOutputTokens_NotDoubleCounted verifies that TotalOutputTokens
++// counts each completed request's output tokens exactly once, even when preemptions
++// cause requests to re-decode from scratch.
++//
++// Regression test: before the fix, TotalOutputTokens was incremented inline during
++// every decode step. Preempted requests reset ProgressIndex to 0, so re-decoding
++// counted the same output tokens again, inflating total_output_tokens and tokens_per_sec.
++func TestPreemption_TotalOutputTokens_NotDoubleCounted(t *testing.T) {
++	seed := int64(42)
++	numReqs := 20
++
++	runSim := func(totalKVBlocks int64) *Simulator {
++		cfg := SimConfig{
++			Horizon:       math.MaxInt64,
++			Seed:          seed,
++			KVCacheConfig: NewKVCacheConfig(totalKVBlocks, 16, 0, 0, 0, 0),
++			BatchConfig:   NewBatchConfig(256, 10000, 0),
++			LatencyCoeffs: NewLatencyCoeffs([]float64{100, 1, 1}, []float64{100, 1, 100}),
++			ModelHardwareConfig: NewModelHardwareConfig(
++				ModelConfig{}, HardwareCalib{}, "", "", 0, "blackbox", 0,
++			),
++		}
++		sim := mustNewSimulator(t, cfg)
++
++		requests := testGenerateRequests(seed, math.MaxInt64, 0.1,
++			numReqs, 0,
++			128, 32, 32, 256,
++			64, 16, 16, 128)
++		injectRequests(sim, requests)
++		sim.Run()
++		return sim
++	}
++
++	// GIVEN a large KV cache where no preemptions occur
++	large := runSim(100000)
++	if large.Metrics.PreemptionCount != 0 {
++		t.Fatalf("expected 0 preemptions with large KV cache, got %d", large.Metrics.PreemptionCount)
++	}
++
++	// AND a small KV cache that forces preemptions
++	small := runSim(50)
++	if small.Metrics.PreemptionCount == 0 {
++		t.Fatal("expected preemptions with small KV cache, got 0")
++	}
++
++	// THEN both runs must complete all requests
++	if large.Metrics.CompletedRequests != numReqs {
++		t.Fatalf("large KV: completed %d, want %d", large.Metrics.CompletedRequests, numReqs)
++	}
++	if small.Metrics.CompletedRequests != numReqs {
++		t.Fatalf("small KV: completed %d, want %d", small.Metrics.CompletedRequests, numReqs)
++	}
++
++	// THEN TotalOutputTokens must be identical (same requests, same output lengths)
++	if large.Metrics.TotalOutputTokens != small.Metrics.TotalOutputTokens {
++		t.Errorf("TotalOutputTokens: large_kv=%d, small_kv=%d (preemption_count=%d); "+
++			"preempted requests should not inflate output token count",
++			large.Metrics.TotalOutputTokens, small.Metrics.TotalOutputTokens,
++			small.Metrics.PreemptionCount)
++	}
++
++	// THEN TotalInputTokens must also be identical (sanity check)
++	if large.Metrics.TotalInputTokens != small.Metrics.TotalInputTokens {
++		t.Errorf("TotalInputTokens: large_kv=%d, small_kv=%d",
++			large.Metrics.TotalInputTokens, small.Metrics.TotalInputTokens)
++	}
++}

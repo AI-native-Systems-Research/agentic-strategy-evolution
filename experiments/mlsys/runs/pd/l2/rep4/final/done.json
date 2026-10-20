@@ -1,0 +1,1 @@
+{"done": true, "why": "Research question fully answered: paper's ITL formula holds within 0.5% for rho<0.10 but breaks at higher rates (122% error at rate=150) due to finite-horizon batch dynamics; corrected transient model reproduces BLIS within 0.05% across all rates 1-150 for both AL and AD, with all qualitative P/D predictions confirmed."}

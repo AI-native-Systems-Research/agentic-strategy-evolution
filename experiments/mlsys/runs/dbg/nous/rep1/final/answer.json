@@ -1,0 +1,35 @@
+{
+  "answer": "Yes, this is a real bug. Root cause: when a request is preempted in sim/batch_formation.go:preemptForTokens(), ProgressIndex is reset to 0 (line 232) but TotalOutputTokens (incremented per decode step in sim/simulator.go:647) is never adjusted. The preempted request re-enters the wait queue, gets rescheduled, re-prefills, and re-decodes — counting every output token again. The fix: (1) compute the number of output tokens already generated before resetting ProgressIndex, pass this count through the PreemptedRequest struct, and subtract it from TotalOutputTokens when processing preemptions in scheduleBatch(); (2) clear the request's ITL slice on preemption to prevent duplicate inter-token latency entries; (3) reset TTFTSet and deduct FirstTokenTime from TTFTSum to prevent double-counting TTFT.",
+  "deliverable": "final/fix.patch",
+  "repro": "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 2>/dev/null | grep total_output_tokens",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "total_output_tokens (before fix, 0 preemptions)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 60000",
+      "evidence": "final/evidence_before.txt"
+    },
+    {
+      "id": "c2",
+      "metric": "total_output_tokens (before fix, 265 preemptions)",
+      "value": 114630,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600",
+      "evidence": "final/evidence_before.txt"
+    },
+    {
+      "id": "c3",
+      "metric": "total_output_tokens (after fix, 265 preemptions)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600",
+      "evidence": "final/evidence_after.txt"
+    },
+    {
+      "id": "c4",
+      "metric": "total_output_tokens (after fix, 72 preemptions)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 6000",
+      "evidence": "final/evidence_after.txt"
+    }
+  ]
+}

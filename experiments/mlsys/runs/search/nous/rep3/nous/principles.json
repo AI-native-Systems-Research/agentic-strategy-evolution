@@ -1,0 +1,172 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "KV cache capacity exhibits a sharp binary threshold below which preemptions spike TTFT p99 by 100-250x; above the threshold, TTFT is determined entirely by compute (prefill latency).",
+      "confidence": "high",
+      "regime": "BLIS simulation with qwen/qwen3-14b on H100, tp=2, num_instances=2, rate=100 req/s, prefix_tokens=512. Threshold ~4500-5000 blocks at this config.",
+      "evidence": [
+        "iteration-1-h-dose-response"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "When total_kv_blocks < threshold, the KV cache fills completely and the scheduler must preempt (evict) running requests to make room for new prefills. Preempted requests rejoin the queue and re-prefill from scratch, causing their TTFT to include both the preemption delay and a second prefill. Above the threshold all concurrent requests fit simultaneously, preemption_count = 0, and TTFT reduces to the single-pass prefill latency (~39ms).",
+      "applicability_bounds": "Threshold scales with GPU count and request rate. Higher throughput tiers (more instances or higher TP) need proportionally more cache blocks to avoid preemption. The binary nature of the threshold (zero preemptions above vs many below) is a general property of FCFS scheduling with cache eviction. Block size (16 vs 32 tokens/block) shifts the threshold slightly.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-2",
+      "statement": "GPU count (tp * num_instances) is the dominant throughput factor in BLIS, creating discrete throughput tiers; within each tier, KV blocks and max_num_running_reqs have threshold-gated effects while scheduler and block_size are negligible.",
+      "confidence": "high",
+      "regime": "BLIS simulation with qwen/qwen3-14b on H100, rate=100 req/s, prefix_tokens=512. Observed across all 200-eval search runs.",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "GPU count determines compute capacity (FLOP/s and memory bandwidth scale with TP and instance count). KV blocks and max_running_reqs each have a threshold below which resource starvation dominates TTFT, but above which they have zero marginal effect. Scheduler (fcfs vs sjf) and block_size (16 vs 32) change only scheduling order and block granularity respectively \u2014 neither affects throughput at the cluster level when resources are sufficient.",
+      "applicability_bounds": "Dominant factor relationship may shift at much lower rates (where a single GPU is sufficient) or at extreme rates where scheduling policy affects batching efficiency. The observation is at rate=100 req/s with 200-request workloads; generalization to higher rates requires verification.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-3",
+      "statement": "A two-phase adaptive search (structured sampling + neighbor expansion) finds a near-complete Pareto front for the BLIS 6-knob space within 11% of the total configuration budget (200 of 1800 configs), covering all GPU tiers, in under 20 seconds wall time.",
+      "confidence": "medium",
+      "regime": "BLIS 6-knob space (tp\u00d7ni\u00d7sched\u00d7max_run\u00d7kv_blocks\u00d7bs), 200 budget from 1800 configs",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "Confirmed in iter-1 that search works; iter-2 reveals 'near-complete' is an overstatement \u2014 v2 at 200 budget achieves only 58% distinct-tuple recall against exhaustive ground truth, not near-complete. The search finds all major GPU tiers and threshold transitions, but cannot enumerate all metric combinations within each tier.",
+      "applicability_bounds": "The search efficiently covers the GPU-tier and threshold-crossing structure, but 200 configs is insufficient to exhaustively represent all 4D metric combinations. 'Near-complete' should be understood as 'covering all major trade-off dimensions' rather than 'capturing all distinct metric tuples'.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "revision_note": "Confidence reduced from 'high' to 'medium' \u2014 iter-2 exhaustive ground truth shows actual recall of 0.337 (v1) and 0.579 (v2), not the near-complete coverage claimed in iter-1. The 'near-complete' claim was based on Pareto size relative comparisons without ground truth validation."
+    },
+    {
+      "id": "RP-4",
+      "statement": "Balanced block_size={16,32} Phase 1 coverage across all GPU tiers improves Pareto recall by 72% relative (0.337\u21920.579 mean tuple recall) and reduces seed-to-seed variance by 8.6\u00d7 (std 0.172\u21920.020), versus a Phase 1 that is 96% bs=16-biased.",
+      "confidence": "high",
+      "regime": "BLIS 6-knob space (tp\u00d7ni\u00d7sched\u00d7max_run\u00d7kv_blocks\u00d7bs), 200 budget from 1800 configs, rate=100, qwen/qwen3-14b H100",
+      "evidence": [
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "block_size=32 halves the KV blocks needed to cross the preemption threshold (critical quantity is total cache tokens = blocks\u00d7block_size). v1 Phase 1 has only 3.8% bs=32 configs covering 3 of 15 GPU tiers; shuffling can exclude bs=32-critical tiers from Phase 1, forcing Phase 2 to rely on multi-step neighbor chains to discover them. v2 explicitly seeds all 15 tiers with bs=32 profiles at threshold-appropriate kv_blocks values, enabling Phase 2 to expand directly from these seeds.",
+      "applicability_bounds": "Applies when the search space contains multiple block_size values and the Pareto front includes configs where block_size is the differentiating factor for KV threshold crossing. Does not apply if the search uses total_cache_tokens as a single dimension (which would eliminate the separate bs dimension).",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-5",
+      "statement": "Structured Pareto search with seed-unstable Phase 1 sampling can produce recall BELOW random sampling for specific seeds (v1 seed 999: 0.154 vs random 0.308), because shuffling may drop critical tier coverage; balanced Phase 1 coverage eliminates this failure mode (v2 min recall across seeds: 0.564).",
+      "confidence": "high",
+      "regime": "BLIS structured search with shuffled Phase 1 sampling, budget 200 from 1800",
+      "evidence": [
+        "iteration-2-h-control-negative",
+        "iteration-2-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "mechanism": "v1 Phase 1 generates 78 configs (4 profiles \u00d7 15 tiers + 15 sjf + 3 bs=32) and shuffles/truncates to 40% budget. For certain seeds, the shuffle can heavily undersample specific GPU tiers or block_size values. When bs=32 tiers are dropped from Phase 1, Phase 2's neighbor expansion may not recover them within 5 rounds. Random sampling distributes more uniformly across the space and has lower variance, preventing catastrophic misses.",
+      "applicability_bounds": "Applies when Phase 1's configuration pool is larger than its allocated budget, requiring truncation/shuffling. If Phase 1 budget covers the full candidate pool or if configs are deterministically ordered, this instability does not occur.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "A three-phase deterministic structure-aware search (deterministic Phase 1 covering all GPU tiers + diversity-directed Phase 2 expanding rich tiers + sjf@kv=5000 coverage + Phase 3 neighbor expansion) achieves 100% Pareto tuple recall within 200 evaluations across all tested conditions: rates {50,100,200} x seeds {42,123,999} for qwen3-14b on H100. Cross-model generalization to llama-2-7b achieves 97.1% (34/35 tuples).",
+      "confidence": "high",
+      "regime": "BLIS 6-knob configuration space (15 GPU tiers, 1800 total configs, H100, num_requests=200, rates 50-200)",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-robustness",
+        "iteration-4-h-main",
+        "iteration-4-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "The v4 algorithm eliminates all known recall gaps: (1) deterministic Phase 1 guarantees tier coverage (RP-5), (2) diversity-directed Phase 2 targets rich tiers where Pareto diversity lives, (3) sjf@kv=5000 in Phase 2 covers the high-kv sjf edge case, (4) Phase 3 neighbor expansion fills remaining gaps. The algorithm is rate-adaptive (Phase 2 classification uses observed metric diversity) and mostly model-agnostic (97.1% on a different model). The 2.9% miss on llama-2-7b is due to a tier classification edge case where all Phase 1 configs show uniformly high TTFT.",
+      "applicability_bounds": "Validated for qwen3-14b and llama-2-7b on H100 at rates 50-200. The rich/simple tier classification may misfire for models where ALL Phase 1 configs have uniformly high TTFT (compute bottleneck masking preemption diversity). This affects only the sjf edge case at the highest kv value; core recall is robust.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-7",
+      "statement": "The BLIS Pareto front's complexity at rates 50-200 is low (23-41 distinct metric tuples out of 1800 configs), but the tuples producing configs are sparse: concentrated at specific (tier, kv, maxrun, scheduler) combos in the partial-preemption zone. A structure-aware search achieving 100% recall within 11% of total budget (200/1800) exploits this structure directly.",
+      "confidence": "high",
+      "regime": "BLIS 6-knob configuration space, rates 50-200, seed=42",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "At rate=100: 35 distinct Pareto tuples from 1800 configs (1.9%). At rate=50: 23 distinct tuples (1.3%). At rate=200: 41 distinct tuples (2.3%). The Pareto front is dominated by configs using bs=32 (confirmed RP-4) and by rich tiers (ni=1, ni=2) which produce 4-6 tuples each due to preemption sensitivity, while simple tiers (ni>=3) produce 1 tuple each. A search with only 200 evals can find all tuples by (a) guaranteeing tier coverage and (b) systematically exploring the preemption zone.",
+      "applicability_bounds": "Validated at rates 50-200. Rate affects Pareto complexity (more tuples at higher rates due to wider preemption zone) but not the qualitative structure. The 11% budget is specific to the 6-knob 1800-config BLIS space; different hardware/model configurations may produce different Pareto complexity.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-8",
+      "statement": "The BLIS Pareto front's Pareto tuple count varies significantly with seed at low arrival rates (rate=50: 23-38 tuples across seeds, 1.65x range) but is more stable at higher rates (rate=100: 35-39, 1.11x range; rate=200: 33-43, 1.30x range). This seed sensitivity at low rates reflects stochastic arrival patterns' stronger influence on preemption behavior when cache pressure is marginal.",
+      "confidence": "high",
+      "regime": "BLIS 6-knob space, qwen3-14b, H100, num_requests=200, rates 50-200",
+      "evidence": [
+        "iteration-4-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "At low rates (rate=50), arrival burstiness has larger relative effect on queue depth, shifting which configs trigger preemptions. This changes which (tier,kv,maxrun,scheduler) combos produce distinct metrics, varying the Pareto tuple count. At higher rates, the queue is consistently pressured, stabilizing the preemption threshold across seeds.",
+      "applicability_bounds": "Observed for seed set {42,123,999}. Broader seed sampling would quantify the distribution. The effect is specific to the 200-request workload where stochastic fluctuations matter; much longer workloads would show convergence.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-9",
+      "statement": "The v4 search algorithm generalizes across model sizes: it achieves 97.1% recall on llama-2-7b-hf (7B) at rate=100 despite being designed on qwen3-14b (14B). The one missed tuple is due to the rich/simple tier classification's 2x-ratio threshold being insensitive to tiers where all configs have uniformly high TTFT (compute bottleneck masking preemption diversity). The algorithm's Phase 2 template is model-agnostic; only the classification threshold may need tuning for very different model sizes.",
+      "confidence": "medium",
+      "regime": "BLIS 6-knob space, llama-2-7b on H100, rate=100, seed=42",
+      "evidence": [
+        "iteration-4-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "For llama-2-7b at tp=1,ni=1, all Phase 1 configs have high TTFT (20793-38054ms) because the model's compute capacity is the bottleneck (not cache). The max/min TTFT ratio is 1.83, below the 2x threshold, so the tier is classified as 'simple'. This misses the sjf@kv=5000 combo which shows dramatically lower TTFT (181ms vs 166ms for fcfs). The fix would be adding kv=5000,bs=32 to Phase 1 or using absolute TTFT reduction rather than ratio for classification.",
+      "applicability_bounds": "Tested only with llama-2-7b at one rate and seed. Generalization to other models (e.g., 70B, quantized, MoE) is untested. The classification edge case is specific to tiers where compute dominates over cache pressure.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

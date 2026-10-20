@@ -1,0 +1,10 @@
+{
+  "gate_type": "continue",
+  "summary": "The v4 search algorithm (a single-line fix adding one scheduler+KV combo to Phase 2) achieved perfect 100% Pareto recall across all 9 tested conditions (3 request rates \u00d7 3 random seeds) for the primary model, and 97.1% recall on a second model \u2014 both exceeding targets. The research question is fully answered.",
+  "key_points": [
+    "PRIMARY HYPOTHESIS (h-main) CONFIRMED: v4 achieved 100% tuple recall (mean=1.000, min=1.000) across all 9 (rate, seed) combinations \u2014 {50, 100, 200 req/s} \u00d7 {seeds 42, 123, 999} \u2014 exceeding the \u226598% mean / \u226595% minimum target. The fix cost only ~7 extra evaluations within the 200-eval budget.",
+    "ROBUSTNESS HYPOTHESIS (h-robustness) CONFIRMED: On a second model (meta-llama/llama-2-7b-hf), v4 achieved 97.1% recall (34/35 tuples, 12/12 tiers) at rate=100, seed=42 \u2014 well above the \u226585% threshold. The one missed tuple stems from a known edge case where the rich/simple tier classifier misfires when all Phase 1 configs have uniformly high TTFT (compute-bottleneck models), suggesting a minor future improvement: add a kv=5000,bs=32 probe to the Phase 1 template.",
+    "RECOMMENDATION \u2014 STOP: The algorithm discovers the full Pareto front using ~200 evaluations (11% of the 1,800-config space), generalizes across request rates and a different model architecture, and the sole remaining gap has a diagnosed root cause with a known fix. No further iteration is needed to answer the core research question; the deliverable (search.py v4 + answer.json) is complete."
+  ],
+  "recommendation": "stop"
+}

@@ -1,0 +1,49 @@
+{
+  "answer": "Yes, this is a real bug. The root cause is in sim/simulator.go:executeBatchStep() at line 647, where TotalOutputTokens++ is incremented on every decode step. When a request is preempted (batch_formation.go:232 resets ProgressIndex to 0), the request re-enters prefill and decode from scratch, causing each re-generated output token to be counted again. The fix moves TotalOutputTokens accumulation to recordRequestCompletion(), computing from ProgressIndex - len(InputTokens) at completion time, which is correct regardless of preemption history. Before fix: small KV (600 blocks) reports 114,630 output tokens vs large KV (5000 blocks) 106,083 — a phantom delta of 8,547 tokens. After fix: both report 105,082.",
+  "deliverable": "final/fix.patch",
+  "repro": "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 2>/dev/null | grep total_output_tokens && ./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 5000 2>/dev/null | grep total_output_tokens",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "total_output_tokens (pre-fix, small KV)",
+      "value": 114630,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 (before fix)",
+      "evidence": "runs/iter-1/results/small_kv.txt"
+    },
+    {
+      "id": "c2",
+      "metric": "total_output_tokens (pre-fix, large KV)",
+      "value": 106083,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 5000 (before fix)",
+      "evidence": "runs/iter-1/results/large_kv.txt"
+    },
+    {
+      "id": "c3",
+      "metric": "total_output_tokens (post-fix, small KV)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 (after fix)",
+      "evidence": "runs/iter-1/results/small_kv_fixed.txt"
+    },
+    {
+      "id": "c4",
+      "metric": "total_output_tokens (post-fix, large KV)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 5000 (after fix)",
+      "evidence": "runs/iter-1/results/large_kv_fixed.txt"
+    },
+    {
+      "id": "c5",
+      "metric": "preemption_count (small KV)",
+      "value": 265,
+      "condition": "--total-kv-blocks 600",
+      "evidence": "runs/iter-1/results/small_kv.txt"
+    },
+    {
+      "id": "c6",
+      "metric": "preemption_count (large KV)",
+      "value": 88,
+      "condition": "--total-kv-blocks 5000",
+      "evidence": "runs/iter-1/results/large_kv.txt"
+    }
+  ]
+}

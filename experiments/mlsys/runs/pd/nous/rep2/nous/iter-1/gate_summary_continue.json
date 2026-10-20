@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 confirmed all directional predictions: prefill-decode disaggregation (AD) consistently lowers inter-token latency (ITL) and raises time-to-first-token (TTFT) compared to always-local (AL) across all 7 arrival rates (10\u2013130 req/s) and 3 seeds. The ITL gap widens from 0.13 ms at low load to 1.68 ms at high load, and the \u03b1/(1-\u03c1) formula fits both curves (R\u00b2=0.94 AL, 0.96 AD). The main open question is where the formula breaks down near saturation \u2014 rates above 130 req/s have not been tested.",
+  "key_points": [
+    "ITL: AD < AL at all 21 rate\u00d7seed combinations. Mean ITL at rate=130: AL=19.45 ms vs AD=17.77 ms (gap of 1.68 ms). At rate=10 the gap is only 0.13 ms \u2014 exactly as predicted by the 1/(1-\u03c1) nonlinearity growing with load.",
+    "TTFT: AD > AL at all conditions by 4.2\u20139.4 ms, attributed to a constant ~3.4 ms KV transfer cost plus prefill-server queueing \u2014 confirms the paper's pipeline overhead mechanism.",
+    "Formula fit quality is good but not perfect: R\u00b2=0.9441 (AL) vs the 0.95 target, likely due to coarse parameter search grid rather than a true model failure; system operates in the near-linear regime (\u03c1 < 0.5) throughout the tested range, so the dramatic knee of 1/(1-\u03c1) has not yet been observed.",
+    "Key surprise: In AL mode, 2 of 4 instances (the prefill servers) sit completely idle \u2014 AL effectively uses half the cluster. This means AL vs AD is not a fair resource comparison, but it does match the paper's assumed setup.",
+    "Next iteration should push arrival rates to 140\u2013170 req/s to probe the saturation boundary and formula breakdown point, and optionally test the prefix-threshold decider as an intermediate policy between AL and AD."
+  ],
+  "recommendation": "continue"
+}

@@ -1,0 +1,24 @@
+{
+  "last_entered_phase": "DONE",
+  "iteration": 1,
+  "run_id": "dbg-nous-rep2",
+  "family": null,
+  "timestamp": "2026-10-20T01:40:16.947491+00:00",
+  "config_ref": null,
+  "work_dir": "/Users/toslali/mlsys_runs/runs/dbg/nous/rep2/nous_work/dbg-nous-rep2",
+  "repo_path": "/Users/toslali/mlsys_runs/runs/dbg/nous/rep2/ws",
+  "reproducibility_metadata": {
+    "captured_at": "2026-10-20T01:10:44Z",
+    "repo_commit": "15a1c7affb13bb2ccbd041f91e12858b02b3afd9",
+    "repo_dirty": false,
+    "hardware_config_sha256": "22e4c3ad34be1b62a62f04b6319fda28422dbf000ef8dda1acfdbf806de2b278",
+    "go_sum_sha256": "2870220a6b21a0142dda7e74f72d3aea2dee1540364b21adcf2579c39bfaa442",
+    "language_versions": {
+      "python": "Python 3.11.7",
+      "go": "go version go1.24.0 darwin/arm64",
+      "node": "v25.2.1",
+      "rust": "rustc 1.93.1 (01f6ddf75 2026-02-11) (Homebrew)"
+    }
+  },
+  "max_iterations": 3
+}

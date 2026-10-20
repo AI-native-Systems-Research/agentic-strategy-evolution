@@ -1,0 +1,67 @@
+metadata:
+  iteration: 5
+  family: "budget-reallocation-selective-phase2"
+  research_question: "Can selective Phase 2 + Phase 3 elimination + expanded Phase 2.5 achieve 100% Pareto recall at budget=100?"
+  complexity_tier: 2
+  tier_justification: "iter 5 — single mechanism (budget reallocation) with dose-response across budget levels. Tier 1 refuted in iter-4 (scope broadening alone insufficient); escalating to tier 2 with restructured phases."
+
+arms:
+  - type: h-main
+    prediction: "Restructured search (selective Phase 2 + no Phase 3 + expanded Phase 2.5) achieves >=95% unique Pareto tuple recall at budget=100 on 14B/rate=100, up from 80.0% baseline, because freeing 22 evals from Phase 2 and 30 from Phase 3 allows probing non-best combos and near-ceiling SJF differentiation that account for all 7 previously-missed tuples."
+    mechanism: "Phase 2 currently tests all 15 combos × 4 kv values = 60 evals, but 8 non-degrading combos (multi-instance with per-instance cache always sufficient) produce identical performance at all kv values — testing them at kv=4000,5000 wastes 22 evals. Phase 3 (bs=16 sweep, 30 evals) produces zero unique Pareto tuples because bs=32 at same kv dominates on all objectives (RP-11). Reallocating these 52 evals to Phase 2.5 allows: (a) probing non-best combos like (1,2) and (4,2) with sjf+128/sjf+64/fcfs+64, capturing 4 missed tuples from non-best combo exclusion; (b) testing sjf+256 at all degraded kv (not just kv_severe), capturing 1 missed tuple; (c) near-ceiling SJF probes at kv=4000 for backbone combos, capturing 2 missed tuples from strict threshold."
+    diagnostic: "If recall < 95%: check which tuples are still missed. If non-best combo tuples: Phase 2.5 non-best probing may not identify degradation correctly at 0.99 threshold. If near-ceiling tuples: the first-kv-above-threshold rule may miss the correct kv. If new misses introduced: selective Phase 2 may have skipped a kv value that was actually needed."
+    code_changes:
+      - file: "search.py"
+        intent: "Replace Phase 2 full sweep (all combos × 4 kv) with selective sweep: all combos at kv=2000,3000, then extend to kv=4000,5000 ONLY for combos still degraded at kv=3000 (ratio < 0.99 vs ceiling)"
+        rationale: "Non-degrading combos (8 of 15) produce identical performance at all kv values, so testing at kv>=4000 wastes 22 evals. The degradation-based extension rule preserves all Pareto coverage."
+      - file: "search.py"
+        intent: "Eliminate Phase 3 (bs=16 sweep at kv=2000,3000 for all combos). Remove the entire Phase 3 block."
+        rationale: "bs=32 at same kv dominates bs=16 on all 4 objectives — bs=16 configs can never be uniquely Pareto. Confirmed across all models and rates (RP-11). Saves 30 evals."
+      - file: "search.py"
+        intent: "Expand Phase 2.5 to probe ALL degraded combos (not just best-per-GPU) at 0.99 threshold, with priority ordering by descending TP. Backbone combos: sjf+128, sjf+256, fcfs+128 at each degraded kv, plus near-ceiling sjf+256 at first non-degraded kv. Non-best combos: sjf+128, sjf+64, fcfs+64 at each degraded kv."
+        rationale: "Non-best combos produce unique Pareto tuples at degraded kv (e.g., (1,2) at kv=2000 has 3 unique tuples via maxr=64 and sjf variants). Near-ceiling SJF probes catch scheduler differentiation at kv values just above the degradation knee (e.g., (2,1,sjf,256,kv=4000))."
+
+  - type: h-dose-response
+    knob: "budget"
+    values: [50, 75, 100, 125, 150, 200]
+    metric: "recall (fraction of GT unique Pareto tuples found)"
+    expected_shape: "saturating"
+    prediction: "Recall-vs-budget curve for v2 search is monotone increasing and saturating, reaching 100% by budget=100 (earlier saturation than v1's 100% at budget=200+). The dead zone at budget=100-125 observed in v1 is eliminated."
+    mechanism: "With budget=53 consumed by Phase 1+2 (was 75) and Phase 3 eliminated, Phase 2.5 starts at eval 54 (was eval 76). This gives Phase 2.5 sufficient evals to cover all degraded combos before the budget=100 cutoff, eliminating the dead zone where Phase 3 previously consumed evals without Pareto gain."
+    diagnostic: "If saturation occurs later than budget=100: Phase 2.5 may be testing too many non-productive probes before reaching high-impact combos. Check priority ordering."
+
+  - type: h-control-negative
+    prediction: "Unmodified search.py at budget=100 achieves exactly 80.0% unique Pareto tuple recall on 14B/rate=100/seed=42, consistent with iter-4 findings."
+    mechanism: "No code changes to baseline. Phase 1+2 consume 75 evals, Phase 2.5 gets 25, Phase 3+ never executes at budget=100. Same 7 tuples missed."
+    diagnostic: "If recall differs from 80.0%: non-determinism or build issue."
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    hardware: "H100"
+    rate: 100
+    seed: 42
+    num_requests: 200
+    prefix_tokens: 512
+    budget_levels: [50, 75, 100, 125, 150, 200]
+  unlocked_parameters_audit:
+    - name: "latency_model"
+      default_value: "trained-physics"
+      justification: "Fixed by campaign spec; default and only relevant mode for this experiment."
+    - name: "gpu_memory_utilization"
+      default_value: 0.9
+      justification: "Fixed by campaign spec; affects cache capacity but controlled identically across arms."
+    - name: "max_num_scheduled_tokens"
+      default_value: 4096
+      justification: "Fixed by campaign spec; affects batch formation but identical across all conditions."
+    - name: "admission_policy"
+      default_value: "always-admit"
+      justification: "Fixed by campaign spec; no admission filtering ensures all configs run comparable request counts."
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      v2_budget100: 7.0
+      v1_budget100: 7.0
+      full_curve_6budgets: 50.0
+    observation_method: "prototype run timing; ~0.067s per eval"

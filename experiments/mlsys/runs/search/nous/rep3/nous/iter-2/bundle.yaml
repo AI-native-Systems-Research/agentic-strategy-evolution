@@ -1,0 +1,138 @@
+metadata:
+  iteration: 2
+  family: "pareto-search-quality-validation"
+  research_question: "Can we validate and improve the BLIS search algorithm's Pareto quality by measuring it against exhaustive ground truth, and does explicit block_size=32 exploration improve recall?"
+  complexity_tier: 2
+  tier_justification: "iter 2, single mechanism (threshold-aware search) + code change ablation against ground truth — escalating from tier-1 (iter-1 confirmed search works) to tier-2 (now measuring its quality and improving it)"
+
+# Arms chosen:
+# - h-main: Tests whether improved bs=32 Phase 1 coverage improves Pareto recall
+#   against exhaustive ground truth. This directly addresses the "near-complete" claim
+#   from iter-1 by quantifying quality.
+# - h-control-negative: Random sampling baseline validates that the search's structure
+#   provides an advantage over naive sampling.
+# Skipped arms:
+# - h-dose-response: Already confirmed (iter-1). No new knob to dose-response test.
+# - h-robustness: Rate robustness would be tier 3+ (cross-workload generalization).
+#   Deferred to iter-3 if needed.
+# - h-tradeoff: Budget vs recall tradeoff is interesting but secondary to establishing
+#   ground truth quality first.
+
+arms:
+  - type: h-main
+    prediction: >
+      The improved search.py (v2) with balanced block_size={16,32} Phase 1 coverage
+      achieves strictly higher Pareto recall (fraction of true Pareto distinct metric
+      tuples found) than the iter-1 search.py (v1) when both are compared against
+      exhaustive enumeration, consistently across seeds {42, 123, 999}. v2 specifically
+      discovers Pareto-optimal configs at lower kv_blocks values per GPU tier, because
+      Phase 1's explicit bs=32 profiles seed the search with configs that exploit
+      block_size=32's threshold-halving effect, enabling Phase 2 to expand from these
+      low-kv seeds rather than requiring multi-step neighbor chains from bs=16 seeds.
+    mechanism: >
+      The KV preemption threshold is in total cache tokens (kv_blocks × block_size),
+      not just blocks. block_size=32 doubles tokens per block, shifting the preemption
+      threshold to ~half the block count. For example, at tp=2,ni=2: kv=3000,bs=32
+      (96K tokens) crosses the threshold (0 preemptions, rps=16.28), while kv=3000,bs=16
+      (48K tokens) does not (108 preemptions, rps=13.53). The iter-1 search has only
+      3 of 78 Phase 1 configs using bs=32, covering only 3 of 15 GPU tiers. Phase 2's
+      neighbor expansion can discover bs=32 variants but requires multi-step chains
+      (flip bs, then reduce kv) which consume budget and may not reach all tiers within
+      the expansion rounds. Adding bs=32 profiles to Phase 1 directly seeds all 15 GPU
+      tiers with threshold-appropriate bs=32 configs, enabling more complete coverage.
+    diagnostic: >
+      If v2 does NOT achieve higher recall than v1, investigate: (1) Phase 2 neighbor
+      expansion may already be sufficient to discover bs=32 configs within 5 rounds,
+      meaning the Phase 1 improvement is redundant. (2) The true Pareto front may not
+      include many bs=32-specific configs because the 4-objective front is dominated by
+      the GPU tier dimension (where v1 already has full coverage). (3) The metrics
+      degeneracy (many configs produce identical rps/ttft) may mean the recall metric
+      is not sensitive to the bs=32 improvement. Check per-tier min-kv analysis for
+      a more discriminating comparison.
+    code_changes:
+      - file: "search.py"
+        intent: >
+          Expand Phase 1 resource_profiles to include 4 block_size=32 entries alongside
+          the existing block_size=16 entries. The bs=32 profiles use lower kv_blocks
+          values to reflect the halved threshold: lean-32 at kv=2000, moderate-32 at
+          kv=3000, generous-32 at kv=4000, max-32 at kv=7500. Also expand the explicit
+          bs=32 tier probes from 3 GPU tiers to all 15 GPU tiers. Keep the Phase 1
+          budget at 40% — the larger config pool means more shuffling, but the balanced
+          coverage ensures both block sizes are represented across tiers.
+        rationale: >
+          Phase 1's current 96.2% bs=16 bias means 12 of 15 GPU tiers have zero
+          direct bs=32 exploration. The improved Phase 1 ensures every tier is probed
+          at both block sizes, directly testing whether this systematic coverage
+          improves Pareto recall.
+
+  - type: h-control-negative
+    prediction: >
+      Uniform random sampling of 200 configurations (without replacement) produces a
+      Pareto front with strictly lower recall against the exhaustive ground truth than
+      both v1 and v2 structured searches, consistently across seeds {42, 123, 999}.
+      Random sampling lacks the tier-aware structure that ensures systematic coverage
+      of all GPU count levels and resource threshold transitions, so it will under-
+      represent extreme tiers and miss threshold-crossing configs.
+    mechanism: >
+      The 1800-config space has 15 GPU tiers with 120 configs each. Random sampling
+      of 200 configs yields ~13 configs per tier on average, but with high variance —
+      some tiers may get as few as 5-6 configs. Within each tier, the KV threshold is
+      a narrow band (e.g., kv=3000,bs=32 is optimal but kv=3000,bs=16 is not), so
+      random sampling has only a ~1/120 chance of hitting the specific threshold-
+      crossing config for each tier. The structured search's Phase 1 explicitly targets
+      threshold transitions and Phase 2 systematically expands near them.
+    diagnostic: >
+      If random sampling achieves comparable recall to the structured searches,
+      the space's structure is even simpler than expected — possibly the Pareto front
+      is so large that any 200-config sample captures most of it, or the metric
+      degeneracy is so extensive that any sampling strategy finds the same few
+      distinct metric tuples.
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    rate: 100
+    prefix_tokens: 512
+    max_num_scheduled_tokens: 4096
+    long_prefill_token_threshold: 0
+    admission_policy: "always-admit"
+    preemption_policy: "fcfs"
+    routing_policy: "round-robin"
+    gpu_memory_utilization: 0.9
+
+  unlocked_parameters_audit:
+    - name: max_model_len
+      default_value: "auto (from HF config)"
+      justification: "Model length limit not varied — all requests use prefix_tokens=512 well below any model length."
+    - name: max_output_len
+      default_value: "auto (from model config)"
+      justification: "Output length budget not constrained for this workload — no length_capped_requests observed."
+    - name: kv_cpu_blocks
+      default_value: 0
+      justification: "CPU offload is not part of this experiment's search space — all KV cache is GPU-only."
+    - name: rtt_ms
+      default_value: 0
+      justification: "Network RTT is irrelevant for simulated DES runs (no real server)."
+
+  physical_realism_check:
+    model: "qwen/qwen3-14b"
+    gpu: "H100"
+    gpu_memory_utilization: 0.9
+    derived_k_realistic: 7500
+    k_used_in_experiment: 5000
+    k_realism_ratio: 0.67
+    justification: "Search explores KV blocks 2000-10000; midpoint 5000 is representative. H100 80GB with 14B model at TP=2 supports ~7500 realistic blocks. Ratio 0.67 reflects that many Pareto configs use 3000-5000 blocks."
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      exhaustive_per_seed: 400
+      search_v1_per_seed: 20
+      search_v2_per_seed: 20
+      random_per_seed: 20
+    observation_method: "Direct measurement: baseline eval = 0.22s wall time, 1800 × 0.22 = 396s for exhaustive"

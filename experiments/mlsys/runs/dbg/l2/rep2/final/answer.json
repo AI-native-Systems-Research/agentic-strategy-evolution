@@ -1,0 +1,35 @@
+{
+  "answer": "Yes, this is a real bug. Root cause: when a request is preempted in sim/batch_formation.go:preemptForTokens(), its ProgressIndex is reset to 0 (line 232). When the request is rescheduled, it re-enters the decode phase and each regenerated output token increments sim.Metrics.TotalOutputTokens again (sim/simulator.go:647), double-counting tokens already counted before preemption. The fix captures the number of decode tokens generated before preemption (ProgressIndex - len(InputTokens)) in PreemptedRequest.GeneratedOutputTokens, and subtracts that count from TotalOutputTokens when recording preemption metrics in scheduleBatch(). This ensures each output token is counted exactly once regardless of preemption.",
+  "deliverable": "final/fix.patch",
+  "repro": "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 2>/dev/null | grep total_output_tokens",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "total_output_tokens (before fix, small KV / 265 preemptions)",
+      "value": 114630,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600",
+      "evidence": "final/answer.json (inline; pre-fix value from initial reproduction)"
+    },
+    {
+      "id": "c2",
+      "metric": "total_output_tokens (before fix, no preemptions)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 60000",
+      "evidence": "final/large_kv_baseline.json"
+    },
+    {
+      "id": "c3",
+      "metric": "total_output_tokens (after fix, small KV / 265 preemptions)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600",
+      "evidence": "final/small_kv_fixed.json"
+    },
+    {
+      "id": "c4",
+      "metric": "inflation from preemption double-counting",
+      "value": 9548,
+      "condition": "114630 - 105082 = 9548 excess tokens from 265 preemptions",
+      "evidence": "final/small_kv_fixed.json"
+    }
+  ]
+}

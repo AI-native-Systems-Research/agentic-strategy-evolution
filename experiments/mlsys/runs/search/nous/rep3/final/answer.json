@@ -1,0 +1,70 @@
+{
+  "answer": "The BLIS 6-knob configuration space (1800 configs, 4 objectives) has a hierarchically structured Pareto front dominated by GPU count (tp*instances), which creates discrete throughput tiers. Within each tier, the Pareto front's complexity lives in the 'partial preemption' zone: specific (kv_blocks, max_num_running_reqs, scheduler) combinations at low-instance tiers (ni=1, ni=2) where cache pressure causes preemptions that differentiate configs by ttft_p99. Above the preemption threshold (~4500-5000 blocks), additional kv_blocks have zero effect; below it, TTFT p99 spikes 100-250x. block_size=32 is strictly Pareto-dominant (halves kv_blocks for same cache capacity). The effective dimensionality is ~3 (GPU count, KV sufficiency, concurrency sufficiency). The Pareto front has only 23-43 distinct metric tuples (depending on rate and seed) out of 1800 configs. A structure-aware search (v4) with 3 phases — deterministic tier sampling, diversity-directed expansion of rich tiers, and neighbor expansion — finds 100% of Pareto tuples at rates 50-200 across 3 seeds using only 200 evaluations (11% of space), in ~16-44 seconds. The algorithm generalizes to a different model (llama-2-7b: 97.1% recall). Pareto tuple count is seed-stable at high rates (rate=100: 35-39 tuples, 1.11x range) but seed-sensitive at low rates (rate=50: 23-38 tuples, 1.65x range).",
+  "deliverable": "search.py",
+  "repro": "go build -o blis main.go && python3 search.py --model qwen/qwen3-14b --rate 100 --budget 200 --seed 42 --out final/evidence/search_output_rate100_seed42.json",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "pareto_configs_found",
+      "value": 72,
+      "condition": "v4 search, 200 evaluations, seed=42, rate=100, model=qwen/qwen3-14b",
+      "evidence": "final/evidence/search_output_rate100_seed42.json"
+    },
+    {
+      "id": "c2",
+      "metric": "tuple_recall_mean_9_conditions",
+      "value": 1.0,
+      "condition": "v4 search, rates {50,100,200} x seeds {42,123,999}, budget=200, qwen/qwen3-14b",
+      "evidence": "final/evidence/recall_summary.json"
+    },
+    {
+      "id": "c3",
+      "metric": "tuple_recall_min_9_conditions",
+      "value": 1.0,
+      "condition": "v4 search, rates {50,100,200} x seeds {42,123,999}, budget=200, qwen/qwen3-14b",
+      "evidence": "final/evidence/recall_summary.json"
+    },
+    {
+      "id": "c4",
+      "metric": "tuple_recall_llama_model_generalization",
+      "value": 0.9714,
+      "condition": "v4 search, rate=100, seed=42, budget=200, meta-llama/llama-2-7b-hf (34/35 tuples)",
+      "evidence": "final/evidence/recall_summary.json"
+    },
+    {
+      "id": "c5",
+      "metric": "gt_distinct_tuples_rate100_seed42",
+      "value": 35,
+      "condition": "exhaustive 1800-config enumeration, rate=100, seed=42, qwen/qwen3-14b",
+      "evidence": "final/evidence/recall_summary.json"
+    },
+    {
+      "id": "c6",
+      "metric": "gt_distinct_tuples_rate50_range",
+      "value": "23-38",
+      "condition": "exhaustive, rate=50, seeds {42,123,999}, qwen/qwen3-14b (1.65x seed range)",
+      "evidence": "final/evidence/recall_summary.json"
+    },
+    {
+      "id": "c7",
+      "metric": "gt_distinct_tuples_rate100_range",
+      "value": "35-39",
+      "condition": "exhaustive, rate=100, seeds {42,123,999}, qwen/qwen3-14b (1.11x seed range)",
+      "evidence": "final/evidence/recall_summary.json"
+    },
+    {
+      "id": "c8",
+      "metric": "gt_distinct_tuples_rate200_range",
+      "value": "33-43",
+      "condition": "exhaustive, rate=200, seeds {42,123,999}, qwen/qwen3-14b (1.30x seed range)",
+      "evidence": "final/evidence/recall_summary.json"
+    },
+    {
+      "id": "c9",
+      "metric": "search_budget_fraction",
+      "value": 0.111,
+      "condition": "200 evaluations out of 1800 total configs (11.1%)",
+      "evidence": "search.py"
+    }
+  ]
+}

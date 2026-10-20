@@ -1,0 +1,12 @@
+{
+  "gate_type": "continue",
+  "summary": "Iteration 1 fully resolved the reported bug: a preemption-driven double-counting error was inflating total_output_tokens by up to 9.1% (9,548 tokens on 265 preemptions). The fix\u2014subtracting already-counted output tokens at preemption time and resetting TTFT/ITL state\u2014produces identical token counts (105,082) across all KV cache sizes, and a new regression test passes.",
+  "key_points": [
+    "Bug confirmed and fixed: pre-fix, 265 preemptions inflated total_output_tokens from 105,082 to 114,630 (+9.1%); post-fix, all three KV cache sizes (600, 6,000, 60,000 blocks) produce exactly 105,082.",
+    "Root cause was ProgressIndex reset to 0 in batch_formation.go:232 causing decode-loop increments in simulator.go:647 to re-count tokens from restarted requests; fix stores OutputTokensGenerated before the reset and subtracts it in the preemption handler.",
+    "Two open questions remain: (1) whether ITL percentile metrics (P90/P95/P99) are now accurate under preemption (ITL array is reset but not explicitly tested at the aggregate level), and (2) whether cluster-level TTFTSum aggregation in cluster/cluster.go:1274 correctly propagates the per-instance fix across multi-instance deployments.",
+    "All existing sim/ tests pass; the only known test failure (TestFetchHFConfig_Success in cmd/) is a pre-existing, unrelated httptest panic.",
+    "Recommendation: the core total_output_tokens correctness question is fully answered; a follow-up iteration would be warranted only to validate ITL percentile accuracy and cluster-level TTFT aggregation under preemption."
+  ],
+  "recommendation": "stop"
+}

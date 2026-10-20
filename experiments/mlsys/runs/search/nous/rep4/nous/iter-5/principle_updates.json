@@ -1,0 +1,80 @@
+[
+  {
+    "id": "RP-12",
+    "statement": "Selective Phase 2 (all combos at kv=2000,3000; extend to kv=4000,5000 only for combos degraded at kv=3000 with ratio < 0.99 vs ceiling) reduces Phase 2 eval count from 60 to ~38 while preserving 100% Pareto coverage, because non-degrading combos produce identical performance at all kv values above their sufficiency threshold.",
+    "confidence": "high",
+    "regime": "14B/rate=100/seed=42; generalizes to any model where non-degrading combos exist (all tested models)",
+    "evidence": [
+      "iteration-5-h-main",
+      "iteration-5-h-dose-response"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "8 of 15 combos (multi-instance or high-instance combos with per-instance cache always sufficient) have ratio=1.0 at all kv values including kv=2000. Testing these at kv=4000,5000 produces ceiling-identical results \u2014 no Pareto-unique tuples. Degradation-at-kv=3000 is a reliable binary filter for which combos need kv extension.",
+    "applicability_bounds": "Applies when the cache-sufficiency threshold for a combo is below kv=2000. If rate increases significantly (e.g., rate=500), more combos may degrade at kv=3000, and fewer evals are saved.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-13",
+    "statement": "Expanding Phase 2.5 to probe ALL degraded combos (not just best-per-GPU) with priority-ordered backbone vs non-best treatment recovers 100% unique Pareto tuple recall at budget=100 on 14B/rate=100, eliminating the 80.0% recall ceiling observed in v1. Non-best combos contribute 4 of the 7 previously-missed tuples at degraded kv values.",
+    "confidence": "high",
+    "regime": "14B/rate=100/seed=42",
+    "evidence": [
+      "iteration-5-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "Non-best combos (e.g., (1,2), (4,2)) are excluded from v1 Phase 2.5 via best-per-GPU filter. At degraded kv, these combos produce unique Pareto tuples via maxr=64/sjf variants because their lower absolute rps creates distinct tradeoff points. Near-ceiling SJF probes (sjf+256 at first non-degraded kv above max degraded) capture scheduler differentiation at the degradation knee for backbone combos.",
+    "applicability_bounds": "Applies at budget=100 with the v2 selective Phase 2 freeing the required evals. At budget=75, v2 achieves 80.0% (same as v1 at budget=100) \u2014 non-best probing only activates at budget >= ~90 when Phase 2.5 has sufficient evals.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-14",
+    "statement": "The v2 hierarchical search achieves 100% unique Pareto tuple recall at budget=100 on 14B/rate=100/seed=42, with a saturating recall curve: 51.4% at b=50, 80.0% at b=75, 100.0% at b=100+. The v1 dead zone at budget=100-125 (both achieving 80.0%) is fully eliminated.",
+    "confidence": "high",
+    "regime": "14B qwen/qwen3-14b, rate=100, seed=42, H100 hardware",
+    "evidence": [
+      "iteration-5-h-main",
+      "iteration-5-h-dose-response",
+      "iteration-5-h-control-negative"
+    ],
+    "contradicts": [
+      "RP-11"
+    ],
+    "extraction_iteration": 5,
+    "mechanism": "Three structural changes combine: (1) selective Phase 2 saves 22 evals by skipping non-degrading combos at high kv; (2) Phase 3 elimination saves 30 evals (bs=16 zero Pareto contribution per RP-11); (3) freed 52 evals fund comprehensive Phase 2.5 covering backbone+non-best combos with sjf+128/sjf+256/fcfs+128 at each degraded kv plus near-ceiling probes.",
+    "applicability_bounds": "Validated on 14B/rate=100. Prior iterations (handoff) report 100% on 7B/rate=100, 14B/rate=50; 97.6% on 14B/rate=200 (one edge-case tuple at rate=200 near-ceiling). Robustness across other seeds not yet validated.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-11",
+    "statement": "SUPERSEDED by RP-14. The recall-vs-budget curve of the hierarchical search has a confirmed dead zone at budget=100-125: both budgets achieve 80.0% recall on 14B/rate=100. This dead zone applied to the v1 search only; the v2 search eliminates it.",
+    "confidence": "high",
+    "regime": "v1 search only: 14B/rate=100",
+    "evidence": [
+      "iteration-4-h-main",
+      "iteration-5-h-control-negative"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 5,
+    "mechanism": "v1 Phase 3 (bs=16 sweep, 30 evals) consumed budget between recall=80% and 91.4% without contributing unique Pareto tuples. v2 eliminates Phase 3.",
+    "applicability_bounds": "Applies only to v1 search. v2 dead zone eliminated.",
+    "superseded_by": "RP-14",
+    "category": "domain",
+    "status": "superseded",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

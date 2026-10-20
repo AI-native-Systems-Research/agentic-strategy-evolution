@@ -1,0 +1,139 @@
+metadata:
+  iteration: 4
+  family: "structural-formula-mismatch"
+  research_question: "Does the paper's ITL formula break down at high rates due to finite-horizon transient effects or due to a structural mismatch between BLIS's latency model and the formula's batch-size assumptions?"
+  complexity_tier: 2
+  tier_justification: "iter-4 — single mechanism (formula mismatch) + per-request analysis ablation; previous tier-1 experiments established directional results, this deepens the causal diagnosis"
+
+# Arms rationale:
+# h-main tests the core structural-vs-transient question via Q2-Q3 restriction analysis.
+# h-control-negative validates that the transient structure is regime-dependent (negligible at low rates).
+# h-dose-response characterizes how the transient magnitude varies with rate.
+# These three arms form a coherent diagnostic: h-main proves structural mismatch, h-control-negative
+# bounds the regime where it matters, and h-dose-response maps the transient magnitude.
+
+arms:
+  - type: h-main
+    prediction: >
+      The best-fit 1/(1-w*lambda) formula applied to quasi-steady-state ITL (Q2-Q3
+      quartile means, middle 50% of requests by arrival order) will produce a LOWER R²
+      than when applied to full-run mean ITL, in both AL and AD modes. Specifically,
+      R²_full - R²_Q2Q3 >= 0.02 for at least one mode. This directionally proves the
+      formula breakdown is structural: removing ramp-up/drain transients makes the data
+      MORE concave (high-rate points pushed up while low-rate points are unchanged),
+      WORSENING the fit of the convex 1/(1-rho) formula.
+    mechanism: >
+      The Q2-Q3 restriction removes requests from the ramp-up phase (Q1, where batch
+      is still building → low ITL) and drain phase (Q4, where arrivals have stopped →
+      batch shrinking → low ITL). At high rates, Q2-Q3 ITL is 3-5% higher than the
+      full-run mean (probed: AL rate=100, Q2-Q3=19.193 vs full=18.436, +4.1%). This
+      disproportionately raises the high-rate data points without affecting low-rate points
+      (where Q2-Q3 ≈ full). The resulting curve is MORE concave, amplifying the mismatch
+      with the convex 1/(1-rho) form. Root cause in code: BLIS's StepTime()
+      (sim/latency/trained_physics_model.go:154-331) includes nonlinear terms (sumCtx in
+      tDcKv at line 238, MoE nEff scaling at line 248) that produce sub-linear per-request
+      ITL growth with batch size, unlike the paper's linear W assumption.
+    diagnostic: >
+      If R²_Q2Q3 > R²_full (formula fit improves with transient removal), the breakdown IS
+      primarily transient-driven and the formula's structural form matches BLIS's steady-state
+      behavior. In that case, investigate whether the probed Q2-Q3 values were computed
+      incorrectly (quartile boundaries off) or whether the improvement only appears at certain
+      rate subranges.
+
+  - type: h-control-negative
+    prediction: >
+      At rates <= 10 req/s, the absolute difference between Q2-Q3 mean ITL and full-run
+      mean ITL will be less than 0.2% of the full-run mean, for both AL and AD modes and
+      all seeds. The inverted-U per-request ITL pattern will be absent (ITL spread < 0.5%
+      of mean).
+    mechanism: >
+      At low rates, the experiment duration is much longer than service time (rate=5:
+      duration≈60s vs service_time≈1.6s; rate=10: duration≈30s vs service_time≈1.6s).
+      The system reaches near-steady-state quickly and maintains it for most of the
+      simulation. Ramp-up and drain phases are negligible fractions of the total requests
+      (probed: AL rate=5 ITL spread = 0.1%, rate=10 ITL spread ≈ 0.1%). The formula's
+      steady-state assumption is operationally valid here.
+    diagnostic: >
+      If the difference exceeds 0.2%, check whether the quartile boundaries (n//4, n//2,
+      3n//4) create uneven groupings at the 300-request boundary. Also check seed 43 and
+      44 for routing asymmetry (one decode instance receiving more requests than the other).
+
+  - type: h-dose-response
+    prediction: >
+      The ITL intra-run spread (defined as (max_quartile_mean_ITL - min_quartile_mean_ITL)
+      / overall_mean_ITL * 100%) follows an inverted-U shape across rates 5-150 req/s for
+      both AL and AD modes, peaking between rates 80-120 and declining at both lower and
+      higher rates.
+    mechanism: >
+      At low rates, minimal concurrency → flat ITL across requests → low spread. At
+      moderate-high rates (80-100), the ramp-up/drain transients are maximally pronounced
+      relative to a short quasi-steady-state period → peak spread. At very high rates
+      (120-150), the system is so loaded that even ramp-up/drain phases have substantial
+      batching → spread compresses. Probed values (AL, seed=42): rate=5:0.1%, rate=20:1.0%,
+      rate=60:9.0%, rate=100:12.1%, rate=150:9.2% — confirming the inverted-U.
+    diagnostic: >
+      If the shape is monotone increasing (no decline at high rates), the drain phase
+      ITL suppression diminishes faster than expected at very high rates. Check whether
+      requests at rate=150 complete before the batch can drain (all 300 requests may be
+      in-flight simultaneously, so there's no true "drain" — just a sudden stop).
+    knob: rate
+    values: [5, 10, 20, 40, 60, 80, 100, 120, 150]
+    metric: itl_intra_run_spread_pct
+    expected_shape: inverted_u
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  fanout_template: >
+    ./blis run --model qwen/qwen3-14b --num-instances 4 --prefill-instances 2
+    --decode-instances 2 --num-requests 300 --prompt-tokens 512 --prompt-tokens-stdev 0
+    --output-tokens 128 --output-tokens-stdev 0 --routing-policy least-loaded
+    --pd-decider {mode} --rate {rate} --seed {seed}
+    --metrics-path {output_path} 2>/dev/null
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    num_instances: 4
+    prefill_instances: 2
+    decode_instances: 2
+    num_requests: 300
+    prompt_tokens: 512
+    prompt_tokens_stdev: 0
+    output_tokens: 128
+    output_tokens_stdev: 0
+    routing_policy: "least-loaded"
+    rates: [5, 10, 20, 40, 60, 80, 100, 120, 150]
+    pd_modes: ["never", "always"]
+    seeds: [42, 43, 44]
+
+  unlocked_parameters_audit:
+    - name: MaxModelLen
+      default_value: "auto (model-specific)"
+      justification: "All requests use fixed 512+128=640 tokens, well within any model's context window; default is safe."
+    - name: gpu_memory_utilization
+      default_value: 0.9
+      justification: "KV cache capacity is not a binding constraint — 300 requests × 640 tokens fits comfortably; default is acceptable."
+    - name: BlockSize
+      default_value: 16
+      justification: "Block size affects KV cache granularity but not ITL computation; our experiment measures ITL not cache efficiency."
+    - name: latency_model
+      default_value: "trained-physics"
+      justification: "Default trained-physics is the production model; switching would change the basis functions we're testing against the paper's formula."
+    - name: kv_transfer_bandwidth
+      default_value: "25 GB/s"
+      justification: "Fixed KV transfer time is constant across all conditions; does not affect ITL comparisons."
+    - name: scheduling_policy
+      default_value: "fcfs"
+      justification: "FCFS is simplest scheduling; batch composition doesn't affect the paper's rate-ITL relationship."
+    - name: max_num_seqs
+      default_value: 2048
+      justification: "Never binding — peak concurrent batch size at rate=150 is ~30-40 requests, well below limit."
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      AL_low_rate: 65
+      AL_high_rate: 5
+      AD_low_rate: 65
+      AD_high_rate: 5
+    observation_method: "Observed from iter-3 runs; simulation duration = num_requests/rate, low rate (5 req/s) takes ~60s, high rate (150 req/s) takes ~2s plus overhead."

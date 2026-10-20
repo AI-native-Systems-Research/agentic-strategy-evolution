@@ -1,0 +1,42 @@
+{
+  "answer": "Yes, this is a real bug. Root cause: sim/simulator.go:647 unconditionally increments TotalOutputTokens on every decode step, but sim/batch_formation.go:232 resets ProgressIndex to 0 on preemption, causing the request to re-execute all decode steps and double-count output tokens. Fix: added OutputTokensCounted field to Request (survives preemption) and gated TotalOutputTokens++ on decode progress exceeding the high-water mark. After fix, small KV (265 preemptions) and large KV (0 preemptions) both report total_output_tokens=105082 for the same workload.",
+  "deliverable": "final/fix.patch",
+  "repro": "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 2>/dev/null && ./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 2>/dev/null",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "total_output_tokens (small KV, before fix)",
+      "value": 114630,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 (unfixed code)",
+      "evidence": "runs/iter-1/results/small_kv.txt"
+    },
+    {
+      "id": "c2",
+      "metric": "total_output_tokens (large KV, baseline)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 (default KV)",
+      "evidence": "runs/iter-1/results/large_kv.txt"
+    },
+    {
+      "id": "c3",
+      "metric": "total_output_tokens (small KV, after fix)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600 (fixed code)",
+      "evidence": "runs/iter-1/results/small_kv_fixed.txt"
+    },
+    {
+      "id": "c4",
+      "metric": "total_output_tokens (large KV, after fix)",
+      "value": 105082,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 (fixed code, default KV)",
+      "evidence": "runs/iter-1/results/large_kv_fixed.txt"
+    },
+    {
+      "id": "c5",
+      "metric": "preemption_count (small KV)",
+      "value": 265,
+      "condition": "--model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600",
+      "evidence": "runs/iter-1/results/small_kv_fixed.txt"
+    }
+  ]
+}

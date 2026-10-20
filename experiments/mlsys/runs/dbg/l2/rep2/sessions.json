@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "The patch is clean and complete. Here's the summary:\n\n## Root Cause\n\n**File:** `sim/batch_formation.go`, function `preemptForTokens` (line 232)\n**File:** `sim/simulator.go`, function `executeBatchStep` (line 647)\n\nWhen a request is preempted mid-decode, `preemptForTokens` resets `ProgressIndex` to 0 (line 232). When the request is rescheduled, it goes through decode again, and each regenerated output token increments `TotalOutputTokens++` (line 647) \u2014 double-counting tokens already counted before preemption.\n\n## Evidence\n\n| Condition | Before Fix | After Fix |\n|---|---|---|\n| 600 KV blocks (265 preemptions) | 114,630 | 105,082 |\n| 60,000 KV blocks (0 preemptions) | 105,082 | 105,082 |\n\nThe 9,548 excess tokens (9.1% inflation) disappeared after the fix, and both runs now report identical `total_output_tokens`.\n\n## Fix (3 files, minimal)\n\n1. **`sim/batch_formation.go`**: Added `GeneratedOutputTokens` field to `PreemptedRequest`; computed before `ProgressIndex` reset as `max(0, ProgressIndex - len(InputTokens))`\n2. **`sim/simulator.go`**: In `scheduleBatch`, subtract `GeneratedOutputTokens` from `TotalOutputTokens` for each preempted request\n3. **`sim/simulator_preempt_test.go`**: Comparative regression test \u2014 runs identical requests with and without preemption, asserts `TotalOutputTokens` matches",
+  "cli_cost": 2.7963507499999998,
+  "subtype": "success",
+  "wall": 775.3,
+  "num_turns": 58,
+  "n": 1
+ }
+]

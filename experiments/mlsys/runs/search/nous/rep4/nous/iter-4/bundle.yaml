@@ -1,0 +1,77 @@
+metadata:
+  iteration: 4
+  family: "budget-efficiency"
+  research_question: "Can the hierarchical Pareto search achieve >=88% recall at budget=100 by broadening Phase 2.5's scope to include non-best-per-GPU combos, testing sjf+256 at all degraded kvs, and lowering the degradation threshold?"
+  complexity_tier: 2
+  tier_justification: "iter 4 — single mechanism (Phase 2.5 scope) + dose-response on one knob (budget), consistent with tier 2"
+
+arms:
+  - type: h-main
+    prediction: "The broadened Phase 2.5 will achieve >=88.6% unique Pareto tuple recall (31/35 or better) on qwen/qwen3-14b at rate=100 with budget=100 (seed=42), up from 80.0% with the current search. It will also improve budget=200 recall from 94.3% to >=97% by including (1,2) combos in degraded-regime exploration."
+    mechanism: "The current Phase 2.5 has three scope limitations that exclude 7/35 GT Pareto tuples at budget=100: (1) pareto_combos filter excludes non-best-per-GPU combos like (1,2) and (4,2) that produce unique rps/ttft tradeoffs — (1,2) has 0.71x the rps of (2,1) at gpus=2 but 16% better ttft. (2) sjf+256 tested only at kv_severe, missing (8,1,sjf,256,kv=3000) where sjf+256 produces a distinct Pareto point from sjf+128. (3) The 0.95 degradation threshold excludes kv=4000 for (1,1) and (2,1), where SJF still produces unique Pareto tuples despite ratio>0.95. Broadening the scope addresses all three: lowering threshold to 0.99 captures near-ceiling kv, including all degraded combos captures multi-instance Pareto points, and testing sjf+256 at all degraded kvs captures moderate-degradation SJF points. Budget impact: Phase 2.5 will use approximately 30-35 evals (up from ~25) covering more combos, fitting within the 25 eval budget remaining after Phases 1-2 by trimming fcfs+128 (which rarely produces unique Pareto tuples)."
+    diagnostic: "If recall < 88.6%, check: (1) whether the broadened Phase 2.5 exceeds 25 evals before covering all combos — the descending-TP ordering ensures highest-impact combos are tested first, but if too many combos qualify under 0.99 threshold, lower-TP combos may get cut; (2) whether the near-ceiling SJF probe (sjf+256 at ratio>0.99 kv) actually produces Pareto-optimal configs or if they're dominated by other configs in the accumulated results; (3) whether the added (1,2)/(4,2) combos require more than 5 additional evals each."
+    code_changes:
+      - file: "search.py"
+        intent: "Broaden Phase 2.5 scope in the search() method (lines 229-265): (1) Replace pareto_combos filter with any (tp,ni) that has at least one Phase 2 result with rps < 0.99 * ceiling. (2) For each qualifying combo, test sjf+{128,256} at each degraded kv (threshold 0.99), plus fcfs+64 and sjf+64 at kv_severe. (3) Add one near-ceiling SJF probe per combo: sjf+256 at the highest kv from Phase 2 (even if ratio > 0.99). (4) Sort combos by descending TP to prioritize highest-impact combos if budget runs low. (5) Remove fcfs+128 testing (rarely produces unique Pareto tuples) to make room for the broader scope."
+        rationale: "The current Phase 2.5 tests only 4 best-per-GPU combos, missing 4 GT Pareto tuples from (1,2) and (4,2). The narrow sjf+256 coverage at kv_severe misses 1 tuple. The strict 0.95 threshold misses 2 near-ceiling tuples. The broadened scope addresses all three root causes identified during probing."
+
+  - type: h-dose-response
+    knob: "budget"
+    values: [50, 75, 100, 125, 150, 200]
+    metric: "pareto_tuple_recall"
+    expected_shape: "saturating"
+    prediction: "The improved search's recall-vs-budget curve will be monotone increasing and saturating: climbing from ~25% at budget=50 to >=88.6% at budget=100, then asymptoting toward 97-100% as later phases fill remaining gaps. The curve should show no dead zone between budget=100 and budget=125, unlike the current search which is flat at 80% for both. This is because the broadened Phase 2.5 eliminates the budget-wasting bs=16 sweep at budget 100-125."
+    mechanism: "By frontloading all SJF/concurrency exploration before the bs=16 sweep (Phase 3), and broadening its scope to include non-best combos, the search extracts maximum Pareto diversity per evaluation in the low-budget regime. The original dead zone (80% for both budget=100 and 125) corresponded to Phase 3 producing zero new Pareto tuples."
+    diagnostic: "If the curve has a plateau or non-monotone region, check which phase's budget allocation is misaligned with Pareto diversity contribution."
+
+  - type: h-control-negative
+    prediction: "The current (unmodified) search at budget=100 will achieve <=82% unique Pareto tuple recall on 14B at rate=100, because Phase 2.5's pareto_combos filter excludes non-best-per-GPU combos that produce 4 unique Pareto tuples, and its sjf+256-at-kv_severe-only policy misses 1 additional tuple, and its 0.95 threshold misses 2 near-ceiling tuples."
+    mechanism: "With the current Phase 2.5 scope, budget=100 completes Phase 1 (15 evals), Phase 2 (60 evals), and a partial Phase 2.5 (~25 evals). Phase 2.5 tests only best-per-GPU combos: (1,1), (2,1), (4,1), (8,1). These 4 combos discover SJF interaction tuples at kv=2000 and kv=3000, but miss multi-instance combos and near-ceiling SJF. Verified at 80.0% (28/35)."
+    diagnostic: "If recall > 82%, the search may be accidentally discovering additional Pareto points through cache hits or Phase 2.5 edge effects."
+
+# Arm selection rationale:
+# h-main tests the budget efficiency improvement via Phase 2.5 scope broadening (code change).
+# h-dose-response characterizes the recall-vs-budget curve shape to understand WHERE the
+# improvement comes from and whether the dead zone is eliminated.
+# h-control-negative confirms the baseline limitation at 80%, validating that the improvement
+# is real. Cross-model testing is omitted because the mechanism (Phase 2.5 scope) is
+# independent of model architecture; the 14B analysis is sufficient to demonstrate the effect.
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    rate: 100
+    seed: 42
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    prefix_tokens: 512
+    gpu_memory_utilization: 0.9
+    max_num_scheduled_tokens: 4096
+
+  unlocked_parameters_audit:
+    - name: "preemption-policy"
+      default_value: "fcfs"
+      justification: "Campaign locks this as fcfs; no per-arm variation needed"
+    - name: "admission-policy"
+      default_value: "always-admit"
+      justification: "Campaign locks this as always-admit; admission policy is not under study"
+    - name: "routing-policy"
+      default_value: "round-robin"
+      justification: "Campaign locks this as round-robin; routing policy is not under study"
+    - name: "long-prefill-token-threshold"
+      default_value: 0
+      justification: "Campaign locks this at 0; chunked prefill threshold not under study"
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      search_b50: 4
+      search_b75: 6
+      search_b100: 8
+      search_b125: 10
+      search_b150: 12
+      search_b200: 16
+    observation_method: "Measured via subprocess timing during design-phase probing: each blis eval takes ~0.067s"

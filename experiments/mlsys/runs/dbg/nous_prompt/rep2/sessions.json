@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "All evidence files are consistent with the claims. Let me write the final report.\n\n---\n\n## Answer\n\nYes, this is a real bug. `total_output_tokens` is double-counted when requests are preempted.\n\n**Root cause:** `sim/simulator.go:647` unconditionally increments `TotalOutputTokens++` on every decode step, but `sim/batch_formation.go:232` resets `ProgressIndex = 0` on preemption. After rescheduling, the request re-executes all prefill and decode steps, re-counting output tokens that were already counted before preemption.\n\n**Fix:** Added `OutputTokensCounted int64` field to `Request` (not reset on preemption). Gated `TotalOutputTokens++` on `decodeProgress > req.OutputTokensCounted`, so only genuinely new decode progress increments the counter.\n\n## Evidence\n\n| Condition | total_output_tokens | preemption_count |\n|---|---|---|\n| Large KV (baseline) | 105,082 | 0 |\n| Small KV (before fix) | 114,630 | 265 |\n| Small KV (after fix) | 105,082 | 265 |\n| Large KV (after fix) | 105,082 | 0 |\n\nThe 9,548-token inflation (before fix) is entirely due to double-counting during preemption re-execution. After the fix, both configurations report identical output tokens.\n\nRegression test `TestPreemption_TotalOutputTokens_NoDoubleCount` verifies that with 4 preemptions, `TotalOutputTokens` matches the no-preemption expectation. All existing tests pass.\n\n## Principles Discovered\n\n**RP-1** (high confidence): Per-request metric counters accumulated during execution must use high-water-mark guards when the execution path can be replayed. Applies whenever `preemption_count > 0`.\n\n## Limitations & Open Questions\n\n- The `req.ITL` array also accumulates entries across preemption cycles, potentially inflating ITL metrics. This was not part of the reported bug but may warrant a similar fix.\n- The completion threshold uses `max(len(OutputTokens),1)-1`, so each request contributes `outputLen-1` to `TotalOutputTokens`. This is consistent behavior, not a bug, but it means `total_output_tokens` slightly undercounts the true sum of output lengths.",
+  "cli_cost": 5.277039000000001,
+  "subtype": "success",
+  "wall": 1397.0,
+  "num_turns": 77,
+  "n": 1
+ }
+]

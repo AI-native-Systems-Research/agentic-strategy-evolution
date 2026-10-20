@@ -1,0 +1,30 @@
+{
+  "50": {
+    "budget": 50,
+    "pareto_configs": 17,
+    "covered": 15,
+    "total_ref": 26,
+    "coverage_pct": 57.7
+  },
+  "100": {
+    "budget": 100,
+    "pareto_configs": 34,
+    "covered": 26,
+    "total_ref": 26,
+    "coverage_pct": 100.0
+  },
+  "150": {
+    "budget": 150,
+    "pareto_configs": 38,
+    "covered": 26,
+    "total_ref": 26,
+    "coverage_pct": 100.0
+  },
+  "200": {
+    "budget": 200,
+    "pareto_configs": 38,
+    "covered": 26,
+    "total_ref": 26,
+    "coverage_pct": 100.0
+  }
+}

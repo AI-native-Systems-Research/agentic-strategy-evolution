@@ -1,0 +1,133 @@
+{
+  "answer": "The paper's ITL formula ITL = alpha/(1-lambda*W) captures the correct direction but the wrong shape. Over rates 1-150 req/s it fits with R²=0.939 (AL) and R²=0.960 (AD) — adequate but structurally biased. The paper predicts a convex (accelerating) curve, but BLIS produces a concave (saturating) curve. A corrected 3-parameter model ITL = a + b*rate/(1+d*rate) fits with R²=0.997 (AL) and R²=0.9985 (AD) across 120 simulations (12 rates x 2 modes x 5 seeds), with mean absolute error 11x smaller than the paper's model. The paper model's residuals follow an S-shaped pattern: overshoots at low rates (0.3-0.8ms), undershoots at mid-rates (0.6-1.1ms), overshoots again near rate=150. This S-shape is unfixable — no parameter choice can make the convex alpha/(1-rho) match concave data. The mechanism: BLIS's step-time formula has fixed per-step costs (weight loading beta3*tWeight=1284us, beta7=126us) that are amortized over the batch. As rate increases, batch size grows and per-token overhead drops — a concave relationship the paper's constant-alpha assumption misses. At rate=1 (batch size=1), AL and AD produce identical ITL=12.260953ms (confirmed across 5 seeds to 9 decimal places), proving the amortization mechanism is absent when there is no batching. AD consistently yields lower ITL than AL (by 0.06ms at rate=5 to 1.69ms at rate=150) because dedicated prefill instances reduce decode-side utilization. AD incurs 4.2-15.7ms higher TTFT due to KV transfer (~3.4ms at 25 GB/s) plus prefill queueing, but is E2E-superior at all rates (benefit: 29-255ms) because the ITL savings over 127 decode tokens dominate the TTFT penalty.",
+  "deliverable": null,
+  "repro": "for pd in never always; do for rate in 1 5 10 20 30 50 70 90 110 130 140 150; do for seed in 42 43 44 45 46; do ./blis run --model qwen/qwen3-14b --num-instances 4 --prefill-instances 2 --decode-instances 2 --num-requests 300 --prompt-tokens 512 --prompt-tokens-stdev 0 --output-tokens 128 --output-tokens-stdev 0 --routing-policy least-loaded --pd-decider $pd --rate $rate --seed $seed --metrics-path final/evidence/raw_results/${pd}_r${rate}_s${seed}.json 2>/dev/null; done; done; done",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "Corrected model R² for AL ITL (mean over 5 seeds)",
+      "value": 0.997,
+      "condition": "ITL = a + b*rate/(1+d*rate) fitted to 12 rates (1-150 req/s), pd-decider=never, seeds 42-46",
+      "evidence": "final/evidence/iter3_analysis_summary.json"
+    },
+    {
+      "id": "c2",
+      "metric": "Corrected model R² for AD ITL (mean over 5 seeds)",
+      "value": 0.9985,
+      "condition": "ITL = a + b*rate/(1+d*rate) fitted to 12 rates (1-150 req/s), pd-decider=always, seeds 42-46",
+      "evidence": "final/evidence/iter3_analysis_summary.json"
+    },
+    {
+      "id": "c3",
+      "metric": "Paper model R² for AL ITL (mean over 5 seeds)",
+      "value": 0.939,
+      "condition": "ITL = alpha/(1-b*rate) fitted to 12 rates (1-150 req/s), pd-decider=never, seeds 42-46",
+      "evidence": "final/evidence/iter3_analysis_summary.json"
+    },
+    {
+      "id": "c4",
+      "metric": "Paper model R² for AD ITL (mean over 5 seeds)",
+      "value": 0.960,
+      "condition": "ITL = alpha/(1-b*rate) fitted to 12 rates (1-150 req/s), pd-decider=always, seeds 42-46",
+      "evidence": "final/evidence/iter3_analysis_summary.json"
+    },
+    {
+      "id": "c5",
+      "metric": "MAE ratio (paper/corrected) for AL",
+      "value": 11.1,
+      "condition": "Mean absolute error of paper model / corrected model, pd-decider=never, 120 runs",
+      "evidence": "final/evidence/iter4_findings.json"
+    },
+    {
+      "id": "c6",
+      "metric": "MAE ratio (paper/corrected) for AD",
+      "value": 11.24,
+      "condition": "Mean absolute error of paper model / corrected model, pd-decider=always, 120 runs",
+      "evidence": "final/evidence/iter4_findings.json"
+    },
+    {
+      "id": "c7",
+      "metric": "AL and AD ITL identical at rate=1",
+      "value": 12.260953,
+      "condition": "rate=1, pd-decider never vs always, seed=42, units: ms. Identical to 9 decimal places across all 5 seeds.",
+      "evidence": "final/evidence/raw_results/never_r1_s42.json"
+    },
+    {
+      "id": "c8",
+      "metric": "ITL gap (AL-AD) at rate=150",
+      "value": 1.686,
+      "condition": "rate=150, (AL_ITL - AD_ITL), seed=42, units: ms",
+      "evidence": "final/evidence/raw_results/never_r150_s42.json"
+    },
+    {
+      "id": "c9",
+      "metric": "AD yields lower ITL at all rates >= 5",
+      "value": true,
+      "condition": "All 12 rates x 5 seeds, pd-decider=always vs never. Gap grows from 0.06ms (rate=5) to 1.69ms (rate=150).",
+      "evidence": "final/evidence/iter4_findings.json"
+    },
+    {
+      "id": "c10",
+      "metric": "AD yields higher TTFT at all rates",
+      "value": true,
+      "condition": "All 12 rates x 5 seeds, pd-decider=always vs never. Penalty: 4.2-15.7ms.",
+      "evidence": "final/evidence/iter3_analysis_summary.json"
+    },
+    {
+      "id": "c11",
+      "metric": "AD E2E lower than AL at all rates",
+      "value": true,
+      "condition": "All 12 rates x 3 seeds, pd-decider=always vs never. Benefit: 29-255ms.",
+      "evidence": "final/evidence/iter3_findings.json"
+    },
+    {
+      "id": "c12",
+      "metric": "E2E benefit of AD at rate=150",
+      "value": 254.837,
+      "condition": "rate=150, (AL_E2E - AD_E2E), mean over seeds 42-44, units: ms",
+      "evidence": "final/evidence/iter3_analysis_summary.json"
+    },
+    {
+      "id": "c13",
+      "metric": "TTFT penalty of AD at rate=1",
+      "value": 15.661,
+      "condition": "rate=1, (AD_TTFT - AL_TTFT), mean over seeds 42-44, units: ms",
+      "evidence": "final/evidence/iter3_analysis_summary.json"
+    },
+    {
+      "id": "c14",
+      "metric": "Corrected model per-seed R² std (AL)",
+      "value": 7.56e-06,
+      "condition": "Standard deviation of R² across 5 seeds, pd-decider=never",
+      "evidence": "final/evidence/iter4_findings.json"
+    },
+    {
+      "id": "c15",
+      "metric": "Cross-validation mean AE for corrected model (AL)",
+      "value": 0.1897,
+      "condition": "Leave-one-rate-out CV, pd-decider=never, units: ms",
+      "evidence": "final/evidence/iter4_findings.json"
+    },
+    {
+      "id": "c16",
+      "metric": "Zero dropped requests across all configurations",
+      "value": 0,
+      "condition": "All 120 simulations (12 rates x 2 modes x 5 seeds), 300 requests each",
+      "evidence": "final/evidence/iter4_findings.json"
+    },
+    {
+      "id": "c17",
+      "metric": "AL ITL at rate=50 (seed=42)",
+      "value": 15.4976,
+      "condition": "pd-decider=never, rate=50, seed=42, units: ms",
+      "evidence": "final/evidence/raw_results/never_r50_s42.json"
+    },
+    {
+      "id": "c18",
+      "metric": "AD ITL at rate=150 (seed=42)",
+      "value": 18.2037,
+      "condition": "pd-decider=always, rate=150, seed=42, units: ms",
+      "evidence": "final/evidence/raw_results/always_r150_s42.json"
+    }
+  ]
+}

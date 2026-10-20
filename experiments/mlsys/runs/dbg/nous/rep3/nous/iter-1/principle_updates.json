@@ -1,0 +1,38 @@
+[
+  {
+    "id": "RP-1",
+    "statement": "Any code path that resets per-request progress state (e.g., ProgressIndex=0 on preemption) must also reverse all cumulative metrics that were incremented based on that progress. Failing to do so causes irreversible metric inflation proportional to the number of preemptions.",
+    "confidence": "high",
+    "regime": "Discrete-event simulators with preemption-and-requeue semantics, where cumulative counters are incremented inline during execution steps.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "In sim/simulator.go:647, TotalOutputTokens++ fires for every decode token in executeBatchStep. In sim/batch_formation.go:232, preemptForTokens resets ProgressIndex=0 but does not decrement TotalOutputTokens. On rescheduling the request regenerates all prior decode tokens, incrementing TotalOutputTokens again. Fix: compute outputTokensLost = max(0, ProgressIndex - len(InputTokens)) before the reset and subtract from TotalOutputTokens in scheduleBatch.",
+    "applicability_bounds": "Applies whenever a simulator increments a cumulative metric inline during forward progress and later resets that progress. Does not apply to metrics keyed by request ID (e.g., RequestTTFTs map) since last-write-wins naturally handles re-execution. Does not apply to completed requests since their progress is never reset.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-2",
+    "statement": "Per-request slice metrics (e.g., ITL inter-token latency entries) must be cleared on preemption to prevent duplicate entries from accumulating across re-executions of the same decode tokens.",
+    "confidence": "high",
+    "regime": "Simulators that append per-step latency observations to per-request slices (ITL, per-step timing) and support preemption-and-requeue.",
+    "evidence": [
+      "iteration-1-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 1,
+    "mechanism": "req.ITL is appended in executeBatchStep (sim/simulator.go:648) for every decode step. When a request is preempted, ProgressIndex resets to 0 but ITL is not cleared. Re-generation appends the same decode latencies again, producing a doubled ITL distribution. Fix: clear ITL[:0] at the preemption site in preemptForTokens.",
+    "applicability_bounds": "Applies to any slice that records per-step observations and is read as a distribution (percentiles, mean) at completion time. Scalar cumulative counters require subtraction (RP-1); slice metrics require truncation.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

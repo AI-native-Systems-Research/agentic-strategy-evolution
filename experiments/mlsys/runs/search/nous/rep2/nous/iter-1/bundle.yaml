@@ -1,0 +1,143 @@
+metadata:
+  iteration: 1
+  family: "pareto-space-structure"
+  research_question: "What is the structure of the BLIS 6-knob configuration space's 4-objective Pareto front, and can an adaptive search find it within 200 evaluations?"
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism: characterize Pareto front structure and build search algorithm"
+
+# Arm selection rationale:
+# - h-main: Tests the primary claim that a 5-phase adaptive search can find
+#   near-complete Pareto front in ≤200 evals, based on the discovered
+#   hierarchical knob structure.
+# - h-dose-response: Validates the key mechanism (KV cache threshold effect)
+#   that the search algorithm exploits — cache capacity has a saturating
+#   effect on throughput, which justifies the binary-search minimization phase.
+# - h-tradeoff: Tests the fundamental GPU-vs-throughput tradeoff that
+#   defines the Pareto front's primary axis.
+
+arms:
+  - type: h-main
+    prediction: >
+      The 5-phase adaptive search algorithm (ceiling scan → cache minimization →
+      maxrun sensitivity → scheduler check → fill) will find ≥80% of the
+      distinct performance tiers in the Pareto front using ≤200 evaluations,
+      because the space has hierarchical structure: GPU topology determines
+      the performance ceiling, and the remaining knobs only shift performance
+      within each topology's envelope. This structure allows the search to
+      allocate most budget to topology enumeration and cache boundary detection
+      rather than exhaustive grid search.
+    mechanism: >
+      The configuration space is hierarchically structured. GPU topology
+      (tp × num_instances) determines the throughput ceiling for each GPU
+      count. Within each topology, KV cache capacity (total_kv_blocks ×
+      block_size_in_tokens) has a threshold effect: below a critical capacity,
+      preemptions (sim/kvcache/) cause severe TTFT degradation; above it,
+      metrics plateau. max_num_running_reqs saturates above 128-256.
+      Scheduler choice (fcfs vs sjf) has negligible impact (0.19 rps mean
+      range). This hierarchy means Phase 1 (15 evals for ceilings) plus
+      Phase 2 (cache minimization per topology) covers most of the
+      performance landscape cheaply.
+    diagnostic: >
+      If the search misses >20% of performance tiers: (1) check whether
+      maxrun or scheduler interactions are stronger at different rates/models,
+      (2) verify that the cache threshold is still a clean step function
+      rather than a gradual slope, (3) check if the search's perf_match
+      tolerance is too tight, causing it to over-explore one topology.
+    code_changes:
+      - file: "search.py"
+        intent: >
+          Create a Python 3 search script implementing the 5-phase adaptive
+          Pareto search: Phase 1 evaluates all 15 GPU topologies with generous
+          cache; Phase 2 minimizes KV blocks per topology; Phase 3 tests
+          maxrun sensitivity; Phase 4 checks scheduler effects; Phase 5
+          fills remaining budget. Outputs JSON list of non-dominated configs.
+        rationale: >
+          The search exploits the hierarchical knob structure discovered
+          during exploration: topology dominates, cache has threshold effect,
+          scheduler is negligible. This ordering ensures the most important
+          dimensions are covered first.
+
+  - type: h-dose-response
+    knob: "total_kv_blocks"
+    values: [2000, 3000, 4000, 5000, 7500, 10000]
+    metric: "responses_per_sec"
+    expected_shape: "saturating"
+    prediction: >
+      Increasing total_kv_blocks from 2000 to 10000 will produce a saturating
+      (diminishing returns) curve in responses_per_sec: large gains from 2000→5000
+      as preemptions are eliminated, then a plateau from 5000→10000 where
+      additional cache capacity is unused. This holds across GPU topologies
+      but the saturation threshold shifts with topology (more concurrent
+      requests need more cache).
+    mechanism: >
+      KV cache stores key-value tensors for active requests (sim/kvcache/).
+      When cache is insufficient, the scheduler must preempt running requests
+      to free blocks, causing re-computation and TTFT spikes. Once cache
+      exceeds the working set of concurrent requests, additional blocks
+      are never allocated and performance plateaus. The working set size
+      depends on concurrency (max_num_running_reqs), request length
+      distribution (prefix_tokens + output_tokens), and block granularity.
+    diagnostic: >
+      If the response is not saturating (e.g., monotonically increasing):
+      (1) check if preemptions persist at high kv_blocks — the working set
+      may be larger than expected, (2) verify block_size × kv_blocks gives
+      sufficient effective tokens, (3) check if rate/model changes shift
+      the saturation point beyond 10000.
+
+  - type: h-tradeoff
+    metric: "responses_per_sec"
+    secondary_metric: "gpus"
+    secondary_budget: 8
+    secondary_direction: "increase"
+    prediction: >
+      Increasing GPU count (tp × num_instances) from 1 to 8 will
+      monotonically increase responses_per_sec from ~7 to ~32 rps,
+      with diminishing returns above 4 GPUs. The throughput-per-GPU
+      decreases as more GPUs are added because the fixed workload
+      (200 requests at rate 100) is distributed across more instances,
+      reducing per-instance utilization.
+    mechanism: >
+      With round-robin routing (sim/cluster/), requests are distributed
+      evenly across instances. Each instance processes requests independently
+      with its own KV cache and scheduler. More instances reduce per-instance
+      load, which reduces queuing delays and preemption pressure. However,
+      with fewer requests per instance, the per-GPU throughput (rps/gpus)
+      decreases because each instance has lower utilization. The fixed
+      rate=100 means arrival rate per instance is rate/instances.
+    diagnostic: >
+      If throughput does not increase with GPUs: (1) check if routing
+      is unbalanced, (2) verify all instances receive requests, (3) check
+      if cache per instance is too small for the per-instance load.
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    hardware: "H100"
+    latency_model: "trained-physics"
+    num_requests: 200
+    rate: 100
+    prefix_tokens: 512
+    seed: 42
+    max_num_scheduled_tokens: 4096
+    long_prefill_token_threshold: 0
+    admission_policy: "always-admit"
+    preemption_policy: "fcfs"
+    routing_policy: "round-robin"
+    gpu_memory_utilization: 0.9
+
+  unlocked_parameters_audit:
+    - name: "output-tokens"
+      default_value: 512
+      justification: "Default output token count; experiment tests infrastructure knobs not workload shape"
+    - name: "output-tokens-stdev"
+      default_value: 256
+      justification: "Default variability; workload distribution is not under study"
+    - name: "max-model-len"
+      default_value: 0
+      justification: "Unlimited; no sequence length capping needed for this workload"
+    - name: "kv-cpu-blocks"
+      default_value: 0
+      justification: "Single-tier GPU-only KV cache; CPU offloading not under study"

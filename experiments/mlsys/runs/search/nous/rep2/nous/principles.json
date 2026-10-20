@@ -1,0 +1,189 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "KV cache capacity (total_kv_blocks * block_size_in_tokens) has a saturating effect on throughput: below a critical effective token capacity, preemptions cause severe TTFT degradation and throughput reduction; above it, performance plateaus with byte-identical results.",
+      "confidence": "high",
+      "regime": "BLIS, qwen3-14b, H100, rate=100, tp=4, num_instances=1, fcfs, maxrun=128; observed threshold ~120k effective tokens (7500 blocks * 16 tokens/block)",
+      "evidence": [
+        "iteration-1-h-dose-response"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "mechanism": "The KV cache in sim/kvcache/ allocates blocks per active request. When total effective token capacity is below the working set of concurrent requests, the scheduler must preempt running requests to free blocks, triggering re-computation. The saturation threshold equals the working set size: number of concurrent requests * mean (input+output) token length / block_size. Above the threshold, blocks are never exhausted, and additional capacity has zero effect.",
+      "applicability_bounds": "Threshold shifts with: (1) workload rate and request length distribution, (2) block_size_in_tokens (higher block size = fewer blocks needed for same effective capacity), (3) max_num_running_reqs (controls concurrency). Does not apply to multi-instance configurations where per-instance load is lower.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-2",
+      "statement": "Within a fixed GPU budget, tensor parallelism (tp) consistently outperforms instance parallelism (num_instances) for throughput: tp=N,inst=1 achieves 1.5-4x higher rps than tp=1,inst=N at the same GPU count.",
+      "confidence": "high",
+      "regime": "BLIS, qwen3-14b, H100, rate=100, seed=42, kv_blocks=5000, block_size=32; observed across all GPU counts 1-8",
+      "evidence": [
+        "iteration-1-h-tradeoff"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "mechanism": "Higher TP reduces per-token computation latency (ITL) by parallelizing attention and FFN across more GPUs. Lower ITL means each request completes faster, reducing the queue backlog and allowing more requests per second. With more instances (low TP), each instance processes its own requests independently with slower per-token speed, and the throughput gain from parallelism is limited to the reduction in per-instance queue depth.",
+      "applicability_bounds": "Holds under fixed round-robin routing. May differ under prefix-affinity routing where cache locality favors more instances. At very high request rates where queueing dominates, instance parallelism may become competitive by distributing queue depth.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-3",
+      "statement": "A topology-first adaptive Pareto search of the BLIS 6-knob space finds only ~41% of performance tiers with a simple 5-phase strategy, because the Pareto front includes preemption-regime configs (high TTFT, low kv_blocks) and non-power-of-2 GPU topologies that topology-first enumeration misses.",
+      "confidence": "high",
+      "regime": "BLIS 6-knob space: tp in {1,2,4,8}, num_instances in {1..8} with tp*inst<=8, scheduler {fcfs,sjf}, maxrun {64,128,256,512}, kv_blocks {2000,5000,10000}, block_size {16,32}",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "mechanism": "The Pareto front in a 4-objective space includes configs that are dominated in performance metrics but not in resource metrics. A topology-first search that prunes preemption-regime configs misses resource-efficient Pareto points.",
+      "applicability_bounds": "Superseded by RP-5 which shows that a corrected search strategy achieves 100% coverage. The 41% figure was based on the original 71-eval search; the 200-eval version achieved 84.6%. Both were improved to 100% by the iter-2 algorithm.",
+      "superseded_by": "RP-5",
+      "category": "meta",
+      "status": "superseded"
+    },
+    {
+      "id": "RP-4",
+      "statement": "GPU count is not a monotone predictor of BLIS throughput: the best achievable rps at 4 GPUs (tp=4,inst=1: 19.56 rps) exceeds the best at 8 GPUs with poor topology (tp=1,inst=8: 11.93 rps), making topology selection more important than raw GPU count.",
+      "confidence": "high",
+      "regime": "BLIS, qwen3-14b, H100, rate=100, seed=42; confirmed across all 10 tested topologies",
+      "evidence": [
+        "iteration-1-h-tradeoff"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "mechanism": "Throughput depends on the product of (per-token speed) * (concurrency), not just GPU count. Higher TP reduces per-token latency, enabling more completions per second even with fewer instances. Instance parallelism reduces per-instance queue depth but does not improve per-token speed. The TP advantage dominates at moderate to high request rates where the bottleneck is compute speed rather than queue depth.",
+      "applicability_bounds": "This finding holds for moderate request rates (rate=100 with 200 requests). At extreme overload where queueing dominates over compute, instance parallelism becomes more competitive. Also model-dependent: models with larger attention heads may benefit differently from TP.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-5",
+      "statement": "The 4-phase adaptive Pareto search algorithm with adaptive ceiling (kv=max(KV_VALUES)) achieves 100% Pareto coverage across multiple models (qwen3-14b, Llama-70B) and arrival rates (50-200 req/s) within 200 evaluations. The ceiling-cheapest-boundary strategy succeeds because the Pareto front concentrates in a low-kv/high-tp subspace discovered by Phase 1+2.",
+      "confidence": "high",
+      "regime": "BLIS 4D Pareto search; H100 hardware; 15 GPU topologies; KV_VALUES=[2000..10000]; budget=200; seeds=[42,123]",
+      "evidence": [
+        "iteration-1-h-main",
+        "iteration-2-h-main",
+        "iteration-3-h-main",
+        "iteration-3-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "The algorithm's structural properties: (1) Phase 1 tests max kv (adaptive ceiling) for all topologies, finding best-case performance; (2) Phase 2 fills intermediate kv values based on preemption detection; (3) Phase 3+4 cover secondary knobs (maxrun, bs, scheduler). Together, these cover the full Pareto-relevant subspace in 200 evaluations vs 180 exhaustive.",
+      "applicability_bounds": "Validated for H100 hardware, models up to 70B parameters, arrival rates 50-200 req/s, tp*instances<=8 GPUs. Broader generalization (MoE models, different hardware) is a next-iteration question.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-6",
+      "statement": "The budget-coverage relationship for the improved BLIS Pareto search follows a sharply saturating curve: 57.7% coverage at 50 evals, 100% at 100 evals, with no further improvement from 100 to 200 evals. The inflection point is at ~60 evals where Phase 1+2 complete.",
+      "confidence": "high",
+      "regime": "BLIS, qwen3-14b, H100, rate=100, seed=42; 4-phase search algorithm",
+      "evidence": [
+        "iteration-2-h-dose-response"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 2,
+      "empirical_content": true,
+      "derivation_type": "empirical",
+      "mechanism": "The search algorithm front-loads the most valuable evaluations in Phase 1 (ceiling+cheapest, 30 evals) and Phase 2 (boundary mapping, ~30 evals). Together these cover all 15 topologies \u00d7 {2000, 3000, 4000, 5000} \u00d7 bs=32, which contains all reference Pareto configs. Phases 3-4 (sensitivity + fill) add Pareto points from secondary knob variations (maxrun, sjf) but these are refinements, not new performance tiers. The 50\u2192100 jump (57.7%\u2192100%) corresponds exactly to Phase 2 completing: at budget=50, Phase 2 has only 20 evals available and can't map all preempting topologies; at budget=100, it fully maps all 15 topologies.",
+      "applicability_bounds": "The saturation point (100 evals) depends on the number of topologies (15) and number of important kv values (4). With more topologies or a wider kv range, the saturation point would shift rightward proportionally.",
+      "superseded_by": null,
+      "category": "meta",
+      "status": "active"
+    },
+    {
+      "id": "RP-7",
+      "statement": "The 4-phase adaptive Pareto search algorithm achieves 100% coverage across model regimes (qwen3-14b, Llama-3.1-70B-Instruct) and arrival rates (50, 100, 200 req/s) within 200 evaluations, demonstrating that the algorithm generalizes across LLM model architectures and load levels.",
+      "confidence": "high",
+      "regime": "BLIS 4D Pareto search; H100 hardware; 15 GPU topologies (tp*inst<=8); kv_values=[2000,3000,4000,5000,7500,10000]; budget=200",
+      "evidence": [
+        "iteration-3-h-main",
+        "iteration-3-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "The adaptive ceiling in Phase 1 (kv=max(KV_VALUES)=10000) guarantees the true performance plateau is discovered for any model, regardless of where it lies. Phase 2 fills intermediate kv values (3000,4000,5000) covering the preemption boundary wherever it appears. This structure makes the algorithm data-driven rather than threshold-specific.",
+      "applicability_bounds": "Applies to models where the KV ceiling is at or below max(KV_VALUES). If a model required kv>10000 for plateau, Phase 1 would still find the kv=10000 point but might miss the true ceiling. The algorithm's robustness is also bounded by the KV_VALUES and BS_VALUES constants \u2014 models requiring significantly different ranges would need those updated.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-8",
+      "statement": "The Pareto front structure is seed-robust: coverage difference between seeds (42 vs 123) is 0 percentage points across all tested regimes. Seed changes affect Pareto front SIZE (\u00b12-5 configs) but not the algorithm's ability to find all configs in the front.",
+      "confidence": "high",
+      "regime": "BLIS Pareto search; seeds 42 and 123; 4 regimes; budget=200",
+      "evidence": [
+        "iteration-3-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 3,
+      "mechanism": "The search algorithm's evaluation ORDER is deterministic (same topologies \u00d7 kv \u00d7 bs probed in same sequence regardless of seed). Seed changes affect the workload realization (which specific requests arrive when), which shifts individual metric values and changes which configs are Pareto-optimal. However, the algorithm covers the full relevant config space (30-39 unique configs at 200 evals), which encompasses any seed's Pareto front (18-28 configs).",
+      "applicability_bounds": "The seed-robustness holds because the budget (200) substantially exceeds the reference Pareto front size (18-28). If the front grew to approach the budget (e.g., 180+ configs), seed variation in front composition could cause misses.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-9",
+      "statement": "The 4-phase adaptive Pareto search algorithm achieves 100% coverage across all tested model architectures: dense models (qwen3-14b, Llama-70B, qwen2.5-7b) and MoE models (Llama-4-Scout-17B-16E). This includes architecturally distinct edge cases: KV-insensitive regime (no preemptions, Phase 2 no-op), TP divisibility failures (tp=8 panic handled by exception handler), and MoE compute path differences.",
+      "confidence": "high",
+      "regime": "H100, rate=100 req/s, budget=200, num_requests=200, prefix_tokens=512, max_num_scheduled_tokens=4096, seeds=[42,123]",
+      "evidence": [
+        "iteration-4-h-main",
+        "iteration-4-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "The algorithm's Phase 1 adaptive ceiling (kv=max(KV_VALUES)=10000) universally finds the performance plateau regardless of model architecture. Phase 2 boundary mapping self-disables when preemptions don't occur (KV-insensitive regime) without harming coverage. Phase 3+4 cover topology x maxrun x scheduler variations that constitute the entire Pareto front for KV-insensitive models. Exception handling in search.py's evaluate() returns None for invalid TP configurations without breaking the search loop.",
+      "applicability_bounds": "Validated for dense and MoE architectures. Both models tested at rate=100 only in this iteration. Generalization to rate=50, 200 for new models is supported by RP-7 (cross-rate robustness) but not directly verified here.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    },
+    {
+      "id": "RP-10",
+      "statement": "KV cache sensitivity is architecture-independent in its effect on the Pareto search algorithm: small dense models (qwen2.5-7b) enter a KV-insensitive regime (zero preemptions at all kv values) that causes Phase 2 to be a no-op, but the algorithm still achieves 100% Pareto coverage because the Pareto front for such models is purely topology-driven and covered by Phases 1+3+4.",
+      "confidence": "high",
+      "regime": "qwen2.5-7b-instruct, H100, rate=100, seeds=[42,123]",
+      "evidence": [
+        "iteration-4-h-robustness"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 4,
+      "mechanism": "qwen2.5-7b has much smaller KV memory footprint than larger models. At rate=100 with 200 requests, even kv=2000 (smallest tested) provides sufficient KV capacity for the 15-topology space. Phase 2 evaluates kv=3000,4000,5000 for each topology but finds no preemptions -> no new Pareto points. Phase 3 sensitivity testing and Phase 4 strategic fill still cover the full topology x maxrun x scheduler space.",
+      "applicability_bounds": "Specific to small dense models where KV cache is not the binding resource. For larger models (14B, 70B) or higher rates where KV pressure occurs, Phase 2 is critical. This principle defines when Phase 2 is safely skippable.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active",
+      "empirical_content": true,
+      "derivation_type": "empirical"
+    }
+  ]
+}

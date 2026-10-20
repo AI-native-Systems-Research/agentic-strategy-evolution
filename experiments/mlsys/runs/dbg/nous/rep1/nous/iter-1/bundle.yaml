@@ -1,0 +1,55 @@
+metadata:
+  iteration: 1
+  family: "preemption-token-double-count"
+  research_question: "When KV cache is small enough to cause preemptions, total_output_tokens and tokens_per_sec are inflated because output tokens generated before preemption are counted again after the request is rescheduled."
+  complexity_tier: 1
+  tier_justification: "iter 1, single mechanism (preemption metric accounting), treatment vs control"
+
+# Arms rationale: Only h-main and h-control-negative are needed.
+# h-main tests whether the fix eliminates the overcounting. h-control-negative
+# verifies the fix has no effect when there are no preemptions (no regression).
+# No ablation or dose-response needed — this is a binary bug (present/absent).
+
+arms:
+  - type: h-main
+    prediction: "After applying the fix to sim/batch_formation.go and sim/simulator.go, total_output_tokens with preemptions (--total-kv-blocks 600) will equal total_output_tokens without preemptions (--total-kv-blocks 60000) for the same seed and workload. Before the fix, the preemption case shows ~9% inflation (114630 vs 105082)."
+    mechanism: "In preemptForTokens(), ProgressIndex is reset to 0 on preemption (line 232) to restart prefill/decode from scratch. But TotalOutputTokens was already incremented during prior decode steps (simulator.go:647). Without deducting these tokens on preemption, the rescheduled request's decode tokens are counted twice. The fix stores the decoded token count before resetting ProgressIndex (in PreemptedRequest.DecodedTokens), then subtracts it from TotalOutputTokens in scheduleBatch()."
+    diagnostic: "If the prediction is wrong, check: (1) whether PreemptedRequest.DecodedTokens is computed correctly (should be ProgressIndex - len(InputTokens) when > 0), (2) whether there are additional paths that increment TotalOutputTokens outside executeBatchStep, (3) whether some requests are completed differently under preemption (e.g., force-completion at MaxModelLen)."
+    code_changes:
+      - file: "sim/batch_formation.go"
+        intent: "Before resetting ProgressIndex to 0 on preemption, compute decoded token count (ProgressIndex - len(InputTokens) if positive) and store in PreemptedRequest.DecodedTokens. Also clear ITL slice and reset TTFTSet to prevent metric contamination."
+        rationale: "Captures the information needed to correct TotalOutputTokens, before it is lost by the ProgressIndex reset."
+      - file: "sim/simulator.go"
+        intent: "In the preemption processing loop in scheduleBatch(), subtract DecodedTokens from TotalOutputTokens for each preempted request. Also deduct FirstTokenTime from TTFTSum when the preempted request had completed prefill."
+        rationale: "Completes the fix by actually adjusting the metrics using the saved decoded token count."
+      - file: "sim/simulator_test.go"
+        intent: "Add regression test TestPreemption_TotalOutputTokens_NoDoubleCount that runs the same workload with small cache (preemptions) and large cache (no preemptions) and asserts TotalOutputTokens is identical."
+        rationale: "Prevents this bug from recurring."
+
+  - type: h-control-negative
+    prediction: "With a large KV cache (--total-kv-blocks 60000) where no preemptions occur, the fix has zero effect — total_output_tokens is identical before and after the fix (105082)."
+    mechanism: "The fix only subtracts tokens in the preemption processing loop (scheduleBatch). With zero preemptions, the loop body never executes, so TotalOutputTokens is unchanged."
+    diagnostic: "If the prediction is wrong, the fix is modifying metrics outside the preemption path — check for unintended side effects in batch formation or executeBatchStep."
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    rate: 20
+    num_requests: 200
+    total_kv_blocks_small: 600
+    total_kv_blocks_large: 60000
+  unlocked_parameters_audit:
+    - name: "block_size_tokens"
+      default_value: 16
+      justification: "Block size does not affect the token-counting bug; it only determines KV allocation granularity."
+    - name: "max_running_reqs"
+      default_value: 256
+      justification: "Batch size limit is not relevant to the preemption metric accounting bug."
+    - name: "max_scheduled_tokens"
+      default_value: 2048
+      justification: "Token budget per step does not affect how preempted tokens are counted."
+    - name: "latency_model"
+      default_value: "blackbox"
+      justification: "Latency model backend does not affect token counting — the bug is in metric accounting, not step timing."

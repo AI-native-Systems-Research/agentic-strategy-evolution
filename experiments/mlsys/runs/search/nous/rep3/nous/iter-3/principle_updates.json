@@ -1,0 +1,40 @@
+[
+  {
+    "id": "RP-6",
+    "statement": "A three-phase deterministic structure-aware search (deterministic Phase 1 covering all GPU tiers + diversity-directed Phase 2 expanding rich tiers + Phase 3 neighbor expansion) achieves 100% Pareto tuple recall within 200 evaluations at rate=100 across all seeds, and >97% recall at rate=50 and rate=200 \u2014 up from v2's 57.9% mean recall.",
+    "confidence": "high",
+    "regime": "BLIS 6-knob configuration space (15 GPU tiers, 1800 total configs, qwen/qwen3-14b on H100, num_requests=200, rates 50-200)",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "The v3 algorithm eliminates the two sources of v2's recall gap: (1) Phase 1 shuffling instability (RP-5) is resolved by deterministically evaluating 5 fixed configs per GPU tier with no randomness; (2) Phase 2's uniform neighbor expansion is replaced by diversity-directed expansion that allocates budget to 'rich' tiers (those showing high ttft_p99 diversity in Phase 1, indicating partial preemption). Rich tiers at low instance counts (ni=1, ni=2) receive 13 targeted evals covering the partial-preemption zone (kv=2000-4000, bs=32, maxrun=32-512, both schedulers). Simple tiers receive 2 evals only. Phase 3 fills gaps via standard neighbor expansion from the current Pareto front.",
+    "applicability_bounds": "Validated for BLIS 6-knob space at rates 50-200. The algorithm is rate-adaptive by construction since Phase 2's rich/simple classification uses observed ttft_p99 diversity. At rate=200, one tuple at (tp=1,ni=1,sjf,kv=5000,bs=32) is missed \u2014 a minor gap the algorithm could fix by adding sjf combos at kv=5000 to the rich-tier Phase 2 template.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-7",
+    "statement": "The BLIS Pareto front's complexity at rates 50-200 is low (23-41 distinct metric tuples out of 1800 configs), but the tuples producing configs are sparse: concentrated at specific (tier, kv, maxrun, scheduler) combos in the partial-preemption zone. A structure-aware search achieving 100% recall within 11% of total budget (200/1800) exploits this structure directly.",
+    "confidence": "high",
+    "regime": "BLIS 6-knob configuration space, rates 50-200, seed=42",
+    "evidence": [
+      "iteration-3-h-main",
+      "iteration-3-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 3,
+    "mechanism": "At rate=100: 35 distinct Pareto tuples from 1800 configs (1.9%). At rate=50: 23 distinct tuples (1.3%). At rate=200: 41 distinct tuples (2.3%). The Pareto front is dominated by configs using bs=32 (confirmed RP-4) and by rich tiers (ni=1, ni=2) which produce 4-6 tuples each due to preemption sensitivity, while simple tiers (ni>=3) produce 1 tuple each. A search with only 200 evals can find all tuples by (a) guaranteeing tier coverage and (b) systematically exploring the preemption zone.",
+    "applicability_bounds": "Validated at rates 50-200. Rate affects Pareto complexity (more tuples at higher rates due to wider preemption zone) but not the qualitative structure. The 11% budget is specific to the 6-knob 1800-config BLIS space; different hardware/model configurations may produce different Pareto complexity.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]

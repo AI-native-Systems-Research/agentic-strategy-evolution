@@ -1,0 +1,1 @@
+{"done": true, "why": "The paper's ITL model was validated against BLIS across 132 runs (22 rates × 3 seeds × 2 modes), with all directional predictions confirmed and quantitative fit MAPE <4% for both AL and AD."}

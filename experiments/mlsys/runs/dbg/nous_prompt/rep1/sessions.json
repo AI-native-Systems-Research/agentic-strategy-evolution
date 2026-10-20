@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "---\n\n## Answer\n\nYes, this is a real bug. `total_output_tokens` is inflated when KV cache preemption occurs.\n\n## Evidence\n\n**Root cause:** `sim/simulator.go:647` \u2014 `TotalOutputTokens++` in the decode loop of `executeBatchStep()`. When a request is preempted, `batch_formation.go:232` resets `ProgressIndex` to 0, causing the request to re-enter prefill and decode from scratch. Every re-generated decode token increments the global counter again.\n\n**Before fix:**\n- Small KV (600 blocks, 265 preemptions): `total_output_tokens = 114,630`\n- Large KV (5000 blocks, 88 preemptions): `total_output_tokens = 106,083`\n- Delta: 8,547 phantom tokens from preemption double-counting\n\n**After fix:**\n- Both configurations: `total_output_tokens = 105,082` (identical, as expected)\n- The large-KV case also dropped by 1,001 tokens (from its 88 preemptions)\n\n**Fix:** Removed `TotalOutputTokens++` from the decode loop. Added accumulation in `recordRequestCompletion()` using `ProgressIndex - len(InputTokens)`, which is correct at completion time regardless of preemption history. Preserves the existing N-1 convention (first token is TTFT, not counted as output).\n\n**Validation:** All existing tests pass (sim, cluster, golden dataset, length-capped anchors). New regression test `TestTotalOutputTokens_PreemptionInvariant` verifies the invariant.\n\n## Principles Discovered\n\n- **RP-1** (high confidence): Running counters incremented during iterative processing must not be placed in loops that re-execute on retry/restart. Accumulate at the terminal state using position-based computation.\n\n## Limitations & Open Questions\n\n- **ITL double-counting**: `req.ITL` is also appended during decode and NOT reset on preemption, so ITL-derived E2E metrics may be inflated for preempted requests. This is a separate bug with the same mechanism.\n- **TTFT on preemption**: `TTFTSet` and `FirstTokenTime` are not reset on preemption. A preempted request that already recorded TTFT will keep the old value even after re-entering prefill \u2014 this may be intentional (measuring time-to-first-token from arrival, not from the latest schedule) or a separate issue.\n- The `nous validate` CLI was unavailable due to a host permission error; artifacts were not machine-validated but are structurally complete.",
+  "cli_cost": 5.67350975,
+  "subtype": "success",
+  "wall": 1278.0,
+  "num_turns": 98,
+  "n": 1
+ }
+]

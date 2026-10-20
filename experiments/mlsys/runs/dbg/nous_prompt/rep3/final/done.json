@@ -1,0 +1,1 @@
+{"done": true, "why": "Root cause identified and fixed with regression test; all sim/ tests pass, total_output_tokens now identical between preemption and non-preemption runs."}

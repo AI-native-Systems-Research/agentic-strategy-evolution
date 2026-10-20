@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "## Summary\n\n**Root cause**: `sim/simulator.go:executeBatchStep()` line 647 \u2014 `sim.Metrics.TotalOutputTokens++` incremented on every decode step. When a request was preempted (`batch_formation.go:232` resets `ProgressIndex` to 0), the already-counted tokens were never subtracted. On reschedule, the request re-decoded from scratch, double-counting all output tokens.\n\n**Evidence**: Same 200 requests (seed 42) produced `total_output_tokens=114630` with small KV (265 preemptions) vs `105082` with large KV (0 preemptions) \u2014 a 9,548-token inflation.\n\n**Fix** (3 changes in `sim/simulator.go`):\n1. **Moved** `TotalOutputTokens` counting from per-decode-step to `recordRequestCompletion()` using `len(req.ITL)` (actual decode steps in the final execution round)\n2. **Clear** `req.ITL` on preemption to prevent ITL accumulation across scheduling rounds\n3. **Reverse** `TTFTSum` contribution on preemption to prevent TTFT double-counting\n\n**Verification**: After fix, both runs report `total_output_tokens=105082`. All 9 test packages pass (including golden tests). Regression test `TestSimulator_PreemptionDoesNotInflateOutputTokens` added.",
+  "cli_cost": 3.6659954999999997,
+  "subtype": "success",
+  "wall": 892.9,
+  "num_turns": 67,
+  "n": 1
+ }
+]

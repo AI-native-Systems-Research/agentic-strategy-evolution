@@ -1,0 +1,70 @@
+{
+  "answer": "The 1800-config space collapses to just 35 unique Pareto-optimal objective vectors due to massive redundancy. The Pareto front is governed by three structural properties: (1) a sharp preemption boundary in KV-cache capacity below which performance degrades severely, (2) a phase transition at max_running_reqs=256 that eliminates queueing delay on single-instance configs (e.g., TTFT drops from 12,000ms to 93ms), and (3) a fundamental tp-vs-instances trade-off where higher tensor parallelism maximizes per-GPU throughput while more instances minimize tail latency. Scheduler choice (fcfs vs sjf) and block_size (16 vs 32) have near-zero impact on the Pareto front. A structured phased search exploiting these properties achieves 100% Pareto objective recall with only 186 evaluations (10.3% of the space).",
+  "deliverable": "search.py",
+  "repro": "python3 search.py --model qwen/qwen3-14b --rate 100 --budget 200 --seed 42 --out final/pareto.json",
+  "claims": [
+    {
+      "id": "c1",
+      "metric": "total configuration space size",
+      "value": 1800,
+      "condition": "all valid (tp, instances, scheduler, mrr, kv_blocks, block_size) combos with tp*instances<=8",
+      "evidence": "experiments/space_analysis.json"
+    },
+    {
+      "id": "c2",
+      "metric": "unique Pareto-optimal objective vectors",
+      "value": 35,
+      "condition": "4 objectives: max rps, min ttft_p99, min gpu_count, min kv_blocks; full enumeration of 1800 configs",
+      "evidence": "experiments/true_pareto.json"
+    },
+    {
+      "id": "c3",
+      "metric": "search objective recall",
+      "value": 1.0,
+      "condition": "search.py with budget=200, seed=42, model=qwen/qwen3-14b, rate=100",
+      "evidence": "experiments/pareto_v4.json"
+    },
+    {
+      "id": "c4",
+      "metric": "search evaluations used",
+      "value": 186,
+      "condition": "search.py with budget=200, seed=42, model=qwen/qwen3-14b, rate=100",
+      "evidence": "experiments/space_analysis.json"
+    },
+    {
+      "id": "c5",
+      "metric": "best responses_per_sec at 8 GPUs",
+      "value": 32.01,
+      "condition": "tp=8, instances=1, mrr=256, kv=4000, bs=32, scheduler=fcfs, rate=100, qwen3-14b on H100",
+      "evidence": "experiments/full_enum/8_1_fcfs_256_4000_32.json"
+    },
+    {
+      "id": "c6",
+      "metric": "best ttft_p99_ms at 8 GPUs",
+      "value": 27.5,
+      "condition": "tp=8, instances=1, mrr=256, kv=4000, bs=32, scheduler=fcfs, rate=100, qwen3-14b on H100",
+      "evidence": "experiments/full_enum/8_1_fcfs_256_4000_32.json"
+    },
+    {
+      "id": "c7",
+      "metric": "best responses_per_sec at 1 GPU",
+      "value": 7.0,
+      "condition": "tp=1, instances=1, mrr=256, kv=5000, bs=32, scheduler=fcfs, rate=100, qwen3-14b on H100",
+      "evidence": "experiments/full_enum/1_1_fcfs_256_5000_32.json"
+    },
+    {
+      "id": "c8",
+      "metric": "mrr=256 TTFT improvement on single-instance (tp=1,i=1)",
+      "value": 92.6,
+      "condition": "mrr=256 vs mrr=128 at tp=1,i=1,kv=5000,bs=32: TTFT p99 drops from 11973.7ms to 92.6ms (129x improvement)",
+      "evidence": "experiments/full_enum/1_1_fcfs_256_5000_32.json"
+    },
+    {
+      "id": "c9",
+      "metric": "minimum GPU config with ttft_p99 < 100ms",
+      "value": 1,
+      "condition": "tp=1, instances=1, mrr=256, kv=5000, bs=32 achieves ttft_p99=92.6ms on 1 GPU",
+      "evidence": "experiments/full_enum/1_1_fcfs_256_5000_32.json"
+    }
+  ]
+}

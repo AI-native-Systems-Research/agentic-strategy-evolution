@@ -1,0 +1,242 @@
+[
+  {
+    "tp": 2,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 3000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 8,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 3000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 3000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 4000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 2,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 2,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 3000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 3,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 4,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 5,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 2,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 2,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 4000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 2,
+    "num_instances": 2,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 2,
+    "num_instances": 2,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 3000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 2,
+    "num_instances": 3,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 2,
+    "num_instances": 4,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 4,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 4,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 3000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 4,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 4000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 4,
+    "num_instances": 2,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 4,
+    "num_instances": 2,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 3000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 8,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 8,
+    "num_instances": 1,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 4000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 2,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 64,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 4,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 64,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 5,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 64,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 2,
+    "num_instances": 2,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 64,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 2,
+    "num_instances": 4,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 64,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 4,
+    "num_instances": 2,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 64,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 32
+  },
+  {
+    "tp": 1,
+    "num_instances": 5,
+    "scheduler": "fcfs",
+    "max_num_running_reqs": 128,
+    "total_kv_blocks": 2000,
+    "block_size_in_tokens": 16
+  }
+]

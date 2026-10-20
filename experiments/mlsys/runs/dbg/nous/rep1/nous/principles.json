@@ -1,0 +1,36 @@
+{
+  "principles": [
+    {
+      "id": "RP-1",
+      "statement": "When a request is preempted and its ProgressIndex is reset to 0 for KV-cache replay, any cumulative metrics (TotalOutputTokens, TTFTSum) already charged to that request must be deducted at the preemption site; otherwise those metrics are double-counted after the request is rescheduled.",
+      "confidence": "high",
+      "regime": "BLIS simulator with KV-cache preemption enabled (total_kv_blocks small enough to force evictions under concurrent decode workloads)",
+      "evidence": [
+        "iteration-1-h-main"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "preemptForTokens() in sim/batch_formation.go resets ProgressIndex to 0, causing the rescheduled request to re-decode from scratch. executeBatchStep() in sim/simulator.go increments TotalOutputTokens on every decode step. Without a compensating deduction at preemption time, the same output tokens are counted twice. The fix records decoded tokens in PreemptedRequest.DecodedTokens before the ProgressIndex reset and subtracts them in scheduleBatch().",
+      "applicability_bounds": "Applies to all cumulative scalar metrics that are incremented per decode step (TotalOutputTokens, TTFTSum). Does NOT apply to per-request map entries keyed by request ID (e.g., RequestTTFTs[id]) because map overwrites self-correct on the second recording.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    },
+    {
+      "id": "RP-2",
+      "statement": "The fix to preemption double-counting is zero-cost in the no-preemption regime: with a large KV cache where preemption_count=0, the corrective subtraction loop in scheduleBatch() never executes, leaving all metrics unchanged.",
+      "confidence": "high",
+      "regime": "BLIS simulator with large KV cache (no preemptions)",
+      "evidence": [
+        "iteration-1-h-control-negative"
+      ],
+      "contradicts": [],
+      "extraction_iteration": 1,
+      "mechanism": "The subtraction code is inside the loop over batchResult.Preempted, which is empty when no preemptions occur. No preemptions means the fix is inert.",
+      "applicability_bounds": "This principle holds for any fix that is conditional on the preemption event slice being non-empty. It confirms the fix is narrowly scoped and cannot regress the no-preemption path.",
+      "superseded_by": null,
+      "category": "domain",
+      "status": "active"
+    }
+  ]
+}

@@ -1,0 +1,146 @@
+metadata:
+  iteration: 3
+  family: "pd-itl-formula-quantitative-fit"
+  research_question: "Does the paper's ITL = alpha/(1-rho) formula quantitatively predict BLIS ITL across arrival rates 5-150, and where/why does it break down?"
+  complexity_tier: 3
+  tier_justification: "iter 3 — multi-mechanism interaction: closed-form formula fit × transient regime boundary × linear-vs-nonlinear shape comparison. Tier 2 (directional + dose-response) was confirmed in iter-2; escalating to quantitative formula validation."
+
+arm_selection_rationale: >
+  h-main tests whether the paper's 1/(1-rho) formula can quantitatively predict BLIS ITL —
+  the key test that iter-2's directional validation could not address. h-dose-response tests
+  whether the formula's overprediction is systematic (monotone increasing), which would
+  confirm the transient-regime mechanism. h-control-negative validates the formula in its
+  applicable regime (low rates where steady-state is approximately reached). All three arms
+  share the same 54 runs (9 rates × 2 modes × 3 seeds); the analysis differs.
+
+arms:
+  - type: h-main
+    prediction: >
+      The paper's best-fit ITL = alpha/(1-rate*w) formula will achieve R-squared below 0.95
+      for BOTH AL and AD modes across the full rate range (5-150 req/s), while a simple
+      linear fit ITL = a + b*rate will achieve R-squared above 0.95 for both modes. The
+      formula's failure is due to a shape mismatch: the data is approximately linear
+      (concave ITL-vs-rate curve in the transient regime) while 1/(1-rho) is convex.
+      Additionally, the best-fit w_AL will be strictly larger than w_AD, consistent with
+      the paper's prediction that W_tot > W_D (local processing contributes more per-request
+      work than disaggregated decode-only processing).
+    mechanism: >
+      The paper's formula T_iter = alpha/(1-rho) assumes steady-state batch size
+      B_ss = lambda*(n_c+o)*T_iter (Little's Law equilibrium). In BLIS's 300-request
+      finite-horizon simulation, the batch builds up from 0 and never reaches B_ss at
+      high rates (experiment duration 300/rate = 2s at rate=150, vs per-request service
+      time ~1.6s). The mean batch size over the run is dominated by the ramp-up transient,
+      producing an approximately linear ITL-vs-rate relationship instead of the predicted
+      convex 1/(1-rho) curve. The formula overpredicts because it assumes the positive
+      feedback loop (larger batch -> slower iterations -> even larger batch) has fully
+      engaged, but the simulation ends before equilibrium.
+    diagnostic: >
+      If the formula achieves R² >= 0.95: check whether the seed variance is large enough
+      to mask the shape mismatch. If the linear fit achieves R² < 0.95: check whether
+      ITL has a non-monotone segment that would degrade both fits. If w_AL <= w_AD:
+      check whether AL routing distributes across more instances than expected (effective
+      lambda_eff differs between modes).
+
+  - type: h-dose-response
+    knob: "rate"
+    values: [5, 10, 20, 40, 60, 80, 100, 120, 150]
+    metric: "formula_residual_pct"
+    expected_shape: "monotone_increasing"
+    prediction: >
+      The formula overprediction percentage (low-rate-calibrated predicted ITL minus observed
+      ITL, divided by observed, times 100) will be strictly positive and monotone increasing
+      for rates >= 20, for both AL and AD modes. At rate=20 the overprediction will be
+      less than 1%. At rate=150 the overprediction will exceed 30% for AD and exceed 50%
+      for AL. The monotone pattern confirms that the transient effect (not random noise)
+      drives the divergence.
+    mechanism: >
+      As rate increases, the gap between the formula's predicted steady-state batch size
+      and the actual transient mean batch size widens. At rate=5, experiment duration
+      (60s) >> service time (1.6s), so steady state is well-approximated. At rate=150,
+      experiment duration (2s) ~ service time, so the ramp-up transient dominates.
+      The overprediction is monotone because the transient-to-steady-state ratio degrades
+      monotonically with rate.
+    diagnostic: >
+      If residuals are not monotone increasing: check whether there is a batch-size
+      saturation effect (e.g., KV cache limits capping the batch) that would reduce
+      ITL at very high rates. Also check whether the Poisson arrival process produces
+      enough variance at high rates to create non-monotone seed-averaged behavior.
+
+  - type: h-control-negative
+    prediction: >
+      At low arrival rates (5, 10, 20 req/s) where the 300-request simulation duration
+      is long enough for approximate steady-state behavior, the low-rate-calibrated formula
+      will achieve mean absolute percentage error (MAPE) below 1% for both AL and AD modes.
+      This confirms the paper's formula IS quantitatively accurate when its steady-state
+      assumption approximately holds — the breakdown is regime-specific, not a fundamental
+      flaw in the formula's structure.
+    mechanism: >
+      At rate=5, the simulation runs for 60s (300/5). Per-request service time is ~1.6s.
+      After ~5 service times (~8s), the batch size has approximately converged to
+      B_ss = lambda_eff*(n_c+o)*T_iter. The remaining 52s of the simulation produce
+      near-steady-state ITL values, so the 300-request mean ITL closely matches the
+      formula's steady-state prediction. At rate=20, the simulation runs for 15s (~9
+      service times), still adequate for convergence.
+    diagnostic: >
+      If MAPE > 1% at low rates: check whether the formula calibration points (rates 5
+      and 10) have insufficient separation to determine both alpha and w accurately. Also
+      check whether the first few requests (before any batching) pull down the mean ITL
+      enough to cause a systematic bias.
+
+experiment_spec:
+  preflight_commands:
+    - "go build -o blis main.go"
+
+  fanout_template: >
+    ./blis run
+    --model qwen/qwen3-14b
+    --num-instances 4 --prefill-instances 2 --decode-instances 2
+    --num-requests 300
+    --prompt-tokens 512 --prompt-tokens-stdev 0
+    --output-tokens 128 --output-tokens-stdev 0
+    --routing-policy least-loaded
+    --pd-decider {pd_decider} --rate {rate} --seed {seed}
+    --metrics-path {output_path}
+
+  verified_parameters:
+    model: "qwen/qwen3-14b"
+    num_instances: 4
+    prefill_instances: 2
+    decode_instances: 2
+    num_requests: 300
+    prompt_tokens: 512
+    prompt_tokens_stdev: 0
+    output_tokens: 128
+    output_tokens_stdev: 0
+    routing_policy: "least-loaded"
+    pd_transfer_bandwidth_gbps: 25.0
+    pd_transfer_base_latency_ms: 0.05
+
+  unlocked_parameters_audit:
+    - name: "total_kv_blocks"
+      default_value: 1000000
+      justification: "Default 1M blocks; KV cache never a bottleneck at 300 requests with 640 tokens each."
+    - name: "max_model_len"
+      default_value: 0
+      justification: "Default 0 means unlimited; 512+128=640 tokens never hits any limit."
+    - name: "scheduler"
+      default_value: "fcfs"
+      justification: "FCFS is standard; the paper's model assumes FCFS-equivalent continuous batching."
+    - name: "latency_model"
+      default_value: "trained-physics"
+      justification: "Trained-physics is default and most realistic; its nonlinear terms (sumCtx, MoE scaling) are part of what we're measuring the formula against."
+    - name: "snapshot_refresh_interval"
+      default_value: 50000
+      justification: "50ms refresh for routing signals; affects load balancing but not per-instance latency."
+    - name: "pd_transfer_contention"
+      default_value: false
+      justification: "Contention disabled; at our rates concurrent KV transfers are few."
+    - name: "timeout"
+      default_value: 300
+      justification: "300s timeout; max E2E ~2.6s, no risk of timeout."
+
+  timing_observations:
+    expected_wall_time_seconds_per_policy:
+      AL_per_run: 2
+      AD_per_run: 3
+    observation_method: "Timed smoke tests from iter-2; each run completes in <3s wall time."

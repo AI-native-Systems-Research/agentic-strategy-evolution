@@ -1,0 +1,26 @@
+{
+  "iteration": 2,
+  "bundle_ref": "runs/iter-2/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-main",
+      "predicted": "Improved search algorithm using ceiling+cheapest scan followed by adaptive boundary mapping will find >=92% (>=24 of 26) reference Pareto front configs within 200 evaluations, up from 84.6% (22/26) with the iter-1 algorithm.",
+      "observed": "The improved search achieved 100% coverage (26/26) of the reference Pareto front at seed=42 within 200 evaluations and 38 Pareto-optimal configs total. At seed=123, the search also achieved 100% coverage (28/28 reference Pareto configs, the reference having 28 Pareto configs at this seed). The 4-phase strategy used its budget as follows: Phase 1 (ceiling+cheapest): 30 evals covering all 15 topologies; Phase 2 (boundary mapping): 30 additional evals for kv=3000/4000 at preempting topologies; Phase 3 (sensitivity): 40 evals for maxrun/sjf/bs16 variations; Phase 4 (strategic fill): 100 evals for remaining configs. Coverage improvement from iter-1: 84.6% -> 100%, a 15.4 percentage point gain. The 4 previously missed configs (tp=8/inst=1 at kv={3000,4000}/bs=32, tp=4/inst=2 at kv={2000,3000}/bs=32) are now all found by Phase 1-2.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Coverage exceeded the >=92% prediction, achieving 100%. The mechanism is validated: systematic exploration of kv={2000,3000,4000,5000} at every topology ensures all Pareto-relevant cache configurations are tested. The key improvement is Phase 2's boundary mapping, which explicitly tests intermediate kv values rather than binary-searching for ceiling match."
+    },
+    {
+      "arm_type": "h-dose-response",
+      "predicted": "Pareto coverage follows a saturating curve as search budget increases from 50 to 200. Expected: ~60% at budget=50, ~85% at budget=100, ~90% at budget=150, ~96% at budget=200.",
+      "observed": "Coverage at each budget level: budget=50: 57.7% (15/26), budget=100: 100.0% (26/26), budget=150: 100.0% (26/26), budget=200: 100.0% (26/26). Pareto configs found: budget=50: 17, budget=100: 34, budget=150: 38, budget=200: 38. The saturating shape is CONFIRMED but saturation occurs much earlier than predicted \u2014 100% coverage at budget=100, not 200. This is because Phase 1 (30 evals) + Phase 2 (20-30 evals completing by eval ~60) together cover all 15 topologies \u00d7 key kv values, which contains all reference Pareto configs. The remaining ~140 evals at budget=200 add sensitivity/fill configs that create 4 additional Pareto points (from 34 to 38) but don't improve reference coverage.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Shape is saturating as predicted. The quantitative predictions for each budget level were directionally correct but the saturation happened earlier: actual coverage at budget=100 was 100% vs predicted 85%. This means the algorithm front-loads the most important exploration (topology x cache sweep) more efficiently than anticipated."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "Both arms CONFIRMED. The improved search achieves 100% Pareto coverage in 200 evals (h-main) with a saturating budget-coverage curve (h-dose-response). The algorithm's structure naturally front-loads the most valuable evaluations: Phase 1 (ceiling+cheapest at all 15 topologies) and Phase 2 (boundary mapping at preempting topologies) together cover all reference Pareto configs within ~60 evaluations. This means the search is even more efficient than predicted \u2014 budget=100 suffices for 100% reference coverage. The remaining budget at 200 adds 4 additional Pareto configs from sensitivity testing (maxrun, sjf) that weren't in the reference but represent genuinely non-dominated points.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "All deliverables are in place. Here's a summary of the findings:\n\n## Summary: Does the P/D disaggregation latency model hold in BLIS?\n\n**Qualitative predictions: all confirmed.**\n- AD always has lower ITL than AL (0-8.7% advantage, growing with load)\n- AD always has higher TTFT than AL (+4ms to +16ms, gap narrows with load)\n- Neither mode saturated at rate=150 req/s\n\n**Quantitative ITL formula: partially holds, with systematic deviation.**\n- The paper's ITL = A/(1-B*rate) fits at MAPE 3.9% (AL) / 2.5% (AD)\n- A simple linear model fits better: MAPE 1.9% (AL) / 1.2% (AD)\n- At rate=150, the 1/(1-\u03c1) model overestimates AL ITL by 1.5ms (7.6%)\n\n**Root cause of breakdown:** The paper assumes constant marginal cost per request (\u03b4), but BLIS's trained-physics latency model has **decreasing** marginal cost \u2014 from ~75\u00b5s/request at batch=1 down to ~14\u00b5s/request at batch=191. This happens because weight loading (a fixed per-step cost) amortizes across larger batches. In the tested range (utilization 0-38%), the curve is nearly linear rather than hyperbolic. The 1/(1-\u03c1) divergence would emerge only near saturation (~395 req/s for AL, ~456 req/s for AD).",
+  "cli_cost": 4.452154999999999,
+  "subtype": "success",
+  "wall": 1291.1,
+  "num_turns": 47,
+  "n": 1
+ }
+]

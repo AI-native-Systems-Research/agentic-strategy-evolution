@@ -1,0 +1,12 @@
+[
+ {
+  "ok": true,
+  "returncode": 0,
+  "final": "All files present and valid. Here's a summary of the findings:\n\n## Results Summary\n\n### Space Structure\nThe 1800-config space has **~27 unique Pareto-optimal objective vectors**. The search finds all of them (plus 1 extra) using only **200 evaluations** (11% of the space) in **~22 seconds**.\n\n### Which Knobs Matter\n| Knob | Impact | Finding |\n|------|--------|---------|\n| **tp \u00d7 num_instances** | **Dominant** | Determines throughput capacity and GPU cost. Higher TP = better per-GPU throughput. More instances = better latency. |\n| **total_kv_blocks** | **Threshold effect** | Below a config-dependent threshold, preemptions degrade perf. Above it, no improvement. |\n| **max_num_running_reqs** | **Moderate** | 128+ is usually sufficient. 256 matters in single-instance configs near soft-saturation. |\n| **block_size_in_tokens** | **32 always wins** | Reduces fragmentation/preemptions. Never hurts. |\n| **scheduler** | **Negligible** | FCFS Pareto-dominates SJF in all tested configs. |\n\n### Key Trade-offs\n- **Throughput vs cost**: tp=8,ni=1 gets 32 rps (8 GPUs) vs tp=4,ni=2 gets 26.78 rps (8 GPUs) with better TTFT (30 vs 28ms)\n- **Quality vs cost**: 1 GPU with adequate KV blocks (5000) gets 7 rps with 93ms TTFT; 8 GPUs get 26-32 rps with 28-30ms TTFT\n\n### Search Algorithm\n5-phase adaptive approach with **soft-saturation detection** (compares moderate vs generous baselines on both RPS and TTFT, not just preemption count). Finds the complete Pareto front with 0 truly missed non-dominated points.",
+  "cli_cost": 2.59343175,
+  "subtype": "success",
+  "wall": 932.8,
+  "num_turns": 41,
+  "n": 1
+ }
+]

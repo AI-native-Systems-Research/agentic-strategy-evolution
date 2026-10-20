@@ -1,0 +1,34 @@
+{
+  "iteration": 5,
+  "bundle_ref": "runs/iter-5/bundle.yaml",
+  "arms": [
+    {
+      "arm_type": "h-control-negative",
+      "predicted": "v1 search.py at budget=100 achieves exactly 80.0% unique Pareto tuple recall on 14B/rate=100/seed=42",
+      "observed": "v1 budget=100: 80.0% recall (28/35 unique tuples). Exact match. Search consumed all 100 evaluations.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": null
+    },
+    {
+      "arm_type": "h-main",
+      "predicted": "Restructured search (selective Phase 2 + no Phase 3 + expanded Phase 2.5) achieves >=95% unique Pareto tuple recall at budget=100 on 14B/rate=100, up from 80.0% baseline",
+      "observed": "v2 budget=100: 100.0% recall (35/35 unique tuples). All 7 previously-missed tuples found. Search consumed exactly 100 evaluations. Found 49 Pareto-optimal configurations (vs 33 for v1). Improvement: 80.0% \u2192 100.0% (+20 percentage points).",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Exceeded prediction threshold: achieved 100% (vs >=95% predicted). Budget arithmetic confirmed: Phase 1 (15) + selective Phase 2 (~38) = ~53 evals, leaving ~47 for expanded Phase 2.5. All degraded combos probed including non-best."
+    },
+    {
+      "arm_type": "h-dose-response",
+      "predicted": "Recall-vs-budget curve for v2 search is monotone increasing and saturating, reaching 100% by budget=100 (dead zone eliminated)",
+      "observed": "v2 recall curve: b=50\u219251.4%, b=75\u219280.0%, b=100\u2192100.0%, b=125\u2192100.0%, b=150\u2192100.0%, b=200\u2192100.0%. Strictly monotone increasing, saturates at budget=100. v1 comparison: b=50\u219225.7%, b=75\u219257.1%, b=100\u219280.0%, b=125\u219280.0% (dead zone), b=150\u219291.4%, b=200\u219294.3%. Dead zone (100-125 flat) eliminated in v2. v2 also never falls below 100% for budgets above 100.",
+      "status": "CONFIRMED",
+      "error_type": null,
+      "diagnostic_note": "Shape is saturating as predicted. Saturation point is exactly budget=100, matching the design target. v1 dead zone at 100-125 (RP-11) is fully eliminated. At budget=200, v2 achieves 100% vs v1's 94.3%."
+    }
+  ],
+  "experiment_valid": true,
+  "discrepancy_analysis": "All three arms confirmed. h-main exceeded the >=95% prediction threshold, achieving 100% recall exactly. h-control-negative validated the baseline at exactly 80.0%, confirming determinism. h-dose-response confirmed the saturating shape with saturation at budget=100 as predicted \u2014 the v1 dead zone at budget=100-125 is fully eliminated. v2 curve: b=50\u219251.4%, b=75\u219280.0%, b=100-200\u2192100.0%.",
+  "dominant_component_pct": null,
+  "worktree_uncommitted_writes": []
+}

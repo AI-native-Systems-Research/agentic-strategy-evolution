@@ -1,0 +1,58 @@
+[
+  {
+    "id": "RP-2",
+    "statement": "The Pareto front of BLIS's 6-knob configuration space has strong structural redundancy, and a hierarchical search with adaptive degraded-regime interaction achieves 100% unique Pareto tuple coverage with 11.1% of total evaluations across arrival rates 50-200.",
+    "confidence": "high",
+    "regime": "qwen/qwen3-14b on H100, rates={50,100,200}, num-requests=200, full 6-knob space (1800 configs)",
+    "evidence": [
+      "iteration-1-h-main",
+      "iteration-2-h-main",
+      "iteration-2-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Three structural regularities enable pruning: (1) effective_cache = kv*bs determines cache regime, (2) maxr=256 is a universal saturation plateau, (3) TP dominates over instance count. A fourth regularity \u2014 scheduler x concurrency interaction in degraded regimes \u2014 creates Pareto tradeoff points invisible to independent exploration. The adaptive phase detects degradation from initial probes and explores the cross-product, closing the coverage gap.",
+    "applicability_bounds": "Verified for qwen/qwen3-14b at rates 50, 100, 200. The Pareto front grows with rate (23\u219235\u219241 unique tuples) but the algorithm adapts. May need tuning for very different model architectures or GPU types.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-5",
+    "statement": "In cache-degraded regimes, scheduler and concurrency interact to create non-obvious Pareto tradeoff points: SJF x maxr=128 at moderate cache pressure (effective_cache ~96K tokens) achieves 2-7% higher throughput than FCFS x maxr=256, at cost of 5-15% higher tail latency. This interaction is invisible when exploring scheduler and concurrency independently.",
+    "confidence": "high",
+    "regime": "Single-instance configs (ni=1) at kv=3000,bs=32 (96K effective cache), rate=100, tp={1,2,4,8}",
+    "evidence": [
+      "iteration-2-h-main"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "Under preemption pressure, SJF prioritizes shorter requests for scheduling, which increases completion rate (higher rps) but delays longer requests (higher ttft_p99). Reducing maxr from 256 to 128 further limits batch size, which interacts with SJF's prioritization to create a qualitatively different operating mode. This cross-product effect only manifests when cache is stressed enough to trigger preemptions but not so stressed that all requests are equally impacted.",
+    "applicability_bounds": "Holds at moderate cache pressure (effective_cache ~60-100K tokens for this workload). At no pressure (effective_cache >= 160K), SJF effect vanishes. At severe pressure (effective_cache < 50K), the interaction reverses. Verified at rate=100; the thresholds shift with rate.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  },
+  {
+    "id": "RP-6",
+    "statement": "The Pareto front diversity scales with arrival rate: rate=50 produces 23 unique objective tuples, rate=100 produces 35, and rate=200 produces 41. Higher load creates more diverse performance tradeoffs because more configs enter degraded regimes where knob interactions differentiate performance.",
+    "confidence": "high",
+    "regime": "qwen/qwen3-14b on H100, rates={50,100,200}, num-requests=200",
+    "evidence": [
+      "iteration-2-h-robustness"
+    ],
+    "contradicts": [],
+    "extraction_iteration": 2,
+    "mechanism": "At lower rates, fewer concurrent requests mean less cache pressure and less scheduler differentiation, so more configs collapse to identical performance (plateau equivalence). At higher rates, more configs enter degraded regimes where cache pressure, scheduler choice, and concurrency limits create distinct performance tradeoffs.",
+    "applicability_bounds": "Observed for rates 50-200 with 200 requests. The trend may not extrapolate monotonically \u2014 at extremely high rates, all configs may saturate and collapse again.",
+    "superseded_by": null,
+    "category": "domain",
+    "status": "active",
+    "empirical_content": true,
+    "derivation_type": "empirical"
+  }
+]
