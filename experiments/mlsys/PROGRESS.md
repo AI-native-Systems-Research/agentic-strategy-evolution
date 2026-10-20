@@ -289,3 +289,4 @@ Times are local (EDT).
 - ALL 27 RUNS SCORED. Final O1: dbg L2 3/3, NP 3/3, Nous 3/3; pd L2 2/3, NP 1/3, Nous 1/3; search 0/3 each.
   Spend $259.22 (L2 $51.29, NP $46.68, Nous $161.26). REPORT.md + figures/ written. Queue stopped, caffeinate
   stopped, run data kept at ~/mlsys_runs.
+- 10-20 08:54 Filed Nous issues with evidence + repro: #327 (SDK 1 MB buffer), #328 (findings schema hard-fail drops principles), #329 (continue gate after solved).

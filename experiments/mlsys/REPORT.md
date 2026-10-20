@@ -98,8 +98,9 @@ All arms: same task text and output contract, same model family and CLI (2.1.301
   runs, but needed several synonym additions; a reader should spot-check `results.json` against the answers.
 - Nous runs as shipped with a Sonnet executor, while the baselines are all-Opus. This was intended to bias against
   Nous; it may explain part of the gap.
-- Nous needs `max_buffer_size` raised in the SDK options, and its schema validation rejected otherwise-valid
-  iterations. Both are Nous `main` robustness issues; they cost Nous iterations on verification.
+- Nous needs `max_buffer_size` raised in the SDK options (#327), and its schema validation rejected otherwise-valid
+  iterations (#328). Both are Nous `main` robustness issues; they cost Nous iterations on verification. The
+  continue gate also kept going after a task was solved (#329).
 - The 200-evaluation limit is strict: Nous search rep4 is scored 0 on hypervolume for 204 evaluations. Its
   structure facts were 1/4, so its O1 would be false regardless.
 
