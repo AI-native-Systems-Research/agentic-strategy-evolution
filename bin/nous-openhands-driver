@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""Run one Nous agent turn with the OpenHands Software Agent SDK.
+
+Invoked by ``orchestrator.openhands_dispatch.OpenHandsRunner`` with the
+Python interpreter of an environment that has ``openhands`` installed
+(kept separate from nous's own venv so the two dependency trees never
+clash). Request and response are JSON files:
+
+    nous-openhands-driver request.json response.json
+
+Request fields: prompt, model, cwd, max_turns, system_prompt, base_url,
+max_output_tokens, pricing (USD per million tokens, optional:
+input_per_million, output_per_million, cache_read_per_million,
+cache_write_per_million), event_log_path (append one JSON line per agent
+event, same shape as the Claude backend's executor_log.jsonl),
+persistence_dir (full OpenHands conversation, for audit and replay),
+resume_conversation_id (continue that saved conversation instead of starting
+a new one; the dispatcher's ``resume``), max_cost_usd + cost_rates (pause the
+session once its token-ruler cost reaches the cap), request_timeout (seconds
+per model call; local models can be slow), context_window (model context in
+tokens; enables token-based summarizing for small local models).
+Response fields mirror ``orchestrator.sdk_dispatch.SDKResult`` plus
+``fatal`` (error that retrying cannot fix), ``execution_status``,
+``conversation_id``. Like the Claude backend, a capped session returns
+``subtype="error_max_budget_usd"`` and a turn-limited one
+``subtype="error_max_turns"``, both with ``session_id`` so they can be resumed.
+Token counts and cost cover this turn only, even for a resumed conversation.
+
+Tokens are reported in Nous's (Anthropic) convention: ``input_tokens`` is
+uncached input only, cache reads and writes are separate. LiteLLM's
+``prompt_tokens`` include both, so they are subtracted here.
+
+Cost is computed here from those four token counts, not taken from
+OpenHands: LiteLLM has no prices for most open-weight models (cost would be
+$0 and budget caps would never fire), and with custom prices it bills cache
+writes twice. Rates come from ``pricing`` (resolved by the orchestrator; see
+``orchestrator.openhands_dispatch.resolve_pricing``), else OpenHands' own cost.
+
+The model is any LiteLLM slug, so open-weight models work unchanged, e.g.
+``openrouter/z-ai/glm-5.2`` or ``nvidia_nim/nvidia/nemotron-3-super``.
+Provider credentials are read by LiteLLM from its usual env vars
+(OPENROUTER_API_KEY, NVIDIA_NIM_API_KEY, ANTHROPIC_API_KEY, ...).
+"""
+from __future__ import annotations
+
+import json
+import os
+import sys
+import threading
+import time
+import uuid
+
+
+def _rates(pricing: dict | None) -> dict | None:
+    """USD per token for input / output / cache_read / cache_write, or None."""
+    if not pricing:
+        return None
+    rin = pricing["input_per_million"] / 1e6
+    return {
+        "in": rin,
+        "out": pricing["output_per_million"] / 1e6,
+        "cache_read": pricing.get("cache_read_per_million", pricing["input_per_million"]) / 1e6,
+        "cache_write": pricing.get("cache_write_per_million", pricing["input_per_million"]) / 1e6,
+    }
+
+
+def _ruler(cost_rates: dict | None) -> dict:
+    """Nous token ruler, USD per million tokens (orchestrator.metrics.DEFAULT_COST_RATES)."""
+    r = {"input": 15.0, "output": 75.0, "cache_write": 18.75, "cache_read": 1.5}
+    r.update({k: float(v) for k, v in (cost_rates or {}).items() if k in r})
+    return r
+
+
+def _usage(metrics) -> dict:
+    u = metrics.accumulated_token_usage
+    def n(name: str) -> int:
+        return int(getattr(u, name, 0) or 0) if u is not None else 0
+    return {"prompt": n("prompt_tokens"), "out": n("completion_tokens"),
+            "cache_read": n("cache_read_tokens"), "cache_write": n("cache_write_tokens"),
+            "cost": float(metrics.accumulated_cost or 0.0), "n_replies": len(metrics.token_usages or [])}
+
+
+def _ruler_usd(prompt: int, out: int, cache_read: int, cache_write: int, r: dict) -> float:
+    uncached = max(0, prompt - cache_read - cache_write)
+    return (uncached * r["input"] + out * r["output"]
+            + cache_write * r["cache_write"] + cache_read * r["cache_read"]) / 1e6
+
+
+def _delta_cost(now: dict, base: dict, r: dict) -> float:
+    return _ruler_usd(*(max(0, now[k] - base[k]) for k in ("prompt", "out", "cache_read", "cache_write")), r)
+
+
+def _reply_cost(usage, r: dict) -> float:
+    def n(name: str) -> int:
+        return int(getattr(usage, name, 0) or 0)
+    return _ruler_usd(n("prompt_tokens"), n("completion_tokens"),
+                      n("cache_read_tokens"), n("cache_write_tokens"), r)
+
+
+# Errors no retry can fix: bad key, unknown model, no credits. Everything else
+# (timeouts, rate limits, 5xx) is reported as a retryable is_error.
+_FATAL_MARKERS = (
+    "AuthenticationError", "PermissionDeniedError", "NotFoundError",
+    "No endpoints found", "not a valid model", "weight_exceeds_budget",
+    "requires more credits", "Insufficient credits",
+    # Daily free-model quota: waiting minutes (the retry backoff) won't reset it.
+    "free-models-per-day",
+)
+
+
+def _is_fatal(message: str) -> bool:
+    return "in_flight_budget_exhausted" not in message and any(
+        marker in message for marker in _FATAL_MARKERS
+    )
+
+
+def _event_logger(path: str | None):
+    if not path:
+        return None
+
+    def log(event) -> None:
+        record = {"type": type(event).__name__, "ts": time.time(), "harness": "openhands"}
+        for name in ("source", "tool_name"):
+            value = getattr(event, name, None)
+            if isinstance(value, str):
+                record[name] = value
+        try:
+            with open(path, "a") as f:
+                f.write(json.dumps(record) + "\n")
+        except OSError:
+            pass  # best-effort, like the Claude backend's _tee_event
+
+    return log
+
+
+def main() -> int:
+    req_path, resp_path = sys.argv[1], sys.argv[2]
+    with open(req_path) as f:
+        req = json.load(f)
+
+    os.environ.setdefault("OPENHANDS_SUPPRESS_BANNER", "1")
+    from openhands.sdk import LLM, AgentContext, Conversation
+    from openhands.sdk.conversation import get_agent_final_response
+    from openhands.tools.preset.default import get_default_agent
+
+    start = time.monotonic()
+    conv = None
+    try:
+        rates = _rates(req.get("pricing"))
+        ruler = _ruler(req.get("cost_rates"))  # nous's token ruler: budgets and caps
+        llm_kwargs = {}
+        if req.get("request_timeout"):
+            llm_kwargs["timeout"] = int(req["request_timeout"])
+        llm = LLM(
+            model=req["model"],
+            base_url=req.get("base_url") or None,
+            # OpenHands defaults to the model's maximum (e.g. 131072), which
+            # providers that pre-authorize credit per request reject and which
+            # lets slow models run past the request timeout.
+            max_output_tokens=req.get("max_output_tokens") or None,
+            usage_id="nous",
+            **llm_kwargs,
+        )
+        agent = get_default_agent(llm=llm, cli_mode=True)
+        ctx = req.get("context_window")
+        if ctx:
+            # Small local context (e.g. Ollama): tell OpenHands the window,
+            # summarize old steps at ~75% of it, and cap single tool outputs, so
+            # the server never silently drops the start of the conversation.
+            from openhands.sdk.context.condenser import LLMSummarizingCondenser
+            small = llm.model_copy(update={"max_input_tokens": int(ctx),
+                                           "max_message_chars": min(30000, int(ctx))})
+            agent = agent.model_copy(update={
+                "llm": small,
+                "condenser": LLMSummarizingCondenser(
+                    llm=small.model_copy(update={"usage_id": "condenser"}),
+                    max_size=80, keep_first=4, max_tokens=int(int(ctx) * 0.75)),
+            })
+        # Nous's methodology preamble rides on the system prompt; skills
+        # from ~/.openhands or the public marketplace are disabled so runs
+        # are reproducible.
+        agent = agent.model_copy(update={"agent_context": AgentContext(
+            system_message_suffix=req.get("system_prompt") or None,
+            load_user_skills=False,
+            load_public_skills=False,
+        )})
+        logger = _event_logger(req.get("event_log_path"))
+        resume_id = req.get("resume_conversation_id")
+        conv = Conversation(
+            agent=agent,
+            workspace=req["cwd"],
+            max_iteration_per_run=int(req["max_turns"]),
+            persistence_dir=req.get("persistence_dir") or None,
+            # Same id + same persistence_dir = OpenHands resumes the saved state.
+            conversation_id=uuid.UUID(resume_id) if resume_id else None,
+            callbacks=[logger] if logger else None,
+            visualizer=None,
+        )
+        if req.get("session_file"):
+            # Lets the orchestrator name the session even if it has to kill a hung turn.
+            with open(req["session_file"], "w") as f:
+                f.write(str(conv.id))
+        # A resumed conversation restores its earlier totals: report only this turn.
+        base = _usage(conv.conversation_stats.get_combined_metrics())
+        n_events = len(conv.state.events)
+
+        budget_hit = threading.Event()
+        done = threading.Event()
+        cap = req.get("max_cost_usd")
+        if cap:
+            def watch() -> None:
+                # pause() is thread-safe and takes effect between agent steps.
+                while not done.wait(1.0):
+                    spent = _delta_cost(_usage(conv.conversation_stats.get_combined_metrics()), base, ruler)
+                    if spent >= float(cap):
+                        budget_hit.set()
+                        conv.pause()
+                        return
+            threading.Thread(target=watch, daemon=True).start()
+
+        conv.send_message(req["prompt"])
+        try:
+            conv.run()
+        finally:
+            done.set()
+        text = get_agent_final_response(conv.state.events) or ""
+        status = conv.state.execution_status
+        execution_status = getattr(status, "value", str(status))
+        new_events = conv.state.events[n_events:]
+        max_turns_hit = any(
+            type(e).__name__ == "ConversationErrorEvent" and getattr(e, "code", "") == "MaxIterationsReached"
+            for e in new_events
+        )
+        metrics = conv.conversation_stats.get_combined_metrics()
+        now = _usage(metrics)
+        tok = {k: max(0, now[k] - base[k]) for k in ("prompt", "out", "cache_read", "cache_write")}
+        uncached = max(0, tok["prompt"] - tok["cache_read"] - tok["cache_write"])
+        if rates:
+            cost = (uncached * rates["in"] + tok["out"] * rates["out"]
+                    + tok["cache_read"] * rates["cache_read"] + tok["cache_write"] * rates["cache_write"])
+        else:
+            cost = max(0.0, now["cost"] - base["cost"])
+        # Per-reply ruler costs for this turn (v8 sizes wrap-ups from these).
+        replies = [_reply_cost(u, ruler) for u in list(metrics.token_usages)[base["n_replies"]:]]
+        resp = {
+            "text": text,
+            "input_tokens": uncached,
+            "output_tokens": tok["out"],
+            "cache_read_input_tokens": tok["cache_read"],
+            "cache_creation_input_tokens": tok["cache_write"],
+            "cost_usd": cost,
+            "num_turns": sum(1 for e in new_events if type(e).__name__ == "ActionEvent"),
+            "is_error": False,
+            "error_message": "",
+            "execution_status": execution_status,
+            "conversation_id": str(conv.id),
+            "session_id": str(conv.id),
+            "last_turn_cost_usd": replies[-1] if replies else 0.0,
+            "max_reply_usd": max(replies) if replies else 0.0,
+        }
+        # Same signals as the Claude backend, so the dispatcher can wrap up by
+        # resuming this session (cap) or continuing it (turn limit).
+        if budget_hit.is_set():
+            resp.update(is_error=True, subtype="error_max_budget_usd",
+                        error_message=f"error_max_budget_usd: session reached its ${float(cap):.2f} cap")
+        elif max_turns_hit:
+            resp.update(is_error=True, subtype="error_max_turns",
+                        error_message=f"error_max_turns: OpenHands reached {req['max_turns']} actions")
+    except Exception as exc:  # noqa: BLE001 — surfaced to the dispatcher's retry logic
+        message = f"{type(exc).__name__}: {exc}"
+        resp = {"text": "", "is_error": True, "error_message": message,
+                "fatal": _is_fatal(message)}
+        if conv is not None:
+            resp["session_id"] = resp["conversation_id"] = str(conv.id)
+    resp["duration_ms"] = int((time.monotonic() - start) * 1000)
+
+    with open(resp_path, "w") as f:
+        json.dump(resp, f)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -363,8 +363,11 @@ def run_campaign(
     # #183: only the SDK path remains as a code-access backend; the legacy
     # claude -p subprocess path was removed. Programmatic callers passing
     # agent="api" hit the guard in run_iteration().
-    if agent == "sdk" and repo_path:
-        from orchestrator.sdk_dispatch import SDKDispatcher
+    if agent in ("sdk", "openhands") and repo_path:
+        if agent == "openhands":
+            from orchestrator.openhands_dispatch import OpenHandsDispatcher as SDKDispatcher
+        else:
+            from orchestrator.sdk_dispatch import SDKDispatcher
         preflight_dispatcher = SDKDispatcher(
             work_dir=work_dir, campaign=campaign,
             model=_resolve_model(campaign, "design", model),
@@ -561,7 +564,7 @@ def main() -> None:
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
                         help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
-    parser.add_argument("--agent", choices=["inline", "sdk"], default="sdk",
+    parser.add_argument("--agent", choices=["inline", "sdk", "openhands"], default="sdk",
                         help="Dispatch backend: 'sdk' (default) uses the Claude "
                              "Agent SDK for code phases; 'inline' emits prompts "
                              "to stdout for the calling agent (no subprocess, "

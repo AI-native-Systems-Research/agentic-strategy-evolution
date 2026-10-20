@@ -175,6 +175,56 @@ properties:
       ``default`` only if the campaign genuinely lives entirely under
       the launched cwd (rare).
 
+  openhands:
+    type: object
+    additionalProperties: false
+    description: >
+      Settings for ``--agent openhands`` (OpenHands SDK backend; any LiteLLM
+      model, incl. open-weight). Ignored by the Claude Agent SDK backend.
+    properties:
+      repair_turns:
+        type: integer
+        minimum: 0
+        description: >
+          Max orchestrator-driven repair turns after EXECUTE_ANALYZE when
+          ``validate_execution`` fails (default 3). Replaces the Claude Code
+          Stop hook, which is not wired into the SDK path.
+      context_window:
+        type: integer
+        minimum: 4096
+        description: >
+          Model context in tokens for small local models (e.g. the Ollama
+          server's OLLAMA_CONTEXT_LENGTH). OpenHands then summarizes old steps
+          at ~75% of it and caps single tool outputs; without it a local server
+          may silently drop the start of the conversation.
+      request_timeout:
+        type: integer
+        minimum: 30
+        description: >
+          Seconds allowed per model call (OpenHands default 300). Raise it for
+          slow local models (Ollama) on long prompts.
+      max_output_tokens:
+        type: integer
+        minimum: 256
+        description: >
+          Per-call output token cap (default 16384). OpenHands otherwise
+          requests the model maximum, which providers that pre-authorize
+          credit per request (OpenRouter) reject.
+      pricing:
+        type: object
+        additionalProperties: false
+        required: [input_per_million, output_per_million]
+        description: >
+          Fixed USD price per million tokens used for cost accounting (e.g. a
+          model-independent ruler for iso-cost comparisons). When omitted,
+          ``openrouter/...`` models are priced from OpenRouter's public list,
+          others from LiteLLM's cost map.
+        properties:
+          input_per_million: {type: number, minimum: 0}
+          output_per_million: {type: number, minimum: 0}
+          cache_read_per_million: {type: number, minimum: 0, description: "Defaults to input_per_million."}
+          cache_write_per_million: {type: number, minimum: 0, description: "Defaults to input_per_million."}
+
   validation:
     type: object
     additionalProperties: false
