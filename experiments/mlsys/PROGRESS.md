@@ -128,3 +128,4 @@ Times are local (EDT).
   nous_prompt rep2 unchanged (O1 false: it reports no breakdown). Self-tests unchanged.
 - 21:21 tick: 5 runs live.
 - 21:22 dbg/nous_prompt/rep2 ($5.23, 1 session): O1 true (upstream test, suite, all 8 hidden checks pass). D5 false, verified by hand: its new regression test passes on the original buggy code too, so it does not catch the bug.
+- 21:26 tick: 5 runs live.
