@@ -186,3 +186,4 @@ Times are local (EDT).
   CLI directly and have no such limit. This is Nous-as-shipped behavior, so it is counted as is (not fixed mid-
   experiment; fixing it would change the Nous arm). Nous moved on to iteration 2. Noted as a Nous robustness finding
   (one-line fix for main: pass a larger max_buffer_size in ClaudeAgentOptions).
+- 22:55 tick: 5 runs live.
