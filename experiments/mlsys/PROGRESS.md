@@ -213,3 +213,4 @@ Times are local (EDT).
   no O1 changed (all still < 3/4). pd re-checked, unaffected.
   Observation: no arm has passed O1 on search yet; every arm's search script reaches HV ~0.997; T4 (small KV
   budgets suffice) has been stated by none.
+- 23:48 tick: runs live (see status).
