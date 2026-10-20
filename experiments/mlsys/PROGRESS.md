@@ -126,3 +126,4 @@ Times are local (EDT).
   every arm: K3 now accepts symbolic comparisons ("TTFT_AD > TTFT_AL"); K2 accepts "observed ITL saturates / hits a
   ceiling / grows slower than predicted" as the observed-side statement of over-prediction. Rescored: L2 O1 true;
   nous_prompt rep2 unchanged (O1 false: it reports no breakdown). Self-tests unchanged.
+- 21:21 tick: 5 runs live.
