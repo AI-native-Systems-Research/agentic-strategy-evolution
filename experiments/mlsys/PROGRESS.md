@@ -111,3 +111,4 @@ Times are local (EDT).
   (good/wrong-sign/bad answers) still behave. Not changed: the pre-registered K2 criterion. Caveat to report: K2
   depends on fitting W at moderate rates (as the paper does: W is a per-request work constant); a whole-range fit
   spreads the error and can hide the breakdown.
+- 20:56 tick: 5 runs live.
