@@ -98,3 +98,4 @@ Times are local (EDT).
   cell or key.
 - 20:40 Main queue launched: 24 cells (dbg reps 2-3; pd and search reps 2-4), arms interleaved by rep, on
   key slots 0-2 now and 3-4 once the two smoke cells finish.
+- 20:41 tick: 5 runs live (pd nous/l2 rep2, search nous_prompt rep2, smoke pd nous_prompt/search l2 rep2).
