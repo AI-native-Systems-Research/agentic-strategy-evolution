@@ -171,3 +171,4 @@ Times are local (EDT).
   K3 accepts "AD carries a TTFT penalty". pd so far: L2 1/2, nous_prompt 0/2, Nous 0/2.
 - 22:16 tick: 5 runs live.
 - 22:20 search/nous_prompt/rep3 ($7.16, 1 session): HV 0.997 main and held-out; T1 yes (block 32 'almost universally dominant'), T3 yes; T2 no (scheduler 'matters only in saturated regime... minor differences' - stated as minor-but-relevant, so not counted as irrelevant); T4 no (says trade-off vs KV cost, not that small KV suffices). T=2/4, O1 false. Checked by hand; no matcher change.
+- 22:21 tick: 5 runs live.
