@@ -187,3 +187,9 @@ Times are local (EDT).
   experiment; fixing it would change the Nous arm). Nous moved on to iteration 2. Noted as a Nous robustness finding
   (one-line fix for main: pass a larger max_buffer_size in ClaudeAgentOptions).
 - 22:55 tick: 5 runs live.
+- 22:56 pd/nous_prompt/rep4 ($4.10): O1 true. Read by hand: <1% fit at rates 1-50, breaks for AL above ~130
+  (14.5% at 150; key: >10% from 100), mechanism = batch cap max_num_running_reqs (not the weight-amortization one in
+  K4, so K4 false). Note: it changed --num-requests (3000) for part of its analysis, which the task fixes at 300;
+  locked-parameter check V1 is not implemented, so this is recorded, not scored. Its K1/K2 claims are supported at
+  the fixed 300 as well. pd now: L2 1/2, nous_prompt 1/3, Nous 0/2 (+1 running).
+- dbg/nous/rep3: Sonnet executor runs go test with -timeout 300s; ~5 min between LLM calls is a long test, not a hang.
