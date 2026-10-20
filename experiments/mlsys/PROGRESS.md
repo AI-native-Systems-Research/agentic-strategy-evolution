@@ -180,3 +180,9 @@ Times are local (EDT).
 - 22:45 tick: 5 runs live.
 - 22:46 dbg/nous_prompt/rep3: O1 true, all D checks pass, $4.08. 19/27.
 - 22:50 tick: 5 runs live.
+- 22:51 pd/nous/rep4: iteration 1 failed in DESIGN with "JSON message exceeded maximum buffer size of
+  1048576 bytes": the designer read 10 pages of the paper PDF in one Read call (1.6 MB tool result), which overflows
+  the Claude Agent SDK's default 1 MB message buffer (Nous main does not set max_buffer_size). The baselines call the
+  CLI directly and have no such limit. This is Nous-as-shipped behavior, so it is counted as is (not fixed mid-
+  experiment; fixing it would change the Nous arm). Nous moved on to iteration 2. Noted as a Nous robustness finding
+  (one-line fix for main: pass a larger max_buffer_size in ClaudeAgentOptions).
