@@ -153,3 +153,4 @@ Times are local (EDT).
     repos/, launch/, tasks/, ~/swefficiency, ~/aiopslab. /private/tmp kept writable as before, for consistency.
   - Arm difference noted: Nous's SDK sessions were offered WebSearch/WebFetch (l2/nous_prompt disable them); never
     called and the network is blocked, so no effect.
+- 21:55 Full scan of /private/tmp (40 dirs) for the fix: three more copies held it (blis-pr2, and my own oracle self-test dirs dbgselftest/searchselftest). Moved to keys/_quarantine_tmp. /private/tmp now has no copy of the fix; no run's transcript ever referenced any of these paths.
