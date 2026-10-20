@@ -205,3 +205,11 @@ Times are local (EDT).
 - 23:37 tick: 5 runs live.
 - 23:42 tick: 5 runs live.
 - 23:43 dbg/nous/rep3: O1 true, all D1-D6 pass, $10.50, 2 iterations (gate said continue after iter 1, stop after iter 2). Debugging complete: all 9 runs O1 true. Only run-own-test D5: L2 2/3, nous_prompt 2/3, Nous 3/3.
+- 23:48 search/nous/rep3 ($24.11, 4 iterations, agent gate): HV 0.997 main and held-out (= baselines);
+  T 1/4 (T1 block 32 'strictly Pareto-dominant'; it names 'throughput tiers' by GPU count but no explicit trade-off
+  vs GPU cost, so T3 no; says KV above a threshold has no effect, not that small KV suffices, so T4 no). O1 false.
+  Oracle bug fixed: the T1/T4 stem "dominat" never matches "dominant" (it is "domin-ant"); now "domina". Applied to
+  every search run and rescored: L2 rep3 T1 now yes (T 2), nous_prompt rep3 T1 yes (T 2), Nous rep3 T1 yes (T 1);
+  no O1 changed (all still < 3/4). pd re-checked, unaffected.
+  Observation: no arm has passed O1 on search yet; every arm's search script reaches HV ~0.997; T4 (small KV
+  budgets suffice) has been stated by none.
