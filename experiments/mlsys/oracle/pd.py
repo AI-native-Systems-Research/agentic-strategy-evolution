@@ -51,6 +51,9 @@ def _kind(metric):
         return None
     if "p99" in m or "p90" in m or "p95" in m or "p50" in m:
         return None
+    # only plain mean ITL/TTFT in ms is re-measurable; marginal/per-request/derived quantities are not
+    if re.search(r"marginal|per[- ]request|per[- ]req|slope|cost|\bus\b|µs|fit|alpha|α|\bw\b|growth|gap|capacity|crossover", m):
+        return None
     if "itl" in m:
         return "itl"
     if "ttft" in m:
