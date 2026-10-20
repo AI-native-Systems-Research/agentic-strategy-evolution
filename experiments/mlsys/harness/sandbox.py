@@ -30,15 +30,23 @@ DENY_READ = [
 ]
 
 
+TASK_NAMES = ("pd", "dbg", "search")
+ARM_NAMES = ("l2", "nous_prompt", "nous")
+REPS = tuple(f"rep{i}" for i in range(10))
+
+
 def _other_runs(run_dir):
-    """Deny every task/arm/rep dir that is not on the path to this run. Parents stay traversable (git needs them)."""
+    """Deny every task/arm/rep path not on the path to this run, including ones that do not exist yet (runs launched
+    later). Parents stay traversable (git needs them)."""
     root = os.path.realpath(os.path.join(RUNS, "runs"))
-    rel = os.path.relpath(os.path.realpath(run_dir), root).split(os.sep)  # [task, arm, rep]
-    out, cur = [], root
-    for part in rel:
-        if os.path.isdir(cur):
-            out += [os.path.join(cur, d) for d in os.listdir(cur) if d != part]
-        cur = os.path.join(cur, part)
+    task, arm, rep = os.path.relpath(os.path.realpath(run_dir), root).split(os.sep)[:3]
+    out = [os.path.join(root, t) for t in TASK_NAMES if t != task]
+    out += [os.path.join(root, task, a) for a in ARM_NAMES if a != arm]
+    out += [os.path.join(root, task, arm, r) for r in REPS if r != rep]
+    for level in (root, os.path.join(root, task), os.path.join(root, task, arm)):  # anything else that exists
+        if os.path.isdir(level):
+            out += [os.path.join(level, d) for d in os.listdir(level)
+                    if os.path.join(level, d) not in out and d not in (task, arm, rep)]
     return out
 
 
