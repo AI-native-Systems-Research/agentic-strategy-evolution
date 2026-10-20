@@ -216,3 +216,4 @@ Times are local (EDT).
 - 23:48 tick: runs live (see status).
 - 23:49 search/nous/rep2 ($22.45, 4 iterations): HV 0.995 main, held-out pass; T 0/4 checked by hand (lumps scheduler AND block size as 'secondary knobs that rarely change the front' - block 32 is on 93.5% of our front, so neither T1 nor T2; no GPU-cost trade-off; KV 'saturating threshold', not small-KV-suffices). O1 false. 23/27.
 - 23:53 tick: last 5 runs live; drafting report generator.
+- 23:54 Report figure generator (oracle/report_figs.py: O1 bars, cost per run, secondary-check heat grid, results.json) tested on the 23 scored runs. 4 runs left: pd l2/nous rep4, search l2/nous_prompt/nous rep4.
