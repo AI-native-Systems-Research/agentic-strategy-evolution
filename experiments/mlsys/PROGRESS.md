@@ -137,3 +137,19 @@ Times are local (EDT).
 - 21:47 tick: 5 runs live; independent cost+isolation audit agent running on finished runs.
 - 21:50 12/27 scored, 5 running, 10 queued. $88.
 - 21:52 tick: 5 runs live.
+- 21:54 Independent audit (separate agent, own scripts) of the 12 finished runs:
+  - Cost: our meter = independent recomputation to 0.00% on every run; = CLI's own total_cost_usd on 11/12; on
+    dbg/nous_prompt/2 the CLI is $0.045 (0.9%) higher (one stream-broken request not in the transcript; meter reads
+    low, never high). All successful proxy requests accounted for. Models: only opus-4-6 and sonnet-4-6.
+  - Isolation: zero tool calls touching keys, oracle, hidden tests, fixed checkouts, Desktop, ~/.claude, other runs;
+    no git clone/fetch/curl/wget; WebSearch/WebFetch used 0 times; denied attempts were pip install (network
+    blocked) and `nous validate` (its editable install points into the denied Desktop) - same for every arm. Every ws
+    has 1 commit, no remote, no d8271ee. All sandbox profiles identical apart from the run path. Task text
+    identical within each task.
+  - Gaps found (none exploited by any run): readable full inference-sim clones containing the fix in /private/tmp
+    (blis-main, blis-pr, blis-llmdr, from earlier unrelated work) and outputs of the fixed binary there; and
+    repos/blis-pd-base had full git history incl. d8271ee. Closed: moved them to keys/_quarantine_tmp (denied;
+    restorable), removed blis-pd-base/.git (the oracle only uses its binary), and the sandbox now also denies all of
+    repos/, launch/, tasks/, ~/swefficiency, ~/aiopslab. /private/tmp kept writable as before, for consistency.
+  - Arm difference noted: Nous's SDK sessions were offered WebSearch/WebFetch (l2/nous_prompt disable them); never
+    called and the network is blocked, so no effect.

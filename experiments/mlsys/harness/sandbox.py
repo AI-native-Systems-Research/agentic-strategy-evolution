@@ -15,8 +15,9 @@ NOUS = os.path.join(RUNS, "nous")  # pinned Nous runtime (copy of the mlsys-exp 
 
 DENY_READ = [
     os.path.join(RUNS, "keys"),
-    os.path.join(RUNS, "repos", "blis-dbg-fixed"),
-    os.path.join(RUNS, "repos", "blis-dbg-base"),
+    os.path.join(RUNS, "repos"),             # all checkouts (blis-pd-base contains the dbg fix); runs work on copies
+    os.path.join(RUNS, "launch"),
+    os.path.join(RUNS, "tasks"),
     os.path.join(NOUS, "experiments"),
     NOUS_SRC,
     PAPER,                                   # paper folder: campaigns, keys, oracle, other checkouts
@@ -27,6 +28,8 @@ DENY_READ = [
     os.path.join(HOME, "nous_repo"),
     os.path.join(HOME, "engram_repo"),
     os.path.join(HOME, "frontier"),
+    os.path.join(HOME, "swefficiency"),
+    os.path.join(HOME, "aiopslab"),
 ]
 
 
@@ -65,6 +68,8 @@ def profile(run_dir, allow_read_extra=()):
              os.path.join(HOME, "go"), os.path.join(HOME, "Library", "Caches", "go-build"), *allow_read_extra]
     lines += [f'(allow file-read* (subpath "{rr(p)}"))' for p in allow if os.path.exists(p)]
     lines += ["(deny file-write*)"]
+    # /private/tmp stays readable/writable as in the first runs (changing it mid-experiment would change agent
+    # behavior for later runs only); answer-bearing files were moved out of it, and cross-run /tmp use is audited.
     writable = [run_dir, os.path.join(HOME, "go"), os.path.join(HOME, "Library", "Caches"), "/private/tmp",
                 "/private/var/folders", "/dev"]
     lines += [f'(allow file-write* (subpath "{rr(p)}"))' for p in writable if os.path.exists(p)]
