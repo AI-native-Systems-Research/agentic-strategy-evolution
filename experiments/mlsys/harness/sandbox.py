@@ -17,7 +17,6 @@ DENY_READ = [
     os.path.join(RUNS, "keys"),
     os.path.join(RUNS, "repos", "blis-dbg-fixed"),
     os.path.join(RUNS, "repos", "blis-dbg-base"),
-    os.path.join(RUNS, "runs"),
     os.path.join(NOUS, "experiments"),
     NOUS_SRC,
     PAPER,                                   # paper folder: campaigns, keys, oracle, other checkouts
@@ -31,6 +30,18 @@ DENY_READ = [
 ]
 
 
+def _other_runs(run_dir):
+    """Deny every task/arm/rep dir that is not on the path to this run. Parents stay traversable (git needs them)."""
+    root = os.path.realpath(os.path.join(RUNS, "runs"))
+    rel = os.path.relpath(os.path.realpath(run_dir), root).split(os.sep)  # [task, arm, rep]
+    out, cur = [], root
+    for part in rel:
+        if os.path.isdir(cur):
+            out += [os.path.join(cur, d) for d in os.listdir(cur) if d != part]
+        cur = os.path.join(cur, part)
+    return out
+
+
 def profile(run_dir, allow_read_extra=()):
     rr = os.path.realpath
     lines = ["(version 1)", "(allow default)",
@@ -39,6 +50,7 @@ def profile(run_dir, allow_read_extra=()):
              '(allow network* (remote unix-socket))',
              '(allow network-bind (local ip "localhost:*"))']
     lines += [f'(deny file-read* (subpath "{rr(p)}"))' for p in DENY_READ if os.path.exists(p)]
+    lines += [f'(deny file-read* (subpath "{p}"))' for p in _other_runs(run_dir)]
     # re-allow what the arm legitimately needs (later rules win in SBPL)
     allow = [run_dir, NOUS + "/.venv", NOUS + "/orchestrator", NOUS + "/prompts", NOUS + "/bin", NOUS + "/plugin",
              NOUS + "/pyproject.toml", NOUS + "/CLAUDE.md", RUNS + "/harness", "/opt/anaconda3", "/opt/homebrew",

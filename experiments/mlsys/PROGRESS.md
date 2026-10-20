@@ -57,3 +57,9 @@ Times are local (EDT).
 - 19:52 tick: pilot running, all arms in iteration 1 (Nous still in DESIGN), $6.67 total, no crashes.
 - 19:57 tick: pilot still in iteration 1 for all arms, $10.51 total, no crashes.
 - 20:02 tick: Nous finished DESIGN of iter 1 (bundle validated), now EXECUTE; l2/nous_prompt still in session 1. $13.63 total.
+- 20:04 Pilot 1 stopped and discarded ($15.60). Harness bug found by self-review: the sandbox denied reads
+  of the whole runs/ tree to block access to other runs, but git needs to read parent directories, so
+  `git worktree add` and `git stash` failed inside the sandbox. This killed Nous's iteration 1 (worktree add, exit 128)
+  and also broke git stash for nous_prompt (L2 had not hit it yet). Fix: deny only sibling task/arm/rep dirs, keep
+  parents traversable. Re-tested: worktree add, stash, build OK; sibling runs and keys still unreadable. Pilot
+  data archived under keys/_archive (unreadable to agents). Relaunching the pilot.

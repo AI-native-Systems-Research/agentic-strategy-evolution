@@ -108,6 +108,7 @@ def main(task, arm, rep, slot):
     time.sleep(1)
     sb = run_dir / "sandbox.sb"
     sb.write_text(sandbox.profile(str(run_dir)))
+
     t0 = time.time()
     meta = dict(task=task, arm=arm, rep=rep, slot=slot, max_iterations=n_max, ceiling=ceiling,
                 nous_commit=(NOUS_RT / "NOUS_COMMIT").read_text().strip(),
