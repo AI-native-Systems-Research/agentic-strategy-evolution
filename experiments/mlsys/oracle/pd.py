@@ -103,7 +103,9 @@ def score(answer, text):
     under_text = bool(re.search(r"under-?predict|under-?estimat", text) and re.search(r"itl[^.\n]{0,60}under-?(predict|estimat)", text))
     hi_sign_ok = all(v > 0 for _, v in hi) if hi else None  # convention: (pred - obs)/obs > 0 = overprediction
     breaks_text = bool(re.search(r"(break|diverg|fail|deviat|degrad|no longer)[^.\n]{0,80}(high|heavy|large)[^.\n]{0,20}(rate|load)", text) or
-                       re.search(r"(rate|load)s?\s*(>=|≥|above|beyond|over|of)\s*~?\s*(8\d|9\d|1[0-5]\d)", text))
+                       re.search(r"(rate|load|λ|lambda)s?\s*(>=|≥|above|beyond|over|of|=|at)\s*~?\s*(8\d|9\d|1[0-5]\d)\b", text) or
+                       # over-prediction stated together with a high-rate magnitude, e.g. "overpredicts by 28% at (rate=100)"
+                       re.search(r"over-?predict\w*[^.\n]{0,160}(rate|λ)\s*[=:]?\s*(1[0-5]\d)", text))
     res["K2_breakdown_overpredict"] = bool((hi and hi_sign_ok) or (over_text and breaks_text and not under_text))
     # K3: AD TTFT higher than AL; AD ITL lower than AL.
     t1 = re.search(r"(\bad\b|always[- ]disagg\w*|disaggregat\w*)[^.\n]{0,100}(higher|larger|worse|greater|more|longer|adds?|pays?|raises?|increases?)[^.\n]{0,40}ttft", text)

@@ -217,3 +217,13 @@ Times are local (EDT).
 - 23:49 search/nous/rep2 ($22.45, 4 iterations): HV 0.995 main, held-out pass; T 0/4 checked by hand (lumps scheduler AND block size as 'secondary knobs that rarely change the front' - block 32 is on 93.5% of our front, so neither T1 nor T2; no GPU-cost trade-off; KV 'saturating threshold', not small-KV-suffices). O1 false. 23/27.
 - 23:53 tick: last 5 runs live; drafting report generator.
 - 23:54 Report figure generator (oracle/report_figs.py: O1 bars, cost per run, secondary-check heat grid, results.json) tested on the 23 scored runs. 4 runs left: pd l2/nous rep4, search l2/nous_prompt/nous rep4.
+- 23:58 pd reps 4 done.
+  - pd/l2/rep4 ($16.30, 3 sessions): fits <0.5% at low rho, "overpredicts by ... 28% at rate=100, 122% at 150".
+  - pd/nous/rep4 ($17.79, 4 iterations, hit max; iteration 1 lost to the SDK buffer overflow): MAPE <0.1% at rates
+    5-20, "overpredicts by 108% (AL) and 50% (AD) at rate=150", concave vs convex mechanism, AD lower ITL / higher
+    TTFT. Read by hand: correct on all three facts.
+  Oracle K2 bug fixed (applied to every pd run): the rate parser did not accept "at rate=100" / "(rate=150)" after
+  an over-prediction statement, so correct answers like L2 rep4 scored K2 false. Every K2=true was then audited by
+  hand against the answer text (all genuine). Self-tests unchanged. Rescored all 9 pd runs:
+  L2 2/3 (rep2, rep4), nous_prompt 1/3 (rep4), Nous 1/3 (rep4). L2 rep3 and nous_prompt rep3 now have K2 true but
+  still fail K1 (no moderate-rate fit within 2%).
