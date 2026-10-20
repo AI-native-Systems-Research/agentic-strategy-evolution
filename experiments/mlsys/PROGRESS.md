@@ -81,3 +81,7 @@ Times are local (EDT).
   upstream (10 non-test lines, incl. the zero-output guard), 68-line regression test; all hidden checks pass, 6/6 claims
   backed and reproduced. Both baselines solve this bug in one session.
 - 20:34 Nous pilot in findings gate of iter 1. Started smoke cells pd/nous_prompt/2 and search/l2/2 on free slots 3,4 to exercise those task paths (they count as real runs).
+- 20:35 Pilot 2, Nous: iteration 1 done; its continue-gate summary recommended stop, and the agent gate
+  followed it (gate mode works). Notable: Nous also found that the same root cause inflates AllITLs and TTFTSum
+  after preemption and patched those too; this matches the separate upstream fix 320aa47. The oracle does not score
+  this (pre-registered checks only); recorded as a qualitative observation. Packaging step next.
