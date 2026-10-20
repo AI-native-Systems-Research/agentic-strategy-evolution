@@ -100,3 +100,4 @@ Times are local (EDT).
   key slots 0-2 now and 3-4 once the two smoke cells finish.
 - 20:41 tick: 5 runs live (pd nous/l2 rep2, search nous_prompt rep2, smoke pd nous_prompt/search l2 rep2).
 - 20:46 tick: 5 runs live, all in iteration/session 1.
+- 20:51 tick: 5 runs live, no crashes.
