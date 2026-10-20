@@ -1102,10 +1102,12 @@ def main():
              "unbounded (default: 10).",
     )
     p_run.add_argument(
-        "--agent", choices=["inline", "sdk"], default="sdk",
+        "--agent", choices=["inline", "sdk", "openhands"], default="sdk",
         help="Dispatch backend. 'sdk' (default) uses the Claude Agent "
              "SDK for code phases; 'inline' emits prompts to stdout for "
-             "an enclosing agent framework. The legacy 'api' backend "
+             "an enclosing agent framework; 'openhands' uses the OpenHands "
+             "SDK (any LiteLLM model, incl. open-weight; needs "
+             "NOUS_OPENHANDS_PYTHON). The legacy 'api' backend "
              "was removed in #183.",
     )
     p_run.add_argument(
@@ -1144,7 +1146,7 @@ def main():
     p_resume.add_argument("--auto-approve", action="store_true")
     p_resume.add_argument("--timeout", type=int, default=1800)
     p_resume.add_argument("--max-cli-retries", type=int, default=10)
-    p_resume.add_argument("--agent", choices=["inline", "sdk"], default="sdk")
+    p_resume.add_argument("--agent", choices=["inline", "sdk", "openhands"], default="sdk")
     p_resume.set_defaults(func=_cmd_resume)
 
     p_schema = subparsers.add_parser(
@@ -1236,7 +1238,7 @@ def main():
     p_report.add_argument("target")
     p_report.add_argument("--model")
     p_report.add_argument("--timeout", type=int, default=1800)
-    p_report.add_argument("--agent", choices=["inline", "sdk"], default="sdk")
+    p_report.add_argument("--agent", choices=["inline", "sdk", "openhands"], default="sdk")
     p_report.set_defaults(func=_cmd_report)
 
     p_replay = subparsers.add_parser("replay")

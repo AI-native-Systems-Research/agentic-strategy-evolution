@@ -195,11 +195,15 @@ def _maybe_carry_forward(campaign: dict, work_dir: Path, repo_path) -> None:
 
 
 def _v7_flow(campaign: dict, iteration: int, cli_dispatcher, repo_path, agent: str) -> bool:
-    """v7 multi-session EXECUTE needs the SDK dispatcher and a worktree target; otherwise v7 runs like v6."""
+    """v7 multi-session EXECUTE needs the SDK dispatcher and a worktree target; otherwise v7 runs like v6.
+
+    ``openhands`` qualifies too: OpenHandsDispatcher is an SDKDispatcher (session
+    budgets, resume) with the turns run by OpenHands instead of Claude Code.
+    """
     from orchestrator.design_profile import is_v7_family
     from orchestrator.iteration_mode import iteration_mode_for
     ts = campaign.get("target_system", {})
-    return (is_v7_family(campaign) and agent == "sdk" and repo_path is not None
+    return (is_v7_family(campaign) and agent in ("sdk", "openhands") and repo_path is not None
             and hasattr(cli_dispatcher, "session_budget") and not ts.get("live_target")
             and not campaign.get("derived_from") and iteration_mode_for(campaign, iteration) == "real")
 
@@ -1164,9 +1168,9 @@ def run_iteration(
             "Use agent='sdk' (default) — install with `pip install nous` and "
             "the claude-agent-sdk dependency lands automatically."
         )
-    if agent not in ("sdk", "inline"):
+    if agent not in ("sdk", "inline", "openhands"):
         raise ValueError(
-            f"Unknown agent backend: {agent!r}. Valid values: 'sdk', 'inline'."
+            f"Unknown agent backend: {agent!r}. Valid values: 'sdk', 'inline', 'openhands'."
         )
 
     # Validate the campaign once, up front. The staticmethod on LLMDispatcher
@@ -1211,7 +1215,12 @@ def run_iteration(
         llm_dispatcher = inline_dispatcher
     else:
         # SDK mode: code-access dispatcher only when repo_path is set.
-        from orchestrator.sdk_dispatch import SDKDispatcher
+        # ``openhands`` swaps the Claude Agent SDK for the OpenHands SDK
+        # (any LiteLLM model, incl. open-weight); see openhands_dispatch.py.
+        if agent == "openhands":
+            from orchestrator.openhands_dispatch import OpenHandsDispatcher as SDKDispatcher
+        else:
+            from orchestrator.sdk_dispatch import SDKDispatcher
         cli_dispatcher = (
             SDKDispatcher(
                 work_dir=work_dir, campaign=campaign,
@@ -1687,7 +1696,7 @@ def main() -> None:
                         help="Timeout in seconds for claude -p calls (default: 1800)")
     parser.add_argument("--max-cli-retries", type=int, default=10,
                         help="Max retries for claude -p failures (-1 = unbounded, default: 10)")
-    parser.add_argument("--agent", choices=["inline", "sdk"], default="sdk",
+    parser.add_argument("--agent", choices=["inline", "sdk", "openhands"], default="sdk",
                         help="Dispatch backend: 'sdk' (default) uses the Claude "
                              "Agent SDK for code phases; 'inline' emits prompts "
                              "to stdout for the calling agent.")
