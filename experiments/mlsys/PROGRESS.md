@@ -204,3 +204,4 @@ Times are local (EDT).
 - 23:33 tick: 5 runs live.
 - 23:37 tick: 5 runs live.
 - 23:42 tick: 5 runs live.
+- 23:43 dbg/nous/rep3: O1 true, all D1-D6 pass, $10.50, 2 iterations (gate said continue after iter 1, stop after iter 2). Debugging complete: all 9 runs O1 true. Only run-own-test D5: L2 2/3, nous_prompt 2/3, Nous 3/3.
