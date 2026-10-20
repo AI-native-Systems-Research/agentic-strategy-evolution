@@ -92,7 +92,7 @@ Times are local (EDT).
   | Nous | $6.87 (opus $5.18 + sonnet $1.61 + gate calls $0.08) | 29 min | 1, agent gate said stop | 29 | 4/4 |
   Nous's fix differs in approach (subtract pre-preemption tokens/TTFT at re-queue) and also corrects AllITLs and
   TTFTSum (matching later upstream fix 320aa47); not scored, since only pre-registered checks count.
-  Harness bug found: the Nous packaging session never started ( is variadic and swallowed the
+  Harness bug found: the Nous packaging session never started (--disallowedTools is variadic and swallowed the
   prompt argument). No effect on this run (Nous's planner wrote final/answer.json and edited the repo directly),
   but it would break pd/search. Fixed: prompt on stdin. Also: RUNNING markers so two queues never run the same
   cell or key.
