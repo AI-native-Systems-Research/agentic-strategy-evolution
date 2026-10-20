@@ -117,3 +117,4 @@ Times are local (EDT).
 - 21:06 tick: 5 runs live.
 - 21:11 search/nous_prompt/rep2 ($5.12, 1 session): HV 0.997 main and held-out (same as L2). T-facts 0/4, checked by hand against its answer: it calls scheduler AND block size 'secondary' (block 32 is on 93.5% of our front, so not T1; 'secondary' is not 'irrelevant', so not T2), says KV has 'sharp threshold effects' (not that small KV suffices), and states TP raises throughput without naming the GPU-cost trade-off. Scored as is; no matcher change. 5/8 claims backed by evidence.
 - 21:12 tick: 5 runs live.
+- 21:13 search/nous/rep2: one gateway request stalled mid-stream for ~5 min (21:06-21:11); the CLI retried on its own and the run continues. Gateway stalls hit all arms alike; wall time is reported but not used for any primary result.
