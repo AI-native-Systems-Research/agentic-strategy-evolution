@@ -214,3 +214,4 @@ Times are local (EDT).
   Observation: no arm has passed O1 on search yet; every arm's search script reaches HV ~0.997; T4 (small KV
   budgets suffice) has been stated by none.
 - 23:48 tick: runs live (see status).
+- 23:49 search/nous/rep2 ($22.45, 4 iterations): HV 0.995 main, held-out pass; T 0/4 checked by hand (lumps scheduler AND block size as 'secondary knobs that rarely change the front' - block 32 is on 93.5% of our front, so neither T1 nor T2; no GPU-cost trade-off; KV 'saturating threshold', not small-KV-suffices). O1 false. 23/27.
