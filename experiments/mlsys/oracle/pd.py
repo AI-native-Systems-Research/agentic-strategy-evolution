@@ -52,7 +52,8 @@ def _kind(metric):
     if "p99" in m or "p90" in m or "p95" in m or "p50" in m:
         return None
     # only plain mean ITL/TTFT in ms is re-measurable; marginal/per-request/derived quantities are not
-    if re.search(r"marginal|per[- ]request|per[- ]req|slope|cost|\bus\b|µs|fit|alpha|α|\bw\b|growth|gap|capacity|crossover", m):
+    if re.search(r"marginal|per[- ]request|per[- ]req|slope|cost|\bus\b|µs|fit|alpha|α|\bw\b|growth|gap|capacity|"
+                 r"crossover|r²|r2|r\^2|r-squared|model|predict|formula|coef|param|identical", m):
         return None
     if "itl" in m:
         return "itl"
@@ -112,9 +113,10 @@ def score(answer, text):
     i2 = re.search(r"itl[^.\n]{0,100}(lower|smaller|better|reduc)[^.\n]{0,60}(\bad\b|disaggregat)", text)
     i3 = re.search(r"(\bal\b|always[- ]local)[^.\n]{0,80}(higher|worse|larger)[^.\n]{0,40}itl", text)
     # symbolic comparisons ("TTFT_AD > TTFT_AL", "ITL_AL > ITL_AD"), same meaning as the prose forms
+    t5 = re.search(r"(\bad\b|always[- ]disagg\w*|disaggregat\w*)[^.\n]{0,60}(carries|has|incurs|pays|adds)[^.\n]{0,10}(a )?ttft (penalty|overhead|cost)", text)
     t4 = re.search(r"ttft[_ ]?\(?ad\)?\s*>\s*ttft[_ ]?\(?al\)?|ttft[_ ]?\(?al\)?\s*<\s*ttft[_ ]?\(?ad\)?", text)
     i4 = re.search(r"itl[_ ]?\(?ad\)?\s*<\s*itl[_ ]?\(?al\)?|itl[_ ]?\(?al\)?\s*>\s*itl[_ ]?\(?ad\)?", text)
-    res["K3_al_vs_ad"] = bool((t1 or t2 or t3 or t4) and (i1 or i2 or i3 or i4))
+    res["K3_al_vs_ad"] = bool((t1 or t2 or t3 or t4 or t5) and (i1 or i2 or i3 or i4))
     res["K4_mechanism_soft"] = any(re.search(p, text) for p in K4_PHRASES)
     res["O1"] = bool(res["K1_fit_moderate"] and res["K2_breakdown_overpredict"] and res["K3_al_vs_ad"])
     rm = [remeasure(c) for c in claims]

@@ -157,3 +157,15 @@ Times are local (EDT).
 - 21:57 tick: 5 runs live.
 - 22:02 tick: 5 runs live.
 - 22:06 tick: 5 runs live.
+- 22:16 Nous pd results (read by hand):
+  - pd/nous/rep2 ($20.79, 88.6 min): iteration 1 succeeded and its gate said continue; iterations 2-4 each FAILED
+    Nous's own schema validation (executor added fields like 'mode', 'summary_statistics' to findings.json; schema
+    is unchanged from main, additionalProperties=false). This is Nous-as-shipped behavior, not a harness bug, and is
+    counted as is (status crashed, S3=true). Final answer (from the report): whole-range fit R2 0.94/0.96, formula is
+    convex but BLIS is concave, mechanism = weight-loading amortization; proposes a better 3-param model. O1 false:
+    no moderate-range fit claim, no statement that the formula over-predicts at high rate.
+  - pd/nous/rep3 ($5.41, 1 iteration, agent gate stop): says the formula UNDER-predicts AL ITL above ~100 req/s.
+    That is the wrong sign (our sweep: over-predicts by +14% at 100, +28% at 120). O1 false.
+  Oracle fixes found on these answers, applied to all arms, all pd runs rescored (O1 unchanged everywhere):
+  C2 now only re-measures raw mean latencies (it was re-measuring R2/model-fit claims as if they were ITL values);
+  K3 accepts "AD carries a TTFT penalty". pd so far: L2 1/2, nous_prompt 0/2, Nous 0/2.
