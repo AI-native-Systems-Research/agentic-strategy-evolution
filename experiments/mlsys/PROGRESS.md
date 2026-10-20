@@ -233,3 +233,4 @@ Times are local (EDT).
 - 10-20 00:08 tick: 2 search rep4 runs live.
 - 10-20 00:16 search/nous_prompt/rep4 ($5.41): HV 0.995 main + held-out; T 2/4 after a T2 matcher fix ('scheduler has zero effect' was missed: added 'zero effect/no effect/no impact'; applied to all search runs, only this run changed). Still O1 false (T3, T4 missing). 26/27; only search/nous/rep4 left.
 - 10-20 00:18 tick: last run (search/nous/rep4) live; drafting REPORT.md.
+- 10-20 00:23 tick: search/nous/rep4 live.
