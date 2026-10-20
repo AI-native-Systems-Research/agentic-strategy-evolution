@@ -85,3 +85,16 @@ Times are local (EDT).
   followed it (gate mode works). Notable: Nous also found that the same root cause inflates AllITLs and TTFTSum
   after preemption and patched those too; this matches the separate upstream fix 320aa47. The oracle does not score
   this (pre-registered checks only); recorded as a qualitative observation. Packaging step next.
+- 20:40 Pilot 2 complete. Debugging task, rep 1 (all O1 true, all checks pass):
+  | arm | cost | wall | iters | non-test lines | claims backed/reproduced |
+  | L2 | $3.75 | 10.5 min | 1 | 2 | 5/5 |
+  | nous_prompt | $5.67 | 21.5 min | 1 | 10 | 6/6 |
+  | Nous | $6.87 (opus $5.18 + sonnet $1.61 + gate calls $0.08) | 29 min | 1, agent gate said stop | 29 | 4/4 |
+  Nous's fix differs in approach (subtract pre-preemption tokens/TTFT at re-queue) and also corrects AllITLs and
+  TTFTSum (matching later upstream fix 320aa47); not scored, since only pre-registered checks count.
+  Harness bug found: the Nous packaging session never started ( is variadic and swallowed the
+  prompt argument). No effect on this run (Nous's planner wrote final/answer.json and edited the repo directly),
+  but it would break pd/search. Fixed: prompt on stdin. Also: RUNNING markers so two queues never run the same
+  cell or key.
+- 20:40 Main queue launched: 24 cells (dbg reps 2-3; pd and search reps 2-4), arms interleaved by rep, on
+  key slots 0-2 now and 3-4 once the two smoke cells finish.

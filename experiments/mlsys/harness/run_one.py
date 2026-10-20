@@ -73,10 +73,11 @@ def cost_now(run_dir):
     return cost_meter.run_cost(str(run_dir / "claude_cfg"), str(camp) if camp.exists() else None)
 
 
-def supervise(cmd, cwd, env, run_dir, ceiling, log):
+def supervise(cmd, cwd, env, run_dir, ceiling, log, stdin_path=None):
     """Run cmd in its own process group; kill it if the run's cost passes the safety ceiling."""
-    with open(log, "a") as lf:
-        p = subprocess.Popen(cmd, cwd=cwd, env=env, stdout=lf, stderr=subprocess.STDOUT, start_new_session=True)
+    with open(log, "a") as lf, open(stdin_path or os.devnull) as inp:
+        p = subprocess.Popen(cmd, cwd=cwd, env=env, stdin=inp, stdout=lf, stderr=subprocess.STDOUT,
+                             start_new_session=True)
         hit = False
         while p.poll() is None:
             time.sleep(30)
@@ -97,6 +98,7 @@ def main(task, arm, rep, slot):
         shutil.rmtree(run_dir)
     for d in ("logs", "claude_cfg", "nous_work", "tmp"):
         (run_dir / d).mkdir(parents=True)
+    (run_dir / "RUNNING").write_text(json.dumps(dict(pid=os.getpid(), slot=slot)))
     ws = run_dir / "ws"
     shutil.copytree(REPOS / repo, ws, symlinks=True)
     task_text = (EXP / "tasks" / prompt_file).read_text() + "\n" + (EXP / "tasks" / "contract.md").read_text()
@@ -148,11 +150,13 @@ def main(task, arm, rep, slot):
                         declared_done=stopped_by_agent, iterations_used=iters, hit_ceiling=hit, returncode=rc,
                         nous_work=str(work) if work else None)
             if work and not hit:  # packaging session (counted in Nous's cost)
-                (run_dir / "logs" / "package.md").write_text(PACKAGE_PROMPT.format(work=work, task=task_text))
+                pp = run_dir / "logs" / "package.md"
+                pp.write_text(PACKAGE_PROMPT.format(work=work, task=task_text))
+                # prompt on stdin: --disallowedTools is variadic and would swallow a trailing prompt argument
                 prc, _ = supervise(["sandbox-exec", "-f", str(sb), CLAUDE, "-p", "--model", "claude-opus-4-6",
                                     "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions",
-                                    "--disallowedTools", "WebSearch,WebFetch", PACKAGE_PROMPT.format(work=work, task=task_text)],
-                                   ws, env, run_dir, ceiling, run_dir / "logs" / "package.jsonl")
+                                    "--disallowedTools", "WebSearch,WebFetch"],
+                                   ws, env, run_dir, ceiling, run_dir / "logs" / "package.jsonl", stdin_path=pp)
                 meta["package_rc"] = prc
     finally:
         os.killpg(proxy.pid, signal.SIGTERM)
@@ -165,6 +169,7 @@ def main(task, arm, rep, slot):
     r = subprocess.run([PY, str(EXP / "oracle" / "score_run.py"), str(run_dir)], capture_output=True, text=True,
                        cwd=str(EXP / "oracle"))
     (run_dir / "logs" / "oracle.log").write_text(r.stdout[-20000:] + r.stderr[-20000:])
+    (run_dir / "RUNNING").unlink(missing_ok=True)
     print(json.dumps({k: meta[k] for k in ("task", "arm", "rep", "status", "cost_usd", "wall_min", "iterations_used")}))
 
 
