@@ -68,3 +68,4 @@ Times are local (EDT).
   zero-token "<synthetic>" error placeholders (they carry no usage). An old pilot-1 L2 CLI process had briefly kept
   writing into a stale rep0 dir after its proxy was killed; it is gone and the stale dirs were removed.
 - 20:09 tick: pilot 2 running (3 arms, iteration/session 1), no errors.
+- 20:14 tick: pilot 2 still in iteration 1, no errors.
