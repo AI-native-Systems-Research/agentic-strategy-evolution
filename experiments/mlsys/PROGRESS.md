@@ -231,3 +231,4 @@ Times are local (EDT).
 - 10-20 00:04 tick: 3 search rep4 runs live.
 - 10-20 00:08 search/l2/rep4 ($3.52): HV 0.916 main (0.910/0.910/0.928 over 3 seeds, below the 0.95 bar; held-out passes), T 2/4 (T1, T3). Read by hand: calls scheduler 'a minor knob ... a genuine but small Pareto trade-off' - says it matters, so not T2. O1 false. 25/27.
 - 10-20 00:08 tick: 2 search rep4 runs live.
+- 10-20 00:16 search/nous_prompt/rep4 ($5.41): HV 0.995 main + held-out; T 2/4 after a T2 matcher fix ('scheduler has zero effect' was missed: added 'zero effect/no effect/no impact'; applied to all search runs, only this run changed). Still O1 false (T3, T4 missing). 26/27; only search/nous/rep4 left.

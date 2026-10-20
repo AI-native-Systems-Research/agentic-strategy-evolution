@@ -111,7 +111,7 @@ T_PHRASES = {
     "T1_block_size_32": [r"block[-_ ]?size[^.\n]{0,60}\b32\b[^.\n]{0,80}(domina|always|almost|nearly|most|\d{2}([.·]\d)?\s*%|optimal|best|preferred)",
                          r"\b32\b[^.\n]{0,40}block[-_ ]?size[^.\n]{0,80}(domina|always|almost|nearly|most|optimal|best)",
                          r"(bs|block_size_in_tokens|block_size|block[- ]size)\s*=\s*32[^.\n]{0,80}(domina|\d{2}([.·]\d)?\s*%|most|almost|nearly|always)"],
-    "T2_scheduler_irrelevant": [r"scheduler[^.\n]{0,100}(irrelevant|negligible|minimal|little|no (significant |meaningful )?(effect|impact|difference)|near[- ]zero|marginal|tiny|insignificant|barely|does not matter|doesn'?t matter|least|weak)",
+    "T2_scheduler_irrelevant": [r"scheduler[^.\n]{0,100}(irrelevant|negligible|minimal|little|no (significant |meaningful )?(effect|impact|difference)|near[- ]zero|zero (effect|impact)|no effect|no impact|marginal|tiny|insignificant|barely|does not matter|doesn'?t matter|least|weak)",
                                 r"(fcfs|sjf)[^.\n]{0,60}(vs\.?|and|or)[^.\n]{0,20}(fcfs|sjf)[^.\n]{0,80}(negligible|little|no (significant )?difference|similar|equivalent|interchangeable|barely)"],
     "T3_gpu_tradeoff": [r"(more|additional|higher)\s+(gpus?|gpu count|replicas|instances|tp)[^.\n]{0,100}(throughput|rps|responses_per_sec|ttft|latency)",
                         r"(throughput|rps|latency|ttft)[^.\n]{0,100}(cost|at the expense|trade[- ]?off|vs\.?)[^.\n]{0,40}(gpus?|gpu count|hardware)",
