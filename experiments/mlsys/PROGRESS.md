@@ -76,3 +76,4 @@ Times are local (EDT).
   reproduced. Note: this bug may be too easy to separate the arms (a strong baseline solves it in one session).
 - 20:19 tick: L2 done; nous_prompt and Nous running.
 - 20:24 tick: nous_prompt and Nous still running, no errors.
+- 20:29 tick: Nous in EXECUTE iter 1 (worktree OK, Sonnet executor); nous_prompt session 1.
