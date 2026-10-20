@@ -169,3 +169,4 @@ Times are local (EDT).
   Oracle fixes found on these answers, applied to all arms, all pd runs rescored (O1 unchanged everywhere):
   C2 now only re-measures raw mean latencies (it was re-measuring R2/model-fit claims as if they were ITL values);
   K3 accepts "AD carries a TTFT penalty". pd so far: L2 1/2, nous_prompt 0/2, Nous 0/2.
+- 22:16 tick: 5 runs live.
