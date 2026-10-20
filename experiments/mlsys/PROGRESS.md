@@ -63,3 +63,7 @@ Times are local (EDT).
   and also broke git stash for nous_prompt (L2 had not hit it yet). Fix: deny only sibling task/arm/rep dirs, keep
   parents traversable. Re-tested: worktree add, stash, build OK; sibling runs and keys still unreadable. Pilot
   data archived under keys/_archive (unreadable to agents). Relaunching the pilot.
+- 20:09 Pilot 2 running (dbg x 3 arms, rep1) via harness/queue.py (one cell per key slot). Two small harness
+  fixes: queue launcher (zsh loop bug never started the first relaunch), and the cost meter now skips the CLI's
+  zero-token "<synthetic>" error placeholders (they carry no usage). An old pilot-1 L2 CLI process had briefly kept
+  writing into a stale rep0 dir after its proxy was killed; it is gone and the stale dirs were removed.

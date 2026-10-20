@@ -48,7 +48,7 @@ def transcript_cost(config_dir):
                 continue
             m = d.get("message") if isinstance(d.get("message"), dict) else None
             u = m.get("usage") if m else None
-            if not u:
+            if not u or m.get("model") == "<synthetic>":  # CLI-generated error placeholder, zero tokens
                 continue
             k = m.get("id") or f"{f}:{d.get('uuid')}"
             c = usage_cost(u, m.get("model"))
