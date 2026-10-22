@@ -90,7 +90,8 @@
         "schema failure triggers repair, never drops results",
         "breaker writes halt.json and still reaches REPORT",
         "pending wait_for is not a validation failure",
-        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch; valid findings become new items"
+        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch; valid findings become new items",
+        "branch review includes /simplify (reuse, simplification, dead code) over orchestrator/v2/; apply only valid simplifications"
       ],
       "passes": false
     },
@@ -182,7 +183,8 @@
       "acceptance": [
         "repro not re-run by default",
         "repro_recorded false when command missing from runs.jsonl",
-        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch"
+        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch",
+        "branch review includes /simplify (reuse, simplification, dead code) over orchestrator/v2/; apply only valid simplifications"
       ],
       "passes": false
     },
@@ -259,7 +261,8 @@
         "no remaining reader of bundle.yaml or experiment_plan.yaml",
         "pytest -q green",
         "grep: no bundle.yaml / experiment_plan.yaml readers remain",
-        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch"
+        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch",
+        "branch review includes /simplify (reuse, simplification, dead code) over orchestrator/v2/; apply only valid simplifications"
       ],
       "passes": false
     },
@@ -301,6 +304,7 @@
     "Per item: tests first (expect fail), implement, tests pass, /pr-review-toolkit:review-pr on the item diff, fix only valid findings (record each decision in progress.txt), pytest -q green, commit, push.",
     "Human checkpoints (R4c, R10, R13): if the required human result file is missing, write BLOCKED.md saying exactly what the human must run, commit+push, and stop. Never poll or loop. The human deletes BLOCKED.md to resume.",
     "The 15-minute progress reporter is run by the human outside the session; not a plan item.",
-    "Never enter plan mode or use any tool that asks an interactive question (EnterPlanMode, AskUserQuestion): this is an unattended background session. Plan in your reasoning or in a file."
+    "Never enter plan mode or use any tool that asks an interactive question (EnterPlanMode, AskUserQuestion): this is an unattended background session. Plan in your reasoning or in a file.",
+    "Keep Nous lean (the user's explicit goal): add only what the SPEC requires; no extra abstractions, layers, config options, plugin points or 'future-proofing'; prefer one small module per concern and plain functions over class hierarchies; reuse existing helpers; delete dead code. Target for the whole v2 runtime (orchestrator/v2/, excluding schemas and tests): about 2,500 lines or less. If an item pushes past its share, simplify before marking it done, and record the line count in progress.txt."
   ]
 }
