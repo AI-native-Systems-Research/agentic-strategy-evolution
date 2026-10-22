@@ -204,7 +204,7 @@
         "smoke JSON with exit 0 present in docs/plans/nous-v2/smoke/",
         "failures turned into new plan items"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R11a",
