@@ -151,3 +151,40 @@ non-empty hooks, ClaudeAgentOptions integration, sync-callback TypeError.
 Tests before: 1633 passed
 Tests after: 1648 passed, 0 failed
 
+## R4a: Stop rule + campaign loop (0fd1533)
+
+Files created: orchestrator/v2/stop_rule.py (139 lines),
+orchestrator/v2/loop.py (285 lines), tests/v2/test_stop_rule.py,
+tests/v2/test_loop.py
+
+Files modified: tests/fakes/sdk_client.py (per_turn_files, _turn_count)
+
+stop_rule.py: check_stop() with halt > stop_sentinel > answered >
+max_iterations > stall priority. Helpers: claims_changed, best_changed,
+principles_changed, _is_quiet, _collect_claims, _claims_needed_met.
+
+loop.py: CampaignConfig dataclass, parse_campaign_config(), Campaign
+class driving BASELINE → (DESIGN → EXECUTE)* → REPORT, bundle hash
+lock with pre-registration violation detection, per-iteration ledger
+writes, principle accumulation via _merge_principles.
+
+Tests before: 1648 passed
+Tests after: 1692 passed, 0 failed (42 new tests)
+
+Runtime line count: 1,694 lines (target ~2,500)
+
+Review decisions (pr-review-toolkit:review-pr):
+Accepted (9): best_changed .get("value") None guard, answered requires
+non-INCONCLUSIVE status, answered gated on claims_needed_met, stall
+uses current_claims_changed/current_best_changed params, _read_json
+catches JSONDecodeError, _merge_principles skips entries without id,
+_design validates baseline.json exists, _lock_bundle warns on missing
+bundle, ledger written after each iteration AND after stop_reason set.
+
+Skipped (5): B4 optional-fields docstring (this is an add-only function,
+docstring is noise), _merge_principles deepcopy (no aliasing — fresh
+dicts built per merge), config min_improvement < 0 validation (YAGNI,
+campaign.yaml is author-controlled), iter-dir creation race (single-
+threaded campaign loop), _check_bundle_hash warn+continue on missing
+locked (empty locked_hash already returns False).
+

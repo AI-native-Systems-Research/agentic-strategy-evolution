@@ -73,7 +73,7 @@
         "stall default 2 counts principles_changed",
         "bundle hash locked before EXECUTE message"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R4b",
