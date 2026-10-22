@@ -6,8 +6,11 @@ tracks per-phase totals. Reporting only — cost never drives a decision.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 def load_prices(defaults_path: Path) -> dict[str, dict[str, float]]:
@@ -16,6 +19,7 @@ def load_prices(defaults_path: Path) -> dict[str, dict[str, float]]:
         import yaml
         data = yaml.safe_load(defaults_path.read_text())
     except Exception:
+        logger.warning("failed to load prices from %s", defaults_path)
         return {}
     if not isinstance(data, dict):
         return {}
@@ -30,6 +34,7 @@ class CostMeter:
         self._seen_ids: set[str] = set()
         self._phase_totals: dict[str, dict[str, Any]] = {}
         self._current_phase: str = "BASELINE"
+        self._last_snapshot: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
 
     def set_phase(self, phase: str) -> None:
         self._current_phase = phase
@@ -51,6 +56,8 @@ class CostMeter:
 
         model = getattr(message, "model", None) or ""
         price = self._prices.get(model, {})
+        if not price and model:
+            logger.debug("no price entry for model %r, costing at $0", model)
         cost = (
             input_t * price.get("input_tokens", 0)
             + output_t * price.get("output_tokens", 0)
@@ -78,3 +85,14 @@ class CostMeter:
             t["output_tokens"] += v["output_tokens"]
             t["cost_usd"] += v["cost_usd"]
         return t
+
+    def iter_delta(self) -> dict[str, Any]:
+        """Return cost since the last call to iter_delta (per-iteration)."""
+        current = self.total()
+        delta = {
+            "input_tokens": current["input_tokens"] - self._last_snapshot["input_tokens"],
+            "output_tokens": current["output_tokens"] - self._last_snapshot["output_tokens"],
+            "cost_usd": current["cost_usd"] - self._last_snapshot["cost_usd"],
+        }
+        self._last_snapshot = current
+        return delta

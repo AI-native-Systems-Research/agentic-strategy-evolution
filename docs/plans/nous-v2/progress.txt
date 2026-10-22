@@ -297,3 +297,109 @@ cwd None when target has no path.
 Tests after: 1718 passed, 0 failed
 Runtime line count: 2,123 lines (target ~2,500)
 
+## R5: Cost meter (7dc84ed)
+
+Files created: orchestrator/v2/cost.py (98 lines),
+tests/v2/test_cost.py
+
+CostMeter: per-message-id dedup, per-phase tracking, price table from
+defaults.yaml. load_prices from YAML with warning on failure. Added
+iter_delta() for per-iteration cost (vs cumulative). Prices section
+added to defaults.yaml (opus-4-6, sonnet-4-6, haiku-4-5).
+
+Tests after: 1806 passed, 0 failed (11 new cost tests)
+
+Review decisions (code-reviewer + silent-failure-hunter):
+- Fixed: load_prices now logs warning on failure instead of silent {}.
+- Fixed: unknown model now logs debug instead of silent $0.
+- Fixed: ledger uses iter_delta() not total() (was cumulative, not
+  per-iteration; both reviewers flagged).
+
+## R6: Effort ladder (d79a37f)
+
+Files created: orchestrator/v2/effort.py (68 lines),
+tests/v2/test_effort.py
+
+EffortManager: EFFORT_LADDER ["max".."low"], consecutive-cut gating
+(low only after 2 consecutive cuts), phase reset, persist_cut_offs.
+Not yet wired into the on_message callback (deferred to integration).
+
+Tests after: 1806 passed, 0 failed (13 new effort tests)
+
+Review decisions: effort.py is a standalone module. Wiring into the
+loop's on_message callback (detecting stop_reason=max_tokens, calling
+interrupt, reconnecting) is deferred — it requires Session.interrupt()
+which is available but untested in integration.
+
+## R7: Resume (f6c664c)
+
+Files created: orchestrator/v2/resume.py (59 lines),
+tests/v2/test_resume.py
+
+Campaign.resume(): load state.json, reconnect by session_id or
+fallback from digest, --note support. _run_phases_from() for
+fresh and resumed campaigns. _reload_state() restores ledger,
+principles, prev_findings from disk.
+
+Tests after: 1806 passed, 0 failed (18 new resume tests)
+
+Review decisions (code-reviewer + silent-failure-hunter):
+- Fixed: fallback turn now metered (was missing on_message callback).
+- Fixed: skipped-design path empty locked_hash now logged in ledger
+  (prereg_violation field shows the gap).
+- Skipped: resume() skips preflight (by design — hooks already
+  verified on first run; adding preflight to resume would add
+  latency for no signal on a warm campaign).
+
+## R8: Method prompt (a3a6f2c)
+
+Files created: orchestrator/v2/prompts.py (29 lines),
+prompts/v2/method.md (3,383 bytes, limit 6,144),
+prompts/v2/checklists/ (debug.md, verify.md, optimize.md,
+policy.md, explain.md), tests/v2/test_method_prompt.py
+
+Core scientific method in method.md: BASELINE→DESIGN→EXECUTE→REPORT.
+Contains all required field names per spec 3.12. No arm menus or
+complexity-tier prose. Task-type checklists loaded per task_type.
+
+Tests after: 1806 passed, 0 failed (32 new prompt tests)
+
+Review decisions: no issues found by reviewers in prompt files.
+
+## R9: Final answer check (50f1b6f)
+
+Files created: orchestrator/v2/final_check.py (134 lines),
+tests/v2/test_final_check.py
+
+check_answer(): validates answer.json from disk records. Checks:
+schema validity, evidence paths, repro command, claims_matched_fraction,
+unmeasured noise findings. No LLM calls, no re-running.
+
+Tests after: 1806 passed, 0 failed (12 new final_check tests)
+
+Review decisions (code-reviewer + silent-failure-hunter):
+- Fixed: repro check now uses answer.repro (falls back to
+  baseline.command). Was using only baseline.command.
+- Fixed: _check_repro now searches work_dir/runs.jsonl (root) in
+  addition to runs/*/runs.jsonl. Hook writes to root.
+- Fixed: _claims_matched_fraction uses .get("id") not ["id"]
+  (KeyError on malformed claim dicts).
+- Fixed: _find_unmeasured_noise uses .get("id", "<unknown>").
+
+## R5-R9 simplification (post-review)
+
+Extracted from loop.py to reduce from 649→401 lines:
+- CampaignConfig + parse_campaign_config → config.py (new, 67 lines)
+- poll_and_resume → robustness.py (standalone async function)
+- validate_phase_artifacts → validators.py (standalone function)
+- Inlined phase prompt methods (_baseline, _design, _execute, _report)
+- Merged _update_state_phase into _set_phase
+- Removed _get_pending_waits, _validate_phase_artifacts, _poll_and_resume
+  methods from Campaign class
+
+Also trimmed: docstrings in session.py, section headers across files,
+compacted preflight fixtures.
+
+Runtime line count: 2,477 lines (target ~2,500)
+  loop.py: 401, validators.py: 623, hooks.py: 332, session.py: 181
+Tests after: 1806 passed, 0 failed

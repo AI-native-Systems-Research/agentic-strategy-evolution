@@ -14,7 +14,6 @@ from typing import Any, Callable
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import SystemPromptPreset
 
-# ── Model → max output token map ─────────────────────────────────────────
 
 MODEL_MAX_OUTPUT: dict[str, int] = {
     "claude-opus-4-6": 128_000,
@@ -25,7 +24,6 @@ MODEL_MAX_OUTPUT: dict[str, int] = {
 
 _DEFAULT_MAX_OUTPUT = 128_000
 
-# ── SDK / CLI version stamps ──────────────────────────────────────────────
 
 SDK_VERSION = "0.2.172"
 
@@ -34,34 +32,13 @@ try:
 except ImportError:  # pragma: no cover
     CLI_VERSION = "unknown"
 
-# ── Default configuration ─────────────────────────────────────────────────
 
 DEFAULT_MODEL = "claude-opus-4-6"
 DEFAULT_MAX_BUFFER_SIZE = 32 * 1024 * 1024  # 32 MB (fixes B7)
 
 
 class Session:
-    """Wraps a ``ClaudeSDKClient`` with Nous-specific options.
-
-    Parameters
-    ----------
-    client_factory:
-        Callable that returns a client object with the same interface as
-        ``ClaudeSDKClient`` (connect, query, receive_response, interrupt,
-        disconnect).  In production this is ``ClaudeSDKClient``; in tests
-        it is ``FakeClient``.
-    options:
-        Campaign configuration dict.  Recognised keys:
-
-        - ``model`` (str): model id, default ``claude-opus-4-6``
-        - ``effort`` (str | None): reasoning effort level
-        - ``method_text`` (str): methodology text appended to system prompt
-        - ``hooks`` (dict): event-name → list[HookMatcher] mapping
-        - ``cwd`` (str | Path): campaign worktree path
-        - ``work_dir`` (str | Path): campaign work-dir for state.json
-        - ``resume`` (str | None): session_id to resume
-        - ``env`` (dict[str, str]): extra env vars
-    """
+    """Wraps a ClaudeSDKClient with Nous-specific options."""
 
     def __init__(
         self,
@@ -76,7 +53,6 @@ class Session:
     # ── Option building ───────────────────────────────────────────────
 
     def build_agent_options(self) -> ClaudeAgentOptions:
-        """Construct ``ClaudeAgentOptions`` from campaign config."""
         model = self._options.get("model", DEFAULT_MODEL)
         max_output = MODEL_MAX_OUTPUT.get(model, _DEFAULT_MAX_OUTPUT)
 
@@ -134,10 +110,6 @@ class Session:
     async def turn(
         self, prompt: str, on_message: Callable[..., Any] | None = None,
     ) -> Any:
-        """Send a single turn and persist session state afterward.
-
-        Returns the ``ResultMessage`` from ``receive_response()``.
-        """
         if self._client is None:
             raise RuntimeError("Session.connect() must be called first")
 
@@ -173,10 +145,6 @@ class Session:
         return Path(work_dir) / "state.json"
 
     def _persist_session_id(self) -> None:
-        """Atomically write session_id (and version stamps) to state.json.
-
-        Uses write-to-tmp + rename for crash safety.
-        """
         state_path = self._state_path()
         if state_path is None:
             return

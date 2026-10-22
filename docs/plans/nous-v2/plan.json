@@ -121,7 +121,7 @@
         "duplicate message ids counted once",
         "no code path reads cost to make a decision"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R6",
@@ -137,7 +137,7 @@
         "cut reply lowers effort for the rest of the phase only",
         "state.json records cut_offs"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R7",
@@ -153,7 +153,7 @@
         "fallback path primes from digest",
         "--note text appears in next phase message and ledger"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R8",
@@ -169,7 +169,7 @@
         "required field names present",
         "no required arm menu or complexity-tier prose"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R9",
@@ -186,7 +186,7 @@
         "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch",
         "branch review includes /simplify (reuse, simplification, dead code) over orchestrator/v2/; apply only valid simplifications"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R10",

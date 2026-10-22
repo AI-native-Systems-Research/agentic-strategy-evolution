@@ -33,18 +33,21 @@ def _find_latest_iter_dir(work_dir: Path) -> Path | None:
     return iters[-1] if iters else None
 
 
-def _check_repro(work_dir: Path, baseline_command: str | None) -> bool:
-    """Check if the baseline command appears in any runs.jsonl."""
-    if not baseline_command:
+def _check_repro(work_dir: Path, repro_command: str | None) -> bool:
+    """Check if the repro command appears in runs.jsonl."""
+    if not repro_command:
         return False
+    paths = [work_dir / "runs.jsonl"]
     runs_dir = work_dir / "runs"
-    if not runs_dir.exists():
-        return False
-    for jsonl_path in runs_dir.rglob("runs.jsonl"):
+    if runs_dir.exists():
+        paths.extend(runs_dir.rglob("runs.jsonl"))
+    for jsonl_path in paths:
+        if not jsonl_path.exists():
+            continue
         try:
             for line in jsonl_path.read_text().strip().splitlines():
                 entry = json.loads(line)
-                if entry.get("command") == baseline_command:
+                if entry.get("command") == repro_command:
                     return True
         except (json.JSONDecodeError, OSError):
             continue
@@ -58,7 +61,7 @@ def _claims_matched_fraction(
     """Fraction of claims_needed ids addressed by findings' claims."""
     if not claims_needed:
         return 1.0
-    needed_ids = {c["id"] for c in claims_needed}
+    needed_ids = {c.get("id") for c in claims_needed if c.get("id")}
     addressed: set[str] = set()
     for hyp in findings_list:
         for claim in hyp.get("claims", []):
@@ -71,7 +74,7 @@ def _claims_matched_fraction(
 def _find_unmeasured_noise(findings_list: list[dict]) -> list[str]:
     """Return hypothesis ids that have noise_unmeasured=true."""
     return [
-        h["id"]
+        h.get("id", "<unknown>")
         for h in findings_list
         if h.get("noise_unmeasured") is True
     ]
@@ -109,9 +112,11 @@ def check_answer(work_dir: Path) -> dict:
     report["evidence_errors"] = evidence_errors
     report["answer_valid"] = len(evidence_errors) == 0
 
-    baseline = _read_json(work_dir / "baseline.json")
-    baseline_cmd = baseline.get("command") if baseline else None
-    report["repro_recorded"] = _check_repro(work_dir, baseline_cmd)
+    repro_cmd = answer.get("repro")
+    if not repro_cmd:
+        baseline = _read_json(work_dir / "baseline.json")
+        repro_cmd = baseline.get("command") if baseline else None
+    report["repro_recorded"] = _check_repro(work_dir, repro_cmd)
 
     iter_dir = _find_latest_iter_dir(work_dir)
     if iter_dir:

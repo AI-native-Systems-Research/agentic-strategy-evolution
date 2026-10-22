@@ -1,8 +1,4 @@
-"""Nous v2 in-process hooks (spec 3.3).
-
-Three jobs: record every command, check phase files on stop, save a
-digest before compaction. No PreToolUse hook.
-"""
+"""Nous v2 in-process hooks (spec 3.3)."""
 
 from __future__ import annotations
 
@@ -22,7 +18,6 @@ from .validators import ValidatorContext, validate_artifact
 
 logger = logging.getLogger(__name__)
 
-# ── Experiment command matching (3.9) ────────────────────────────────────
 
 DEFAULT_EXPERIMENT_COMMANDS: list[str] = [
     r"\bblis\s+run\b",
@@ -47,7 +42,6 @@ def is_experiment_command(command: str, patterns: list[str]) -> bool:
     return False
 
 
-# ── Shared hook state ────────────────────────────────────────────────────
 
 
 @dataclass
@@ -64,7 +58,6 @@ class HookState:
     now: Callable[[], float] = field(default=time.time)
 
 
-# ── Phase → expected artifacts ───────────────────────────────────────────
 
 _PHASE_ARTIFACTS: dict[str, list[str]] = {
     "BASELINE": ["baseline"],
@@ -76,7 +69,6 @@ _PHASE_ARTIFACTS: dict[str, list[str]] = {
 _EXIT_CODE_RE = re.compile(r"Exit code (\d+)")
 
 
-# ── PostToolUse hook ─────────────────────────────────────────────────────
 
 
 def _stringify_tool_response(tool_response: Any) -> str:
@@ -122,7 +114,6 @@ def make_post_tool_use_hook(state: HookState):
     return hook
 
 
-# ── PostToolUseFailure hook ──────────────────────────────────────────────
 
 
 def make_post_tool_use_failure_hook(state: HookState):
@@ -142,7 +133,6 @@ def make_post_tool_use_failure_hook(state: HookState):
     return hook
 
 
-# ── Stop hook ────────────────────────────────────────────────────────────
 
 
 def make_stop_hook(state: HookState):
@@ -194,7 +184,6 @@ def make_stop_hook(state: HookState):
     return hook
 
 
-# ── PreCompact hook ──────────────────────────────────────────────────────
 
 
 def make_precompact_hook(state: HookState):
@@ -273,7 +262,6 @@ def make_precompact_hook(state: HookState):
     return hook
 
 
-# ── Build hooks dict ─────────────────────────────────────────────────────
 
 
 def build_hooks(state: HookState) -> dict[str, list[HookMatcher]]:
@@ -310,7 +298,6 @@ def build_hooks(state: HookState) -> dict[str, list[HookMatcher]]:
     }
 
 
-# ── Internal helpers ─────────────────────────────────────────────────────
 
 
 def _append_runs_jsonl(work_dir: Path, row: dict) -> None:

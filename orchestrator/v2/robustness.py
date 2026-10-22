@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
@@ -9,10 +10,10 @@ import re
 import subprocess
 import time
 from pathlib import Path
+from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
 
-# ── Failure fingerprint ──────────────────────────────────────────────────
 
 _NUMBERS_RE = re.compile(r"\d+(\.\d+)?")
 _PATH_RE = re.compile(r"(/[\w./-]+|[A-Za-z]:\\[\w.\\-]+)")
@@ -26,7 +27,6 @@ def failure_fingerprint(exc_type: str, phase: str, message: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-# ── Failure breaker ──────────────────────────────────────────────────────
 
 
 class FailureBreaker:
@@ -59,7 +59,6 @@ def write_halt(work_dir: Path, fingerprint: str, phase: str, message: str) -> No
     path.write_text(json.dumps(halt, indent=2) + "\n")
 
 
-# ── Wait-for polling (3.2 step 4) ───────────────────────────────────────
 
 
 def check_wait_condition(wait_spec: str) -> bool:
@@ -98,3 +97,55 @@ def poll_wait_for(
         sleep_fn(min(poll_interval, remaining))
 
     return False
+
+
+async def poll_and_resume(
+    pending_waits: list[dict],
+    iteration: int,
+    breaker: FailureBreaker,
+    turn_fn: Callable,
+) -> list[str]:
+    """Poll all wait_for conditions; call turn_fn to resume the agent.
+
+    Returns list of timed-out run ids.
+    """
+    if not pending_waits:
+        return []
+
+    remaining = {r["id"]: r["wait_for"] for r in pending_waits}
+    max_polls = 240
+    ev_loop = asyncio.get_event_loop()
+
+    for _ in range(max_polls):
+        done = [rid for rid, wf in remaining.items() if check_wait_condition(wf)]
+        for rid in done:
+            del remaining[rid]
+        if done:
+            ids_str = ", ".join(done)
+            logger.info("wait_for satisfied for runs: %s", ids_str)
+            if remaining:
+                await turn_fn(
+                    f"Runs {ids_str} finished; continue EXECUTE. "
+                    f"Runs still pending: {', '.join(remaining)}.",
+                )
+            else:
+                await turn_fn(
+                    f"Runs {ids_str} finished; continue EXECUTE. "
+                    f"Write runs/iter-{iteration}/findings.json "
+                    f"and runs/iter-{iteration}/principle_updates.json.",
+                )
+        if not remaining:
+            break
+        await ev_loop.run_in_executor(None, time.sleep, 60.0)
+    else:
+        timed_out = list(remaining)
+        for rid in timed_out:
+            logger.warning("wait_for timed out for run %s", rid)
+            breaker.record("TimeoutError", "EXECUTE", f"wait_for timed out: {rid}")
+        await turn_fn(
+            f"Runs {', '.join(timed_out)} timed out. "
+            f"Write findings for completed runs only.",
+        )
+        return timed_out
+
+    return []

@@ -23,7 +23,6 @@ from .secrets import check_secrets
 
 logger = logging.getLogger(__name__)
 
-# ── Schema directory ─────────────────────────────────────────────────────
 
 _SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
 
@@ -44,7 +43,6 @@ def _load_schema(name: str) -> dict:
     return json.loads(path.read_text())
 
 
-# ── Context ──────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -62,7 +60,6 @@ class ValidatorContext:
     runs_jsonl: Path | None = None
 
 
-# ── Extra-field handling (B5) ────────────────────────────────────────────
 
 
 def _move_extras(data: dict, schema: dict) -> list[str]:
@@ -82,7 +79,6 @@ def _move_extras(data: dict, schema: dict) -> list[str]:
     return warnings
 
 
-# ── Evidence checking (3.4) ──────────────────────────────────────────────
 
 
 _JSON_EXTENSIONS = {".json"}
@@ -249,7 +245,6 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
     return errors
 
 
-# ── Per-artifact semantic checks ─────────────────────────────────────────
 
 
 def _check_noise_schema(noise: dict) -> list[str]:
@@ -541,7 +536,6 @@ def _check_task_limits(data: dict, ctx: ValidatorContext) -> list[str]:
     return errors
 
 
-# ── Bundle hash ──────────────────────────────────────────────────────────
 
 
 def bundle_hash(data: dict) -> str:
@@ -550,7 +544,6 @@ def bundle_hash(data: dict) -> str:
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-# ── Public API ───────────────────────────────────────────────────────────
 
 # Dispatch table: artifact_type -> (has_semantic_check_fn or None)
 _SEMANTIC_CHECKS: dict[str, Any] = {
@@ -607,3 +600,24 @@ def validate_artifact(
         errors.extend(_check_task_limits(data, context))
 
     return errors
+
+
+def validate_phase_artifacts(
+    work_dir: Path, phase_dir: Path, artifact_types: list[str],
+) -> list[str]:
+    """Run validators on phase artifacts, return error list."""
+    all_errors: list[str] = []
+    for atype in artifact_types:
+        path = phase_dir / f"{atype}.json"
+        if not path.exists():
+            all_errors.append(f"{atype}: file not found")
+            continue
+        try:
+            data = json.loads(path.read_text())
+        except (json.JSONDecodeError, OSError) as exc:
+            all_errors.append(f"{atype}: invalid JSON — {exc}")
+            continue
+        ctx = ValidatorContext(work_dir=work_dir, iter_dir=phase_dir)
+        for e in validate_artifact(atype, data, ctx):
+            all_errors.append(f"{atype}: {e}")
+    return all_errors

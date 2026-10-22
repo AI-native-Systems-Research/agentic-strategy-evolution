@@ -17,43 +17,22 @@ logger = logging.getLogger(__name__)
 
 # ── Known-good fixtures for each artifact type ───────────────────────────
 
+_HYP_TEMPLATE = {
+    "role": "main", "family": "f1", "mechanism": "m",
+    "prediction": {"metric": "x", "direction": "increase"},
+    "control": "baseline", "falsified_if": "x <= baseline", "claim_ids": ["c1"],
+}
 _GOOD_BASELINE = {
-    "task_type": "optimize",
-    "command": "run.sh",
-    "git_sha": "a1b2c3d",
-    "observation": {"score": 42},
-    "metrics_path": "metrics.json",
+    "task_type": "optimize", "command": "run.sh", "git_sha": "a1b2c3d",
+    "observation": {"score": 42}, "metrics_path": "metrics.json",
     "noise": {"deterministic": True},
 }
-
-_BAD_BASELINE = {"task_type": "optimize"}  # missing required fields
-
-_GOOD_BUNDLE = {
-    "hypotheses": [
-        {
-            "id": "h1",
-            "role": "main",
-            "family": "f1",
-            "mechanism": "m",
-            "prediction": {"metric": "x", "direction": "increase"},
-            "control": "baseline",
-            "falsified_if": "x <= baseline",
-            "claim_ids": ["c1"],
-        },
-        {
-            "id": "h2",
-            "role": "alt",
-            "family": "f2",
-            "mechanism": "m2",
-            "prediction": {"metric": "x", "direction": "increase"},
-            "control": "baseline",
-            "falsified_if": "x <= baseline",
-            "claim_ids": ["c1"],
-        },
-    ],
-}
-
-_BAD_BUNDLE = {"hypotheses": []}  # missing required hypothesis fields
+_BAD_BASELINE = {"task_type": "optimize"}
+_GOOD_BUNDLE = {"hypotheses": [
+    {"id": "h1", **_HYP_TEMPLATE},
+    {"id": "h2", **_HYP_TEMPLATE, "role": "alt", "family": "f2", "mechanism": "m2"},
+]}
+_BAD_BUNDLE = {"hypotheses": []}
 
 
 def _check_validators(work_dir: Path) -> list[str]:
