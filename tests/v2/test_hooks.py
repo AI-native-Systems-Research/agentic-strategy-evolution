@@ -407,7 +407,7 @@ class TestStopHook:
 
     async def test_blocks_on_invalid_findings_in_execute(self, tmp_path):
         state = _make_state(tmp_path, phase="EXECUTE", iteration=1)
-        iter_dir = state.work_dir / "runs" / "iter-1"
+        iter_dir = state.work_dir / "iter-1"
         iter_dir.mkdir(parents=True)
         bundle = {
             "hypotheses": [

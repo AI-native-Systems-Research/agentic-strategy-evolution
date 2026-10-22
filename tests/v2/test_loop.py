@@ -112,13 +112,13 @@ def _findings(
                 "status": status,
                 "error_type": "none",
                 "evidence": [],
-                "question_answered": answered,
-                "reason": "test passes now",
                 "noise_unmeasured": True,
                 "noise_reason": "single run",
                 "claims": claims,
             },
         ],
+        "question_answered": answered,
+        "reason": "test passes now",
     }
 
 
@@ -642,11 +642,13 @@ class TestLedgerPerIteration:
         findings = {
             "hypotheses": [{
                 "id": "h1", "status": "CONFIRMED", "error_type": "none",
-                "evidence": [], "question_answered": True, "reason": "done",
+                "evidence": [],
                 "noise_unmeasured": True, "noise_reason": "n/a",
                 "claims": [{"claim_id": "c1", "metric": "m",
                             "condition": "a", "value": 1}],
             }],
+            "question_answered": True,
+            "reason": "done",
         }
 
         def write_files_on_turn(turn_idx):

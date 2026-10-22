@@ -2,14 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Nous v2 findings artifact",
   "type": "object",
-  "required": ["hypotheses"],
+  "required": ["hypotheses", "question_answered", "reason"],
   "properties": {
     "hypotheses": {
       "type": "array",
       "minItems": 1,
       "items": {
         "type": "object",
-        "required": ["id", "status", "error_type", "evidence", "question_answered", "reason"],
+        "required": ["id", "status", "error_type", "evidence"],
         "properties": {
           "id": { "type": "string" },
           "status": {
@@ -59,8 +59,6 @@
           "noise_condition": { "type": "string" },
           "noise_unmeasured": { "const": true },
           "noise_reason": { "type": "string" },
-          "question_answered": { "type": "boolean" },
-          "reason": { "type": "string" },
           "claims": {
             "type": "array",
             "items": {
@@ -88,6 +86,8 @@
       },
       "additionalProperties": false
     },
+    "question_answered": { "type": "boolean" },
+    "reason": { "type": "string" },
     "extra": { "type": "object" }
   },
   "additionalProperties": false

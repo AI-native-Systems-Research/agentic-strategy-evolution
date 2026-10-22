@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 import logging
+import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .hooks import HookState, build_hooks
 from .session import Session
 from .stop_rule import (
     best_changed,
@@ -44,6 +46,7 @@ class CampaignConfig:
     stall_iterations: int = 2
     task_type: str | None = None
     session_scope: str = "campaign"
+    experiment_commands: list[str] = field(default_factory=list)
     task_limits: dict | None = None
     objective: dict | None = None
 
@@ -70,6 +73,7 @@ def parse_campaign_config(raw: dict) -> CampaignConfig:
         stall_iterations=raw.get("stall_iterations", 2),
         task_type=raw.get("task_type"),
         session_scope=raw.get("session_scope", "campaign"),
+        experiment_commands=raw.get("experiment_commands", []),
         task_limits=raw.get("task_limits"),
         objective=raw.get("objective"),
     )
@@ -133,30 +137,47 @@ class Campaign:
 
     async def run(self) -> dict:
         """Execute the full campaign. Returns summary dict."""
+        hook_state = HookState(
+            work_dir=self._work_dir,
+            secrets={k: "***" for k in self._config.secrets},
+            experiment_commands=self._config.experiment_commands,
+        )
+        hooks = build_hooks(hook_state)
         session = Session(
             client_factory=self._client_factory,
             options={
                 "work_dir": str(self._work_dir),
                 "effort": self._config.effort,
+                "hooks": hooks,
             },
         )
         await session.connect()
         try:
-            return await self._run_phases(session)
+            return await self._run_phases(session, hook_state)
         finally:
             await session.disconnect()
 
-    async def _run_phases(self, session: Session) -> dict:
+    async def _run_phases(
+        self, session: Session, hook_state: HookState
+    ) -> dict:
+        hook_state.phase = "BASELINE"
+        hook_state.iteration = 0
         await self._baseline(session)
+        self._commit_phase(0, "BASELINE")
 
         stop_reason: str | None = None
         for iteration in range(1, self._config.max_iterations + 1):
             iter_dir = self._work_dir / f"iter-{iteration}"
             iter_dir.mkdir(parents=True, exist_ok=True)
 
+            hook_state.phase = "DESIGN"
+            hook_state.iteration = iteration
             await self._design(session, iteration)
+            self._commit_phase(iteration, "DESIGN")
             locked_hash = self._lock_bundle(iter_dir)
+            hook_state.phase = "EXECUTE"
             await self._execute(session, iteration)
+            self._commit_phase(iteration, "EXECUTE")
             prereg = self._check_bundle_hash(iter_dir, locked_hash)
 
             findings = _read_json(iter_dir / "findings.json") or {}
@@ -215,14 +236,24 @@ class Campaign:
                 self._ledger[-1]["stop_reason"] = stop_reason
                 _write_json(self._work_dir / "ledger.json", self._ledger)
 
+        hook_state.phase = "REPORT"
         await self._report(session)
+        last_iter = len(self._ledger)
+        self._commit_phase(last_iter, "REPORT")
 
-        return {"stop_reason": stop_reason, "iterations": len(self._ledger)}
+        return {"stop_reason": stop_reason, "iterations": last_iter}
 
     async def _baseline(self, session: Session) -> None:
+        task_hint = ""
+        if not self._config.task_type:
+            task_hint = (
+                " Determine the task_type (debug/verify/optimize/policy/"
+                "explain/other) and include task_type_reason."
+            )
         prompt = (
             "BASELINE phase. Do not design hypotheses yet. "
-            "Get one real observation of the current system and write baseline.json."
+            "Get one real observation of the current system and "
+            f"write baseline.json.{task_hint}"
         )
         await session.turn(prompt)
 
@@ -238,6 +269,8 @@ class Campaign:
             )
         prompt = (
             f"Iteration {iteration}, DESIGN phase. "
+            f"Read state/digest.json and baseline.json. "
+            f"Frame each prediction as a change relative to the baseline. "
             f"Write iter-{iteration}/problem.json, "
             f"iter-{iteration}/bundle.json, "
             f"iter-{iteration}/plan.json."
@@ -248,7 +281,9 @@ class Campaign:
     async def _execute(self, session: Session, iteration: int) -> None:
         prompt = (
             f"Iteration {iteration}, EXECUTE phase. "
-            f"Run plan.json; write iter-{iteration}/findings.json "
+            f"Run plan.json; fix anything that does not run. "
+            f"If a run has wait_for, it will be polled automatically. "
+            f"Write iter-{iteration}/findings.json "
             f"and iter-{iteration}/principle_updates.json."
         )
         await session.turn(prompt)
@@ -260,8 +295,7 @@ class Campaign:
     def _lock_bundle(self, iter_dir: Path) -> str:
         bundle = _read_json(iter_dir / "bundle.json")
         if bundle is None:
-            logger.warning("bundle.json missing at %s; skipping hash lock", iter_dir.name)
-            return ""
+            raise ValueError(f"bundle.json missing at {iter_dir.name} after DESIGN")
         h = bundle_hash(bundle)
         _write_json(iter_dir / ".bundle.locked.json", bundle)
         return h
@@ -277,6 +311,36 @@ class Campaign:
                 _write_json(iter_dir / "bundle.json", locked)
             return True
         return False
+
+    def _commit_phase(self, iteration: int, phase: str) -> None:
+        """Commit the target worktree if there are changes."""
+        target = self._config.target_system.get("path")
+        if not target:
+            return
+        target_path = Path(target)
+        if not (target_path / ".git").exists():
+            return
+        try:
+            status = subprocess.run(
+                ["git", "status", "--porcelain"],
+                cwd=str(target_path), capture_output=True, text=True,
+                timeout=30,
+            )
+            if not status.stdout.strip():
+                return
+            subprocess.run(
+                ["git", "add", "-A"],
+                cwd=str(target_path), capture_output=True, timeout=30,
+            )
+            msg = f"nous: iter-{iteration} {phase}"
+            if iteration == 0:
+                msg = f"nous: {phase}"
+            subprocess.run(
+                ["git", "commit", "-m", msg, "--allow-empty"],
+                cwd=str(target_path), capture_output=True, timeout=30,
+            )
+        except (subprocess.TimeoutExpired, OSError):
+            logger.warning("failed to commit target worktree after %s", phase)
 
     def _objective_direction(self) -> str:
         obj = self._config.objective

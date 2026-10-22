@@ -78,10 +78,10 @@ def _valid_findings(tmp_path: Path) -> dict:
                 "evidence": [{"path": "results.json", "key": "/latency", "value": 1.5}],
                 "effect": {"value": 5.0},
                 "noise_sd": 0.1,
-                "question_answered": True,
-                "reason": "latency dropped",
             }
-        ]
+        ],
+        "question_answered": True,
+        "reason": "latency dropped",
     }
 
 
@@ -428,10 +428,10 @@ class TestFindingsSemantics:
                     ],
                     "effect": {"value": 5.0},
                     "noise_sd": 0.1,
-                    "question_answered": True,
-                    "reason": "latency dropped",
                 }
-            ]
+            ],
+            "question_answered": True,
+            "reason": "latency dropped",
         }
         errs = validate_artifact("findings", data, _ctx(tmp_path))
         assert any(

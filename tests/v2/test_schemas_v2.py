@@ -92,15 +92,17 @@ def _valid_findings_hypothesis(**overrides) -> dict:
         "status": "CONFIRMED",
         "error_type": "none",
         "evidence": [],
-        "question_answered": True,
-        "reason": "metric improved",
     }
     h.update(overrides)
     return h
 
 
 def _valid_findings() -> dict:
-    return {"hypotheses": [_valid_findings_hypothesis()]}
+    return {
+        "hypotheses": [_valid_findings_hypothesis()],
+        "question_answered": True,
+        "reason": "metric improved",
+    }
 
 
 def _valid_principle_updates() -> dict:
@@ -396,11 +398,11 @@ class TestFindingsSchema:
         ["CONFIRMED", "PARTIALLY_CONFIRMED", "REFUTED", "INCONCLUSIVE"],
     )
     def test_valid_statuses(self, status):
-        doc = {"hypotheses": [_valid_findings_hypothesis(status=status)]}
+        doc = {**_valid_findings(), "hypotheses": [_valid_findings_hypothesis(status=status)]}
         jsonschema.validate(doc, self.schema)
 
     def test_invalid_status(self):
-        doc = {"hypotheses": [_valid_findings_hypothesis(status="MAYBE")]}
+        doc = {**_valid_findings(), "hypotheses": [_valid_findings_hypothesis(status="MAYBE")]}
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, self.schema)
 
@@ -408,24 +410,24 @@ class TestFindingsSchema:
         "error_type", ["direction", "magnitude", "regime", "shape", "none"]
     )
     def test_valid_error_types(self, error_type):
-        doc = {"hypotheses": [_valid_findings_hypothesis(error_type=error_type)]}
+        doc = {**_valid_findings(), "hypotheses": [_valid_findings_hypothesis(error_type=error_type)]}
         jsonschema.validate(doc, self.schema)
 
     def test_invalid_error_type(self):
-        doc = {"hypotheses": [_valid_findings_hypothesis(error_type="typo")]}
+        doc = {**_valid_findings(), "hypotheses": [_valid_findings_hypothesis(error_type="typo")]}
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, self.schema)
 
     def test_evidence_item_structure(self):
         h = _valid_findings_hypothesis()
         h["evidence"] = [{"path": "f.json", "key": "/x", "value": 1}]
-        jsonschema.validate({"hypotheses": [h]}, self.schema)
+        jsonschema.validate({**_valid_findings(), "hypotheses": [h]}, self.schema)
 
     def test_evidence_item_extra_field(self):
         h = _valid_findings_hypothesis()
         h["evidence"] = [{"path": "f.json", "key": "/x", "value": 1, "extra": True}]
         with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
-            jsonschema.validate({"hypotheses": [h]}, self.schema)
+            jsonschema.validate({**_valid_findings(), "hypotheses": [h]}, self.schema)
 
     def test_optional_best(self):
         doc = _valid_findings()
@@ -443,25 +445,25 @@ class TestFindingsSchema:
         h["claims"] = [
             {"claim_id": "c1", "metric": "pass_rate", "condition": "all", "value": 1.0}
         ]
-        jsonschema.validate({"hypotheses": [h]}, self.schema)
+        jsonschema.validate({**_valid_findings(), "hypotheses": [h]}, self.schema)
 
     def test_optional_noise_fields(self):
         h = _valid_findings_hypothesis()
         h["noise_sd"] = 0.01
         h["noise_condition"] = "3 seeds"
-        jsonschema.validate({"hypotheses": [h]}, self.schema)
+        jsonschema.validate({**_valid_findings(), "hypotheses": [h]}, self.schema)
 
     def test_noise_unmeasured_must_be_true(self):
         h = _valid_findings_hypothesis()
         h["noise_unmeasured"] = False
         with pytest.raises(jsonschema.ValidationError, match="const"):
-            jsonschema.validate({"hypotheses": [h]}, self.schema)
+            jsonschema.validate({**_valid_findings(), "hypotheses": [h]}, self.schema)
 
     def test_question_answered_must_be_bool(self):
-        h = _valid_findings_hypothesis()
-        h["question_answered"] = "yes"
+        f = _valid_findings()
+        f["question_answered"] = "yes"
         with pytest.raises(jsonschema.ValidationError, match="boolean"):
-            jsonschema.validate({"hypotheses": [h]}, self.schema)
+            jsonschema.validate(f, self.schema)
 
 
 # ── Principle updates schema ─────────────────────────────────────────────

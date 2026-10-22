@@ -23,6 +23,8 @@ def _findings(
     *,
     hypotheses: list[dict] | None = None,
     best: dict | None = None,
+    question_answered: bool = True,
+    reason: str = "confirmed",
 ) -> dict:
     """Build a minimal valid findings dict."""
     if hypotheses is None:
@@ -32,8 +34,6 @@ def _findings(
                 "status": "CONFIRMED",
                 "error_type": "none",
                 "evidence": [],
-                "question_answered": True,
-                "reason": "confirmed",
                 "noise_unmeasured": True,
                 "noise_reason": "single run",
                 "claims": [
@@ -41,7 +41,11 @@ def _findings(
                 ],
             },
         ]
-    result: dict[str, Any] = {"hypotheses": hypotheses}
+    result: dict[str, Any] = {
+        "hypotheses": hypotheses,
+        "question_answered": question_answered,
+        "reason": reason,
+    }
     if best is not None:
         result["best"] = best
     return result
@@ -79,13 +83,13 @@ class TestClaimsChanged:
     def test_different_claims_returns_true(self):
         prev = _findings(hypotheses=[{
             "id": "h1", "status": "CONFIRMED", "error_type": "none",
-            "evidence": [], "question_answered": True, "reason": "ok",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [{"claim_id": "c1", "metric": "m", "condition": "default", "value": 10}],
         }])
         curr = _findings(hypotheses=[{
             "id": "h1", "status": "CONFIRMED", "error_type": "none",
-            "evidence": [], "question_answered": True, "reason": "ok",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [{"claim_id": "c1", "metric": "m", "condition": "default", "value": 20}],
         }])
@@ -101,13 +105,13 @@ class TestClaimsChanged:
     def test_added_claim_returns_true(self):
         prev = _findings(hypotheses=[{
             "id": "h1", "status": "CONFIRMED", "error_type": "none",
-            "evidence": [], "question_answered": True, "reason": "ok",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [{"claim_id": "c1", "metric": "m", "condition": "a", "value": 1}],
         }])
         curr = _findings(hypotheses=[{
             "id": "h1", "status": "CONFIRMED", "error_type": "none",
-            "evidence": [], "question_answered": True, "reason": "ok",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [
                 {"claim_id": "c1", "metric": "m", "condition": "a", "value": 1},
@@ -186,12 +190,15 @@ class TestCheckStop:
         assert result == "answered"
 
     def test_question_not_answered_continues(self, tmp_path):
-        findings = _findings(hypotheses=[{
-            "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": False, "reason": "unclear",
-            "noise_unmeasured": True, "noise_reason": "n/a",
-            "claims": [],
-        }])
+        findings = _findings(
+            question_answered=False, reason="unclear",
+            hypotheses=[{
+                "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
+                "evidence": [],
+                "noise_unmeasured": True, "noise_reason": "n/a",
+                "claims": [],
+            }],
+        )
         result = check_stop(
             iteration=1,
             findings=findings,
@@ -205,12 +212,15 @@ class TestCheckStop:
         assert result is None
 
     def test_max_iterations(self, tmp_path):
-        findings = _findings(hypotheses=[{
-            "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": False, "reason": "unclear",
-            "noise_unmeasured": True, "noise_reason": "n/a",
-            "claims": [],
-        }])
+        findings = _findings(
+            question_answered=False, reason="unclear",
+            hypotheses=[{
+                "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
+                "evidence": [],
+                "noise_unmeasured": True, "noise_reason": "n/a",
+                "claims": [],
+            }],
+        )
         result = check_stop(
             iteration=5,
             findings=findings,
@@ -228,9 +238,9 @@ class TestCheckStop:
             _ledger_entry(iteration=1),
             _ledger_entry(iteration=2),
         ]
-        findings = _findings(hypotheses=[{
+        findings = _findings(question_answered=False, hypotheses=[{
             "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": False, "reason": "unclear",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [],
         }])
@@ -251,9 +261,9 @@ class TestCheckStop:
         ledger = [
             _ledger_entry(iteration=1, principles_changed=True),
         ]
-        findings = _findings(hypotheses=[{
+        findings = _findings(question_answered=False, hypotheses=[{
             "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": False, "reason": "unclear",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [],
         }])
@@ -272,9 +282,9 @@ class TestCheckStop:
     def test_halt_file(self, tmp_path):
         halt = tmp_path / "halt.json"
         halt.write_text('{"fingerprint": "test"}')
-        findings = _findings(hypotheses=[{
+        findings = _findings(question_answered=False, hypotheses=[{
             "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": False, "reason": "unclear",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [],
         }])
@@ -293,9 +303,9 @@ class TestCheckStop:
     def test_stop_sentinel(self, tmp_path):
         sentinel = tmp_path / "STOP"
         sentinel.write_text("")
-        findings = _findings(hypotheses=[{
+        findings = _findings(question_answered=False, hypotheses=[{
             "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": False, "reason": "unclear",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [],
         }])
@@ -314,7 +324,7 @@ class TestCheckStop:
     def test_answered_requires_non_inconclusive(self, tmp_path):
         findings = _findings(hypotheses=[{
             "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": True, "reason": "maybe",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [{"claim_id": "c1", "metric": "m", "condition": "a", "value": 1}],
         }])
@@ -333,9 +343,9 @@ class TestCheckStop:
     def test_stall_iteration_2_with_default(self, tmp_path):
         """Stall check starts from iteration 2 (needs >= stall_iterations of quiet)."""
         ledger = [_ledger_entry(iteration=1)]
-        findings = _findings(hypotheses=[{
+        findings = _findings(question_answered=False, hypotheses=[{
             "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": False, "reason": "unclear",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [],
         }])
@@ -362,9 +372,9 @@ class TestCheckStop:
     def test_stall_not_triggered_when_claims_changed(self, tmp_path):
         """If current iteration has claims_changed, it's not quiet."""
         ledger = [_ledger_entry(iteration=1)]
-        findings = _findings(hypotheses=[{
+        findings = _findings(question_answered=False, hypotheses=[{
             "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": False, "reason": "unclear",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [],
         }])
@@ -384,9 +394,9 @@ class TestCheckStop:
     def test_stall_not_triggered_when_best_changed(self, tmp_path):
         """If current iteration has best_changed, it's not quiet."""
         ledger = [_ledger_entry(iteration=1)]
-        findings = _findings(hypotheses=[{
+        findings = _findings(question_answered=False, hypotheses=[{
             "id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
-            "evidence": [], "question_answered": False, "reason": "unclear",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [],
         }])
@@ -407,7 +417,7 @@ class TestCheckStop:
         """If claims_needed has an id not in findings, not answered."""
         findings = _findings(hypotheses=[{
             "id": "h1", "status": "CONFIRMED", "error_type": "none",
-            "evidence": [], "question_answered": True, "reason": "yes",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [{"claim_id": "c1", "metric": "m", "condition": "a", "value": 1}],
         }])
@@ -427,7 +437,7 @@ class TestCheckStop:
     def test_answered_when_all_claims_met(self, tmp_path):
         findings = _findings(hypotheses=[{
             "id": "h1", "status": "CONFIRMED", "error_type": "none",
-            "evidence": [], "question_answered": True, "reason": "yes",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [
                 {"claim_id": "c1", "metric": "m", "condition": "a", "value": 1},
@@ -451,7 +461,7 @@ class TestCheckStop:
         """A hypothesis with missing status should not count as non-INCONCLUSIVE."""
         findings = _findings(hypotheses=[{
             "id": "h1", "error_type": "none",
-            "evidence": [], "question_answered": True, "reason": "yes",
+            "evidence": [],
             "noise_unmeasured": True, "noise_reason": "n/a",
             "claims": [{"claim_id": "c1", "metric": "m", "condition": "a", "value": 1}],
         }])

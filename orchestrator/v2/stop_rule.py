@@ -97,13 +97,13 @@ def check_stop(
         return "stop_sentinel"
 
     hypotheses = findings.get("hypotheses", [])
-    has_answered = any(h.get("question_answered") for h in hypotheses)
+    question_answered = bool(findings.get("question_answered"))
     has_non_inconclusive = any(
         h.get("status") is not None and h["status"] != "INCONCLUSIVE"
         for h in hypotheses
     )
     claims_met = _claims_needed_met(findings, claims_needed)
-    if has_answered and has_non_inconclusive and claims_met:
+    if question_answered and has_non_inconclusive and claims_met:
         return "answered"
 
     if iteration >= max_iterations:
