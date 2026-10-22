@@ -234,7 +234,7 @@
         "pytest -q green",
         "grep: no imports of the old iteration/campaign loop or cli/inline/llm dispatch modules remain"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R11c",
