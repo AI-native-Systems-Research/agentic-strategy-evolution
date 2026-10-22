@@ -15,10 +15,15 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
-from collections.abc import AsyncIterator, Awaitable, Callable
+import inspect
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
+
+from claude_agent_sdk.types import _hooks_to_internal_format
+from claude_agent_sdk._internal.query import _convert_hook_output_for_cli
 
 
 @dataclasses.dataclass
@@ -81,19 +86,22 @@ class FakeClient:
         Dict of ``{path: content}`` that ``connect()`` writes to disk,
         simulating agent file creation.
     hooks:
-        Dict of ``{event_name: list[callback]}`` that FakeClient invokes
-        when it encounters matching tool uses in the script.
+        SDK-style hooks dict: ``{event_name: list[HookMatcher]}``.
+        Passed through ``_hooks_to_internal_format`` exactly like the
+        real SDK does, then each callback is awaited per the real contract.
     """
 
     def __init__(
         self,
         script: list[Any] | None = None,
         files_to_write: dict[str | Path, str] | None = None,
-        hooks: dict[str, list[Callable[..., Any]]] | None = None,
+        hooks: dict[str, list[Any]] | None = None,
     ) -> None:
         self._script = list(script or [FakeResultMessage()])
         self._files_to_write = files_to_write or {}
-        self._hooks = hooks or {}
+        self._internal_hooks: dict[str, list[dict[str, Any]]] = {}
+        if hooks:
+            self._internal_hooks = _hooks_to_internal_format(hooks)
         self._connected = False
         self._queries: list[str] = []
         self._response_index = 0
@@ -134,25 +142,51 @@ class FakeClient:
     async def disconnect(self) -> None:
         self._connected = False
 
-    # ── Hook invocation ───────────────────────────────────────────────
+    # ── Hook invocation (mirrors real SDK contract) ───────────────────
 
     async def _invoke_hooks(
         self, msg: Any, tool_block: dict[str, Any]
     ) -> None:
         tool_name = tool_block.get("name", "")
-        callbacks = self._hooks.get("PostToolUse", [])
-        for cb in callbacks:
-            hook_input = {
-                "session_id": getattr(msg, "session_id", "fake-session-1"),
-                "hook_event_name": "PostToolUse",
-                "tool_name": tool_name,
-                "tool_input": tool_block.get("input", {}),
-                "tool_response": tool_block.get("response", ""),
-                "tool_use_id": tool_block.get("id", "tu-fake"),
-            }
-            result = cb(hook_input, None, None)
-            if isinstance(result, Awaitable):
-                await result
+        tool_use_id = tool_block.get("id", "tu-fake")
+        response = tool_block.get("response", "")
+
+        await self._run_event_hooks("PostToolUse", {
+            "session_id": getattr(msg, "session_id", "fake-session-1"),
+            "hook_event_name": "PostToolUse",
+            "tool_name": tool_name,
+            "tool_input": tool_block.get("input", {}),
+            "tool_response": response,
+            "tool_use_id": tool_use_id,
+            "transcript_path": "",
+            "cwd": "",
+        }, tool_use_id)
+
+    async def _run_event_hooks(
+        self,
+        event: str,
+        hook_input: dict[str, Any],
+        tool_use_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Run all matching hooks for an event, following the real SDK contract."""
+        matchers = self._internal_hooks.get(event, [])
+        for matcher_dict in matchers:
+            callbacks = matcher_dict.get("hooks", [])
+            for cb in callbacks:
+                if not inspect.iscoroutinefunction(cb):
+                    raise TypeError(
+                        f"Hook callback for {event} must be async def, "
+                        f"got {type(cb).__name__}"
+                    )
+                hook_output = await cb(
+                    hook_input,
+                    tool_use_id,
+                    {"signal": None},
+                )
+                converted = _convert_hook_output_for_cli(hook_output)
+                if converted.get("decision") == "block":
+                    return converted
+        return None
 
     # ── Inspection helpers ────────────────────────────────────────────
 

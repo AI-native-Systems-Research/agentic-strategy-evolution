@@ -15,6 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from claude_agent_sdk.types import HookMatcher
+
 from .secrets import mask_secrets
 from .validators import ValidatorContext, validate_artifact
 
@@ -76,22 +78,29 @@ _EXIT_CODE_RE = re.compile(r"Exit code (\d+)")
 # ── PostToolUse hook ─────────────────────────────────────────────────────
 
 
+def _stringify_tool_response(tool_response: Any) -> str:
+    """Ensure tool_response is a string for masking and byte counting."""
+    if isinstance(tool_response, str):
+        return tool_response
+    return json.dumps(tool_response, default=str)
+
+
 def make_post_tool_use_hook(state: HookState):
     """Create a PostToolUse callback that records Bash commands to runs.jsonl."""
 
-    def hook(hook_input: dict, _signal: Any, _ctx: Any) -> None:
+    async def hook(hook_input: dict, _tool_use_id: str | None, _ctx: Any) -> dict:
         if hook_input.get("tool_name") != "Bash":
-            return
+            return {}
 
         state.consecutive_blocks = 0
 
         tool_input = hook_input.get("tool_input", {})
         command = tool_input.get("command", "")
-        tool_response = hook_input.get("tool_response", "")
+        raw_response = hook_input.get("tool_response", "")
+        tool_response_str = _stringify_tool_response(raw_response)
         is_background = bool(tool_input.get("run_in_background", False))
 
         masked_command = mask_secrets(command, state.secrets)
-        masked_response = mask_secrets(tool_response, state.secrets)
 
         row: dict[str, Any] = {
             "ts": state.now(),
@@ -100,7 +109,7 @@ def make_post_tool_use_hook(state: HookState):
             "tool_use_id": hook_input.get("tool_use_id", ""),
             "command": masked_command,
             "exit_code": None if is_background else 0,
-            "output_bytes": len(tool_response.encode("utf-8")),
+            "output_bytes": len(tool_response_str.encode("utf-8")),
             "cwd": tool_input.get("cwd", ""),
             "background": is_background,
             "agent_id": hook_input.get("session_id", ""),
@@ -108,6 +117,7 @@ def make_post_tool_use_hook(state: HookState):
         }
 
         _append_runs_jsonl(state.work_dir, row)
+        return {}
 
     return hook
 
@@ -118,9 +128,9 @@ def make_post_tool_use_hook(state: HookState):
 def make_post_tool_use_failure_hook(state: HookState):
     """Create a PostToolUseFailure callback that records failed Bash commands."""
 
-    def hook(hook_input: dict, _signal: Any, _ctx: Any) -> None:
+    async def hook(hook_input: dict, _tool_use_id: str | None, _ctx: Any) -> dict:
         if hook_input.get("tool_name") != "Bash":
-            return
+            return {}
 
         state.consecutive_blocks = 0
 
@@ -133,6 +143,9 @@ def make_post_tool_use_failure_hook(state: HookState):
 
         masked_command = mask_secrets(command, state.secrets)
 
+        raw_response = hook_input.get("tool_response", "")
+        response_str = _stringify_tool_response(raw_response)
+
         row: dict[str, Any] = {
             "ts": state.now(),
             "phase": state.phase,
@@ -140,7 +153,7 @@ def make_post_tool_use_failure_hook(state: HookState):
             "tool_use_id": hook_input.get("tool_use_id", ""),
             "command": masked_command,
             "exit_code": exit_code,
-            "output_bytes": len(hook_input.get("tool_response", "").encode("utf-8")),
+            "output_bytes": len(response_str.encode("utf-8")),
             "cwd": tool_input.get("cwd", ""),
             "background": False,
             "agent_id": hook_input.get("session_id", ""),
@@ -148,6 +161,7 @@ def make_post_tool_use_failure_hook(state: HookState):
         }
 
         _append_runs_jsonl(state.work_dir, row)
+        return {}
 
     return hook
 
@@ -158,10 +172,10 @@ def make_post_tool_use_failure_hook(state: HookState):
 def make_stop_hook(state: HookState):
     """Create a Stop callback that validates phase artifacts before allowing stop."""
 
-    def hook(hook_input: dict, _signal: Any, _ctx: Any) -> dict | None:
+    async def hook(hook_input: dict, _tool_use_id: str | None, _ctx: Any) -> dict:
         if state.consecutive_blocks >= 6:
             state.consecutive_blocks = 0
-            return None
+            return {}
 
         artifact_types = _PHASE_ARTIFACTS.get(state.phase, [])
         all_errors: list[str] = []
@@ -195,7 +209,7 @@ def make_stop_hook(state: HookState):
             }
 
         state.consecutive_blocks = 0
-        return None
+        return {}
 
     return hook
 
@@ -206,7 +220,7 @@ def make_stop_hook(state: HookState):
 def make_precompact_hook(state: HookState):
     """Create a PreCompact callback that writes state/digest.json."""
 
-    def hook(hook_input: dict, _signal: Any, _ctx: Any) -> None:
+    async def hook(hook_input: dict, _tool_use_id: str | None, _ctx: Any) -> dict:
         digest: dict[str, Any] = {
             "phase": state.phase,
             "iteration": state.iteration,
@@ -274,42 +288,44 @@ def make_precompact_hook(state: HookState):
         except OSError:
             logger.error("Failed to write digest.json", exc_info=True)
 
+        return {}
+
     return hook
 
 
 # ── Build hooks dict ─────────────────────────────────────────────────────
 
 
-def build_hooks(state: HookState) -> dict[str, list[dict[str, Any]]]:
+def build_hooks(state: HookState) -> dict[str, list[HookMatcher]]:
     """Build the hooks dict for ClaudeAgentOptions.hooks."""
     return {
         "PostToolUse": [
-            {
-                "matcher": "Bash",
-                "hooks": [make_post_tool_use_hook(state)],
-                "timeout": 30.0,
-            }
+            HookMatcher(
+                matcher="Bash",
+                hooks=[make_post_tool_use_hook(state)],
+                timeout=30.0,
+            )
         ],
         "PostToolUseFailure": [
-            {
-                "matcher": "Bash",
-                "hooks": [make_post_tool_use_failure_hook(state)],
-                "timeout": 30.0,
-            }
+            HookMatcher(
+                matcher="Bash",
+                hooks=[make_post_tool_use_failure_hook(state)],
+                timeout=30.0,
+            )
         ],
         "Stop": [
-            {
-                "matcher": "",
-                "hooks": [make_stop_hook(state)],
-                "timeout": 120.0,
-            }
+            HookMatcher(
+                matcher="",
+                hooks=[make_stop_hook(state)],
+                timeout=120.0,
+            )
         ],
         "PreCompact": [
-            {
-                "matcher": "",
-                "hooks": [make_precompact_hook(state)],
-                "timeout": 60.0,
-            }
+            HookMatcher(
+                matcher="",
+                hooks=[make_precompact_hook(state)],
+                timeout=60.0,
+            )
         ],
     }
 

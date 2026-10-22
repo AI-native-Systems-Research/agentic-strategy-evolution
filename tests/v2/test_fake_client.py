@@ -5,6 +5,7 @@ from __future__ import annotations
 import inspect
 
 import pytest
+from claude_agent_sdk.types import HookMatcher
 
 from tests.fakes.sdk_client import (
     FakeAssistantMessage,
@@ -63,8 +64,9 @@ class TestFakeClientScript:
     async def test_tool_use_invokes_hooks(self):
         hook_calls: list[dict] = []
 
-        def hook_cb(hook_input, _signal, _ctx):
+        async def hook_cb(hook_input, _tool_use_id, _ctx):
             hook_calls.append(hook_input)
+            return {}
 
         assistant = FakeAssistantMessage(
             content=[
@@ -80,7 +82,7 @@ class TestFakeClientScript:
         result = FakeResultMessage()
         client = FakeClient(
             script=[assistant, result],
-            hooks={"PostToolUse": [hook_cb]},
+            hooks={"PostToolUse": [HookMatcher(hooks=[hook_cb])]},
         )
         await client.connect()
         await client.query("list files")
@@ -95,8 +97,9 @@ class TestFakeClientScript:
     async def test_multiple_tool_uses_invoke_hooks(self):
         hook_calls: list[str] = []
 
-        def hook_cb(hook_input, _signal, _ctx):
+        async def hook_cb(hook_input, _tool_use_id, _ctx):
             hook_calls.append(hook_input["tool_name"])
+            return {}
 
         assistant = FakeAssistantMessage(
             content=[
@@ -107,7 +110,7 @@ class TestFakeClientScript:
         result = FakeResultMessage()
         client = FakeClient(
             script=[assistant, result],
-            hooks={"PostToolUse": [hook_cb]},
+            hooks={"PostToolUse": [HookMatcher(hooks=[hook_cb])]},
         )
         await client.connect()
         await client.query("do things")
@@ -115,6 +118,24 @@ class TestFakeClientScript:
             pass
 
         assert hook_calls == ["Bash", "Read"]
+
+    async def test_sync_callback_raises_type_error(self):
+        def sync_cb(hook_input, _tool_use_id, _ctx):
+            return {}
+
+        assistant = FakeAssistantMessage(
+            content=[{"type": "tool_use", "name": "Bash", "id": "tu-1", "input": {}}],
+        )
+        result = FakeResultMessage()
+        client = FakeClient(
+            script=[assistant, result],
+            hooks={"PostToolUse": [HookMatcher(hooks=[sync_cb])]},
+        )
+        await client.connect()
+        await client.query("test")
+        with pytest.raises(TypeError, match="must be async def"):
+            async for _ in client.receive_response():
+                pass
 
 
 class TestFakeClientFilesWritten:

@@ -122,3 +122,32 @@ Review decisions (pr-review-toolkit:review-pr):
   in digest (best-effort, warning is fine). Skipped write-failure test
   (low priority).
 
+## R3 fix: B1 recurred — hooks used dicts instead of HookMatcher objects
+
+B1 recurred in R3: build_hooks() returned plain dicts instead of
+HookMatcher objects. The SDK's _hooks_to_internal_format reads
+matcher.hooks via hasattr, so dicts produce empty hook lists.
+
+Five fixes applied:
+1. build_hooks now returns HookMatcher objects (from claude_agent_sdk.types).
+2. All hook callbacks are async def (input, tool_use_id, context) — the SDK
+   awaits them at query.py:648.
+3. All callbacks return dict ({} for no action, {"decision": "block", ...}
+   for Stop blocks) — query.py calls _convert_hook_output_for_cli which
+   calls .items() on the return value.
+4. PostToolUse/PostToolUseFailure: tool_response is Any (dict for Bash);
+   added _stringify_tool_response() to json.dumps non-string responses
+   before masking and measuring output_bytes.
+5. FakeClient now uses the real SDK contract: takes dict[event, list[HookMatcher]]
+   hooks, runs _hooks_to_internal_format, awaits every callback, passes output
+   through _convert_hook_output_for_cli, and raises TypeError if a callback
+   is not a coroutine function.
+
+New tests: async signature assertions on all 4 hooks, dict tool_response
+serialization (PostToolUse + PostToolUseFailure), return-value assertions
+(all hooks return {}), HookMatcher isinstance checks, _hooks_to_internal_format
+non-empty hooks, ClaudeAgentOptions integration, sync-callback TypeError.
+
+Tests before: 1633 passed
+Tests after: 1648 passed, 0 failed
+
