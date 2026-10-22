@@ -27,7 +27,6 @@ from orchestrator.validate import (
     _validate_locked_parameters,
     _validate_locked_workload,
     _validate_physical_realism,
-    compute_campaign_spec_diff,
     validate_design,
 )
 
@@ -144,48 +143,6 @@ def test_f3_no_depth_overrides_passes():
 
 
 # ─── F4 / #249: campaign_spec_diff in gate summary ─────────────────────────
-
-
-def test_f4_compute_campaign_spec_diff_lists_violations(tmp_path: Path):
-    iter_dir = tmp_path / "iter-1"
-    iter_dir.mkdir()
-    (iter_dir / "bundle.yaml").write_text(yaml.safe_dump({
-        "metadata": {"iteration": 1, "family": "f", "research_question": "q"},
-        "arms": [{"type": "h-main", "prediction": "p", "mechanism": "m", "diagnostic": "d"}],
-        "experiment_spec": {
-            "verified_parameters": {"model": "qwen", "concurrency": 8},
-            "rehearsal_subset": {"depth_overrides": {
-                "duration_seconds": 60,
-                "invalidates_checks": ["pmf-histogram"],
-            }},
-        },
-        "workload_changes_from_canonical": {
-            "rationale": "x", "diff": [{"field": "P_A", "from": 1024, "to": 4000}],
-        },
-    }))
-    campaign = {"locked_parameters": {"model": "llama", "concurrency": 32}}
-    diff = compute_campaign_spec_diff(iter_dir, campaign)
-    assert len(diff["locked_parameters_violations"]) == 2
-    assert diff["depth_overrides_present"] is True
-    assert diff["invalidated_checks_declared"] == ["pmf-histogram"]
-    assert diff["workload_changes_from_canonical_declared"] is True
-
-
-def test_f4_compute_campaign_spec_diff_clean_when_match(tmp_path: Path):
-    iter_dir = tmp_path / "iter-1"
-    iter_dir.mkdir()
-    (iter_dir / "bundle.yaml").write_text(yaml.safe_dump({
-        "metadata": {"iteration": 1, "family": "f", "research_question": "q"},
-        "arms": [{"type": "h-main", "prediction": "p", "mechanism": "m", "diagnostic": "d"}],
-        "experiment_spec": {"verified_parameters": {"model": "llama"}},
-    }))
-    diff = compute_campaign_spec_diff(iter_dir, {"locked_parameters": {"model": "llama"}})
-    assert diff["locked_parameters_violations"] == []
-    assert diff["depth_overrides_present"] is False
-    assert diff["workload_changes_from_canonical_declared"] is False
-
-
-# ─── F15 / #260: physical_realism_check soft warning ───────────────────────
 
 
 def test_f15_physical_realism_warns_at_low_ratio_with_no_justification():

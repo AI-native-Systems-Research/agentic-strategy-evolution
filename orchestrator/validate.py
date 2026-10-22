@@ -33,8 +33,6 @@ _KNOWN_ROOT_FILES = {
     "experiment_plan.yaml", "findings.json", "principle_updates.json",
     "design_log.md", "executor_log.md", "design_raw.md",
     "execute_analyze_output.json",
-    "gate_summary_design.json", "gate_summary_findings.json",
-    "gate_summary_continue.json",
     "human_feedback.json",
     # #188: provenance for `nous run --bundle <path>` (pre-authored
     # bundle, skips DESIGN dispatch).
@@ -454,72 +452,6 @@ def _validate_typed_arm_fields(bundle: dict) -> list[str]:
                     f"from primary metric (both = {arm.get('metric')!r})."
                 )
     return errors
-
-
-def compute_campaign_spec_diff(
-    iter_dir: Path, campaign: dict | None,
-) -> dict:
-    """Issue #249 (F4): structured campaign-vs-bundle deviation report.
-
-    Used by ``_generate_gate_summary`` to populate the
-    ``campaign_spec_diff`` block on every gate summary, regardless of
-    --auto-approve. The diff is "soft" (informational) by default —
-    F1's ``_validate_locked_parameters`` is the hard-fail layer.
-
-    Returns a dict with three sub-keys:
-      * ``locked_parameters_violations`` — list of {param, campaign,
-        bundle} entries (these are also hard validation failures
-        upstream; recorded here so an auditor sees them in one place).
-      * ``locked_workload_violations`` — list of {field, canonical, actual,
-        tenant?} entries (these are also hard validation failures upstream).
-      * ``depth_overrides_present`` — bool.
-      * ``invalidated_checks_declared`` — list of strings.
-      * ``workload_changes_from_canonical_declared`` — bool.
-
-    All keys are present so the consumer can grep for missing keys as
-    a regression signal (PR #235 pattern).
-    """
-    diff: dict = {
-        "locked_parameters_violations": [],
-        "locked_workload_violations": [],
-        "depth_overrides_present": False,
-        "invalidated_checks_declared": [],
-        "workload_changes_from_canonical_declared": False,
-    }
-    bundle_path = iter_dir / "bundle.yaml"
-    if not bundle_path.exists():
-        return diff
-    try:
-        bundle = yaml.safe_load(bundle_path.read_text()) or {}
-    except (OSError, yaml.YAMLError):
-        return diff
-    if not isinstance(bundle, dict):
-        return diff
-    spec = bundle.get("experiment_spec") or {}
-    verified = (spec.get("verified_parameters") or {}) if isinstance(spec, dict) else {}
-
-    locked = (campaign or {}).get("locked_parameters") or {}
-    if isinstance(locked, dict) and isinstance(verified, dict):
-        for k, expected in locked.items():
-            actual = verified.get(k, "<missing>")
-            if actual != expected:
-                diff["locked_parameters_violations"].append(
-                    {"param": k, "campaign": expected, "bundle": actual}
-                )
-
-    rehearsal = spec.get("rehearsal_subset") or {} if isinstance(spec, dict) else {}
-    overrides = rehearsal.get("depth_overrides") if isinstance(rehearsal, dict) else None
-    if isinstance(overrides, dict):
-        payload_keys = [k for k in overrides if k != "invalidates_checks"]
-        diff["depth_overrides_present"] = bool(payload_keys)
-        invalidates = overrides.get("invalidates_checks") or []
-        if isinstance(invalidates, list):
-            diff["invalidated_checks_declared"] = [str(x) for x in invalidates]
-
-    diff["workload_changes_from_canonical_declared"] = (
-        isinstance(bundle.get("workload_changes_from_canonical"), dict)
-    )
-    return diff
 
 
 def validate_design(iter_dir: Path, campaign: dict | None = None) -> dict:
