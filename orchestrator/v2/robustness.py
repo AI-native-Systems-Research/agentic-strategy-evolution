@@ -10,7 +10,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 logger = logging.getLogger(__name__)
 
@@ -25,8 +25,6 @@ def failure_fingerprint(exc_type: str, phase: str, message: str) -> str:
     normalized = _PATH_RE.sub("PATH", normalized)
     raw = f"{exc_type}:{phase}:{normalized}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
-
-
 
 
 class FailureBreaker:
@@ -57,8 +55,6 @@ def write_halt(work_dir: Path, fingerprint: str, phase: str, message: str) -> No
     path = work_dir / "halt.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(halt, indent=2) + "\n")
-
-
 
 
 def check_wait_condition(wait_spec: str) -> bool:

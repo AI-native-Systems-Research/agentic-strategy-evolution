@@ -5,14 +5,13 @@ Spec reference: R1 / spec 3.1.
 
 from __future__ import annotations
 
-import json
-import os
-import tempfile
 from pathlib import Path
 from typing import Any, Callable
 
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import SystemPromptPreset
+
+from .resume import update_state
 
 
 MODEL_MAX_OUTPUT: dict[str, int] = {
@@ -138,44 +137,11 @@ class Session:
     def session_id(self) -> str | None:
         return self._session_id
 
-    def _state_path(self) -> Path | None:
+    def _persist_session_id(self) -> None:
         work_dir = self._options.get("work_dir")
         if work_dir is None:
-            return None
-        return Path(work_dir) / "state.json"
-
-    def _persist_session_id(self) -> None:
-        state_path = self._state_path()
-        if state_path is None:
             return
-
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Read existing state if present
-        existing: dict[str, Any] = {}
-        if state_path.exists():
-            try:
-                existing = json.loads(state_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
-
-        existing["session_id"] = self._session_id
-        existing["sdk_version"] = SDK_VERSION
-        existing["cli_version"] = CLI_VERSION
-
-        # Atomic write: tmp file in same dir, then rename
-        fd, tmp = tempfile.mkstemp(
-            dir=str(state_path.parent), suffix=".tmp"
+        update_state(
+            Path(work_dir), session_id=self._session_id,
+            sdk_version=SDK_VERSION, cli_version=CLI_VERSION,
         )
-        try:
-            with os.fdopen(fd, "w") as f:
-                json.dump(existing, f, indent=2)
-                f.write("\n")
-            os.replace(tmp, str(state_path))
-        except BaseException:
-            # Clean up the tmp file on failure
-            try:
-                os.unlink(tmp)
-            except OSError:
-                pass
-            raise

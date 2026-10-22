@@ -7,7 +7,6 @@ continue, enter REPORT, or halt.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 
 
 def _collect_claims(findings: dict) -> set[tuple]:

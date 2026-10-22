@@ -14,7 +14,7 @@ from typing import Any
 from claude_agent_sdk.types import HookMatcher
 
 from .secrets import mask_secrets
-from .validators import ValidatorContext, validate_artifact
+from .validators import ValidatorContext, read_json, validate_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -42,8 +42,6 @@ def is_experiment_command(command: str, patterns: list[str]) -> bool:
     return False
 
 
-
-
 @dataclass
 class HookState:
     """Mutable state shared across all hook callbacks within a campaign."""
@@ -60,7 +58,6 @@ class HookState:
     limits: dict[str, Any] = field(default_factory=dict)
 
 
-
 _PHASE_ARTIFACTS: dict[str, list[str]] = {
     "BASELINE": ["baseline"],
     "DESIGN": ["problem", "bundle", "plan"],
@@ -69,8 +66,6 @@ _PHASE_ARTIFACTS: dict[str, list[str]] = {
 }
 
 _EXIT_CODE_RE = re.compile(r"Exit code (\d+)")
-
-
 
 
 def _stringify_tool_response(tool_response: Any) -> str:
@@ -116,8 +111,6 @@ def make_post_tool_use_hook(state: HookState):
     return hook
 
 
-
-
 def make_post_tool_use_failure_hook(state: HookState):
     """Create a PostToolUseFailure callback that records failed Bash commands."""
 
@@ -133,8 +126,6 @@ def make_post_tool_use_failure_hook(state: HookState):
         return {}
 
     return hook
-
-
 
 
 def make_stop_hook(state: HookState):
@@ -185,8 +176,6 @@ def make_stop_hook(state: HookState):
     return hook
 
 
-
-
 def make_precompact_hook(state: HookState):
     """Create a PreCompact callback that writes state/digest.json."""
 
@@ -197,55 +186,32 @@ def make_precompact_hook(state: HookState):
         }
 
         # Baseline summary
-        baseline_path = state.work_dir / "baseline.json"
-        if baseline_path.exists():
-            try:
-                baseline = json.loads(baseline_path.read_text())
-                digest["baseline"] = {
-                    "task_type": baseline.get("task_type"),
-                    "command": baseline.get("command"),
-                    "git_sha": baseline.get("git_sha"),
-                    "noise": baseline.get("noise"),
-                }
-            except json.JSONDecodeError:
-                logger.warning("corrupt baseline.json in digest")
-                digest["baseline"] = None
-        else:
-            digest["baseline"] = None
+        baseline = read_json(state.work_dir / "baseline.json")
+        digest["baseline"] = None
+        if baseline is not None:
+            digest["baseline"] = {
+                "task_type": baseline.get("task_type"),
+                "command": baseline.get("command"),
+                "git_sha": baseline.get("git_sha"),
+                "noise": baseline.get("noise"),
+            }
 
         # Active principles
-        principles_path = state.work_dir / "principles.json"
-        if principles_path.exists():
-            try:
-                digest["principles"] = json.loads(principles_path.read_text())
-            except json.JSONDecodeError:
-                logger.warning("corrupt principles.json in digest")
-                digest["principles"] = []
-        else:
-            digest["principles"] = []
+        principles = read_json(state.work_dir / "principles.json")
+        digest["principles"] = principles if principles is not None else []
 
         # Last findings summary and active hypotheses
         iter_dir = _iter_dir(state)
         digest["last_findings"] = None
         digest["active_hypotheses"] = []
         if iter_dir:
-            findings_path = iter_dir / "findings.json"
-            if findings_path.exists():
-                try:
-                    digest["last_findings"] = json.loads(findings_path.read_text())
-                except json.JSONDecodeError:
-                    logger.warning("corrupt findings.json in digest")
-
-            bundle_path = iter_dir / "bundle.json"
-            if bundle_path.exists():
-                try:
-                    bundle = json.loads(bundle_path.read_text())
-                    digest["active_hypotheses"] = [
-                        {"id": h.get("id"), "mechanism": h.get("mechanism")}
-                        for h in bundle.get("hypotheses", [])
-                    ]
-                except json.JSONDecodeError:
-                    logger.warning("corrupt bundle.json in digest")
+            digest["last_findings"] = read_json(iter_dir / "findings.json")
+            bundle = read_json(iter_dir / "bundle.json")
+            if bundle is not None:
+                digest["active_hypotheses"] = [
+                    {"id": h.get("id"), "mechanism": h.get("mechanism")}
+                    for h in bundle.get("hypotheses", [])
+                ]
 
         # Secret-mask the entire digest
         text = json.dumps(digest, indent=2)
@@ -261,8 +227,6 @@ def make_precompact_hook(state: HookState):
         return {}
 
     return hook
-
-
 
 
 def build_hooks(state: HookState) -> dict[str, list[HookMatcher]]:
@@ -297,8 +261,6 @@ def build_hooks(state: HookState) -> dict[str, list[HookMatcher]]:
             )
         ],
     }
-
-
 
 
 def _append_runs_jsonl(work_dir: Path, row: dict) -> None:

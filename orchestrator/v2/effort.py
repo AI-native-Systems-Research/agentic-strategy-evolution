@@ -5,8 +5,9 @@ Detects stop_reason == "max_tokens", steps effort down, resets per phase.
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+from .resume import update_state
 
 EFFORT_LADDER = ["max", "xhigh", "high", "medium", "low"]
 
@@ -57,12 +58,4 @@ class EffortManager:
         return self._total_cuts
 
     def persist_cut_offs(self, state_path: Path) -> None:
-        existing: dict = {}
-        if state_path.exists():
-            try:
-                existing = json.loads(state_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
-        existing["cut_offs"] = self._total_cuts
-        state_path.parent.mkdir(parents=True, exist_ok=True)
-        state_path.write_text(json.dumps(existing, indent=2) + "\n")
+        update_state(state_path.parent, cut_offs=self._total_cuts)

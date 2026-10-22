@@ -11,18 +11,11 @@ import logging
 import re
 from pathlib import Path
 
-from .validators import ValidatorContext, check_evidence_item, validate_artifact
+from .validators import (
+    ValidatorContext, check_evidence_item, read_json, validate_artifact,
+)
 
 logger = logging.getLogger(__name__)
-
-
-def _read_json(path: Path) -> dict | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return None
 
 
 def _find_latest_iter_dir(work_dir: Path) -> Path | None:
@@ -118,7 +111,7 @@ def check_answer(work_dir: Path, limits: dict | None = None) -> dict:
         "unmeasured_noise_findings": [],
     }
 
-    answer = _read_json(work_dir / "answer.json")
+    answer = read_json(work_dir / "answer.json")
     if answer is None:
         return report
 
@@ -133,14 +126,14 @@ def check_answer(work_dir: Path, limits: dict | None = None) -> dict:
 
     repro_cmd = answer.get("repro")
     if not repro_cmd:
-        baseline = _read_json(work_dir / "baseline.json")
+        baseline = read_json(work_dir / "baseline.json")
         repro_cmd = baseline.get("command") if baseline else None
     report["repro_recorded"] = _check_repro(work_dir, repro_cmd)
 
     iter_dir = _find_latest_iter_dir(work_dir)
     if iter_dir:
-        findings = _read_json(iter_dir / "findings.json")
-        problem = _read_json(iter_dir / "problem.json")
+        findings = read_json(iter_dir / "findings.json")
+        problem = read_json(iter_dir / "problem.json")
 
         hypotheses = findings.get("hypotheses", []) if findings else []
         claims_needed = problem.get("claims_needed", []) if problem else []

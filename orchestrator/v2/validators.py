@@ -13,7 +13,7 @@ import json
 import logging
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,15 @@ def _load_schema(name: str) -> dict:
     return json.loads(path.read_text())
 
 
+def read_json(path: Path) -> Any | None:
+    """Parse JSON at *path*; None if missing, corrupt, or unreadable."""
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text())
+    except (ValueError, OSError):
+        logger.warning("corrupt or unreadable JSON in %s", path)
+        return None
 
 
 @dataclass
@@ -60,8 +69,6 @@ class ValidatorContext:
     runs_jsonl: Path | None = None
 
 
-
-
 def _move_extras(data: dict, schema: dict) -> list[str]:
     """Move unknown top-level keys into ``data["extra"]``.
 
@@ -77,14 +84,6 @@ def _move_extras(data: dict, schema: dict) -> list[str]:
             warnings.append(f"unknown key {key!r} moved to extra")
         logger.warning("Moved unknown keys to extra: %s", unknown)
     return warnings
-
-
-
-
-_JSON_EXTENSIONS = {".json"}
-_JSONL_EXTENSIONS = {".jsonl"}
-_CSV_EXTENSIONS = {".csv"}
-_TSV_EXTENSIONS = {".tsv"}
 
 
 def _resolve_json_pointer(doc: Any, pointer: str) -> Any:
@@ -138,15 +137,10 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
 
     suffix = evidence_path.suffix.lower()
     try:
-        if suffix in _JSON_EXTENSIONS:
+        if suffix == ".json":
             doc = json.loads(evidence_path.read_text())
             actual = _resolve_json_pointer(doc, key)
-            if not _values_match(value, actual):
-                errors.append(
-                    f"evidence value mismatch at {path_str}#{key}: "
-                    f"expected {value!r}, got {actual!r}"
-                )
-        elif suffix in _JSONL_EXTENSIONS:
+        elif suffix == ".jsonl":
             # key format: line_number@pointer
             m = re.match(r"^(\d+)@(.*)$", key)
             if not m:
@@ -166,12 +160,7 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
                 return errors
             doc = json.loads(lines[line_no])
             actual = _resolve_json_pointer(doc, pointer)
-            if not _values_match(value, actual):
-                errors.append(
-                    f"evidence value mismatch at {path_str}#"
-                    f"{key}: expected {value!r}, got {actual!r}"
-                )
-        elif suffix in _CSV_EXTENSIONS | _TSV_EXTENSIONS:
+        elif suffix in (".csv", ".tsv"):
             # key format: column@row_index
             m = re.match(r"^(.+)@(\d+)$", key)
             if not m:
@@ -182,7 +171,7 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
                 return errors
             column = m.group(1)
             row_idx = int(m.group(2))
-            delimiter = "\t" if suffix in _TSV_EXTENSIONS else ","
+            delimiter = "\t" if suffix == ".tsv" else ","
             with open(evidence_path, newline="") as f:
                 reader = csv.DictReader(f, delimiter=delimiter)
                 rows = list(reader)
@@ -197,27 +186,13 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
                     f"CSV/TSV column {column!r} not found in {path_str}"
                 )
                 return errors
-            cell = rows[row_idx][column]
-            # Try numeric comparison first
-            try:
-                cell_num = float(cell)
-                if isinstance(value, (int, float)):
-                    if not _values_match(value, cell_num):
-                        errors.append(
-                            f"evidence value mismatch at {path_str}#"
-                            f"{key}: expected {value!r}, got {cell_num!r}"
-                        )
-                elif not _values_match(value, cell):
-                    errors.append(
-                        f"evidence value mismatch at {path_str}#"
-                        f"{key}: expected {value!r}, got {cell!r}"
-                    )
-            except ValueError:
-                if not _values_match(value, cell):
-                    errors.append(
-                        f"evidence value mismatch at {path_str}#"
-                        f"{key}: expected {value!r}, got {cell!r}"
-                    )
+            actual = rows[row_idx][column]
+            # Numeric comparison when the expected value is numeric
+            if isinstance(value, (int, float)):
+                try:
+                    actual = float(actual)
+                except ValueError:
+                    pass
         else:
             # Plain text: key is a regex whose group 1 is the value
             text = evidence_path.read_text()
@@ -232,19 +207,17 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
                     f"evidence regex {key!r} matched in {path_str} "
                     "but has no capture group to compare against value"
                 )
-            else:
-                actual = match.group(1)
-                if not _values_match(value, actual):
-                    errors.append(
-                        f"evidence value mismatch at {path_str}#"
-                        f"{key}: expected {value!r}, got {actual!r}"
-                    )
+                return errors
+            actual = match.group(1)
+        if not _values_match(value, actual):
+            errors.append(
+                f"evidence value mismatch at {path_str}#{key}: "
+                f"expected {value!r}, got {actual!r}"
+            )
     except (KeyError, IndexError, json.JSONDecodeError, IsADirectoryError) as exc:
         errors.append(f"evidence lookup failed for {path_str}#{key}: {exc}")
 
     return errors
-
-
 
 
 def _check_noise_schema(noise: dict) -> list[str]:
@@ -342,34 +315,24 @@ def _check_plan_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
                                 "seeds (paired comparison)"
                             )
 
-    # locked_parameters check
-    if ctx.locked_parameters:
+    # locked_parameters / locked_workload checks
+    for label, locked in (
+        ("parameter", ctx.locked_parameters),
+        ("workload parameter", ctx.locked_workload),
+    ):
+        if not locked:
+            continue
         for run in runs:
             params = run.get("parameters", {})
             wl_changes = set(run.get("workload_changes", []))
-            for key, locked_val in ctx.locked_parameters.items():
+            for key, locked_val in locked.items():
                 if key in params and key not in wl_changes:
                     if params[key] != locked_val:
                         errors.append(
-                            f"run {run.get('id')!r}: parameter {key!r} "
+                            f"run {run.get('id')!r}: {label} {key!r} "
                             f"deviates from locked value {locked_val!r} "
                             f"(got {params[key]!r}) without workload_changes "
                             "declaration"
-                        )
-
-    # locked_workload check
-    if ctx.locked_workload:
-        for run in runs:
-            params = run.get("parameters", {})
-            wl_changes = set(run.get("workload_changes", []))
-            for key, locked_val in ctx.locked_workload.items():
-                if key in params and key not in wl_changes:
-                    if params[key] != locked_val:
-                        errors.append(
-                            f"run {run.get('id')!r}: workload parameter "
-                            f"{key!r} deviates from locked value "
-                            f"{locked_val!r} (got {params[key]!r}) without "
-                            "workload_changes declaration"
                         )
 
     return errors
@@ -377,12 +340,8 @@ def _check_plan_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
 
 def _get_baseline_noise_sd(ctx: ValidatorContext) -> float | None:
     """Read baseline.noise.sd, returning 0 for deterministic noise."""
-    baseline_path = ctx.work_dir / "baseline.json"
-    if not baseline_path.exists():
-        return None
-    try:
-        baseline = json.loads(baseline_path.read_text())
-    except (json.JSONDecodeError, OSError):
+    baseline = read_json(ctx.work_dir / "baseline.json")
+    if baseline is None:
         return None
     noise = baseline.get("noise", {})
     if noise.get("deterministic") is True:
@@ -536,25 +495,19 @@ def _check_task_limits(data: dict, ctx: ValidatorContext) -> list[str]:
     return errors
 
 
-
-
 def bundle_hash(data: dict) -> str:
     """Compute sha256 hash of a bundle for the ledger's bundle_hash field."""
     canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode()).hexdigest()
 
 
-
-# Dispatch table: artifact_type -> (has_semantic_check_fn or None)
+# Dispatch table: artifact_type -> semantic check fn (absent = none)
 _SEMANTIC_CHECKS: dict[str, Any] = {
-    "baseline": None,
-    "problem": None,
     "bundle": _check_bundle_semantics,
     "plan": _check_plan_semantics,
     "findings": _check_findings_semantics,
     "principle_updates": _check_principle_updates_semantics,
     "answer": _check_answer_semantics,
-    "ledger_entry": None,
 }
 
 

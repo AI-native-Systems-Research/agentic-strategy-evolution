@@ -7,23 +7,40 @@ fallback priming messages from digest, and handling --note.
 from __future__ import annotations
 
 import json
-import logging
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from .validators import read_json
 
 
 def load_campaign_state(work_dir: Path) -> dict | None:
     """Load state.json from work_dir. Returns None if missing or corrupt."""
+    return read_json(work_dir / "state.json")
+
+
+def update_state(work_dir: Path, **fields: Any) -> None:
+    """Merge *fields* into work_dir/state.json with an atomic write."""
     state_path = work_dir / "state.json"
-    if not state_path.exists():
-        return None
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    existing = read_json(state_path)
+    if not isinstance(existing, dict):
+        existing = {}
+    existing.update(fields)
+    # Atomic write: tmp file in same dir, then rename
+    fd, tmp = tempfile.mkstemp(dir=str(state_path.parent), suffix=".tmp")
     try:
-        return json.loads(state_path.read_text())
-    except (json.JSONDecodeError, OSError):
-        logger.warning("corrupt or unreadable state.json in %s", work_dir)
-        return None
+        with os.fdopen(fd, "w") as f:
+            json.dump(existing, f, indent=2)
+            f.write("\n")
+        os.replace(tmp, str(state_path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
 
 
 def resume_phase(state: dict) -> tuple[str, int]:

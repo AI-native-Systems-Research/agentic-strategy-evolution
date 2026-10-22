@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
 
 from .validators import validate_artifact, ValidatorContext
 
@@ -65,10 +64,7 @@ async def _check_stop_hook(hooks: dict[str, list]) -> list[str]:
 
     fake_input = {"stop_reason": "end_turn"}
     for matcher in stop_matchers:
-        hook_cbs = getattr(matcher, "hooks", None)
-        if hook_cbs is None:
-            hook_cbs = matcher.get("hooks", []) if isinstance(matcher, dict) else []
-        for cb in hook_cbs:
+        for cb in matcher.hooks:
             try:
                 result = await cb(fake_input, None, {"signal": None})
                 if not isinstance(result, dict):

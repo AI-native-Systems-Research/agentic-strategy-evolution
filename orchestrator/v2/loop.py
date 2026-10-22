@@ -5,6 +5,7 @@ Drives the BASELINE → DESIGN → EXECUTE → REPORT lifecycle in one session.
 
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import os
@@ -12,11 +13,11 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import CampaignConfig, validator_limits
+from .config import CampaignConfig, parse_campaign_config, validator_limits  # noqa: F401 (re-export)
 from .cost import CostMeter, load_prices
 from .hooks import HookState, build_hooks
 from .preflight import run_preflight
-from .resume import build_fallback_message, load_campaign_state, resume_phase
+from .resume import build_fallback_message, load_campaign_state, resume_phase, update_state
 from .robustness import FailureBreaker, poll_and_resume, write_halt
 from .prompts import build_system_prompt
 from .session import DEFAULT_MODEL, Session
@@ -27,26 +28,13 @@ from .stop_rule import (
     claims_changed,
     principles_changed,
 )
-from .validators import bundle_hash, validate_phase_artifacts
+from .validators import bundle_hash, read_json as _read_json, validate_phase_artifacts
 
 logger = logging.getLogger(__name__)
-
-# Re-export for backward compat
-from .config import CampaignConfig, parse_campaign_config  # noqa: F811
 
 
 def iter_dir(work_dir: Path, iteration: int) -> Path:
     return work_dir / "runs" / f"iter-{iteration}"
-
-
-def _read_json(path: Path) -> dict | None:
-    if not path.exists():
-        return None
-    try:
-        return json.loads(path.read_text())
-    except json.JSONDecodeError:
-        logger.warning("corrupt JSON in %s", path.name)
-        return None
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -215,11 +203,8 @@ class Campaign:
 
         first_iter = max(start_iteration, 1)
         if start_phase == "REPORT":
-            self._set_phase(hook_state, "REPORT", start_iteration)
-            await self._turn(session, "REPORT phase. Write answer.json and report.md.")
             last_iter = len(self._ledger) or start_iteration
-            self._commit_phase(last_iter, "REPORT")
-            self._record_final_check()
+            await self._report(session, hook_state, start_iteration, last_iter)
             return {"stop_reason": "resumed_report", "iterations": last_iter}
 
         stop_reason: str | None = None
@@ -274,9 +259,9 @@ class Campaign:
             await self._turn(session, exec_prompt)
             hook_state.pending_wait_for = []
 
-            async def metered_turn(prompt: str) -> Any:
-                return await self._turn(session, prompt)
-            await poll_and_resume(pending_waits, iteration, breaker, metered_turn)
+            await poll_and_resume(
+                pending_waits, iteration, breaker, functools.partial(self._turn, session),
+            )
             self._commit_phase(iteration, "EXECUTE")
 
             status = await self._repair(session, idir, ["findings", "principle_updates"])
@@ -309,7 +294,7 @@ class Campaign:
             if execute_note:
                 entry["note"] = execute_note
             self._ledger.append(entry)
-            _write_json(self._work_dir / "ledger.json", self._ledger)
+            self._save_ledger()
             self._prev_findings = findings
 
             if status == "partial":
@@ -329,20 +314,29 @@ class Campaign:
             )
             if stop_reason is not None:
                 entry["stop_reason"] = stop_reason
-                _write_json(self._work_dir / "ledger.json", self._ledger)
+                self._save_ledger()
                 break
 
         if stop_reason is None:
             stop_reason = "max_iterations"
             if self._ledger:
                 self._ledger[-1]["stop_reason"] = stop_reason
-                _write_json(self._work_dir / "ledger.json", self._ledger)
+                self._save_ledger()
 
-        self._set_phase(hook_state, "REPORT", len(self._ledger))
-        await self._turn(session, "REPORT phase. Write answer.json and report.md.")
-        self._commit_phase(len(self._ledger), "REPORT")
-        self._record_final_check()
+        await self._report(session, hook_state, len(self._ledger), len(self._ledger))
         return {"stop_reason": stop_reason, "iterations": len(self._ledger)}
+
+    async def _report(
+        self, session: Session, hook_state: HookState,
+        phase_iteration: int, commit_iteration: int,
+    ) -> None:
+        self._set_phase(hook_state, "REPORT", phase_iteration)
+        await self._turn(session, "REPORT phase. Write answer.json and report.md.")
+        self._commit_phase(commit_iteration, "REPORT")
+        self._record_final_check()
+
+    def _save_ledger(self) -> None:
+        _write_json(self._work_dir / "ledger.json", self._ledger)
 
     def _record_final_check(self) -> None:
         """Spec 3.8: check answer.json against the record and log the result in the ledger."""
@@ -353,23 +347,14 @@ class Campaign:
                 repro_recorded=report["repro_recorded"],
                 claims_matched_fraction=report["claims_matched_fraction"],
             )
-            _write_json(self._work_dir / "ledger.json", self._ledger)
+            self._save_ledger()
         _write_json(self._work_dir / "final_check.json", report)
 
     def _set_phase(self, hook_state: HookState, phase: str, iteration: int) -> None:
         hook_state.phase = phase
         hook_state.iteration = iteration
         self._meter.set_phase(phase)
-        state_path = self._work_dir / "state.json"
-        existing: dict[str, Any] = {}
-        if state_path.exists():
-            try:
-                existing = json.loads(state_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass
-        existing["phase"] = phase
-        existing["iteration"] = iteration
-        _write_json(state_path, existing)
+        update_state(self._work_dir, phase=phase, iteration=iteration)
 
     def _lock_bundle(self, idir: Path) -> str:
         bundle = _read_json(idir / "bundle.json")
