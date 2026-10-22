@@ -9,13 +9,14 @@ import asyncio
 import json
 import logging
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from .hooks import HookState, build_hooks
 from .preflight import run_preflight
-from .robustness import FailureBreaker, poll_wait_for, write_halt
+from .robustness import FailureBreaker, write_halt
 from .session import Session
 from .stop_rule import (
     best_changed,
@@ -101,6 +102,20 @@ def _read_json(path: Path) -> dict | None:
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def _check_wait_condition(wait_spec: str) -> bool:
+    """Check a single wait_for condition (file exists or cmd exits 0)."""
+    if wait_spec.startswith("cmd:"):
+        try:
+            result = subprocess.run(
+                wait_spec[4:], shell=True, capture_output=True, timeout=30,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("wait_for command error: %s", exc)
+            return False
+    return Path(wait_spec).exists()
 
 
 def _merge_principles(
@@ -203,8 +218,13 @@ class Campaign:
             locked_hash = self._lock_bundle(idir)
 
             hook_state.phase = "EXECUTE"
+            pending_waits = self._get_pending_waits(idir)
+            hook_state.pending_wait_for = bool(pending_waits)
             await self._execute(session, iteration)
-            await self._poll_wait_for(idir)
+            hook_state.pending_wait_for = False
+            await self._poll_and_resume(
+                session, idir, pending_waits, iteration, breaker,
+            )
             self._commit_phase(iteration, "EXECUTE")
 
             status = await self._repair_phase(
@@ -328,20 +348,68 @@ class Campaign:
                 all_errors.append(f"{artifact_type}: {e}")
         return all_errors
 
-    async def _poll_wait_for(self, phase_dir: Path) -> None:
-        """Check plan.json for wait_for entries and poll them."""
+    def _get_pending_waits(self, phase_dir: Path) -> list[dict]:
+        """Return plan.json runs that have wait_for entries."""
         plan = _read_json(phase_dir / "plan.json")
         if not plan:
-            return
-        loop = asyncio.get_event_loop()
-        for run in plan.get("runs", []):
-            wf = run.get("wait_for")
-            if wf:
-                run_id = run.get("id", "?")
-                logger.info("Polling wait_for for run %s: %s", run_id, wf)
-                ok = await loop.run_in_executor(None, lambda w=wf: poll_wait_for(w))
-                if not ok:
-                    logger.warning("wait_for timed out for run %s: %s", run_id, wf)
+            return []
+        return [r for r in plan.get("runs", []) if r.get("wait_for")]
+
+    async def _poll_and_resume(
+        self,
+        session: Session,
+        phase_dir: Path,
+        pending_waits: list[dict],
+        iteration: int,
+        breaker: FailureBreaker,
+    ) -> list[str]:
+        """Poll all wait_for conditions together; send resume when any finish.
+
+        Returns list of timed-out run ids.
+        """
+        if not pending_waits:
+            return []
+
+        remaining = {r["id"]: r["wait_for"] for r in pending_waits}
+        timed_out: list[str] = []
+        max_polls = 240  # 240 × 60s = 4h
+        ev_loop = asyncio.get_event_loop()
+
+        for _ in range(max_polls):
+            done = [
+                rid for rid, wf in remaining.items()
+                if _check_wait_condition(wf)
+            ]
+            for rid in done:
+                del remaining[rid]
+            if done:
+                ids_str = ", ".join(done)
+                logger.info("wait_for satisfied for runs: %s", ids_str)
+                if remaining:
+                    await session.turn(
+                        f"Runs {ids_str} finished; continue EXECUTE. "
+                        f"Runs still pending: {', '.join(remaining)}."
+                    )
+                else:
+                    await session.turn(
+                        f"Runs {ids_str} finished; continue EXECUTE. "
+                        f"Write runs/iter-{iteration}/findings.json "
+                        f"and runs/iter-{iteration}/principle_updates.json."
+                    )
+            if not remaining:
+                break
+            await ev_loop.run_in_executor(None, time.sleep, 60.0)
+        else:
+            timed_out = list(remaining)
+            for rid in timed_out:
+                logger.warning("wait_for timed out for run %s", rid)
+                breaker.record("TimeoutError", "EXECUTE", f"wait_for timed out: {rid}")
+            await session.turn(
+                f"Runs {', '.join(timed_out)} timed out. "
+                f"Write findings for completed runs only."
+            )
+
+        return timed_out
 
     async def _baseline(self, session: Session) -> None:
         task_hint = ""

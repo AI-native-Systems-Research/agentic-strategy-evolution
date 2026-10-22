@@ -60,6 +60,7 @@ class HookState:
     secrets: dict[str, str] = field(default_factory=dict)
     experiment_commands: list[str] = field(default_factory=list)
     consecutive_blocks: int = 0
+    pending_wait_for: bool = False
     now: Callable[[], float] = field(default=time.time)
 
 
@@ -174,6 +175,10 @@ def make_stop_hook(state: HookState):
 
     async def hook(hook_input: dict, _tool_use_id: str | None, _ctx: Any) -> dict:
         if state.consecutive_blocks >= 6:
+            state.consecutive_blocks = 0
+            return {}
+
+        if state.pending_wait_for:
             state.consecutive_blocks = 0
             return {}
 

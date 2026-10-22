@@ -248,3 +248,23 @@ Skipped (2): EXECUTE breaker doesn't explicitly break (by design:
 check_stop reads halt.json at top priority), _read_json corruption
 yields empty dict (pre-existing pattern, not R4b).
 
+## R4b fix: wait_for flow (spec 3.2 step 4)
+
+Cross-session reviewer identified 3 wait_for issues:
+1. Agent never resumed after wait — added resume message
+   "Runs X finished; continue EXECUTE." via session.turn.
+2. Stop hook blocked during pending wait — added pending_wait_for
+   flag to HookState; Stop hook allows stop when set.
+3. Sequential polling — rewrote _poll_and_resume to check all
+   wait_for conditions together in one 60s loop.
+
+Also: _check_wait_condition helper in loop.py replaces the old
+poll_wait_for call; poll_wait_for stays in robustness.py for unit
+tests. Timeout counts as a breaker failure.
+
+3 new integration tests: stop allowed with pending wait, resume
+message sent, two runs polled together.
+
+Tests after: 1715 passed, 0 failed
+Runtime line count: 2,159 lines (target ~2,500)
+
