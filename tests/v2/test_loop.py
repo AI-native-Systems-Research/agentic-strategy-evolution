@@ -1,0 +1,688 @@
+"""Tests for orchestrator.v2.loop — campaign lifecycle (spec 3.2)."""
+
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from orchestrator.v2.loop import Campaign, parse_campaign_config, CampaignConfig
+from tests.fakes.sdk_client import FakeClient, FakeResultMessage
+
+
+# ── Minimal valid artifacts ──────────────────────────────────────────────
+
+
+def _baseline(*, task_type: str = "debug") -> dict:
+    return {
+        "task_type": task_type,
+        "command": "pytest test_bug.py",
+        "git_sha": "abc1234",
+        "observation": {
+            "reproduced": True,
+            "symptom": "AssertionError",
+            "expected": "pass",
+            "actual": "fail",
+        },
+        "metrics_path": "metrics.csv",
+        "noise": {"deterministic": True},
+    }
+
+
+def _problem() -> dict:
+    return {
+        "task_type": "debug",
+        "claims_needed": [
+            {"id": "c1", "description": "bug is fixed", "test_method": "pytest"},
+        ],
+    }
+
+
+def _bundle() -> dict:
+    return {
+        "hypotheses": [
+            {
+                "id": "h1",
+                "role": "treatment",
+                "family": "f1",
+                "mechanism": "fix the off-by-one",
+                "prediction": {"metric": "pass_rate", "direction": "increase"},
+                "falsified_if": "test still fails",
+                "claim_ids": ["c1"],
+            },
+            {
+                "id": "h2",
+                "role": "alternative",
+                "family": "f2",
+                "mechanism": "rewrite the function",
+                "prediction": {"metric": "pass_rate", "direction": "increase"},
+                "falsified_if": "test still fails",
+                "claim_ids": ["c1"],
+            },
+        ],
+    }
+
+
+def _plan() -> dict:
+    return {
+        "runs": [
+            {
+                "id": "r1",
+                "hypothesis_id": "h1",
+                "role": "treatment",
+                "command": "pytest test_bug.py",
+                "parameters": {},
+                "seeds": [42],
+            },
+            {
+                "id": "r2",
+                "hypothesis_id": "h1",
+                "role": "control",
+                "command": "pytest test_bug.py",
+                "parameters": {},
+                "seeds": [42],
+            },
+        ],
+    }
+
+
+def _findings(
+    *,
+    answered: bool = True,
+    status: str = "CONFIRMED",
+    with_claims: bool = True,
+) -> dict:
+    claims = []
+    if with_claims:
+        claims = [
+            {
+                "claim_id": "c1",
+                "metric": "pass_rate",
+                "condition": "default",
+                "value": 1.0,
+            },
+        ]
+    return {
+        "hypotheses": [
+            {
+                "id": "h1",
+                "status": status,
+                "error_type": "none",
+                "evidence": [],
+                "question_answered": answered,
+                "reason": "test passes now",
+                "noise_unmeasured": True,
+                "noise_reason": "single run",
+                "claims": claims,
+            },
+        ],
+    }
+
+
+def _principle_updates(*, count: int = 0) -> dict:
+    return {
+        "updates": [
+            {
+                "id": f"p{i}",
+                "text": f"principle {i}",
+                "finding_ref": "h1",
+                "action": "add",
+            }
+            for i in range(count)
+        ],
+    }
+
+
+def _answer() -> dict:
+    return {
+        "answer": "Fixed the off-by-one bug",
+        "deliverable": "patch applied",
+        "repro": "pytest test_bug.py",
+        "claims": [
+            {
+                "id": "c1",
+                "metric": "pass_rate",
+                "value": 1.0,
+                "condition": "default",
+                "evidence": [],
+            },
+        ],
+    }
+
+
+def _campaign_yaml(
+    *,
+    research_question: str = "Is the bug fixable?",
+    run_id: str = "test-run",
+    max_iterations: int = 3,
+    target_name: str = "test-project",
+    repo_path: str = "/tmp/repo",
+) -> dict:
+    return {
+        "research_question": research_question,
+        "run_id": run_id,
+        "max_iterations": max_iterations,
+        "target_system": {
+            "name": target_name,
+            "description": "A test project",
+            "repo_path": repo_path,
+        },
+    }
+
+
+# ── Helpers ──────────────────────────────────────────────────────────────
+
+
+def _write_artifact(work_dir: Path, relative: str, data: dict) -> str:
+    """Write artifact JSON and return the full path as a string."""
+    p = work_dir / relative
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data))
+    return str(p)
+
+
+def _build_per_turn_files(work_dir: Path, *, answered: bool = True) -> list[dict]:
+    """Build per-turn file dicts for a single-iteration campaign.
+
+    Turn order: BASELINE, DESIGN, EXECUTE, REPORT.
+    """
+    iter_dir = work_dir / "iter-1"
+    return [
+        {
+            str(work_dir / "baseline.json"): json.dumps(_baseline()),
+        },
+        {
+            str(iter_dir / "problem.json"): json.dumps(_problem()),
+            str(iter_dir / "bundle.json"): json.dumps(_bundle()),
+            str(iter_dir / "plan.json"): json.dumps(_plan()),
+        },
+        {
+            str(iter_dir / "findings.json"): json.dumps(
+                _findings(answered=answered)
+            ),
+            str(iter_dir / "principle_updates.json"): json.dumps(
+                _principle_updates()
+            ),
+        },
+        {
+            str(work_dir / "answer.json"): json.dumps(_answer()),
+        },
+    ]
+
+
+def _make_script(num_turns: int) -> list[FakeResultMessage]:
+    """Build a flat script of N result messages (one per turn)."""
+    return [FakeResultMessage(session_id=f"ses-{i}") for i in range(num_turns)]
+
+
+# ── parse_campaign_config tests ──────────────────────────────────────────
+
+
+class TestParseCampaignConfig:
+    def test_minimal_valid(self):
+        raw = _campaign_yaml()
+        cfg = parse_campaign_config(raw)
+        assert cfg.research_question == "Is the bug fixable?"
+        assert cfg.run_id == "test-run"
+        assert cfg.max_iterations == 3
+        assert cfg.stall_iterations == 2
+        assert cfg.min_improvement == 0
+        assert cfg.human_gates is False
+
+    def test_all_optional_fields(self):
+        raw = _campaign_yaml()
+        raw["effort"] = "high"
+        raw["stall_iterations"] = 3
+        raw["min_improvement"] = 5.0
+        raw["human_gates"] = True
+        raw["secrets"] = ["API_KEY"]
+        raw["task_type"] = "debug"
+        cfg = parse_campaign_config(raw)
+        assert cfg.effort == "high"
+        assert cfg.stall_iterations == 3
+        assert cfg.min_improvement == 5.0
+        assert cfg.human_gates is True
+        assert cfg.secrets == ["API_KEY"]
+        assert cfg.task_type == "debug"
+
+    def test_missing_research_question_raises(self):
+        raw = _campaign_yaml()
+        del raw["research_question"]
+        with pytest.raises(ValueError, match="research_question"):
+            parse_campaign_config(raw)
+
+    def test_missing_target_system_raises(self):
+        raw = _campaign_yaml()
+        del raw["target_system"]
+        with pytest.raises(ValueError, match="target_system"):
+            parse_campaign_config(raw)
+
+    def test_legacy_keys_warn(self, caplog):
+        raw = _campaign_yaml()
+        raw["critic"] = True
+        raw["arm_sweep"] = True
+        with caplog.at_level(logging.WARNING):
+            cfg = parse_campaign_config(raw)
+        assert any("critic" in r.message for r in caplog.records)
+        assert cfg.research_question == "Is the bug fixable?"
+
+    def test_default_max_iterations(self):
+        raw = _campaign_yaml()
+        del raw["max_iterations"]
+        cfg = parse_campaign_config(raw)
+        assert cfg.max_iterations == 5
+
+
+# ── Campaign lifecycle tests ─────────────────────────────────────────────
+
+
+class TestCampaignLifecycle:
+    async def test_single_iteration_answered(self, tmp_path):
+        """BASELINE → DESIGN → EXECUTE (answered) → REPORT."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(_campaign_yaml())
+        per_turn = _build_per_turn_files(work_dir, answered=True)
+        script = _make_script(4)
+
+        def factory(_opts):
+            return FakeClient(script=script, per_turn_files=per_turn)
+
+        campaign = Campaign(config=config, work_dir=work_dir, client_factory=factory)
+        result = await campaign.run()
+
+        assert result["stop_reason"] == "answered"
+        assert (work_dir / "ledger.json").exists()
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        assert len(ledger) == 1
+        assert ledger[0]["status"] == "ok"
+        assert (work_dir / "answer.json").exists()
+
+    async def test_max_iterations(self, tmp_path):
+        """Loop runs max_iterations then stops."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(
+            _campaign_yaml(max_iterations=2)
+        )
+
+        iter1_dir = work_dir / "iter-1"
+        iter2_dir = work_dir / "iter-2"
+
+        per_turn = [
+            {str(work_dir / "baseline.json"): json.dumps(_baseline())},
+            {
+                str(iter1_dir / "problem.json"): json.dumps(_problem()),
+                str(iter1_dir / "bundle.json"): json.dumps(_bundle()),
+                str(iter1_dir / "plan.json"): json.dumps(_plan()),
+            },
+            {
+                str(iter1_dir / "findings.json"): json.dumps(
+                    _findings(answered=False, status="INCONCLUSIVE")
+                ),
+                str(iter1_dir / "principle_updates.json"): json.dumps(
+                    _principle_updates(count=1)
+                ),
+            },
+            {
+                str(iter2_dir / "problem.json"): json.dumps(_problem()),
+                str(iter2_dir / "bundle.json"): json.dumps(_bundle()),
+                str(iter2_dir / "plan.json"): json.dumps(_plan()),
+            },
+            {
+                str(iter2_dir / "findings.json"): json.dumps(
+                    _findings(answered=False, status="INCONCLUSIVE")
+                ),
+                str(iter2_dir / "principle_updates.json"): json.dumps(
+                    _principle_updates()
+                ),
+            },
+            {str(work_dir / "answer.json"): json.dumps(_answer())},
+        ]
+        # Turns: BASELINE, DESIGN1, EXECUTE1, DESIGN2, EXECUTE2, REPORT
+        script = _make_script(6)
+
+        def factory(_opts):
+            return FakeClient(script=script, per_turn_files=per_turn)
+
+        campaign = Campaign(config=config, work_dir=work_dir, client_factory=factory)
+        result = await campaign.run()
+
+        assert result["stop_reason"] == "max_iterations"
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        assert len(ledger) == 2
+
+    async def test_stall_stops(self, tmp_path):
+        """Two quiet iterations (no claims, no best, no principles) → stall."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(
+            _campaign_yaml(max_iterations=5)
+        )
+
+        iter1_dir = work_dir / "iter-1"
+        iter2_dir = work_dir / "iter-2"
+
+        quiet_findings = _findings(
+            answered=False, status="INCONCLUSIVE", with_claims=False
+        )
+
+        per_turn = [
+            {str(work_dir / "baseline.json"): json.dumps(_baseline())},
+            {
+                str(iter1_dir / "problem.json"): json.dumps(_problem()),
+                str(iter1_dir / "bundle.json"): json.dumps(_bundle()),
+                str(iter1_dir / "plan.json"): json.dumps(_plan()),
+            },
+            {
+                str(iter1_dir / "findings.json"): json.dumps(quiet_findings),
+                str(iter1_dir / "principle_updates.json"): json.dumps(
+                    _principle_updates()
+                ),
+            },
+            {
+                str(iter2_dir / "problem.json"): json.dumps(_problem()),
+                str(iter2_dir / "bundle.json"): json.dumps(_bundle()),
+                str(iter2_dir / "plan.json"): json.dumps(_plan()),
+            },
+            {
+                str(iter2_dir / "findings.json"): json.dumps(quiet_findings),
+                str(iter2_dir / "principle_updates.json"): json.dumps(
+                    _principle_updates()
+                ),
+            },
+            {str(work_dir / "answer.json"): json.dumps(_answer())},
+        ]
+        script = _make_script(6)
+
+        def factory(_opts):
+            return FakeClient(script=script, per_turn_files=per_turn)
+
+        campaign = Campaign(config=config, work_dir=work_dir, client_factory=factory)
+        result = await campaign.run()
+
+        assert result["stop_reason"] == "stall"
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        assert len(ledger) == 2
+
+
+class TestBundleHashLock:
+    async def test_hash_match_no_violation(self, tmp_path):
+        """Bundle unchanged after EXECUTE → no prereg_violation."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(_campaign_yaml())
+        per_turn = _build_per_turn_files(work_dir, answered=True)
+        script = _make_script(4)
+
+        def factory(_opts):
+            return FakeClient(script=script, per_turn_files=per_turn)
+
+        campaign = Campaign(config=config, work_dir=work_dir, client_factory=factory)
+        await campaign.run()
+
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        assert ledger[0].get("prereg_violation") is False
+
+    async def test_hash_mismatch_records_violation(self, tmp_path):
+        """Bundle modified during EXECUTE → prereg_violation recorded."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(_campaign_yaml())
+        iter_dir = work_dir / "iter-1"
+
+        modified_bundle = _bundle()
+        modified_bundle["hypotheses"][0]["mechanism"] = "CHANGED during execute"
+
+        per_turn = [
+            {str(work_dir / "baseline.json"): json.dumps(_baseline())},
+            {
+                str(iter_dir / "problem.json"): json.dumps(_problem()),
+                str(iter_dir / "bundle.json"): json.dumps(_bundle()),
+                str(iter_dir / "plan.json"): json.dumps(_plan()),
+            },
+            {
+                str(iter_dir / "findings.json"): json.dumps(_findings()),
+                str(iter_dir / "principle_updates.json"): json.dumps(
+                    _principle_updates()
+                ),
+                str(iter_dir / "bundle.json"): json.dumps(modified_bundle),
+            },
+            {str(work_dir / "answer.json"): json.dumps(_answer())},
+        ]
+        script = _make_script(4)
+
+        def factory(_opts):
+            return FakeClient(script=script, per_turn_files=per_turn)
+
+        campaign = Campaign(config=config, work_dir=work_dir, client_factory=factory)
+        await campaign.run()
+
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        assert ledger[0]["prereg_violation"] is True
+        locked = json.loads(
+            (iter_dir / ".bundle.locked.json").read_text()
+        )
+        restored = json.loads((iter_dir / "bundle.json").read_text())
+        assert locked == restored
+
+
+class TestLedger:
+    async def test_ledger_fields(self, tmp_path):
+        """Ledger entry has required fields per spec."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(_campaign_yaml())
+        per_turn = _build_per_turn_files(work_dir, answered=True)
+        script = _make_script(4)
+
+        def factory(_opts):
+            return FakeClient(script=script, per_turn_files=per_turn)
+
+        campaign = Campaign(config=config, work_dir=work_dir, client_factory=factory)
+        await campaign.run()
+
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        entry = ledger[0]
+        assert "iteration" in entry
+        assert "bundle_hash" in entry
+        assert "claims_changed" in entry
+        assert "best_changed" in entry
+        assert "principles_changed" in entry
+        assert "status" in entry
+        assert "stop_reason" in entry
+
+
+class TestPrinciples:
+    async def test_principles_accumulate(self, tmp_path):
+        """Principles from iteration 1 are saved for iteration 2."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(
+            _campaign_yaml(max_iterations=2)
+        )
+
+        iter1_dir = work_dir / "iter-1"
+        iter2_dir = work_dir / "iter-2"
+
+        per_turn = [
+            {str(work_dir / "baseline.json"): json.dumps(_baseline())},
+            {
+                str(iter1_dir / "problem.json"): json.dumps(_problem()),
+                str(iter1_dir / "bundle.json"): json.dumps(_bundle()),
+                str(iter1_dir / "plan.json"): json.dumps(_plan()),
+            },
+            {
+                str(iter1_dir / "findings.json"): json.dumps(
+                    _findings(answered=False, status="INCONCLUSIVE")
+                ),
+                str(iter1_dir / "principle_updates.json"): json.dumps(
+                    _principle_updates(count=2)
+                ),
+            },
+            {
+                str(iter2_dir / "problem.json"): json.dumps(_problem()),
+                str(iter2_dir / "bundle.json"): json.dumps(_bundle()),
+                str(iter2_dir / "plan.json"): json.dumps(_plan()),
+            },
+            {
+                str(iter2_dir / "findings.json"): json.dumps(
+                    _findings(answered=False, status="INCONCLUSIVE")
+                ),
+                str(iter2_dir / "principle_updates.json"): json.dumps(
+                    _principle_updates()
+                ),
+            },
+            {str(work_dir / "answer.json"): json.dumps(_answer())},
+        ]
+        script = _make_script(6)
+
+        def factory(_opts):
+            return FakeClient(script=script, per_turn_files=per_turn)
+
+        campaign = Campaign(config=config, work_dir=work_dir, client_factory=factory)
+        await campaign.run()
+
+        principles = json.loads(
+            (work_dir / "principles.json").read_text()
+        )
+        assert len(principles) == 2
+        assert principles[0]["id"] == "p0"
+        assert principles[1]["id"] == "p1"
+
+
+class TestFakeClientMultiTurn:
+    """Verify FakeClient multi-turn support (ResultMessage boundary)."""
+
+    async def test_two_turns(self):
+        script = [
+            FakeResultMessage(session_id="s1"),
+            FakeResultMessage(session_id="s2"),
+        ]
+        client = FakeClient(script=script)
+        await client.connect()
+
+        await client.query("turn-1")
+        msgs1 = [m async for m in client.receive_response()]
+        assert len(msgs1) == 1
+        assert msgs1[0].session_id == "s1"
+
+        await client.query("turn-2")
+        msgs2 = [m async for m in client.receive_response()]
+        assert len(msgs2) == 1
+        assert msgs2[0].session_id == "s2"
+
+    async def test_per_turn_files(self, tmp_path):
+        script = [FakeResultMessage(), FakeResultMessage()]
+        per_turn = [
+            {str(tmp_path / "a.txt"): "hello"},
+            {str(tmp_path / "b.txt"): "world"},
+        ]
+        client = FakeClient(script=script, per_turn_files=per_turn)
+        await client.connect()
+
+        await client.query("turn-1")
+        assert (tmp_path / "a.txt").read_text() == "hello"
+        assert not (tmp_path / "b.txt").exists()
+
+        async for _ in client.receive_response():
+            pass
+
+        await client.query("turn-2")
+        assert (tmp_path / "b.txt").read_text() == "world"
+
+
+class TestBaselineValidation:
+    async def test_design_rejects_missing_baseline(self, tmp_path):
+        """DESIGN must reject when baseline.json is missing."""
+        from orchestrator.v2.loop import Campaign, CampaignConfig
+        from tests.fakes.sdk_client import FakeClient, FakeResultMessage
+
+        work_dir = tmp_path / "campaign"
+        work_dir.mkdir()
+
+        config = CampaignConfig(
+            research_question="test?",
+            run_id="test-run",
+            max_iterations=1,
+            target_system={"path": "/tmp/target"},
+        )
+        # FakeClient produces results but no baseline.json is written
+        script = [FakeResultMessage()] * 5
+        client = FakeClient(script=script)
+        campaign = Campaign(
+            config=config,
+            work_dir=work_dir,
+            client_factory=lambda _opts: client,
+        )
+        with pytest.raises(ValueError, match="baseline.json"):
+            await campaign.run()
+
+
+class TestLedgerPerIteration:
+    async def test_ledger_written_after_each_iteration(self, tmp_path):
+        """Ledger must be written after each iteration, not just at the end."""
+        from orchestrator.v2.loop import Campaign, CampaignConfig, _write_json
+        from tests.fakes.sdk_client import FakeClient, FakeResultMessage
+
+        work_dir = tmp_path / "campaign"
+        work_dir.mkdir()
+
+        baseline = {
+            "task_type": "debug", "command": "test", "git_sha": "abc",
+            "observation": {"reproduced": True, "symptom": "crash",
+                            "expected": 0, "actual": 1},
+            "metrics_path": "m.json", "noise": {"deterministic": True},
+        }
+        iter1 = work_dir / "iter-1"
+        iter1.mkdir(parents=True)
+        findings = {
+            "hypotheses": [{
+                "id": "h1", "status": "CONFIRMED", "error_type": "none",
+                "evidence": [], "question_answered": True, "reason": "done",
+                "noise_unmeasured": True, "noise_reason": "n/a",
+                "claims": [{"claim_id": "c1", "metric": "m",
+                            "condition": "a", "value": 1}],
+            }],
+        }
+
+        def write_files_on_turn(turn_idx):
+            if turn_idx == 0:
+                return {str(work_dir / "baseline.json"): json.dumps(baseline)}
+            elif turn_idx == 1:
+                return {
+                    str(iter1 / "problem.json"): json.dumps({"task_type": "debug", "claims_needed": []}),
+                    str(iter1 / "bundle.json"): json.dumps({"hypotheses": []}),
+                    str(iter1 / "plan.json"): json.dumps({"runs": []}),
+                }
+            elif turn_idx == 2:
+                return {
+                    str(iter1 / "findings.json"): json.dumps(findings),
+                    str(iter1 / "principle_updates.json"): json.dumps({"updates": []}),
+                }
+            return {}
+
+        per_turn = [write_files_on_turn(i) for i in range(4)]
+        # 4 turns: BASELINE, DESIGN, EXECUTE, REPORT
+        script = [FakeResultMessage()] * 4
+        client = FakeClient(script=script, per_turn_files=per_turn)
+
+        config = CampaignConfig(
+            research_question="test?",
+            run_id="test-run",
+            max_iterations=1,
+            target_system={"path": "/tmp/target"},
+        )
+        campaign = Campaign(
+            config=config,
+            work_dir=work_dir,
+            client_factory=lambda _opts: client,
+        )
+        await campaign.run()
+
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        assert len(ledger) == 1
+        assert ledger[0]["iteration"] == 1

@@ -96,15 +96,18 @@ class FakeClient:
         script: list[Any] | None = None,
         files_to_write: dict[str | Path, str] | None = None,
         hooks: dict[str, list[Any]] | None = None,
+        per_turn_files: list[dict[str | Path, str]] | None = None,
     ) -> None:
         self._script = list(script or [FakeResultMessage()])
         self._files_to_write = files_to_write or {}
+        self._per_turn_files = per_turn_files or []
         self._internal_hooks: dict[str, list[dict[str, Any]]] = {}
         if hooks:
             self._internal_hooks = _hooks_to_internal_format(hooks)
         self._connected = False
         self._queries: list[str] = []
         self._response_index = 0
+        self._turn_count = 0
 
     # ── ClaudeSDKClient interface ─────────────────────────────────────
 
@@ -119,9 +122,21 @@ class FakeClient:
         if not self._connected:
             raise RuntimeError("FakeClient.connect() not called")
         self._queries.append(prompt)
+        if self._turn_count < len(self._per_turn_files):
+            for path, content in self._per_turn_files[self._turn_count].items():
+                p = Path(path)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                p.write_text(content)
+        self._turn_count += 1
 
     async def receive_response(self) -> AsyncIterator[Any]:
-        """Async generator that yields each scripted message in order."""
+        """Async generator that yields each scripted message in order.
+
+        Stops after yielding a ``FakeResultMessage``, so multiple
+        ``query()`` / ``receive_response()`` rounds work naturally:
+        each round consumes messages up to and including the next
+        ``FakeResultMessage``.
+        """
         if self._response_index >= len(self._script):
             raise RuntimeError("FakeClient script exhausted — add more messages to the script")
 
@@ -135,6 +150,9 @@ class FakeClient:
                         await self._invoke_hooks(msg, block)
 
             yield msg
+
+            if isinstance(msg, FakeResultMessage):
+                break
 
     async def interrupt(self) -> None:
         pass
