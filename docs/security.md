@@ -13,7 +13,7 @@ The settings file declares:
 | Key | Meaning |
 |---|---|
 | `permissions.allowOnly` | Absolute paths the agent may read or write. Always includes the campaign work-dir; includes the target repo when `repo_path` is set. |
-| `permissions.allow` | Bash command allowlist. Built from a conservative default set (`git`, `python`, `pytest`, `grep`, …) plus any binaries referenced in `experiment_plan.yaml` arms, plus campaign-specific entries you pass via `extra_bin_allowlist`. |
+| `permissions.allow` | Bash command allowlist. Built from a conservative default set (`git`, `python`, `pytest`, `grep`, …) plus any binaries referenced in `plan.json` arms, plus campaign-specific entries you pass via `extra_bin_allowlist`. |
 | `permissions.deny` | Hard blocks. Ships with `Bash(curl https://*)`, `Bash(wget https://*)`, and `Bash(rm -rf /*)` to prevent the agent from exfiltrating data or destroying its host. |
 | `hooks.Stop` | (When `bin/nous-execute-stop` exists) deterministic completion check — see #129. |
 | `hooks.PreToolUse` | (When configured) plan-enforcer hook — see #128. |
@@ -39,6 +39,6 @@ The flag is still available behind explicit opt-in for emergency cases (e.g. rec
 The settings file's `hooks` section wires up:
 
 - **Stop hook** (`bin/nous-execute-stop`, #129): allows the executor to terminate only when `principle_updates.json` exists and `nous validate execution` returns pass. Cheaper and more reliable than a Haiku evaluator for schema-driven success criteria.
-- **PreToolUse hook** (`bin/nous-plan-enforcer`, #128): rejects (or logs) Bash calls that aren't derivable from `experiment_plan.yaml`. Defense-in-depth on top of the allow/deny lists.
+- **PreToolUse hook** (`bin/nous-plan-enforcer`, #128): rejects (or logs) Bash calls that aren't derivable from `plan.json`. Defense-in-depth on top of the allow/deny lists.
 
 Both hooks are optional; their absence falls back to settings-only enforcement.

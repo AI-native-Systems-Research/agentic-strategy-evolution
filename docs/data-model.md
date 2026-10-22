@@ -4,7 +4,7 @@ Nous uses 11 schema-governed artifacts to drive the investigation loop. This gui
 
 ## How They Fit Together
 
-`campaign.yaml` describes the target system. `state.json` drives the loop. Each iteration produces a `bundle.yaml` (hypothesis bundle), `experiment_plan.yaml` (exact commands), `execution_results.json` (raw output), `findings.json` (analysis), and `principle_updates.json` (proposed principle changes). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations.
+`campaign.yaml` describes the target system. `state.json` drives the loop. Each iteration produces a `bundle.json` (hypothesis bundle), `plan.json` (exact commands), `execution_results.json` (raw output), `findings.json` (analysis), and `principle_updates.json` (proposed principle changes). The `ledger.json` records what happened. `principles.json` accumulates knowledge across iterations.
 
 ```
 campaign.yaml       "What system?"          Target system, prompts
@@ -13,10 +13,10 @@ campaign.yaml       "What system?"          Target system, prompts
 state.json          "Where are we?"         Drives the loop
     │
     ▼
-bundle.yaml         "What are we testing?"  Hypothesis bundle for this iteration
+bundle.json         "What are we testing?"  Hypothesis bundle for this iteration
     │                                        ▲
     ▼                                        │ (injected into design prompt)
-experiment_plan.yaml "How to run it?"         Exact commands per arm
+plan.json "How to run it?"         Exact commands per arm
     │                                        │
     ▼                                        │
 execution_results.json "Raw output"          Stdout/stderr per condition
@@ -115,7 +115,7 @@ Each principle has:
 
 **Operations:** Insert (new principle), Update (refine scope or confidence), Prune (mark as superseded or refuted).
 
-## 4. bundle.yaml — "What are we testing this iteration?"
+## 4. bundle.json — "What are we testing this iteration?"
 
 **Schema:** `schemas/bundle.schema.yaml`
 
@@ -135,7 +135,7 @@ The experiment plan. A set of hypotheses ("arms") designed together to test one 
 
 Each arm is a triple: **prediction** (quantitative claim), **mechanism** (causal explanation), **diagnostic** (what to investigate if wrong). Arms may also carry optional **code_changes** (file/intent/rationale triples describing what code to modify) and a **metadata** object for domain-specific extensions.
 
-## 4b. experiment_plan.yaml — "What commands to run?"
+## 4b. plan.json — "What commands to run?"
 
 **Schema:** `schemas/experiment_plan.schema.yaml`
 
@@ -153,7 +153,7 @@ The experiment plan. Produced by the executor during EXECUTE_ANALYZE. Contains e
 | `arms[].conditions[].inputs` | Optional: array of input file paths created by the agent |
 | `arms[].conditions[].description` | Optional human description |
 
-Located at `runs/iter-N/experiment_plan.yaml`. The agent writes the plan first, then executes it. All output paths use absolute paths to `runs/iter-N/results/` so files persist after worktree cleanup.
+Located at `runs/iter-N/plan.json`. The agent writes the plan first, then executes it. All output paths use absolute paths to `runs/iter-N/results/` so files persist after worktree cleanup.
 
 ## 4b2. patches/ — "What code changes were made?"
 
@@ -246,5 +246,5 @@ The orchestrator invokes agents through a dispatcher. Two implementations exist:
 - `StubDispatcher` (`orchestrator/dispatch.py`) — produces deterministic, schema-valid artifacts without LLM calls. Used for testing.
 - `CLIDispatcher` (`orchestrator/cli_dispatch.py`) — invokes `claude -p` as a subprocess, giving agents code access and shell tools. Used for both the planner (DESIGN, Opus) and executor (EXECUTE_ANALYZE, Sonnet) roles.
 
-`CLIDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. The DESIGN phase produces both `problem.md` and `bundle.yaml` in a single dispatch — the raw output is split by `_split_design_output()` in `run_iteration.py`.
+`CLIDispatcher` reads `campaign.yaml` at construction time and injects domain-specific context (target system name, metrics, knobs, active principles) into prompt templates from `prompts/methodology/`. The DESIGN phase produces both `problem.md` and `bundle.json` in a single dispatch — the raw output is split by `_split_design_output()` in `run_iteration.py`.
 

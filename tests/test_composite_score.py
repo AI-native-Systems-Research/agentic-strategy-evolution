@@ -48,7 +48,7 @@ def _write_iter_findings(work_dir: Path, iteration: int, arms: list[dict]) -> No
     iter_dir.mkdir(parents=True, exist_ok=True)
     findings = {
         "iteration": iteration,
-        "bundle_ref": f"runs/iter-{iteration}/bundle.yaml",
+        "bundle_ref": f"runs/iter-{iteration}/bundle.json",
         "arms": arms,
         "experiment_valid": True,
         "discrepancy_analysis": "",

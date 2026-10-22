@@ -317,9 +317,9 @@ ledger.json             # one row per iteration
 handoff.md              # living exploration context (updated each iteration)
 runs/iter-N/
   problem.md            # problem framing
-  bundle.yaml           # hypothesis bundle
+  bundle.json           # hypothesis bundle
   handoff_snapshot.md   # iteration snapshot of handoff
-  experiment_plan.yaml  # exact commands per arm
+  plan.json  # exact commands per arm
   findings.json         # prediction vs outcome
   principle_updates.json # proposed principle changes
   patches/              # code diffs (evolve mode only)
@@ -350,7 +350,7 @@ nous stop campaign.yaml --reason "out of budget"  # halt at next iteration bound
 | Discover the campaign.yaml shape | `nous schema` |
 | Scaffold a starter campaign | `nous create-campaign --to ./campaign.yaml` |
 | Run a campaign end-to-end | `nous run campaign.yaml` (uses `--agent sdk` by default) |
-| Skip DESIGN with a pre-authored bundle | `nous run campaign.yaml --bundle path/to/bundle.yaml` |
+| Skip DESIGN with a pre-authored bundle | `nous run campaign.yaml --bundle path/to/bundle.json` |
 | Watch progress live | `nous status campaign.yaml --watch` |
 | Cleanly halt a running campaign | `nous stop campaign.yaml` |
 | Resume after halt or interruption | `nous resume campaign.yaml` |
@@ -375,7 +375,7 @@ When a campaign is mid-iteration and you can't tell what's happening:
 5. **`state.json`** — the engine's atomic phase + iteration. Safe to
    `cat` mid-run. Resume picks up from here.
 
-When DESIGN exits without producing `bundle.yaml` / `problem.md` /
+When DESIGN exits without producing `bundle.json` / `problem.md` /
 `handoff_snapshot.md`, the orchestrator raises a structured
 `DesignIncompleteError` (#187) naming the missing files and listing
 the four common causes — `max_turns` exhaustion, agent ran the

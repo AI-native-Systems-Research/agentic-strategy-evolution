@@ -92,7 +92,7 @@ def _write_findings(
     iter_dir.mkdir(parents=True, exist_ok=True)
     findings = {
         "iteration": iteration,
-        "bundle_ref": f"runs/iter-{iteration}/bundle.yaml",
+        "bundle_ref": f"runs/iter-{iteration}/bundle.json",
         "arms": [
             {
                 "arm_type": "h-main",
@@ -440,7 +440,7 @@ class TestValidatorRejectsVague:
         good = {
             "schema_version": "1",
             "campaign_design_lessons": [
-                {"lesson": "Tighten experiment_plan validation upstream",
+                {"lesson": "Tighten plan.json validation upstream",
                  "evidence": "findings.json reported experiment_valid=false in iter-2"},
             ],
             "target_system_asks": [],

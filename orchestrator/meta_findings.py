@@ -18,7 +18,7 @@ tool name, or error string — never a vague aspirational claim.
 
 This file is also the home of citation enforcement. ``validate_evidence``
 classifies an evidence string as concrete or vague; the validator in
-``orchestrator.validate`` uses the same classifier so an LLM-emitted
+``orchestrator.validate.validate_meta_findings`` uses the same classifier so an LLM-emitted
 meta_findings.json (a future enhancement) is held to the same floor.
 """
 from __future__ import annotations
@@ -466,7 +466,7 @@ def _detect_design_lessons(work_dir: Path) -> list[dict]:
     if invalid_iters:
         lessons.append({
             "lesson": (
-                "Tighten experiment_plan validation upstream: at least one "
+                "Tighten plan.json validation upstream: at least one "
                 "iteration produced findings.json with experiment_valid=false."
             ),
             "evidence": (

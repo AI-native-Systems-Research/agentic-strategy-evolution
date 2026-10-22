@@ -40,7 +40,7 @@ The Planner agent explores the target system, validates assumptions, then produc
 - Constraints — what cannot be changed (resource limits, SLOs, compatibility)
 - Prior knowledge — relevant principles from earlier iterations
 
-**Hypothesis bundle** (`bundle.yaml`):
+**Hypothesis bundle** (`bundle.json`):
 The agent decomposes the investigation into a structured set of falsifiable predictions — a hypothesis bundle.
 
 **Handoff** (`handoff_snapshot.md`):
@@ -58,7 +58,7 @@ A single `claude -p` session handles the entire execution pipeline:
 
 1. Reads the designer's handoff — uses validated commands and code map instead of re-exploring
 2. Creates any input files needed by commands (configs, workloads) in `inputs/`
-3. Writes `experiment_plan.yaml` with exact commands per arm (plan first, execute second)
+3. Writes `plan.json` with exact commands per arm (plan first, execute second)
 4. Creates patches for code-change arms (evolve mode), saves to `patches/`
 5. Runs the plan in an isolated git worktree, writes results to `results/`
 6. Compares observed metrics against predictions
@@ -68,7 +68,7 @@ A single `claude -p` session handles the entire execution pipeline:
 All file paths (inputs, outputs) use absolute paths to the campaign directory so they persist after worktree cleanup.
 
 **Key artifacts:**
-- `experiment_plan.yaml` — exact commands per arm
+- `plan.json` — exact commands per arm
 - `execution_results.json` — stdout/stderr/metrics per condition
 - `findings.json` — prediction vs outcome comparison
 - `principle_updates.json` — proposed principle inserts/updates/prunes
@@ -177,8 +177,8 @@ Backward/looping transitions:
 
 | Role | Phase | Reads | Writes | Model |
 |---|---|---|---|---|
-| Planner | DESIGN | campaign, principles | `problem.md`, `bundle.yaml` | Opus |
-| Executor | EXECUTE_ANALYZE | bundle, problem | `experiment_plan.yaml`, `execution_results.json`, `findings.json`, `principle_updates.json` | Sonnet |
+| Planner | DESIGN | campaign, principles | `problem.md`, `bundle.json` | Opus |
+| Executor | EXECUTE_ANALYZE | bundle, problem | `plan.json`, `execution_results.json`, `findings.json`, `principle_updates.json` | Sonnet |
 
 ### File Layout
 
@@ -191,8 +191,8 @@ campaign-dir/
   runs/
     iter-N/
       problem.md      — problem framing
-      bundle.yaml     — hypothesis bundle
-      experiment_plan.yaml — exact commands per arm
+      bundle.json     — hypothesis bundle
+      plan.json — exact commands per arm
       execution_results.json — stdout/stderr/metrics per condition
       findings.json    — prediction vs outcome
       principle_updates.json — proposed principle changes

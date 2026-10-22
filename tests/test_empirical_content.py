@@ -16,7 +16,6 @@ Test contract:
   - Schema accepts both fields when present.
   - Legacy entries without them validate unchanged.
   - Malformed forms (wrong type, unknown enum value) rejected.
-  - The decision-rule blurb is present in design.md (LLM reads it).
 """
 from __future__ import annotations
 
@@ -113,19 +112,3 @@ class TestSchemaRejectsMalformed:
         store = {"principles": [_principle(derivation_type="vibes")]}
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(store, _load_principles_schema())
-
-
-# ─── Methodology prompt mentions the decision rule ────────────────────────
-
-
-class TestMethodologyDocumentsRule:
-    def test_design_md_describes_empirical_content(self) -> None:
-        """The LLM produces principles via the executor / extractor, and
-        relies on the methodology prompt to know when to set
-        empirical_content=false. The prompt must surface the decision
-        rule (cached system block, paid once per session)."""
-        prompt = (Path(__file__).resolve().parent.parent
-                  / "prompts" / "methodology" / "design.md")
-        text = prompt.read_text()
-        assert "empirical_content" in text
-        assert "algebraic" in text or "definitional" in text

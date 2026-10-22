@@ -241,126 +241,12 @@ class TestPrinciplesSchema:
             jsonschema.validate(instance, schema)
 
 
-class TestBundleSchema:
-    def test_valid_full_bundle(self, load_schema):
-        schema = load_schema("bundle.schema.yaml")
-        instance = {
-            "metadata": {
-                "iteration": 5,
-                "family": "routing-signals",
-                "research_question": "Does compound routing reduce critical TTFT P99?",
-            },
-            "arms": [
-                {
-                    "type": "h-main",
-                    "prediction": "Compound routing reduces critical TTFT P99 by >40%",
-                    "mechanism": "PA reduces jitter, QD ensures fairness under saturation",
-                    "diagnostic": "If failed, check interaction between scheduling priority and depth signal",
-                },
-                {
-                    "type": "h-ablation",
-                    "component": "prefix-affinity",
-                    "prediction": "PA alone reduces P99 TTFT by >25%",
-                    "mechanism": "Reduces jitter by grouping similar-length sequences",
-                    "diagnostic": "If failed, check if variance reduction was correct metric",
-                },
-                {
-                    "type": "h-control-negative",
-                    "prediction": "At <50% utilization, compound ≈ round-robin",
-                    "mechanism": "No contention → scheduling irrelevant",
-                    "diagnostic": "If failed, overhead or secondary effect present",
-                },
-            ],
-        }
-        jsonschema.validate(instance, schema)
-
-    def test_invalid_arm_type_rejected(self, load_schema):
-        schema = load_schema("bundle.schema.yaml")
-        instance = {
-            "metadata": {
-                "iteration": 1,
-                "family": "test",
-                "research_question": "test?",
-            },
-            "arms": [
-                {
-                    "type": "h-invalid",
-                    "prediction": "x",
-                    "mechanism": "y",
-                    "diagnostic": "z",
-                }
-            ],
-        }
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)
-
-    def test_empty_arms_rejected(self, load_schema):
-        schema = load_schema("bundle.schema.yaml")
-        instance = {
-            "metadata": {
-                "iteration": 1,
-                "family": "test",
-                "research_question": "test?",
-            },
-            "arms": [],
-        }
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate(instance, schema)
-
-    def test_bundle_arm_with_code_changes(self, load_schema):
-        """Bundle arms can optionally include code_changes."""
-        schema = load_schema("bundle.schema.yaml")
-        bundle = {
-            "metadata": {
-                "iteration": 1,
-                "family": "test-family",
-                "research_question": "Does SJF reduce TTFT?",
-            },
-            "arms": [
-                {
-                    "type": "h-main",
-                    "prediction": "TTFT decreases by 15-25%",
-                    "mechanism": "SJF reorders by predicted compute cost",
-                    "diagnostic": "Check scheduling order in logs",
-                    "code_changes": [
-                        {
-                            "file": "scheduler/policy.go",
-                            "intent": "Replace FCFS dispatch with shortest-job-first ordering",
-                            "rationale": "Prefix-heavy requests have predictable compute cost",
-                        }
-                    ],
-                }
-            ],
-        }
-        jsonschema.validate(bundle, schema)  # Should not raise
-
-    def test_bundle_arm_without_code_changes(self, load_schema):
-        """Bundle arms without code_changes remain valid (backwards compatible)."""
-        schema = load_schema("bundle.schema.yaml")
-        bundle = {
-            "metadata": {
-                "iteration": 1,
-                "family": "test-family",
-                "research_question": "Does batch size matter?",
-            },
-            "arms": [
-                {
-                    "type": "h-main",
-                    "prediction": ">10% improvement",
-                    "mechanism": "Batching amortizes overhead",
-                    "diagnostic": "Check overhead per item",
-                }
-            ],
-        }
-        jsonschema.validate(bundle, schema)  # Should not raise (existing behavior)
-
-
 class TestFindingsSchema:
     def test_valid_findings(self, load_schema):
         schema = load_schema("findings.schema.json")
         instance = {
             "iteration": 5,
-            "bundle_ref": "runs/iter-5/bundle.yaml",
+            "bundle_ref": "runs/iter-5/bundle.json",
             "arms": [
                 {
                     "arm_type": "h-main",
@@ -443,7 +329,6 @@ class TestAdditionalPropertiesRejected:
         }
         with pytest.raises(jsonschema.ValidationError, match="Additional properties"):
             jsonschema.validate(instance, schema)
-
 
 
 class TestCampaignSchema:
@@ -744,34 +629,7 @@ class TestStateConfigRef:
 
 
 class TestArmMetadata:
-    def test_bundle_arm_with_metadata(self, load_schema):
-        schema = load_schema("bundle.schema.yaml")
-        instance = {
-            "metadata": {
-                "iteration": 1, "family": "test",
-                "research_question": "test?",
-            },
-            "arms": [{
-                "type": "h-main",
-                "prediction": "x", "mechanism": "y", "diagnostic": "z",
-                "metadata": {"gpu_type": "A100", "custom_param": 42},
-            }],
-        }
-        jsonschema.validate(instance, schema)
 
-    def test_bundle_arm_without_metadata(self, load_schema):
-        schema = load_schema("bundle.schema.yaml")
-        instance = {
-            "metadata": {
-                "iteration": 1, "family": "test",
-                "research_question": "test?",
-            },
-            "arms": [{
-                "type": "h-main",
-                "prediction": "x", "mechanism": "y", "diagnostic": "z",
-            }],
-        }
-        jsonschema.validate(instance, schema)
 
     def test_findings_arm_with_metadata(self, load_schema):
         schema = load_schema("findings.schema.json")
@@ -830,6 +688,3 @@ class TestLedgerDomainMetrics:
             }]
         }
         jsonschema.validate(instance, schema)
-
-
-

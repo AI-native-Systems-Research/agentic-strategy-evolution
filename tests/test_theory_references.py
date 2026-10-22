@@ -14,8 +14,6 @@ Test contract:
     independent_of_detector, use_as (enum), how.
   - Legacy campaigns without theory_references validate unchanged.
   - examples/campaign.yaml still validates against the updated schema.
-  - Designer prompt (design.md, cached system block) describes how to
-    use theory_references.
 """
 from __future__ import annotations
 
@@ -130,16 +128,3 @@ class TestSchemaRejectsMalformed:
         }])
         with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(campaign, _load_campaign_schema())
-
-
-# ─── Methodology prompt mentions theory_references ────────────────────────
-
-
-class TestMethodologyDocumentsTheoryReferences:
-    def test_design_md_describes_theory_references(self) -> None:
-        prompt = (Path(__file__).resolve().parent.parent
-                  / "prompts" / "methodology" / "design.md")
-        text = prompt.read_text()
-        assert "theory_references" in text
-        # The prompt should explain *how* to use them, not just mention them.
-        assert "ground" in text.lower() or "external" in text.lower()

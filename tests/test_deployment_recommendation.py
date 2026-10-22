@@ -67,7 +67,7 @@ def _seed_workdir(
     iter_dir.mkdir(parents=True, exist_ok=True)
     findings = {
         "iteration": 1,
-        "bundle_ref": "runs/iter-1/bundle.yaml",
+        "bundle_ref": "runs/iter-1/bundle.json",
         "arms": arms,
         "experiment_valid": True,
         "discrepancy_analysis": "",

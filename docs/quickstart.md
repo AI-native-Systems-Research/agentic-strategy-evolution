@@ -116,9 +116,9 @@ After a campaign, your working directory contains:
 - **`principles.json`** — Accumulated principles across all iterations
 - **`ledger.json`** — One row per completed iteration
 - **`runs/iter-N/problem.md`** — How the problem was framed
-- **`runs/iter-N/bundle.yaml`** — The hypothesis bundle
+- **`runs/iter-N/bundle.json`** — The hypothesis bundle
 - **`runs/iter-N/handoff_snapshot.md`** — Iteration snapshot of handoff for audit
-- **`runs/iter-N/experiment_plan.yaml`** — Exact commands per arm
+- **`runs/iter-N/plan.json`** — Exact commands per arm
 - **`runs/iter-N/findings.json`** — Prediction vs. outcome analysis
 - **`runs/iter-N/principle_updates.json`** — Proposed principle changes
 - **`runs/iter-N/patches/`** — Code diffs (evolve mode only)

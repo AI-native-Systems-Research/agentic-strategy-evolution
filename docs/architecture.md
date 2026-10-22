@@ -40,8 +40,8 @@ This separation exists because:
                     │  campaign.yaml   state.json          │
                     │  ledger.json     principles.json     │
                     │  runs/iter-N/                        │
-                    │    problem.md    bundle.yaml          │
-                    │    experiment_plan.yaml               │
+                    │    problem.md    bundle.json          │
+                    │    plan.json               │
                     │    execution_results.json              │
                     │    findings.json                      │
                     │    principle_updates.json             │
@@ -98,14 +98,14 @@ The dispatcher invokes AI agents by role and phase, passing structured input and
 
 | Role | Invoked During | Produces |
 |---|---|---|
-| **Planner** (Opus, Claude Agent SDK) | DESIGN | `problem.md`, `bundle.yaml`, `handoff_snapshot.md` |
-| **Executor** (Sonnet, Claude Agent SDK) | EXECUTE_ANALYZE | `experiment_plan.yaml`, `findings.json`, `principle_updates.json`, `patches/`, `results/` |
+| **Planner** (Opus, Claude Agent SDK) | DESIGN | `problem.md`, `bundle.json`, `handoff_snapshot.md` |
+| **Executor** (Sonnet, Claude Agent SDK) | EXECUTE_ANALYZE | `plan.json`, `findings.json`, `principle_updates.json`, `patches/`, `results/` |
 
 Both agents write artifacts directly to the campaign directory (`iter_dir`) and run `nous validate` before claiming done. If validation fails, the agent reads the errors, fixes the artifacts, and retries. The orchestrator runs a post-check as a safety net.
 
 **Validation CLI** (`orchestrator/validate.py`):
-- `nous validate design --dir <iter_dir>` — checks problem.md, bundle.yaml (schema), handoff_snapshot.md
-- `nous validate execution --dir <iter_dir>` — checks experiment_plan.yaml (schema), findings.json (schema), principle_updates.json, patches (when code_changes exist), input and output files referenced in plan
+- `nous validate design --dir <iter_dir>` — checks problem.md, bundle.json (schema), handoff_snapshot.md
+- `nous validate execution --dir <iter_dir>` — checks plan.json (schema), findings.json (schema), principle_updates.json, patches (when code_changes exist), input and output files referenced in plan
 
 **Implementations:**
 
@@ -167,7 +167,7 @@ The executor agent (Sonnet, via the Claude Agent SDK) handles the entire executi
 
 1. Receives the approved hypothesis bundle
 2. Explores the target repo, discovers build commands
-3. Produces `experiment_plan.yaml` with exact shell commands per arm
+3. Produces `plan.json` with exact shell commands per arm
 4. Runs the commands, captures stdout/stderr per condition
 5. Compares observed metrics against predictions
 6. Produces `findings.json` and `principle_updates.json`
@@ -217,7 +217,7 @@ The planner says **what and why** — the executor implements the actual changes
 
 ### Ledger (`orchestrator/ledger.py`)
 
-Deterministic module that appends a schema-conformant row to `ledger.json` after each iteration. Reads `findings.json`, `bundle.yaml`, and `principles.json` to extract: h_main_result, ablation_results, control_result, robustness_result, prediction accuracy, and principle changes. No LLM calls — purely deterministic computation.
+Deterministic module that appends a schema-conformant row to `ledger.json` after each iteration. Reads `findings.json`, `bundle.json`, and `principles.json` to extract: h_main_result, ablation_results, control_result, robustness_result, prediction accuracy, and principle changes. No LLM calls — purely deterministic computation.
 
 ### Gates (`orchestrator/gates.py`)
 
@@ -323,7 +323,7 @@ F17 reproducibility metadata.
                     Planner (Opus)
                        │
                        ▼
-              problem.md + bundle.yaml
+              problem.md + bundle.json
                        │
                        ▼
               HUMAN_DESIGN_GATE (approve/reject/abort)
@@ -332,7 +332,7 @@ F17 reproducibility metadata.
                   Executor (Sonnet)
                        │
                        ▼
-         experiment_plan.yaml + execution_results.json
+         plan.json + execution_results.json
          + findings.json + principle_updates.json
                        │
                        ▼

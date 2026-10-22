@@ -194,7 +194,7 @@ properties:
         uniqueItems: true
         description: >
           Additional filenames allowed at the iter root (in addition to
-          the global whitelist in orchestrator/validate.py). Names only,
+          the global whitelist). Names only,
           not paths — files in subdirectories are always allowed.
       required_iter_root:
         type: array
@@ -336,9 +336,9 @@ properties:
     description: >
       Issue #246 (F1): campaign-author-declared parameters that are
       hard-pinned for this campaign's experiments. Each ``key: value``
-      entry MUST appear identically in
-      ``bundle.experiment_spec.verified_parameters``; mismatches are
-      hard validation failures (see ``orchestrator.validate.validate_design``)
+      entry MUST appear identically in each plan.json run's
+      ``parameters`` unless declared in ``workload_changes``; mismatches are
+      hard validation failures (see ``orchestrator.v2.validators``)
       that fire **regardless of --auto-approve**. This is the spec-
       fidelity primitive that closes the gap left by HUMAN_DESIGN_GATE
       bypass under auto-approve.
@@ -503,7 +503,7 @@ properties:
       to ground its ground truths (issue #88). Each entry names a
       theorem / law / identity and (optionally) describes how the
       designer should use it. Pairs with the ground_truth block on
-      bundle.yaml (issue #85): theory_references say "here's the
+      bundle.json (issue #85): theory_references say "here's the
       independent thermometer to use"; ground_truth.independence_argument
       says "and here's why it can disagree with the detector."
 
@@ -553,7 +553,7 @@ properties:
       rendered into the agent's prompt template alongside
       ``target_system.description`` so the inner LLM sees it directly.
       Distinct from the per-iteration ``ground_truth`` block on
-      bundle.yaml (issue #85) which describes the independence argument
+      bundle.json (issue #85) which describes the independence argument
       for that iteration's detector.
     properties:
       pre_registered:
@@ -566,7 +566,7 @@ properties:
       baselines:
         type: array
         items: { type: string, minLength: 1 }
-        description: "Pre-specified baselines the candidate must beat — names that map to bundle.yaml arms."
+        description: "Pre-specified baselines the candidate must beat — names that map to bundle.json hypotheses."
       primary_metric:
         type: string
         minLength: 1
