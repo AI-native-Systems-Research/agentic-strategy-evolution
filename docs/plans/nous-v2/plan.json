@@ -301,7 +301,7 @@
         "docs describe single-session v2, hooks, artifacts, resume",
         "grep: no `bundle.yaml` or `--agent inline` left in README.md and docs/"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R12b",
