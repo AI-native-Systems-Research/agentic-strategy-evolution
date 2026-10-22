@@ -19,6 +19,7 @@ from .preflight import run_preflight
 from .resume import build_fallback_message, load_campaign_state, resume_phase
 from .robustness import FailureBreaker, poll_and_resume, write_halt
 from .session import Session
+from .final_check import check_answer
 from .stop_rule import (
     best_changed,
     check_stop,
@@ -211,6 +212,7 @@ class Campaign:
             await self._turn(session, "REPORT phase. Write answer.json and report.md.")
             last_iter = len(self._ledger) or start_iteration
             self._commit_phase(last_iter, "REPORT")
+            self._record_final_check()
             return {"stop_reason": "resumed_report", "iterations": last_iter}
 
         stop_reason: str | None = None
@@ -332,7 +334,19 @@ class Campaign:
         self._set_phase(hook_state, "REPORT", len(self._ledger))
         await self._turn(session, "REPORT phase. Write answer.json and report.md.")
         self._commit_phase(len(self._ledger), "REPORT")
+        self._record_final_check()
         return {"stop_reason": stop_reason, "iterations": len(self._ledger)}
+
+    def _record_final_check(self) -> None:
+        """Spec 3.8: check answer.json against the record and log the result in the ledger."""
+        report = check_answer(self._work_dir)
+        if self._ledger:
+            self._ledger[-1].update(
+                repro_recorded=report["repro_recorded"],
+                claims_matched_fraction=report["claims_matched_fraction"],
+            )
+            _write_json(self._work_dir / "ledger.json", self._ledger)
+        _write_json(self._work_dir / "final_check.json", report)
 
     def _set_phase(self, hook_state: HookState, phase: str, iteration: int) -> None:
         hook_state.phase = phase

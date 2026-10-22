@@ -147,7 +147,7 @@ def _answer() -> dict:
                 "metric": "pass_rate",
                 "value": 1.0,
                 "condition": "default",
-                "evidence": [],
+                "evidence": {"path": "runs/iter-1/results.json", "key": "/pass_rate", "value": 1.0},
             },
         ],
     }
@@ -507,6 +507,45 @@ class TestLedger:
         assert "status" in entry
         assert "stop_reason" in entry
 
+
+    async def test_final_check_recorded_from_runs_jsonl(self, tmp_path):
+        """Spec 3.8: REPORT ends with the final check; repro is proven from runs.jsonl, not re-run."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        (work_dir / "runs.jsonl").write_text(
+            json.dumps({"phase": "EXECUTE", "iter": 1, "command": "pytest test_bug.py", "exit_code": 0}) + "\n"
+        )
+        (work_dir / "runs" / "iter-1").mkdir(parents=True)
+        (work_dir / "runs" / "iter-1" / "results.json").write_text(json.dumps({"pass_rate": 1.0}))
+        config = parse_campaign_config(_campaign_yaml())
+        per_turn = _build_per_turn_files(work_dir, answered=True)
+        script = _make_script(4)
+
+        def factory(_opts):
+            return FakeClient(script=script, per_turn_files=per_turn)
+
+        await Campaign(config=config, work_dir=work_dir, client_factory=factory).run()
+
+        entry = json.loads((work_dir / "ledger.json").read_text())[-1]
+        assert entry["repro_recorded"] is True
+        assert "claims_matched_fraction" in entry
+        assert (work_dir / "final_check.json").exists()
+
+    async def test_final_check_repro_missing_from_record(self, tmp_path):
+        """A repro command never run in the session is reported as not recorded."""
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(_campaign_yaml())
+        per_turn = _build_per_turn_files(work_dir, answered=True)
+        script = _make_script(4)
+
+        def factory(_opts):
+            return FakeClient(script=script, per_turn_files=per_turn)
+
+        await Campaign(config=config, work_dir=work_dir, client_factory=factory).run()
+
+        entry = json.loads((work_dir / "ledger.json").read_text())[-1]
+        assert entry["repro_recorded"] is False
 
 class TestPrinciples:
     async def test_principles_accumulate(self, tmp_path):

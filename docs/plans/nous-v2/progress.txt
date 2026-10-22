@@ -403,3 +403,7 @@ compacted preflight fixtures.
 Runtime line count: 2,477 lines (target ~2,500)
   loop.py: 401, validators.py: 623, hooks.py: 332, session.py: 181
 Tests after: 1806 passed, 0 failed
+
+## Reviewer fix: final check wired into REPORT (spec 3.8)
+
+final_check.check_answer existed but was never called from loop.py (grep found no caller), so repro_recorded never reached the ledger. Added Campaign._record_final_check after REPORT (both normal and resumed paths): writes final_check.json and sets repro_recorded + claims_matched_fraction on the last ledger row. check_answer now reports schema errors without returning early, so repro is still checked. Tests: test_final_check_recorded_from_runs_jsonl, test_final_check_repro_missing_from_record. 1808 passed. Runtime 2486 lines.

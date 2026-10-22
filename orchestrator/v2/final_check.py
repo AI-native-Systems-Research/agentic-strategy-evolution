@@ -99,15 +99,10 @@ def check_answer(work_dir: Path) -> dict:
         return report
 
     ctx = ValidatorContext(work_dir=work_dir)
-    schema_errors = validate_artifact("answer", answer, ctx)
-    if schema_errors:
-        report["evidence_errors"] = schema_errors
-        return report
-
-    evidence_errors: list[str] = []
+    evidence_errors: list[str] = list(validate_artifact("answer", answer, ctx))
     for claim in answer.get("claims", []):
         ev = claim.get("evidence")
-        if ev:
+        if isinstance(ev, dict):
             evidence_errors.extend(check_evidence_item(ev, work_dir))
     report["evidence_errors"] = evidence_errors
     report["answer_valid"] = len(evidence_errors) == 0
