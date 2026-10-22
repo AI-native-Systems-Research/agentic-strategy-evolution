@@ -124,11 +124,11 @@ class Session:
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
-    def connect(self) -> Any:
+    async def connect(self) -> Any:
         """Create and connect the SDK client."""
         opts = self.build_agent_options()
         self._client = self._client_factory(opts)
-        self._client.connect()
+        await self._client.connect()
         return self._client
 
     async def turn(self, prompt: str) -> Any:
@@ -139,19 +139,21 @@ class Session:
         if self._client is None:
             raise RuntimeError("Session.connect() must be called first")
 
-        self._client.query(prompt)
-        result = await self._client.receive_response()
+        await self._client.query(prompt)
 
-        # Capture session_id from the result
-        if hasattr(result, "session_id") and result.session_id:
+        result = None
+        async for msg in self._client.receive_response():
+            result = msg
+
+        if result is not None and hasattr(result, "session_id") and result.session_id:
             self._session_id = result.session_id
             self._persist_session_id()
 
         return result
 
-    def disconnect(self) -> None:
+    async def disconnect(self) -> None:
         if self._client is not None:
-            self._client.disconnect()
+            await self._client.disconnect()
             self._client = None
 
     # ── State persistence ─────────────────────────────────────────────
