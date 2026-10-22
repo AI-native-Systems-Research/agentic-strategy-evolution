@@ -105,7 +105,7 @@
       "acceptance": [
         "smoke/1.json exists with exit_code 0, or its failures turned into new plan items"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R5",
