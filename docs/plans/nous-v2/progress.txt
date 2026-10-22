@@ -35,6 +35,22 @@ Review decisions (pr-review-toolkit:review-pr):
   Skipped 5xx narrowing (pedantic, 501/505 are extremely rare in LLM APIs).
 - Added is_transient support for stdlib TimeoutError and OSError("timed out").
 
+## R2: JSON schemas + validators (13903b8)
+
+Files created: orchestrator/v2/schemas/ (8 schema JSON files),
+orchestrator/v2/validators.py, orchestrator/v2/secrets.py,
+tests/v2/test_schemas_v2.py, tests/v2/test_validators_v2.py,
+tests/v2/test_evidence_rules.py, tests/v2/test_secrets.py
+
+Tests before: 1413 passed
+Tests after: 1617 passed, 0 failed
+
+Covers: B5 extra-field handling, JSON/JSONL/CSV/TSV evidence checking,
+3 noise shapes, paired-seed check, locked_parameters/workload checks,
+task_limits (B11), bundle hash, secret masking (3.14),
+PARTIALLY_CONFIRMED partial_note, claims_needed coverage,
+per-task_type baseline observation rules.
+
 ## R1 fix: async mismatch (post-review)
 
 Session.connect/turn/disconnect were async but FakeClient had sync

@@ -37,7 +37,7 @@
         "evidence value mismatch is reported with path/key/expected/actual",
         "validators never discard valid content"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R3",
