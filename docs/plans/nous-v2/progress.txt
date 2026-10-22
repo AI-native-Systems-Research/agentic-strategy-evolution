@@ -188,3 +188,22 @@ campaign.yaml is author-controlled), iter-dir creation race (single-
 threaded campaign loop), _check_bundle_hash warn+continue on missing
 locked (empty locked_hash already returns False).
 
+## R4a fix: 6 spec gaps + 1 review fix (57835ac)
+
+Cross-session reviewer identified 6 spec gaps:
+1. Hooks wired into loop (HookState + build_hooks in Campaign.run,
+   phase/iteration set before each turn).
+2. Campaign worktree commit per phase (_commit_phase helper).
+3. Phase messages completed per 3.2 (BASELINE task_type, DESIGN
+   read digest + frame relative to baseline, EXECUTE wait_for).
+4. Bundle lock raises on missing bundle after DESIGN.
+5. question_answered moved to findings top level per 3.4 (schema,
+   stop_rule, all tests updated).
+6. hooks.py _iter_dir fixed (removed erroneous "runs/" subdir).
+
+Code review fix: _commit_phase guard logic (.git check only),
+experiment_commands from CampaignConfig field.
+
+Runtime line count: 1,758 lines (target ~2,500)
+Tests after: 1692 passed, 0 failed
+
