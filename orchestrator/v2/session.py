@@ -131,7 +131,9 @@ class Session:
         await self._client.connect()
         return self._client
 
-    async def turn(self, prompt: str) -> Any:
+    async def turn(
+        self, prompt: str, on_message: Callable[..., Any] | None = None,
+    ) -> Any:
         """Send a single turn and persist session state afterward.
 
         Returns the ``ResultMessage`` from ``receive_response()``.
@@ -143,6 +145,8 @@ class Session:
 
         result = None
         async for msg in self._client.receive_response():
+            if on_message is not None:
+                on_message(msg)
             result = msg
 
         if result is not None and hasattr(result, "session_id") and result.session_id:

@@ -15,8 +15,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
+from .cost import CostMeter, load_prices
 from .hooks import HookState, build_hooks
 from .preflight import run_preflight
+from .resume import build_fallback_message, load_campaign_state, resume_phase
 from .robustness import FailureBreaker, check_wait_condition, write_halt
 from .session import Session
 from .stop_rule import (
@@ -154,14 +156,29 @@ class Campaign:
         self._principles: list[dict] = []
         self._prev_findings: dict | None = None
 
-    async def run(self) -> dict:
-        """Execute the full campaign. Returns summary dict."""
+    def _init_meter(self) -> None:
+        defaults_path = Path(__file__).resolve().parent.parent / "defaults.yaml"
+        self._meter = CostMeter(load_prices(defaults_path))
+
+    def _build_hooks_and_session_opts(self) -> tuple[HookState, dict, dict]:
         hook_state = HookState(
             work_dir=self._work_dir,
             secrets={k: os.environ.get(k, "") for k in self._config.secrets},
             experiment_commands=self._config.experiment_commands,
         )
         hooks = build_hooks(hook_state)
+        session_opts = {
+            "work_dir": str(self._work_dir),
+            "effort": self._config.effort,
+            "hooks": hooks,
+            "cwd": self._config.target_system.get("repo_path"),
+        }
+        return hook_state, hooks, session_opts
+
+    async def run(self) -> dict:
+        """Execute the full campaign. Returns summary dict."""
+        self._init_meter()
+        hook_state, hooks, session_opts = self._build_hooks_and_session_opts()
 
         preflight_errors = await run_preflight(hooks, work_dir=self._work_dir)
         if preflight_errors:
@@ -171,52 +188,140 @@ class Campaign:
 
         session = Session(
             client_factory=self._client_factory,
-            options={
-                "work_dir": str(self._work_dir),
-                "effort": self._config.effort,
-                "hooks": hooks,
-                "cwd": self._config.target_system.get("repo_path"),
-            },
+            options=session_opts,
         )
         await session.connect()
         try:
-            return await self._run_phases(session, hook_state)
+            return await self._run_phases_from(
+                session, hook_state, "BASELINE", 0,
+            )
         finally:
             await session.disconnect()
 
-    async def _run_phases(
-        self, session: Session, hook_state: HookState
-    ) -> dict:
-        breaker = FailureBreaker()
+    async def resume(self, *, note: str | None = None) -> dict:
+        """Resume a campaign from state.json, or start fresh if missing."""
+        self._init_meter()
+        hook_state, hooks, session_opts = self._build_hooks_and_session_opts()
 
-        hook_state.phase = "BASELINE"
-        hook_state.iteration = 0
-        await self._baseline(session)
-        self._commit_phase(0, "BASELINE")
+        state = load_campaign_state(self._work_dir)
+        if state is None:
+            return await self.run()
+
+        saved_phase, saved_iteration = resume_phase(state)
+        session_id = state.get("session_id")
+        use_fallback = (
+            session_id is None
+            or self._config.session_scope == "iteration"
+        )
+
+        if not use_fallback:
+            session_opts["resume"] = session_id
+
+        self._reload_state(saved_iteration)
+
+        session = Session(
+            client_factory=self._client_factory,
+            options=session_opts,
+        )
+        await session.connect()
+        try:
+            if use_fallback:
+                digest = _read_json(self._work_dir / "state" / "digest.json")
+                msg = build_fallback_message(
+                    phase=saved_phase,
+                    iteration=saved_iteration,
+                    digest=digest,
+                    note=note,
+                )
+                await session.turn(msg)
+
+            return await self._run_phases_from(
+                session, hook_state, saved_phase, saved_iteration, note=note,
+            )
+        finally:
+            await session.disconnect()
+
+    def _reload_state(self, up_to_iteration: int) -> None:
+        """Reload ledger, principles, and prev_findings from disk."""
+        ledger = _read_json(self._work_dir / "ledger.json")
+        if isinstance(ledger, list):
+            self._ledger = ledger
+        principles = _read_json(self._work_dir / "principles.json")
+        if isinstance(principles, list):
+            self._principles = principles
+        if up_to_iteration >= 1:
+            prev_iter = up_to_iteration - 1 if up_to_iteration > 1 else 1
+            prev_findings = _read_json(
+                iter_dir(self._work_dir, prev_iter) / "findings.json"
+            )
+            if prev_findings:
+                self._prev_findings = prev_findings
+
+    async def _run_phases_from(
+        self,
+        session: Session,
+        hook_state: HookState,
+        start_phase: str,
+        start_iteration: int,
+        *,
+        note: str | None = None,
+    ) -> dict:
+        """Resume the campaign loop from a given phase/iteration."""
+        breaker = FailureBreaker()
+        skip_baseline = start_phase != "BASELINE" or start_iteration > 0
+        skip_design_for = start_iteration if start_phase in ("EXECUTE", "REPORT") else 0
+
+        if not skip_baseline:
+            hook_state.phase = "BASELINE"
+            hook_state.iteration = 0
+            self._meter.set_phase("BASELINE")
+            self._update_state_phase("BASELINE", 0)
+            await self._baseline(session)
+            self._commit_phase(0, "BASELINE")
+
+        first_iter = max(start_iteration, 1)
+        if start_phase == "REPORT":
+            hook_state.phase = "REPORT"
+            self._meter.set_phase("REPORT")
+            self._update_state_phase("REPORT", start_iteration)
+            await self._report(session)
+            last_iter = len(self._ledger) or start_iteration
+            self._commit_phase(last_iter, "REPORT")
+            return {"stop_reason": "resumed_report", "iterations": last_iter}
 
         stop_reason: str | None = None
-        for iteration in range(1, self._config.max_iterations + 1):
+        for iteration in range(first_iter, self._config.max_iterations + 1):
             idir = iter_dir(self._work_dir, iteration)
             idir.mkdir(parents=True, exist_ok=True)
 
-            hook_state.phase = "DESIGN"
-            hook_state.iteration = iteration
-            try:
-                await self._design(session, iteration)
-            except Exception as exc:
-                fp = breaker.record(type(exc).__name__, "DESIGN", str(exc))
-                if fp:
-                    write_halt(self._work_dir, fp, "DESIGN", str(exc))
-                    stop_reason = "halt"
-                    break
-                raise
-            self._commit_phase(iteration, "DESIGN")
-            locked_hash = self._lock_bundle(idir)
+            do_design = not (iteration == skip_design_for)
+
+            if do_design:
+                hook_state.phase = "DESIGN"
+                hook_state.iteration = iteration
+                self._meter.set_phase("DESIGN")
+                self._update_state_phase("DESIGN", iteration)
+                try:
+                    await self._design(session, iteration)
+                except Exception as exc:
+                    fp = breaker.record(type(exc).__name__, "DESIGN", str(exc))
+                    if fp:
+                        write_halt(self._work_dir, fp, "DESIGN", str(exc))
+                        stop_reason = "halt"
+                        break
+                    raise
+                self._commit_phase(iteration, "DESIGN")
+                locked_hash = self._lock_bundle(idir)
+            else:
+                locked_hash = self._lock_bundle(idir) if (idir / "bundle.json").exists() else ""
 
             hook_state.phase = "EXECUTE"
+            self._meter.set_phase("EXECUTE")
+            self._update_state_phase("EXECUTE", iteration)
             pending_waits = self._get_pending_waits(idir)
             hook_state.pending_wait_for = [r["wait_for"] for r in pending_waits]
-            await self._execute(session, iteration)
+            execute_note = note if iteration == first_iter else None
+            await self._execute(session, iteration, note=execute_note)
             hook_state.pending_wait_for = []
             await self._poll_and_resume(
                 session, idir, pending_waits, iteration, breaker,
@@ -246,7 +351,8 @@ class Campaign:
             problem = _read_json(idir / "problem.json") or {}
             cn = problem.get("claims_needed")
 
-            entry = {
+            iter_cost = self._meter.total()
+            entry: dict[str, Any] = {
                 "iteration": iteration,
                 "bundle_hash": locked_hash,
                 "claims_changed": cc,
@@ -255,7 +361,14 @@ class Campaign:
                 "prereg_violation": prereg,
                 "status": status,
                 "stop_reason": None,
+                "cost_meter_usd": iter_cost["cost_usd"],
+                "tokens": {
+                    "input": iter_cost["input_tokens"],
+                    "output": iter_cost["output_tokens"],
+                },
             }
+            if execute_note:
+                entry["note"] = execute_note
             self._ledger.append(entry)
             _write_json(self._work_dir / "ledger.json", self._ledger)
             self._prev_findings = findings
@@ -291,8 +404,10 @@ class Campaign:
                 _write_json(self._work_dir / "ledger.json", self._ledger)
 
         hook_state.phase = "REPORT"
-        await self._report(session)
+        self._meter.set_phase("REPORT")
         last_iter = len(self._ledger)
+        self._update_state_phase("REPORT", last_iter)
+        await self._report(session)
         self._commit_phase(last_iter, "REPORT")
 
         return {"stop_reason": stop_reason, "iterations": last_iter}
@@ -318,7 +433,8 @@ class Campaign:
             error_text = "\n".join(f"  - {e}" for e in errors)
             logger.warning("Repair attempt %d for %s: %s", attempt + 1, phase, error_text)
             await session.turn(
-                f"Repair {phase}: the following validation errors must be fixed:\n{error_text}"
+                f"Repair {phase}: the following validation errors must be fixed:\n{error_text}",
+                on_message=self._meter.record,
             )
         logger.warning("Repair exhausted for %s, marking partial", phase)
         return "partial"
@@ -384,13 +500,15 @@ class Campaign:
                 if remaining:
                     await session.turn(
                         f"Runs {ids_str} finished; continue EXECUTE. "
-                        f"Runs still pending: {', '.join(remaining)}."
+                        f"Runs still pending: {', '.join(remaining)}.",
+                        on_message=self._meter.record,
                     )
                 else:
                     await session.turn(
                         f"Runs {ids_str} finished; continue EXECUTE. "
                         f"Write runs/iter-{iteration}/findings.json "
-                        f"and runs/iter-{iteration}/principle_updates.json."
+                        f"and runs/iter-{iteration}/principle_updates.json.",
+                        on_message=self._meter.record,
                     )
             if not remaining:
                 break
@@ -402,7 +520,8 @@ class Campaign:
                 breaker.record("TimeoutError", "EXECUTE", f"wait_for timed out: {rid}")
             await session.turn(
                 f"Runs {', '.join(timed_out)} timed out. "
-                f"Write findings for completed runs only."
+                f"Write findings for completed runs only.",
+                on_message=self._meter.record,
             )
 
         return timed_out
@@ -419,7 +538,7 @@ class Campaign:
             "Get one real observation of the current system and "
             f"write baseline.json.{task_hint}"
         )
-        await session.turn(prompt)
+        await session.turn(prompt, on_message=self._meter.record)
 
     async def _design(self, session: Session, iteration: int) -> None:
         baseline = _read_json(self._work_dir / "baseline.json")
@@ -440,9 +559,11 @@ class Campaign:
             f"runs/iter-{iteration}/plan.json."
             f"{principles_text}"
         )
-        await session.turn(prompt)
+        await session.turn(prompt, on_message=self._meter.record)
 
-    async def _execute(self, session: Session, iteration: int) -> None:
+    async def _execute(
+        self, session: Session, iteration: int, *, note: str | None = None,
+    ) -> None:
         prompt = (
             f"Iteration {iteration}, EXECUTE phase. "
             f"Run plan.json; fix anything that does not run. "
@@ -450,11 +571,13 @@ class Campaign:
             f"Write runs/iter-{iteration}/findings.json "
             f"and runs/iter-{iteration}/principle_updates.json."
         )
-        await session.turn(prompt)
+        if note:
+            prompt += f"\n\nHuman note: {note}"
+        await session.turn(prompt, on_message=self._meter.record)
 
     async def _report(self, session: Session) -> None:
         prompt = "REPORT phase. Write answer.json and report.md."
-        await session.turn(prompt)
+        await session.turn(prompt, on_message=self._meter.record)
 
     def _lock_bundle(self, iter_dir: Path) -> str:
         bundle = _read_json(iter_dir / "bundle.json")
@@ -505,6 +628,19 @@ class Campaign:
             )
         except (subprocess.TimeoutExpired, OSError):
             logger.warning("failed to commit target worktree after %s", phase)
+
+    def _update_state_phase(self, phase: str, iteration: int) -> None:
+        """Write phase and iteration to state.json for resume."""
+        state_path = self._work_dir / "state.json"
+        existing: dict[str, Any] = {}
+        if state_path.exists():
+            try:
+                existing = json.loads(state_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
+        existing["phase"] = phase
+        existing["iteration"] = iteration
+        _write_json(state_path, existing)
 
     def _objective_direction(self) -> str:
         obj = self._config.objective
