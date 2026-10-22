@@ -264,7 +264,7 @@
         "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch",
         "branch review includes /simplify (reuse, simplification, dead code) over orchestrator/v2/; apply only valid simplifications"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R12",
