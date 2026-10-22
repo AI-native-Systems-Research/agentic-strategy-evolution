@@ -44,6 +44,10 @@ class FailureBreaker:
             return fp
         return None
 
+    def reset(self) -> None:
+        """A success breaks the run of consecutive failures."""
+        self._recent = []
+
 
 def write_halt(work_dir: Path, fingerprint: str, phase: str, message: str) -> None:
     """Write halt.json to trigger stop rule."""
@@ -57,18 +61,21 @@ def write_halt(work_dir: Path, fingerprint: str, phase: str, message: str) -> No
     path.write_text(json.dumps(halt, indent=2) + "\n")
 
 
-def check_wait_condition(wait_spec: str) -> bool:
-    """Check a single wait_for condition (file exists or cmd exits 0)."""
+def check_wait_condition(wait_spec: str, cwd: str | None = None) -> bool:
+    """Check a single wait_for condition (file exists or cmd exits 0).
+
+    Relative paths and commands resolve against *cwd* (the target repo).
+    """
     if wait_spec.startswith("cmd:"):
         try:
             result = subprocess.run(
-                wait_spec[4:], shell=True, capture_output=True, timeout=30,
+                wait_spec[4:], shell=True, capture_output=True, timeout=30, cwd=cwd,
             )
             return result.returncode == 0
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.warning("wait_for command error: %s", exc)
             return False
-    return Path(wait_spec).exists()
+    return (Path(cwd or ".") / wait_spec).exists()
 
 
 def poll_wait_for(
@@ -100,6 +107,7 @@ async def poll_and_resume(
     iteration: int,
     breaker: FailureBreaker,
     turn_fn: Callable,
+    cwd: str | None = None,
 ) -> list[str]:
     """Poll all wait_for conditions; call turn_fn to resume the agent.
 
@@ -113,7 +121,7 @@ async def poll_and_resume(
     ev_loop = asyncio.get_event_loop()
 
     for _ in range(max_polls):
-        done = [rid for rid, wf in remaining.items() if check_wait_condition(wf)]
+        done = [rid for rid, wf in remaining.items() if check_wait_condition(wf, cwd)]
         for rid in done:
             del remaining[rid]
         if done:

@@ -571,7 +571,7 @@ class TestPrincipleUpdatesSemantics:
 class TestTaskLimits:
     def test_max_runs_exceeded(self, tmp_path):
         runs_path = tmp_path / "runs.jsonl"
-        lines = [json.dumps({"wall_seconds": 1.0}) for _ in range(5)]
+        lines = [json.dumps({"wall_seconds": 1.0, "experiment": True}) for _ in range(5)]
         runs_path.write_text("\n".join(lines))
 
         data = _valid_findings(tmp_path)
@@ -642,3 +642,36 @@ class TestValidatorContext:
         )
         assert ctx.locked_parameters == {"k": "v"}
         assert ctx.secrets == {"key": "val"}
+
+
+# ── Review fixes ─────────────────────────────────────────────────────────
+
+
+class TestReviewFixes:
+    def test_unknown_keys_do_not_fail_validation(self, tmp_path):
+        data = _valid_baseline()
+        data["surprise"] = 1
+        errs = validate_artifact("baseline", data, _ctx(tmp_path))
+        assert errs == []
+        assert data["extra"]["surprise"] == 1
+
+    def test_task_limits_count_only_experiment_rows(self, tmp_path):
+        runs_path = tmp_path / "runs.jsonl"
+        rows = [{"experiment": True}] * 2 + [{"experiment": False}] * 4
+        runs_path.write_text("\n".join(json.dumps(r) for r in rows))
+        ctx = _ctx(tmp_path, task_limits={"max_runs": 3}, runs_jsonl=runs_path)
+        errs = validate_artifact("findings", _valid_findings(tmp_path), ctx)
+        assert not any("max_runs" in e for e in errs)
+
+    def test_secret_anywhere_in_answer_detected(self, tmp_path):
+        data = _valid_answer(tmp_path)
+        data["claims"][0]["condition"] = "token sk-12345secret"
+        ctx = _ctx(tmp_path, secrets={"api_key": "sk-12345secret"})
+        errs = validate_artifact("answer", data, ctx)
+        assert any("api_key" in e for e in errs)
+
+    def test_secret_in_report_md_detected(self, tmp_path):
+        (tmp_path / "report.md").write_text("key: sk-12345secret\n")
+        ctx = _ctx(tmp_path, secrets={"api_key": "sk-12345secret"})
+        errs = validate_artifact("answer", _valid_answer(tmp_path), ctx)
+        assert any("report.md" in e and "api_key" in e for e in errs)

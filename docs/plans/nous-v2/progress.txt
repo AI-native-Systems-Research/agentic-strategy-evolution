@@ -457,3 +457,24 @@ Deleted (with tests; none reachable from cli.py, bin/nous-mcp, plugin/, scripts/
 grep "bundle\.yaml|experiment_plan\.yaml" over orchestrator bin plugin prompts tests examples: empty.
 Tests before: 1207 passed. After: 842 passed. orchestrator/*.py 6979 -> 3654 lines.
 Review decisions (code-reviewer): runtime reachability clean; conftest guards intact. Deferred to R12 (full docs rewrite): literal swaps left v1 shapes/flags in README.md (--bundle), docs/architecture.md (validate execution), docs/data-model.md (v1 field tables, deleted schema paths), protocol/quickstart listings (problem.md vs problem.json); methodology_layer still scaffolded by create_campaign; root CLAUDE.md names deleted explore_design/complexity_tier.
+
+## R11d branch review (review-pr code + silent-failure, code-review, simplify over orchestrator/v2/)
+
+Simplify (commit before fixes): shared read_json (validators) and update_state (resume, atomic) replace 8 + 3 copies; one evidence mismatch check; locked_parameters/locked_workload one loop; loop _report/_save_ledger/partial; dead preflight dict-matcher path and blank-line runs removed. 2537 -> 2397 lines, 842 passed.
+Skipped simplifications: deleting effort.py / errors.py / poll_wait_for / CostMeter.phase_summary (owned by R1/R5/R6 acceptance; R12b lean pass decides).
+
+Branch-review bugs fixed (test-first, 19 new tests):
+- unknown top-level keys returned as errors (broke B5) -> logged only.
+- evidence lookups raised on bad regex / non-int pointer into list / binary file -> error strings.
+- _merge_principles IndexError on revise after remove (reproduced) -> match by id.
+- best_changed TypeError on non-numeric value -> False.
+- experiment_commands default [] disabled DEFAULT_EXPERIMENT_COMMANDS; task_limits counted every Bash row -> default None, count experiment rows only.
+- relative wait_for paths resolved against process cwd -> target repo (HookState.cwd).
+- FailureBreaker never reset -> reset on ok iteration (3 consecutive identical).
+- resume at EXECUTE relocked bundle, erasing prereg violation -> reuse .bundle.locked.json.
+- --note dropped when resuming at REPORT; no fallback when resume session fails -> note in REPORT message; one fresh-session retry from digest.
+- cost meter ignored cache tokens and double-counted ResultMessage.usage -> cache read 0.1x / write 1.25x input, skip model-less messages (test_result_message_not_double_counted expectation corrected).
+- REPORT secret check only 3 fields -> whole answer.json + report.md.
+- pending_wait_for cleared before polling Stop-gated intermediate turns -> cleared after poll.
+Recorded, not fixed (later candidates, beyond MVP or need design): bundle_hypotheses/claims_needed never set in ValidatorContext so paired-seed/finding_ref/claims coverage checks skip; no baseline semantic check; phase commit does `git add -A` on the user's branch without a campaign worktree (D5) and unchecked return codes; transient-error retry (B9 is_transient) not wired into Session.turn; stop rule ignores min_seeds/needs_ci/conditions and partial status; background repro (exit_code None). Note duplicated when fallback lands at REPORT (harmless).
+Tests: 842 -> 861 passed. v2 runtime 2429 lines.

@@ -304,3 +304,23 @@ class TestMissingFile:
         )
         assert len(errs) == 1
         assert "does not exist" in errs[0]
+
+
+# ── Malformed inputs return errors, never raise ──────────────────────────
+
+
+class TestMalformedInputs:
+    def test_bad_regex_key(self, tmp_path: Path):
+        _write(tmp_path / "log.txt", "score=1\n")
+        errs = check_evidence_item({"path": "log.txt", "key": "score=(", "value": "1"}, tmp_path)
+        assert errs
+
+    def test_non_int_pointer_into_list(self, tmp_path: Path):
+        _write(tmp_path / "r.json", json.dumps({"a": [1, 2]}))
+        errs = check_evidence_item({"path": "r.json", "key": "/a/x", "value": 1}, tmp_path)
+        assert errs
+
+    def test_binary_text_file(self, tmp_path: Path):
+        (tmp_path / "blob.bin").write_bytes(b"\xff\xfe\x00\x81")
+        errs = check_evidence_item({"path": "blob.bin", "key": "(x)", "value": "x"}, tmp_path)
+        assert errs

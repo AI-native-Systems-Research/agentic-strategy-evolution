@@ -476,3 +476,11 @@ class TestCheckStop:
             stop_sentinel_path=tmp_path / "STOP",
         )
         assert result is None
+
+
+class TestBestChangedNonNumeric:
+    def test_non_numeric_values_return_false(self):
+        prev = {"best": {"value": "fast"}}
+        curr = {"best": {"value": 2.0}}
+        assert best_changed(prev, curr) is False
+        assert best_changed({"best": {"value": 1.0}}, {"best": {"value": "x"}}) is False

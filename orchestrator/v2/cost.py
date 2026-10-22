@@ -46,21 +46,23 @@ class CostMeter:
         if msg_id:
             self._seen_ids.add(msg_id)
 
+        # ResultMessage carries no model and repeats the per-message usage: skip it
+        model = getattr(message, "model", None)
         usage = getattr(message, "usage", None)
-        if not usage:
+        if not model or not usage:
             return
         input_t = usage.get("input_tokens", 0)
         output_t = usage.get("output_tokens", 0)
-        if input_t == 0 and output_t == 0:
-            return
-
-        model = getattr(message, "model", None) or ""
+        cache_r = usage.get("cache_read_input_tokens", 0) or 0
+        cache_w = usage.get("cache_creation_input_tokens", 0) or 0
         price = self._prices.get(model, {})
-        if not price and model:
+        if not price:
             logger.debug("no price entry for model %r, costing at $0", model)
+        pin = price.get("input_tokens", 0)
+        # Anthropic ratios: cache read 0.1x input, cache write 1.25x input
         cost = (
-            input_t * price.get("input_tokens", 0)
-            + output_t * price.get("output_tokens", 0)
+            input_t * pin + output_t * price.get("output_tokens", 0)
+            + cache_r * pin * 0.1 + cache_w * pin * 1.25
         ) / 1_000_000
 
         totals = self._phase_totals.setdefault(

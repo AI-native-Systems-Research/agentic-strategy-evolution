@@ -53,6 +53,7 @@ class HookState:
     experiment_commands: list[str] = field(default_factory=list)
     consecutive_blocks: int = 0
     pending_wait_for: list[str] = field(default_factory=list)
+    cwd: str | None = None  # target repo; relative wait_for paths resolve here
     now: Callable[[], float] = field(default=time.time)
     # Campaign limits passed to every ValidatorContext (spec 3.4).
     limits: dict[str, Any] = field(default_factory=dict)
@@ -136,7 +137,7 @@ def make_stop_hook(state: HookState):
             state.consecutive_blocks = 0
             return {}
 
-        if state.pending_wait_for and _any_wait_pending(state.pending_wait_for):
+        if state.pending_wait_for and _any_wait_pending(state.pending_wait_for, state.cwd):
             state.consecutive_blocks = 0
             return {}
 
@@ -278,10 +279,10 @@ def _iter_dir(state: HookState) -> Path | None:
     return state.work_dir / "runs" / f"iter-{state.iteration}"
 
 
-def _any_wait_pending(wait_specs: list[str]) -> bool:
+def _any_wait_pending(wait_specs: list[str], cwd: str | None = None) -> bool:
     """True if at least one wait_for condition is still unmet."""
     from .robustness import check_wait_condition
-    return any(not check_wait_condition(spec) for spec in wait_specs)
+    return any(not check_wait_condition(spec, cwd) for spec in wait_specs)
 
 
 def _artifact_path(state: HookState, artifact_type: str) -> Path:

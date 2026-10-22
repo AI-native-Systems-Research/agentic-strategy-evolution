@@ -35,7 +35,7 @@ class CampaignConfig:
     stall_iterations: int = 2
     task_type: str | None = None
     session_scope: str = "campaign"
-    experiment_commands: list[str] = field(default_factory=list)
+    experiment_commands: list[str] | None = None  # None = hooks.DEFAULT_EXPERIMENT_COMMANDS
     task_limits: dict | None = None
     objective: dict | None = None
     rerun_repro: bool = False
@@ -72,7 +72,7 @@ def parse_campaign_config(raw: dict) -> CampaignConfig:
         stall_iterations=raw.get("stall_iterations", 2),
         task_type=raw.get("task_type"),
         session_scope=raw.get("session_scope", "campaign"),
-        experiment_commands=raw.get("experiment_commands", []),
+        experiment_commands=raw.get("experiment_commands"),
         task_limits=raw.get("task_limits"),
         objective=raw.get("objective"),
         rerun_repro=raw.get("rerun_repro", False),

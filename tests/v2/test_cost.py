@@ -126,11 +126,11 @@ class TestCostMeter:
         assert total["output_tokens"] == 0
 
     def test_result_message_not_double_counted(self):
-        """ResultMessage has usage but no message_id — still counted once via uuid."""
+        """ResultMessage usage is a session total that repeats the assistant messages; not counted."""
         from orchestrator.v2.cost import CostMeter
 
         meter = CostMeter(PRICES)
-        # ResultMessage doesn't have model, so cost = 0, but tokens counted
+        # ResultMessage has no model and repeats per-message usage: skipped
         result = FakeResultMessage(
             usage={"input_tokens": 500, "output_tokens": 100},
         )
@@ -138,8 +138,8 @@ class TestCostMeter:
         meter.record(result)
 
         total = meter.total()
-        assert total["input_tokens"] == 500
-        assert total["output_tokens"] == 100
+        assert total["input_tokens"] == 0
+        assert total["output_tokens"] == 0
 
     def test_subagent_messages_included(self):
         """Messages with parent_tool_use_id (subagent) are counted normally."""
@@ -185,3 +185,29 @@ class TestLoadPrices:
         f.write_text("models:\n  design: opus\n")
         prices = load_prices(f)
         assert prices == {}
+
+
+class TestCacheAndResult:
+    def test_cache_tokens_priced(self):
+        from orchestrator.v2.cost import CostMeter
+
+        meter = CostMeter(PRICES)
+        # opus input $15/M: cache read 0.1x, cache write 1.25x
+        meter.record(FakeAssistantMessage(
+            message_id="msg-c", model="claude-opus-4-6",
+            usage={"input_tokens": 0, "output_tokens": 0,
+                   "cache_read_input_tokens": 1000, "cache_creation_input_tokens": 1000},
+        ))
+        assert abs(meter.total()["cost_usd"] - (0.0015 + 0.01875)) < 1e-9
+
+    def test_result_message_usage_not_added_to_assistant_usage(self):
+        from orchestrator.v2.cost import CostMeter
+
+        meter = CostMeter(PRICES)
+        meter.record(FakeAssistantMessage(
+            message_id="msg-a", model="claude-opus-4-6",
+            usage={"input_tokens": 1000, "output_tokens": 500},
+        ))
+        meter.record(FakeResultMessage(usage={"input_tokens": 1000, "output_tokens": 500}))
+        assert meter.total()["input_tokens"] == 1000
+        assert meter.total()["output_tokens"] == 500

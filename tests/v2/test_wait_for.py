@@ -333,3 +333,79 @@ class TestWaitForIntegration:
         assert result["stop_reason"] == "answered"
         resume_msgs = [q for q in client.queries if "finished" in q]
         assert len(resume_msgs) >= 1
+
+
+# ── Review fixes: relative wait_for, Stop gating during polling ─────────
+
+
+class TestWaitForRepoCwd:
+    def test_relative_file_resolves_against_repo(self, tmp_path):
+        from orchestrator.v2.robustness import check_wait_condition
+
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "done.txt").write_text("x")
+        assert check_wait_condition("done.txt", cwd=str(repo)) is True
+        assert check_wait_condition("cmd:test -f done.txt", cwd=str(repo)) is True
+
+    async def test_stop_hook_uses_repo_cwd(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        (repo / "done_rel_wait.txt").write_text("x")
+        state = HookState(work_dir=tmp_path, phase="EXECUTE", iteration=1,
+                          pending_wait_for=["done_rel_wait.txt"], cwd=str(repo))
+        cb = build_hooks(state)["Stop"][0].hooks[0]
+        result = await cb({"stop_reason": "end_turn"}, None, {"signal": None})
+        assert result.get("decision") == "block"  # wait met -> artifacts validated
+
+
+class _StopProbingClient(FakeClient):
+    """Runs the Stop hook at the end of each turn and records its decision."""
+
+    def __init__(self, *a, **kw):
+        super().__init__(*a, **kw)
+        self.stop_decisions: list[str | None] = []
+
+    async def receive_response(self):
+        async for msg in super().receive_response():
+            yield msg
+        out = await self._run_event_hooks("Stop", {"hook_event_name": "Stop"})
+        self.stop_decisions.append((out or {}).get("decision"))
+
+
+class TestStopGateDuringPolling:
+    async def test_intermediate_resume_turn_not_blocked(self, tmp_path, monkeypatch):
+        work_dir = tmp_path / "campaign"
+        work_dir.mkdir()
+        idir = iter_dir(work_dir, 1)
+        done1, done2 = tmp_path / "d1.txt", tmp_path / "d2.txt"
+        plan = {"runs": [
+            {"id": "r1", "hypothesis_id": "h1", "role": "treatment", "command": "a.sh",
+             "parameters": {}, "seeds": [1], "wait_for": str(done1)},
+            {"id": "r2", "hypothesis_id": "h2", "role": "treatment", "command": "b.sh",
+             "parameters": {}, "seeds": [1], "wait_for": str(done2)},
+        ]}
+        per_turn = [
+            {str(work_dir / "baseline.json"): json.dumps(_baseline())},
+            {str(idir / "problem.json"): json.dumps(_problem()),
+             str(idir / "bundle.json"): json.dumps(_bundle()),
+             str(idir / "plan.json"): json.dumps(plan)},
+            {},  # EXECUTE
+            {},  # "Runs r1 finished; still pending r2"
+            {str(idir / "findings.json"): json.dumps(_findings()),
+             str(idir / "principle_updates.json"): json.dumps(_principle_updates())},
+            {str(work_dir / "answer.json"): json.dumps(_answer())},
+        ]
+        done1.write_text("x")
+        monkeypatch.setattr("orchestrator.v2.robustness.time.sleep", lambda _s: done2.write_text("x"))
+        holder = {}
+
+        def factory(opts):
+            holder["c"] = _StopProbingClient(script=[FakeResultMessage()] * 6,
+                                             per_turn_files=per_turn, hooks=opts.hooks)
+            return holder["c"]
+
+        result = await Campaign(config=_config(), work_dir=work_dir, client_factory=factory).run()
+        assert result["stop_reason"] == "answered"
+        # turn index 3 is the intermediate resume turn
+        assert holder["c"].stop_decisions[3] != "block"

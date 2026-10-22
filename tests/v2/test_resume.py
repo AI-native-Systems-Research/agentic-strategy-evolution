@@ -646,3 +646,100 @@ class TestCampaignStateResumeFields:
         state = json.loads((work_dir / "state.json").read_text())
         assert "phase" in state
         assert "iteration" in state
+
+
+# ── Review fixes: resume edge cases ──────────────────────────────────────
+
+_BUNDLE = {"hypotheses": [{
+    "id": f"h{i}", "role": "treatment", "family": f"f{i}", "mechanism": "m",
+    "prediction": {"metric": "pass", "direction": "increase"},
+    "falsified_if": "fails", "claim_ids": ["c1"]} for i in (1, 2)]}
+_FINDINGS = {"hypotheses": [{
+    "id": "h1", "status": "CONFIRMED", "error_type": "none", "evidence": [],
+    "noise_unmeasured": True, "noise_reason": "single",
+    "claims": [{"claim_id": "c1", "metric": "pass", "condition": "default", "value": 1.0}]}],
+    "question_answered": True, "reason": "fixed"}
+_ANSWER = {"answer": "fixed", "deliverable": "patch", "repro": "pytest", "claims": []}
+
+
+def _seed_execute_state(work_dir: Path, phase: str = "EXECUTE") -> Path:
+    from orchestrator.v2.loop import _write_json
+
+    _write_json(work_dir / "state.json", {"session_id": "ses-1", "phase": phase, "iteration": 1})
+    _write_json(work_dir / "baseline.json", {
+        "task_type": "debug", "command": "pytest", "git_sha": "abc",
+        "observation": {"pass": True}, "noise": {"deterministic": True}})
+    idir = work_dir / "runs" / "iter-1"
+    _write_json(idir / "problem.json", {"task_type": "debug", "claims_needed": [
+        {"id": "c1", "description": "fix", "test_method": "pytest"}]})
+    _write_json(idir / "bundle.json", _BUNDLE)
+    _write_json(idir / "plan.json", {"runs": [
+        {"id": f"r{i}", "hypothesis_id": "h1", "role": role, "command": "pytest",
+         "parameters": {}, "seeds": [42]} for i, role in ((1, "treatment"), (2, "control"))]})
+    return idir
+
+
+def _exec_report_turns(work_dir: Path, idir: Path) -> list[dict]:
+    return [
+        {str(idir / "findings.json"): json.dumps(_FINDINGS),
+         str(idir / "principle_updates.json"): json.dumps({"updates": []})},
+        {str(work_dir / "answer.json"): json.dumps(_ANSWER)},
+    ]
+
+
+def _config():
+    from orchestrator.v2.loop import CampaignConfig
+    return CampaignConfig(research_question="q?", run_id="r", max_iterations=3,
+                          target_system={"repo_path": "/nonexistent"})
+
+
+class TestResumeReviewFixes:
+    async def test_resume_execute_keeps_existing_lock(self, tmp_path):
+        """A bundle edited before the crash is still a pre-reg violation on resume."""
+        from orchestrator.v2.loop import Campaign, _write_json
+        from tests.fakes.sdk_client import FakeClient, FakeResultMessage
+
+        work_dir = tmp_path / "c"
+        idir = _seed_execute_state(work_dir)
+        _write_json(idir / ".bundle.locked.json", _BUNDLE)
+        edited = json.loads(json.dumps(_BUNDLE))
+        edited["hypotheses"][0]["mechanism"] = "edited after lock"
+        _write_json(idir / "bundle.json", edited)
+
+        client = FakeClient(script=[FakeResultMessage()] * 2,
+                            per_turn_files=_exec_report_turns(work_dir, idir))
+        await Campaign(_config(), work_dir, lambda _o: client).resume()
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        assert ledger[0]["prereg_violation"] is True
+        assert json.loads((idir / "bundle.json").read_text()) == _BUNDLE
+
+    async def test_note_reaches_report_on_resume(self, tmp_path):
+        from orchestrator.v2.loop import Campaign
+        from tests.fakes.sdk_client import FakeClient, FakeResultMessage
+
+        work_dir = tmp_path / "c"
+        idir = _seed_execute_state(work_dir, phase="REPORT")
+        client = FakeClient(script=[FakeResultMessage()],
+                            per_turn_files=_exec_report_turns(work_dir, idir)[1:])
+        await Campaign(_config(), work_dir, lambda _o: client).resume(note="cite r2")
+        assert "cite r2" in client.queries[-1]
+
+    async def test_failed_resume_falls_back_to_fresh_session(self, tmp_path):
+        from orchestrator.v2.loop import Campaign
+        from tests.fakes.sdk_client import FakeClient, FakeResultMessage
+
+        work_dir = tmp_path / "c"
+        idir = _seed_execute_state(work_dir)
+        fresh = FakeClient(script=[FakeResultMessage()] * 3,
+                           per_turn_files=[{}] + _exec_report_turns(work_dir, idir))
+
+        class _DeadSession(FakeClient):
+            async def connect(self):
+                raise RuntimeError("session ses-1 not found")
+
+        def factory(opts):
+            return _DeadSession() if opts.resume else fresh
+
+        result = await Campaign(_config(), work_dir, factory).resume()
+        assert result["stop_reason"] == "answered"
+        assert "Resuming campaign" in fresh.queries[0]

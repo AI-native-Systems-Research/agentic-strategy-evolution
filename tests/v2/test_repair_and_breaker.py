@@ -344,3 +344,16 @@ class TestFailureBreaker:
         fp1 = failure_fingerprint("ValueError", "DESIGN", "missing key")
         fp2 = failure_fingerprint("KeyError", "DESIGN", "missing key")
         assert fp1 != fp2
+
+
+class TestBreakerReset:
+    def test_success_between_failures_resets(self):
+        from orchestrator.v2.robustness import FailureBreaker
+
+        b = FailureBreaker()
+        assert b.record("E", "EXECUTE", "boom") is None
+        assert b.record("E", "EXECUTE", "boom") is None
+        b.reset()
+        assert b.record("E", "EXECUTE", "boom") is None
+        assert b.record("E", "EXECUTE", "boom") is None
+        assert b.record("E", "EXECUTE", "boom") is not None

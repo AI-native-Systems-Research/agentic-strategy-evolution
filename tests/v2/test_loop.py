@@ -801,3 +801,26 @@ class TestCwdPassedToSession:
         await campaign.run()
 
         assert getattr(captured_opts[0], "cwd", None) is None
+
+
+class TestMergePrinciples:
+    def test_revise_after_remove(self):
+        from orchestrator.v2.loop import _merge_principles
+
+        existing = [{"id": "p1", "text": "a"}, {"id": "p2", "text": "b"}]
+        out = _merge_principles(existing, {"updates": [
+            {"id": "p1", "action": "remove"},
+            {"id": "p2", "action": "revise", "text": "b2"},
+        ]})
+        assert out == [{"id": "p2", "text": "b2"}]
+
+
+class TestExperimentCommandsDefault:
+    async def test_unset_uses_default_patterns(self, tmp_path):
+        config = parse_campaign_config(_campaign_yaml())
+        campaign = Campaign(config=config, work_dir=tmp_path, client_factory=lambda _o: None)
+        _state, hooks, _opts = campaign._build_hooks_and_session_opts()
+        cb = hooks["PostToolUse"][0].hooks[0]
+        await cb({"tool_name": "Bash", "tool_input": {"command": "blis run --x"}}, None, {})
+        row = json.loads((tmp_path / "runs.jsonl").read_text().splitlines()[0])
+        assert row["experiment"] is True

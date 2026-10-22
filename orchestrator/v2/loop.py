@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from .config import CampaignConfig, parse_campaign_config, validator_limits  # noqa: F401 (re-export)
 from .cost import CostMeter, load_prices
-from .hooks import HookState, build_hooks
+from .hooks import DEFAULT_EXPERIMENT_COMMANDS, HookState, build_hooks
 from .preflight import run_preflight
 from .resume import build_fallback_message, load_campaign_state, resume_phase, update_state
 from .robustness import FailureBreaker, poll_and_resume, write_halt
@@ -46,7 +46,6 @@ def _merge_principles(existing: list[dict], updates: dict | None) -> list[dict]:
     if updates is None:
         return existing
     result = list(existing)
-    by_id = {p["id"]: i for i, p in enumerate(result)}
     for u in updates.get("updates", []):
         uid = u.get("id")
         if uid is None:
@@ -56,9 +55,7 @@ def _merge_principles(existing: list[dict], updates: dict | None) -> list[dict]:
         if action == "add":
             result.append({"id": uid, "text": text})
         elif action == "revise":
-            idx = by_id.get(uid)
-            if idx is not None:
-                result[idx] = {"id": uid, "text": text}
+            result = [{"id": uid, "text": text} if p["id"] == uid else p for p in result]
         elif action == "remove":
             result = [p for p in result if p["id"] != uid]
     return result
@@ -76,6 +73,7 @@ class Campaign:
         self._ledger: list[dict] = []
         self._principles: list[dict] = []
         self._prev_findings: dict | None = None
+        self._turns_ok = 0
 
     def _init_meter(self) -> None:
         defaults_path = Path(__file__).resolve().parent.parent / "defaults.yaml"
@@ -85,8 +83,9 @@ class Campaign:
         hook_state = HookState(
             work_dir=self._work_dir,
             secrets={k: os.environ.get(k, "") for k in self._config.secrets},
-            experiment_commands=self._config.experiment_commands,
+            experiment_commands=self._config.experiment_commands or DEFAULT_EXPERIMENT_COMMANDS,
             limits=self._limits(),
+            cwd=self._config.target_system.get("repo_path"),
         )
         hooks = build_hooks(hook_state)
         session_opts = {
@@ -136,20 +135,30 @@ class Campaign:
             session_opts["resume"] = session_id
         self._reload_state(saved_iteration)
 
-        session = await self._start_session(session_opts)
-        try:
-            if use_fallback:
-                digest = _read_json(self._work_dir / "state" / "digest.json")
-                msg = build_fallback_message(
-                    phase=saved_phase, iteration=saved_iteration,
-                    digest=digest, note=note,
+        async def attempt(fallback: bool) -> dict:
+            session = await self._start_session(session_opts)
+            try:
+                if fallback:
+                    digest = _read_json(self._work_dir / "state" / "digest.json")
+                    await self._turn(session, build_fallback_message(
+                        phase=saved_phase, iteration=saved_iteration, digest=digest, note=note,
+                    ))
+                return await self._run_phases_from(
+                    session, hook_state, saved_phase, saved_iteration, note=note,
                 )
-                await session.turn(msg, on_message=self._meter.record)
-            return await self._run_phases_from(
-                session, hook_state, saved_phase, saved_iteration, note=note,
-            )
-        finally:
-            await session.disconnect()
+            finally:
+                await session.disconnect()
+
+        if not use_fallback:
+            self._turns_ok = 0
+            try:
+                return await attempt(False)
+            except Exception as exc:  # spec 3.7: resume failed -> fresh session from digest
+                if self._turns_ok:
+                    raise
+                logger.warning("resume of session %s failed (%s); starting fresh", session_id, exc)
+                session_opts.pop("resume")
+        return await attempt(True)
 
     def _reload_state(self, up_to_iteration: int) -> None:
         ledger = _read_json(self._work_dir / "ledger.json")
@@ -165,7 +174,9 @@ class Campaign:
                 self._prev_findings = prev
 
     async def _turn(self, session: Session, prompt: str) -> Any:
-        return await session.turn(prompt, on_message=self._meter.record)
+        result = await session.turn(prompt, on_message=self._meter.record)
+        self._turns_ok += 1
+        return result
 
     async def _repair(self, session: Session, idir: Path, artifact_types: list[str]) -> str:
         for attempt in range(3):
@@ -204,7 +215,7 @@ class Campaign:
         first_iter = max(start_iteration, 1)
         if start_phase == "REPORT":
             last_iter = len(self._ledger) or start_iteration
-            await self._report(session, hook_state, start_iteration, last_iter)
+            await self._report(session, hook_state, start_iteration, last_iter, note=note)
             return {"stop_reason": "resumed_report", "iterations": last_iter}
 
         stop_reason: str | None = None
@@ -240,7 +251,12 @@ class Campaign:
                 self._commit_phase(iteration, "DESIGN")
                 locked_hash = self._lock_bundle(idir)
             else:
-                locked_hash = self._lock_bundle(idir) if (idir / "bundle.json").exists() else ""
+                # Resume at EXECUTE: keep the original lock so a pre-crash edit still counts
+                locked = _read_json(idir / ".bundle.locked.json")
+                if locked is not None:
+                    locked_hash = bundle_hash(locked)
+                else:
+                    locked_hash = self._lock_bundle(idir) if (idir / "bundle.json").exists() else ""
 
             # EXECUTE
             self._set_phase(hook_state, "EXECUTE", iteration)
@@ -257,11 +273,12 @@ class Campaign:
             if execute_note:
                 exec_prompt += f"\n\nHuman note: {execute_note}"
             await self._turn(session, exec_prompt)
-            hook_state.pending_wait_for = []
-
+            # Keep waits armed while polling so "still pending" turns are not Stop-gated
             await poll_and_resume(
                 pending_waits, iteration, breaker, functools.partial(self._turn, session),
+                cwd=hook_state.cwd,
             )
+            hook_state.pending_wait_for = []
             self._commit_phase(iteration, "EXECUTE")
 
             status = await self._repair(session, idir, ["findings", "principle_updates"])
@@ -297,7 +314,9 @@ class Campaign:
             self._save_ledger()
             self._prev_findings = findings
 
-            if status == "partial":
+            if status == "ok":
+                breaker.reset()
+            else:
                 fp = breaker.record("ValidationError", "EXECUTE", "repair exhausted")
                 if fp:
                     write_halt(self._work_dir, fp, "EXECUTE", "repair exhausted")
@@ -328,10 +347,11 @@ class Campaign:
 
     async def _report(
         self, session: Session, hook_state: HookState,
-        phase_iteration: int, commit_iteration: int,
+        phase_iteration: int, commit_iteration: int, note: str | None = None,
     ) -> None:
         self._set_phase(hook_state, "REPORT", phase_iteration)
-        await self._turn(session, "REPORT phase. Write answer.json and report.md.")
+        msg = "REPORT phase. Write answer.json and report.md."
+        await self._turn(session, msg + (f"\n\nHuman note: {note}" if note else ""))
         self._commit_phase(commit_iteration, "REPORT")
         self._record_final_check()
 

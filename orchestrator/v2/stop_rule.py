@@ -49,6 +49,9 @@ def best_changed(
     prev_val = prev.get("best", {}).get("value")
     if prev_val is None:
         return True
+    num = (int, float)
+    if not isinstance(curr_val, num) or not isinstance(prev_val, num):
+        return False
 
     delta = curr_val - prev_val if direction == "increase" else prev_val - curr_val
     return delta > min_improvement

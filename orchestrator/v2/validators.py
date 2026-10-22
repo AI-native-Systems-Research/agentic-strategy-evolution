@@ -103,6 +103,8 @@ def _resolve_json_pointer(doc: Any, pointer: str) -> Any:
         if isinstance(current, dict):
             current = current[part]
         elif isinstance(current, list):
+            if not part.isdigit():
+                raise KeyError(f"list index must be an integer: {part!r}")
             current = current[int(part)]
         else:
             raise KeyError(f"cannot descend into {type(current).__name__}")
@@ -214,7 +216,7 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
                 f"evidence value mismatch at {path_str}#{key}: "
                 f"expected {value!r}, got {actual!r}"
             )
-    except (KeyError, IndexError, json.JSONDecodeError, IsADirectoryError) as exc:
+    except (KeyError, IndexError, ValueError, re.error, OSError) as exc:
         errors.append(f"evidence lookup failed for {path_str}#{key}: {exc}")
 
     return errors
@@ -441,15 +443,15 @@ def _check_answer_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
         if ev:
             errors.extend(check_evidence_item(ev, base_dir))
 
-    # Secret check: answer must not contain literal secret values
+    # Secret check (3.14): no literal secret value anywhere in answer.json or report.md
     if ctx.secrets:
-        for field_name in ("answer", "deliverable", "repro"):
-            text = data.get(field_name, "")
-            leaked = check_secrets(text, ctx.secrets)
-            for name in leaked:
-                errors.append(
-                    f"answer.{field_name} contains secret {name!r}"
-                )
+        report = ctx.work_dir / "report.md"
+        texts = {"answer.json": json.dumps(data)}
+        if report.is_file():
+            texts["report.md"] = report.read_text(errors="replace")
+        for label, text in texts.items():
+            for name in check_secrets(text, ctx.secrets):
+                errors.append(f"{label} contains secret {name!r}")
 
     return errors
 
@@ -462,8 +464,17 @@ def _check_task_limits(data: dict, ctx: ValidatorContext) -> list[str]:
     if not ctx.runs_jsonl.exists():
         return errors
 
-    lines = ctx.runs_jsonl.read_text().strip().splitlines()
-    run_count = len(lines)
+    rows: list[dict] = []
+    corrupt_lines: list[int] = []
+    for i, line in enumerate(ctx.runs_jsonl.read_text().strip().splitlines()):
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            corrupt_lines.append(i)
+    if corrupt_lines:
+        errors.append(f"runs.jsonl: corrupt JSON on lines {corrupt_lines}")
+    # B11: only experiment commands count against the task's run limit
+    run_count = sum(1 for r in rows if r.get("experiment") is True)
 
     max_runs = ctx.task_limits.get("max_runs")
     if max_runs is not None and run_count > max_runs:
@@ -471,21 +482,9 @@ def _check_task_limits(data: dict, ctx: ValidatorContext) -> list[str]:
             f"task_limits: {run_count} runs exceeds max_runs={max_runs}"
         )
 
-    # Check total wall time if present
     max_wall_s = ctx.task_limits.get("max_wall_seconds")
     if max_wall_s is not None:
-        total_wall = 0.0
-        corrupt_lines: list[int] = []
-        for i, line in enumerate(lines):
-            try:
-                entry = json.loads(line)
-                total_wall += entry.get("wall_seconds", 0)
-            except json.JSONDecodeError:
-                corrupt_lines.append(i)
-        if corrupt_lines:
-            errors.append(
-                f"runs.jsonl: corrupt JSON on lines {corrupt_lines}"
-            )
+        total_wall = sum(r.get("wall_seconds", 0) for r in rows)
         if total_wall > max_wall_s:
             errors.append(
                 f"task_limits: total wall time {total_wall:.1f}s "
@@ -527,8 +526,7 @@ def validate_artifact(
 
     # B5: move unknown keys to extra
     schema = _load_schema(artifact_type)
-    warnings = _move_extras(data, schema)
-    errors.extend(warnings)
+    _move_extras(data, schema)  # logs only; unknown keys never fail
 
     # JSON Schema validation
     try:
