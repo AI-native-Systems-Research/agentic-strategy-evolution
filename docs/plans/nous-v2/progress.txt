@@ -207,3 +207,44 @@ experiment_commands from CampaignConfig field.
 Runtime line count: 1,758 lines (target ~2,500)
 Tests after: 1692 passed, 0 failed
 
+## Iter-dir fix: runs/ prefix per spec 3.13 (ca0f096)
+
+SPEC.md line 271: "iter-N/... is short for <work_dir>/runs/iter-N/..."
+Added iter_dir() helper in loop.py. Updated hooks.py _iter_dir and
+phase messages. All tests updated to use runs/iter-N/ layout.
+
+## R4b: Robustness (repair loop, failure breaker, wait_for, preflight)
+
+Files created: orchestrator/v2/robustness.py (102 lines),
+orchestrator/v2/preflight.py (121 lines),
+tests/v2/test_repair_and_breaker.py, tests/v2/test_wait_for.py,
+tests/v2/test_preflight.py
+
+Files modified: orchestrator/v2/loop.py (added repair loop integration,
+breaker, async wait_for polling, preflight at campaign start)
+
+robustness.py: failure_fingerprint (normalizes numbers/paths),
+FailureBreaker (threshold=3, record/reset), write_halt,
+poll_wait_for (file exists or cmd:exit-0, configurable interval/timeout).
+
+preflight.py: run_preflight (async) checks validators on known-good
+and known-bad fixtures, runs Stop hook callback on fake input.
+
+loop.py integration: preflight before session.connect, repair loop
+(2 tries then partial) around EXECUTE validation, breaker tracks
+consecutive identical failures across iterations, wait_for polling
+runs in executor to avoid blocking async event loop.
+
+Tests before: 1692 passed
+Tests after: 1712 passed, 0 failed (20 new tests)
+
+Runtime line count: 2,086 lines (target ~2,500)
+
+Review decisions (code-reviewer + silent-failure-hunter):
+Accepted (3): poll_wait_for blocks event loop (fixed: run_in_executor),
+_poll_wait_for discards timeout (fixed: log warning), poll_wait_for
+swallows command errors (fixed: log warning).
+Skipped (2): EXECUTE breaker doesn't explicitly break (by design:
+check_stop reads halt.json at top priority), _read_json corruption
+yields empty dict (pre-existing pattern, not R4b).
+

@@ -5,6 +5,7 @@ Drives the BASELINE → DESIGN → EXECUTE → REPORT lifecycle in one session.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import subprocess
@@ -13,6 +14,8 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .hooks import HookState, build_hooks
+from .preflight import run_preflight
+from .robustness import FailureBreaker, poll_wait_for, write_halt
 from .session import Session
 from .stop_rule import (
     best_changed,
@@ -149,6 +152,13 @@ class Campaign:
             experiment_commands=self._config.experiment_commands,
         )
         hooks = build_hooks(hook_state)
+
+        preflight_errors = await run_preflight(hooks, work_dir=self._work_dir)
+        if preflight_errors:
+            raise ValueError(
+                "Preflight failed:\n" + "\n".join(f"  - {e}" for e in preflight_errors)
+            )
+
         session = Session(
             client_factory=self._client_factory,
             options={
@@ -166,6 +176,8 @@ class Campaign:
     async def _run_phases(
         self, session: Session, hook_state: HookState
     ) -> dict:
+        breaker = FailureBreaker()
+
         hook_state.phase = "BASELINE"
         hook_state.iteration = 0
         await self._baseline(session)
@@ -178,12 +190,27 @@ class Campaign:
 
             hook_state.phase = "DESIGN"
             hook_state.iteration = iteration
-            await self._design(session, iteration)
+            try:
+                await self._design(session, iteration)
+            except Exception as exc:
+                fp = breaker.record(type(exc).__name__, "DESIGN", str(exc))
+                if fp:
+                    write_halt(self._work_dir, fp, "DESIGN", str(exc))
+                    stop_reason = "halt"
+                    break
+                raise
             self._commit_phase(iteration, "DESIGN")
             locked_hash = self._lock_bundle(idir)
+
             hook_state.phase = "EXECUTE"
             await self._execute(session, iteration)
+            await self._poll_wait_for(idir)
             self._commit_phase(iteration, "EXECUTE")
+
+            status = await self._repair_phase(
+                session, hook_state, idir, "EXECUTE",
+                ["findings", "principle_updates"],
+            )
             prereg = self._check_bundle_hash(idir, locked_hash)
 
             findings = _read_json(idir / "findings.json") or {}
@@ -210,12 +237,17 @@ class Campaign:
                 "best_changed": bc,
                 "principles_changed": pc,
                 "prereg_violation": prereg,
-                "status": "ok",
+                "status": status,
                 "stop_reason": None,
             }
             self._ledger.append(entry)
             _write_json(self._work_dir / "ledger.json", self._ledger)
             self._prev_findings = findings
+
+            if status == "partial":
+                fp = breaker.record("ValidationError", "EXECUTE", "repair exhausted")
+                if fp:
+                    write_halt(self._work_dir, fp, "EXECUTE", "repair exhausted")
 
             stop_reason = check_stop(
                 iteration=iteration,
@@ -248,6 +280,68 @@ class Campaign:
         self._commit_phase(last_iter, "REPORT")
 
         return {"stop_reason": stop_reason, "iterations": last_iter}
+
+    async def _repair_phase(
+        self,
+        session: Session,
+        hook_state: HookState,
+        phase_dir: Path,
+        phase: str,
+        artifact_types: list[str],
+    ) -> str:
+        """Validate phase artifacts; send up to 2 repair messages if needed.
+
+        Returns "ok" or "partial".
+        """
+        for attempt in range(3):  # initial check + 2 repairs
+            errors = self._validate_phase_artifacts(phase_dir, artifact_types)
+            if not errors:
+                return "ok"
+            if attempt >= 2:
+                break
+            error_text = "\n".join(f"  - {e}" for e in errors)
+            logger.warning("Repair attempt %d for %s: %s", attempt + 1, phase, error_text)
+            await session.turn(
+                f"Repair {phase}: the following validation errors must be fixed:\n{error_text}"
+            )
+        logger.warning("Repair exhausted for %s, marking partial", phase)
+        return "partial"
+
+    def _validate_phase_artifacts(
+        self, phase_dir: Path, artifact_types: list[str]
+    ) -> list[str]:
+        """Run validators on phase artifacts, return error list."""
+        all_errors: list[str] = []
+        for artifact_type in artifact_types:
+            path = phase_dir / f"{artifact_type}.json"
+            if not path.exists():
+                all_errors.append(f"{artifact_type}: file not found")
+                continue
+            try:
+                data = json.loads(path.read_text())
+            except (json.JSONDecodeError, OSError) as exc:
+                all_errors.append(f"{artifact_type}: invalid JSON — {exc}")
+                continue
+            ctx = ValidatorContext(work_dir=self._work_dir, iter_dir=phase_dir)
+            errors = validate_artifact(artifact_type, data, ctx)
+            for e in errors:
+                all_errors.append(f"{artifact_type}: {e}")
+        return all_errors
+
+    async def _poll_wait_for(self, phase_dir: Path) -> None:
+        """Check plan.json for wait_for entries and poll them."""
+        plan = _read_json(phase_dir / "plan.json")
+        if not plan:
+            return
+        loop = asyncio.get_event_loop()
+        for run in plan.get("runs", []):
+            wf = run.get("wait_for")
+            if wf:
+                run_id = run.get("id", "?")
+                logger.info("Polling wait_for for run %s: %s", run_id, wf)
+                ok = await loop.run_in_executor(None, lambda w=wf: poll_wait_for(w))
+                if not ok:
+                    logger.warning("wait_for timed out for run %s: %s", run_id, wf)
 
     async def _baseline(self, session: Session) -> None:
         task_hint = ""
