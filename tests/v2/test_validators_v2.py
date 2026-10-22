@@ -470,13 +470,53 @@ class TestFindingsSemantics:
         errs = validate_artifact("findings", data, _ctx(tmp_path))
         assert not any("effect" in e and "noise_sd" in e for e in errs)
 
-    def test_no_effect_field_skips_magnitude_check(self, tmp_path):
+    def test_missing_effect_with_noise_sd_is_error(self, tmp_path):
         data = _valid_findings(tmp_path)
         data["hypotheses"][0]["noise_sd"] = 10.0
         if "effect" in data["hypotheses"][0]:
             del data["hypotheses"][0]["effect"]
         errs = validate_artifact("findings", data, _ctx(tmp_path))
-        assert not any("effect" in e and "noise_sd" in e for e in errs)
+        assert any("effect.value" in e for e in errs)
+
+    def test_baseline_noise_fallback(self, tmp_path):
+        baseline = {
+            "task_type": "optimize",
+            "command": "make bench",
+            "git_sha": "abc123",
+            "noise": {"seeds": [1, 2, 3], "values": [1.0, 1.1, 0.9], "sd": 0.05},
+            "observations": {"latency_ms": 100},
+        }
+        (tmp_path / "baseline.json").write_text(json.dumps(baseline))
+        data = _valid_findings(tmp_path)
+        h = data["hypotheses"][0]
+        del h["noise_sd"]
+        h["effect"] = {"value": 0.01}
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert any("2" in e and "noise" in e for e in errs)
+
+    def test_baseline_deterministic_noise_fallback(self, tmp_path):
+        baseline = {
+            "task_type": "optimize",
+            "command": "make bench",
+            "git_sha": "abc123",
+            "noise": {"deterministic": True},
+            "observations": {"latency_ms": 100},
+        }
+        (tmp_path / "baseline.json").write_text(json.dumps(baseline))
+        data = _valid_findings(tmp_path)
+        h = data["hypotheses"][0]
+        del h["noise_sd"]
+        h["effect"] = {"value": 0.0}
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert any("2" in e and "noise" in e for e in errs)
+
+    def test_no_baseline_no_noise_sd_no_unmeasured_is_error(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        h = data["hypotheses"][0]
+        del h["noise_sd"]
+        h["effect"] = {"value": 5.0}
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert any("noise_sd" in e or "noise_unmeasured" in e for e in errs)
 
 
 # ── Answer semantics ────────────────────────────────────────────────────

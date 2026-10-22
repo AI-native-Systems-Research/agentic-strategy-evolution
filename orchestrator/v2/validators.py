@@ -381,6 +381,23 @@ def _check_plan_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
     return errors
 
 
+def _get_baseline_noise_sd(ctx: ValidatorContext) -> float | None:
+    """Read baseline.noise.sd, returning 0 for deterministic noise."""
+    baseline_path = ctx.work_dir / "baseline.json"
+    if not baseline_path.exists():
+        return None
+    try:
+        baseline = json.loads(baseline_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+    noise = baseline.get("noise", {})
+    if noise.get("deterministic") is True:
+        return 0.0
+    if "sd" in noise:
+        return noise["sd"]
+    return None
+
+
 def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
     """Check findings-specific rules beyond JSON Schema."""
     errors: list[str] = []
@@ -401,16 +418,31 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
         if status in ("CONFIRMED", "REFUTED"):
             has_noise_sd = "noise_sd" in h
             has_unmeasured = h.get("noise_unmeasured") is True
-            if not has_noise_sd and not has_unmeasured:
-                errors.append(
-                    f"hypothesis {hid!r}: {status} requires either "
-                    "'noise_sd' or 'noise_unmeasured: true'"
-                )
-            elif has_noise_sd:
+
+            # Resolve noise: finding's own noise_sd, else baseline noise
+            noise_sd: float | None = None
+            if has_noise_sd:
                 noise_sd = h["noise_sd"]
+            elif not has_unmeasured:
+                baseline_noise = _get_baseline_noise_sd(ctx)
+                if baseline_noise is not None:
+                    noise_sd = baseline_noise
+                else:
+                    errors.append(
+                        f"hypothesis {hid!r}: {status} requires either "
+                        "'noise_sd', 'noise_unmeasured: true', or a "
+                        "baseline with measured noise"
+                    )
+
+            if noise_sd is not None:
                 effect = h.get("effect", {})
                 effect_value = effect.get("value") if isinstance(effect, dict) else None
-                if effect_value is not None and isinstance(noise_sd, (int, float)):
+                if effect_value is None:
+                    errors.append(
+                        f"hypothesis {hid!r}: {status} with noise_sd "
+                        "requires 'effect.value'"
+                    )
+                elif isinstance(noise_sd, (int, float)):
                     if abs(effect_value) <= 2 * noise_sd:
                         errors.append(
                             f"hypothesis {hid!r}: |effect| "
