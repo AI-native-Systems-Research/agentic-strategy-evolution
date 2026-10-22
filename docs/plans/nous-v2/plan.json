@@ -1,0 +1,305 @@
+{
+  "spec": "docs/plans/nous-v2/SPEC.md (GitHub issue #330)",
+  "branch": "nous-v2-wip",
+  "items": [
+    {
+      "id": "R1",
+      "title": "Session core: pin claude-agent-sdk exactly to the installed 0.2.172 (`==` in pyproject.toml, `uv lock` + `uv sync`) (first commit, suite green), orchestrator/v2/session.py with client_factory, ClaudeAgentOptions per 3.1, session_id persistence in state.json, transient error classes incl. ProcessError exit 143 (B9), max_buffer_size 32MB (B7), CLAUDE_CODE_MAX_OUTPUT_TOKENS env, tests/fakes/sdk_client.py FakeClient, conftest guard extended to ClaudeSDKClient.connect (3.11); set cli_path to the SDK-bundled CLI and record SDK + CLI versions in state.json; re-check the 3.1 API list on 0.2.172 and note it in progress.txt; first commit also force-adds docs/plans/nous-v2/",
+      "depends_on": [],
+      "tests": [
+        "tests/v2/test_session.py",
+        "tests/v2/test_fake_client.py",
+        "tests/test_no_live_llm_guard.py::test_sdk_client_connect_blocked"
+      ],
+      "acceptance": [
+        "uv.lock pins claude-agent-sdk 0.2.170 and full suite green before other changes",
+        "Session persists session_id after every turn",
+        "ProcessError exit 143 classified transient",
+        "options carry max_buffer_size, env output cap, in-process hooks, preset system prompt with append"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R2",
+      "title": "JSON schemas + validators for every artifact in 3.4 (baseline, problem, bundle, plan, findings, principle_updates, answer, ledger additions): extra-field move to `extra` (B5), evidence rules incl. JSONL/TSV (3.4), noise honesty rule with per-finding noise, paired-seed check, PARTIALLY_CONFIRMED with partial_note, claims_needed requirements, parameters{}/workload_changes[] lock checks, task_limits (B11), bundle hash lock, secret masking helper (3.14); per-task_type baseline.observation rules, the 3 noise shapes, >=2 families or single_family_reason, every claims_needed covered by a hypothesis, evidence file-format limit, REPORT rejects secret values in answer.json/report.md",
+      "depends_on": [
+        "R1"
+      ],
+      "tests": [
+        "tests/v2/test_schemas_v2.py",
+        "tests/v2/test_validators_v2.py",
+        "tests/v2/test_evidence_rules.py",
+        "tests/v2/test_secrets.py"
+      ],
+      "acceptance": [
+        "unknown top-level keys move to extra, never fail",
+        "missing required field returns a repair message listing every error",
+        "evidence value mismatch is reported with path/key/expected/actual",
+        "validators never discard valid content"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R3",
+      "title": "In-process hooks (3.3): PostToolUse + PostToolUseFailure recorder to runs.jsonl (secret-masked, output_bytes, background rows), experiment-command matching (3.9), Stop gate with consecutive-block counter reset by tool calls (allow at 6), PreCompact digest incl. active principles. No PreToolUse hook.; HookMatcher timeouts (Stop 120s, PreCompact 60s); digest is secret-masked",
+      "depends_on": [
+        "R1",
+        "R2"
+      ],
+      "tests": [
+        "tests/v2/test_hooks.py"
+      ],
+      "acceptance": [
+        "hook callbacks invoked by FakeClient write runs.jsonl rows",
+        "Stop hook blocks with rendered errors until files validate",
+        "no PreToolUse hook registered"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R4a",
+      "title": "v2 loop core (3.2): BASELINE phase, DESIGN/EXECUTE/REPORT as turns in one session, one campaign worktree committed each phase, principles in every DESIGN message, baseline refresh on git SHA change, DESIGN rejects bundle.json without valid baseline.json, bundle hash lock before EXECUTE, ledger fields, stop rule 3.6 (answered + declared requirements / stall 2 / max_iterations / STOP), deterministic gates (B8), no ignored validation (B6), human_gates optional, parse new campaign.yaml keys",
+      "depends_on": [
+        "R1",
+        "R2",
+        "R3"
+      ],
+      "tests": [
+        "tests/v2/test_loop.py",
+        "tests/v2/test_stop_rule.py"
+      ],
+      "acceptance": [
+        "full campaign driven by FakeClient produces every file in 3.13",
+        "stall default 2 counts principles_changed",
+        "bundle hash locked before EXECUTE message"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R4b",
+      "title": "v2 robustness (3.5, 3.2 step 4): repair loop (2 tries then partial, never drop), failure breaker (3 identical fingerprints -> halt.json -> REPORT), wait_for polling without model calls, preflight (B4)",
+      "depends_on": [
+        "R4a"
+      ],
+      "tests": [
+        "tests/v2/test_repair_and_breaker.py",
+        "tests/v2/test_wait_for.py",
+        "tests/v2/test_preflight.py"
+      ],
+      "acceptance": [
+        "schema failure triggers repair, never drops results",
+        "breaker writes halt.json and still reaches REPORT",
+        "pending wait_for is not a validation failure",
+        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch; valid findings become new items"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R4c",
+      "title": "Human smoke checkpoint 1 (7.5 touchpoint 3): needs docs/plans/nous-v2/smoke/1.json written by the human from ~/nous_v2_smoke/smoke.sh; if missing, write BLOCKED.md and stop",
+      "depends_on": [
+        "R4b"
+      ],
+      "tests": [],
+      "acceptance": [
+        "smoke/1.json exists with exit_code 0, or its failures turned into new plan items"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R5",
+      "title": "Cost meter (3.10, B10): port transcript meter from aiopslab@09dcb1c experiments/frontiercs/gen/cost_meter.py into orchestrator/v2/cost.py; one count per message id, subagents included, price table in defaults.yaml; ledger records cost_meter_usd and cost_sdk_usd plus tokens per phase; reporting only",
+      "depends_on": [
+        "R1"
+      ],
+      "tests": [
+        "tests/v2/test_cost.py"
+      ],
+      "acceptance": [
+        "fixture transcript reproduces a known total",
+        "duplicate message ids counted once",
+        "no code path reads cost to make a decision"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R6",
+      "title": "Effort ladder and output cut-offs (3.10, B12): detect stop_reason max_tokens, interrupt, reconnect with resume and one level lower, low only after 2 consecutive cuts, level resets at each new phase; recorded-transcript fixtures",
+      "depends_on": [
+        "R1",
+        "R4a"
+      ],
+      "tests": [
+        "tests/v2/test_effort.py"
+      ],
+      "acceptance": [
+        "cut reply lowers effort for the rest of the phase only",
+        "state.json records cut_offs"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R7",
+      "title": "Resume (3.7): nous resume by session_id with phase/hooks/effort re-applied, fallback fresh session from ledger+digest, session_scope iteration via the fallback path, --note, persisted cost/time totals, STOP sentinel, process-group spawn and killpg cleanup; context-full fallback (3.10)",
+      "depends_on": [
+        "R4a"
+      ],
+      "tests": [
+        "tests/v2/test_resume.py"
+      ],
+      "acceptance": [
+        "resume continues at saved phase",
+        "fallback path primes from digest",
+        "--note text appears in next phase message and ledger"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R8",
+      "title": "Light method prompt (<=6144 bytes, appended to Claude Code preset) and task-type checklists in prompts/v2/checklists/ (debug, verify, optimize, policy, explain; other = core only), phase messages (3.12)",
+      "depends_on": [
+        "R2"
+      ],
+      "tests": [
+        "tests/v2/test_method_prompt.py"
+      ],
+      "acceptance": [
+        "prompt size <= 6144 bytes",
+        "required field names present",
+        "no required arm menu or complexity-tier prose"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R9",
+      "title": "Final answer check from the record (3.8): answer.json validated, evidence checked, repro_recorded from runs.jsonl and evidence mtimes; optional rerun_repro; claims_matched_fraction; findings resting on unmeasured noise marked lower confidence in answer.json",
+      "depends_on": [
+        "R4a"
+      ],
+      "tests": [
+        "tests/v2/test_final_check.py"
+      ],
+      "acceptance": [
+        "repro not re-run by default",
+        "repro_recorded false when command missing from runs.jsonl",
+        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R10",
+      "title": "Human smoke checkpoint 2 (7.4): needs docs/plans/nous-v2/smoke/2.json from ~/nous_v2_smoke/smoke.sh; if missing, write BLOCKED.md saying what to run and stop",
+      "depends_on": [
+        "R4c",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9"
+      ],
+      "tests": [],
+      "acceptance": [
+        "smoke JSON with exit 0 present in docs/plans/nous-v2/smoke/",
+        "failures turned into new plan items"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R11a",
+      "title": "CLI cutover per section 4: run/resume call v2; --agent warns and is ignored; new and legacy campaign.yaml keys (legacy warn+ignore; examples/ still load); other commands pointed at v2 or deprecated with warning",
+      "depends_on": [
+        "R10"
+      ],
+      "tests": [
+        "tests/v2/test_cli_v2.py"
+      ],
+      "acceptance": [
+        "every file in examples/ loads with warnings only",
+        "`--agent` warns and is ignored",
+        "legacy campaign.yaml keys warn and are ignored"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R11b",
+      "title": "Delete old planner/executor orchestration (iteration.py/campaign.py loop) and inline/cli/llm dispatch code with their tests",
+      "depends_on": [
+        "R11a"
+      ],
+      "tests": [],
+      "acceptance": [
+        "deleted tests only for deleted modules, listed in progress.txt",
+        "pytest -q green",
+        "grep: no imports of the old iteration/campaign loop or cli/inline/llm dispatch modules remain"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R11c",
+      "title": "Delete shell hooks (bin/nous-*), settings-template hook wiring, gate-summary LLM calls",
+      "depends_on": [
+        "R11a"
+      ],
+      "tests": [],
+      "acceptance": [
+        "no .claude/settings.json hook wiring written",
+        "pytest -q green",
+        "grep: no bin/nous-execute-stop or bin/nous-plan-enforcer references remain"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R11d",
+      "title": "Delete critic and complexity_tier readers; migrate remaining bundle.yaml/experiment_plan.yaml readers, templates and docs to JSON",
+      "depends_on": [
+        "R11a"
+      ],
+      "tests": [],
+      "acceptance": [
+        "no remaining reader of bundle.yaml or experiment_plan.yaml",
+        "pytest -q green",
+        "grep: no bundle.yaml / experiment_plan.yaml readers remain",
+        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R12",
+      "title": "Docs: README.md, docs/architecture.md, docs/data-model.md, CLAUDE.md, CLI help updated for v2",
+      "depends_on": [
+        "R11a",
+        "R11b",
+        "R11c",
+        "R11d"
+      ],
+      "tests": [],
+      "acceptance": [
+        "docs describe single-session v2, hooks, artifacts, resume",
+        "grep: no `bundle.yaml` or `--agent inline` left in README.md and docs/"
+      ],
+      "passes": false
+    },
+    {
+      "id": "R13",
+      "title": "Merge-bar evaluation (section 10): needs ~/nous_v2_eval/eval.sh set up by the human (results only); if missing, write BLOCKED.md and stop. Up to 3 improvement rounds of general fixes, up to 2 extra runs on a borderline task, then the held-out p225 run and docs/plans/nous-v2/EVAL_REPORT.md",
+      "depends_on": [
+        "R12"
+      ],
+      "tests": [],
+      "acceptance": [
+        "bar passes, or EVAL_REPORT.md written after round 3",
+        "only general fixes, each justified in progress.txt"
+      ],
+      "passes": false
+    }
+  ],
+  "rules": [
+    "Run Python as .venv/bin/python (3.11); tests with `.venv/bin/python -m pytest -q`.",
+    "v2 tests must not need Go, BLIS or network: use fixture files and echo/python -c commands; test 3.9 regexes on plain strings. Only the human-run smoke and eval scripts use real BLIS.",
+    "docs/plans/ is gitignored: commit docs/plans/nous-v2/* with `git add -f`.",
+    "Push only to origin nous-v2-wip. Open/update draft PRs from nous-v2-wip into nous-v2 (the branch exists). Never push to main or nous-v2.",
+    "Per item: tests first (expect fail), implement, tests pass, /pr-review-toolkit:review-pr on the item diff, fix only valid findings (record each decision in progress.txt), pytest -q green, commit, push.",
+    "Human checkpoints (R4c, R10, R13): if the required human result file is missing, write BLOCKED.md saying exactly what the human must run, commit+push, and stop. Never poll or loop. The human deletes BLOCKED.md to resume.",
+    "The 15-minute progress reporter is run by the human outside the session; not a plan item."
+  ]
+}
