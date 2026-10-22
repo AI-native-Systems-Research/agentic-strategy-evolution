@@ -312,6 +312,7 @@
     }
   ],
   "rules": [
+    "MVP first (user's priority): Nous v2 = (1) light scientific-method core, (2) hooks + validators for traceability and repro, (3) one Claude session. For every item choose the simplest version that meets acceptance; no extra options, layers, retries or abstractions; prefer deleting code; if a spec detail is heavy, implement the minimal form and log it in progress.txt as a later candidate.",
     "Run Python as .venv/bin/python (3.11); tests with `.venv/bin/python -m pytest -q`.",
     "v2 tests must not need Go, BLIS or network: use fixture files and echo/python -c commands; test 3.9 regexes on plain strings. Only the human-run smoke and eval scripts use real BLIS.",
     "docs/plans/ is gitignored: commit docs/plans/nous-v2/* with `git add -f`.",
