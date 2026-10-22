@@ -78,6 +78,20 @@ def block_live_llm_calls(monkeypatch):
     except ImportError:
         pass
 
+    # Block ClaudeSDKClient.connect — tests must use FakeClient instead.
+    try:
+        from claude_agent_sdk import ClaudeSDKClient
+
+        def _blocked_connect(self, *args, **kwargs):
+            raise LiveLLMCallBlocked(
+                "Test invoked ClaudeSDKClient.connect — use "
+                "tests.fakes.sdk_client.FakeClient instead. See CLAUDE.md."
+            )
+
+        monkeypatch.setattr(ClaudeSDKClient, "connect", _blocked_connect)
+    except ImportError:
+        pass
+
     # Block live PyMC NUTS sampling (issue #164). Importing pymc is
     # allowed; running pymc.sample() is not — it pulls in MCMC chains
     # that take seconds-to-minutes per call and inject randomness into
