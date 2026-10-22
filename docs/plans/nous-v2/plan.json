@@ -17,7 +17,7 @@
         "ProcessError exit 143 classified transient",
         "options carry max_buffer_size, env output cap, in-process hooks, preset system prompt with append"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R2",

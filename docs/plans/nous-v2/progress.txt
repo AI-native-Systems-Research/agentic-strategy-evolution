@@ -1,2 +1,36 @@
 # Nous v2 build progress (append-only)
 
+## R1: Session core (354b4bf)
+
+Files created: orchestrator/v2/__init__.py, orchestrator/v2/errors.py,
+orchestrator/v2/session.py, tests/fakes/__init__.py, tests/fakes/sdk_client.py,
+tests/v2/__init__.py, tests/v2/test_session.py, tests/v2/test_fake_client.py
+
+Files modified: pyproject.toml (pinned SDK ==0.2.172, added pytest-asyncio,
+asyncio_mode=auto), tests/conftest.py (ClaudeSDKClient.connect guard),
+tests/test_no_live_llm_guard.py (added connect guard test class), uv.lock
+
+Tests before: 1352 passed (baseline on main)
+Tests after: 1393 passed, 0 failed
+
+SDK API check on 0.2.172 (spec said 0.2.163):
+- All APIs in spec 3.1 confirmed: hooks, HookMatcher.timeout, PostToolUseFailure
+  (as PostToolUseFailureHookInput), env, max_buffer_size, resume, effort,
+  SystemPromptPreset with append/snapshot, AssistantMessage.stop_reason
+- SystemPromptPreset is in claude_agent_sdk.types (not top-level module)
+- hooks on ClaudeAgentOptions takes dict[event_name, list[HookMatcher]] not flat list
+- connect() is sync, receive_response() is async
+- CLI bundled: 2.1.308 (spec said 2.1.306)
+
+Review decisions (pr-review-toolkit:review-pr):
+- code-reviewer: Fixed _make_session helper key leak (pop before spread).
+  Removed dead original_connect capture in conftest. Skipped ProcessError
+  hierarchy concern (all ProcessError is transient by design; R4 will use
+  is_transient for non-subclass errors).
+- silent-failure-hunter: Fixed FakeClient.receive_response to raise on
+  script exhaustion instead of returning None. Skipped state.json
+  corruption logging (defensive behavior is intentional; no logger yet).
+  Skipped persist failure in turn() (correct per spec — disk-full is fatal).
+  Skipped 5xx narrowing (pedantic, 501/505 are extremely rare in LLM APIs).
+- Added is_transient support for stdlib TimeoutError and OSError("timed out").
+
