@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nous v2 findings artifact",
+  "type": "object",
+  "required": ["hypotheses"],
+  "properties": {
+    "hypotheses": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "status", "error_type", "evidence", "question_answered", "reason"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": {
+            "type": "string",
+            "enum": ["CONFIRMED", "PARTIALLY_CONFIRMED", "REFUTED", "INCONCLUSIVE"]
+          },
+          "partial_note": { "type": "string" },
+          "error_type": {
+            "type": "string",
+            "enum": ["direction", "magnitude", "regime", "shape", "none"]
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["path", "key", "value"],
+              "properties": {
+                "path": { "type": "string" },
+                "key": { "type": "string" },
+                "value": {}
+              },
+              "additionalProperties": false
+            }
+          },
+          "noise_sd": { "type": "number" },
+          "noise_condition": { "type": "string" },
+          "noise_unmeasured": { "const": true },
+          "noise_reason": { "type": "string" },
+          "question_answered": { "type": "boolean" },
+          "reason": { "type": "string" },
+          "claims": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["claim_id", "metric", "condition", "value"],
+              "properties": {
+                "claim_id": { "type": "string" },
+                "metric": { "type": "string" },
+                "condition": { "type": "string" },
+                "value": {}
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "best": {
+      "type": "object",
+      "required": ["metric", "value"],
+      "properties": {
+        "metric": { "type": "string" },
+        "value": {}
+      },
+      "additionalProperties": false
+    },
+    "extra": { "type": "object" }
+  },
+  "additionalProperties": false
+}

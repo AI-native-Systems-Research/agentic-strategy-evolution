@@ -1,0 +1,37 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nous v2 answer artifact",
+  "type": "object",
+  "required": ["answer", "deliverable", "repro", "claims"],
+  "properties": {
+    "answer": { "type": "string" },
+    "deliverable": { "type": "string" },
+    "repro": { "type": "string" },
+    "claims": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "metric", "value", "condition", "evidence"],
+        "properties": {
+          "id": { "type": "string" },
+          "metric": { "type": "string" },
+          "value": {},
+          "condition": { "type": "string" },
+          "evidence": {
+            "type": "object",
+            "required": ["path", "key", "value"],
+            "properties": {
+              "path": { "type": "string" },
+              "key": { "type": "string" },
+              "value": {}
+            },
+            "additionalProperties": false
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "extra": { "type": "object" }
+  },
+  "additionalProperties": false
+}

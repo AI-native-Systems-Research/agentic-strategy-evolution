@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nous v2 baseline artifact",
+  "type": "object",
+  "required": ["task_type", "command", "git_sha", "observation", "metrics_path", "noise"],
+  "properties": {
+    "task_type": {
+      "type": "string",
+      "enum": ["debug", "verify", "optimize", "policy", "explain", "other"]
+    },
+    "task_type_reason": { "type": "string" },
+    "command": { "type": "string" },
+    "git_sha": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
+    "observation": { "type": "object" },
+    "metrics_path": { "type": "string" },
+    "noise": { "type": "object" },
+    "extra": { "type": "object" }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "task_type": { "const": "debug" } } },
+      "then": {
+        "properties": {
+          "observation": {
+            "type": "object",
+            "required": ["reproduced", "symptom", "expected", "actual"],
+            "properties": {
+              "reproduced": { "const": true },
+              "symptom": { "type": "string" },
+              "expected": {},
+              "actual": {}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "task_type": { "const": "verify" } } },
+      "then": {
+        "properties": {
+          "observation": {
+            "type": "object",
+            "required": ["points"],
+            "properties": {
+              "points": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": ["condition", "predicted", "measured"],
+                  "properties": {
+                    "condition": { "type": "string" },
+                    "predicted": {},
+                    "measured": {}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "task_type": { "const": "optimize" } } },
+      "then": {
+        "properties": {
+          "observation": {
+            "type": "object",
+            "required": ["score"],
+            "properties": {
+              "score": { "type": "number", "exclusiveMinimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "task_type": { "const": "policy" } } },
+      "then": {
+        "properties": {
+          "observation": {
+            "type": "object",
+            "required": ["metrics"],
+            "properties": {
+              "metrics": { "type": "object", "minProperties": 1 }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "task_type": { "const": "explain" } } },
+      "then": {
+        "properties": {
+          "observation": {
+            "type": "object",
+            "required": ["symptom", "control"],
+            "properties": {
+              "symptom": { "type": "string" },
+              "control": {}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "task_type": { "const": "other" } } },
+      "then": {
+        "properties": {
+          "observation": {
+            "type": "object",
+            "required": ["metrics"],
+            "properties": {
+              "metrics": { "type": "object", "minProperties": 1 }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "noise_measured": {
+      "type": "object",
+      "required": ["seeds", "values", "sd"],
+      "properties": {
+        "seeds": { "type": "array", "items": { "type": "integer" } },
+        "values": { "type": "array", "items": { "type": "number" } },
+        "sd": { "type": "number" }
+      },
+      "additionalProperties": false
+    },
+    "noise_deterministic": {
+      "type": "object",
+      "required": ["deterministic"],
+      "properties": {
+        "deterministic": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "noise_unmeasured": {
+      "type": "object",
+      "required": ["unmeasured", "reason"],
+      "properties": {
+        "unmeasured": { "const": true },
+        "reason": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

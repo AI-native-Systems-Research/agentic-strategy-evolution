@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nous v2 ledger entry additions",
+  "description": "Additional fields that v2 adds to each ledger iteration entry",
+  "type": "object",
+  "properties": {
+    "bundle_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "cost_meter_usd": { "type": "number", "minimum": 0 },
+    "cost_sdk_usd": { "type": "number", "minimum": 0 },
+    "input_tokens": { "type": "integer", "minimum": 0 },
+    "output_tokens": { "type": "integer", "minimum": 0 },
+    "cache_read_tokens": { "type": "integer", "minimum": 0 },
+    "cache_write_tokens": { "type": "integer", "minimum": 0 },
+    "claims_changed": { "type": "boolean" },
+    "best_changed": { "type": "boolean" },
+    "principles_changed": { "type": "boolean" },
+    "repro_recorded": { "type": "boolean" },
+    "claims_matched_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
+    "note": { "type": "string" },
+    "stop_reason": { "type": "string" },
+    "status": {
+      "type": "string",
+      "enum": ["ok", "partial", "failed", "skipped"]
+    },
+    "prereg_violation": { "type": "string" },
+    "extra": { "type": "object" }
+  },
+  "additionalProperties": true
+}

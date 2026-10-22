@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nous v2 bundle artifact",
+  "type": "object",
+  "required": ["hypotheses"],
+  "properties": {
+    "hypotheses": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "role", "family", "mechanism", "prediction", "falsified_if", "claim_ids"],
+        "properties": {
+          "id": { "type": "string" },
+          "role": { "type": "string" },
+          "family": { "type": "string" },
+          "mechanism": { "type": "string" },
+          "prediction": {
+            "type": "object",
+            "required": ["metric", "direction"],
+            "properties": {
+              "metric": { "type": "string" },
+              "direction": { "type": "string", "enum": ["increase", "decrease", "equal", "change"] },
+              "magnitude_or_threshold": {}
+            },
+            "additionalProperties": false
+          },
+          "control": { "type": "string" },
+          "no_control_reason": { "type": "string" },
+          "falsified_if": { "type": "string" },
+          "claim_ids": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "single_family_reason": { "type": "string" },
+    "extra": { "type": "object" }
+  },
+  "additionalProperties": false
+}

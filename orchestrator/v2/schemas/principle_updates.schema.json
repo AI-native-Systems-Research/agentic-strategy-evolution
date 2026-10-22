@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nous v2 principle_updates artifact",
+  "type": "object",
+  "required": ["updates"],
+  "properties": {
+    "updates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "text", "finding_ref", "action"],
+        "properties": {
+          "id": { "type": "string" },
+          "text": { "type": "string" },
+          "finding_ref": { "type": "string" },
+          "action": {
+            "type": "string",
+            "enum": ["add", "revise", "remove"]
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "extra": { "type": "object" }
+  },
+  "additionalProperties": false
+}
