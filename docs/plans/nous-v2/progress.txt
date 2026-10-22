@@ -87,3 +87,38 @@ async def test methods (pytest-asyncio auto mode). Added signature tests
 verifying FakeClient methods are coroutines/async generators. Corrected
 progress.txt note about SDK API signatures.
 
+## R2 fix: baseline noise fallback (c780cea)
+
+Added _get_baseline_noise_sd() helper that reads baseline.json and returns
+noise sd (0.0 for deterministic, sd for measured, None otherwise).
+CONFIRMED/REFUTED hypotheses without noise_sd now fall back to baseline
+noise before requiring noise_unmeasured. Missing effect.value with noise_sd
+present is now an error, not a silent pass. Four new tests.
+
+## R3: In-process hooks (dd7d0e9)
+
+Files created: orchestrator/v2/hooks.py, tests/v2/test_hooks.py
+
+Implements spec 3.3: PostToolUse (records Bash commands to runs.jsonl),
+PostToolUseFailure (records failed commands with exit code parsing),
+Stop (validates phase artifacts, blocks up to 6 times),
+PreCompact (writes state/digest.json).
+
+Tests after: 1633 passed, 0 failed
+
+Review decisions (pr-review-toolkit:review-pr):
+- code-reviewer: Fixed output_bytes in failure hook to use .encode("utf-8")
+  for byte count (was counting chars). Injected deterministic now= in test
+  helper per tests/CLAUDE.md. Skipped _PHASE_ARTIFACTS plan in EXECUTE
+  (plan belongs to DESIGN phase, mapping is correct per spec).
+- silent-failure-hunter: Fixed output_bytes char/byte mismatch (same as
+  code-reviewer). Widened stop hook exception catch to include OSError and
+  UnicodeDecodeError (was only json.JSONDecodeError). Skipped runs.jsonl
+  write propagation (logging was the prior review's fix; propagating would
+  crash hook framework). Skipped digest write propagation (same reasoning).
+  Skipped eager regex validation (patterns from campaign config, crash at
+  first use is acceptable). Skipped error field in failure rows (exit_code
+  sufficient; error text may contain secrets). Skipped corrupt-JSON markers
+  in digest (best-effort, warning is fine). Skipped write-failure test
+  (low priority).
+

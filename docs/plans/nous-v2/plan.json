@@ -54,7 +54,7 @@
         "Stop hook blocks with rendered errors until files validate",
         "no PreToolUse hook registered"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R4a",
