@@ -7,15 +7,16 @@ Usage::
         ResultMessage(session_id="ses-1", ...),
     ]
     client = FakeClient(script=script)
-    client.connect()
-    client.query("do something")
-    result = await client.receive_response()  # returns ResultMessage
+    await client.connect()
+    await client.query("do something")
+    async for msg in client.receive_response():
+        result = msg
 """
 
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -99,24 +100,23 @@ class FakeClient:
 
     # ── ClaudeSDKClient interface ─────────────────────────────────────
 
-    def connect(self) -> None:
+    async def connect(self) -> None:
         self._connected = True
         for path, content in self._files_to_write.items():
             p = Path(path)
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
 
-    def query(self, prompt: str) -> None:
+    async def query(self, prompt: str) -> None:
         if not self._connected:
             raise RuntimeError("FakeClient.connect() not called")
         self._queries.append(prompt)
 
-    async def receive_response(self) -> Any:
-        """Walk the script, invoking hooks for tool uses, return the final message."""
+    async def receive_response(self) -> AsyncIterator[Any]:
+        """Async generator that yields each scripted message in order."""
         if self._response_index >= len(self._script):
             raise RuntimeError("FakeClient script exhausted — add more messages to the script")
 
-        result = None
         while self._response_index < len(self._script):
             msg = self._script[self._response_index]
             self._response_index += 1
@@ -126,14 +126,12 @@ class FakeClient:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         await self._invoke_hooks(msg, block)
 
-            result = msg
+            yield msg
 
-        return result
-
-    def interrupt(self) -> None:
+    async def interrupt(self) -> None:
         pass
 
-    def disconnect(self) -> None:
+    async def disconnect(self) -> None:
         self._connected = False
 
     # ── Hook invocation ───────────────────────────────────────────────

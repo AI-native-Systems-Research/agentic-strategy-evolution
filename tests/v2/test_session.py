@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import anyio
 import pytest
 
 from orchestrator.v2.session import (
@@ -19,7 +18,7 @@ from orchestrator.v2.session import (
 from tests.fakes.sdk_client import FakeClient, FakeResultMessage
 
 
-def _make_session(
+async def _make_session(
     tmp_path: Path, **overrides: object
 ) -> tuple[Session, FakeClient]:
     """Helper: build a Session backed by FakeClient."""
@@ -44,8 +43,7 @@ def _make_session(
         return client
 
     session = Session(client_factory=factory, options=opts)
-    # Connect so we can inspect the built options
-    session.connect()
+    await session.connect()
     client = captured_client[0]
     return session, client
 
@@ -54,166 +52,163 @@ def _make_session(
 
 
 class TestBuildAgentOptions:
-    def test_default_model(self, tmp_path):
-        session, client = _make_session(tmp_path)
+    async def test_default_model(self, tmp_path):
+        session, client = await _make_session(tmp_path)
         opts = client._agent_options
         assert opts.model == DEFAULT_MODEL
-        session.disconnect()
+        await session.disconnect()
 
-    def test_custom_model(self, tmp_path):
-        session, client = _make_session(tmp_path, model="claude-sonnet-4-20250514")
+    async def test_custom_model(self, tmp_path):
+        session, client = await _make_session(tmp_path, model="claude-sonnet-4-20250514")
         opts = client._agent_options
         assert opts.model == "claude-sonnet-4-20250514"
-        session.disconnect()
+        await session.disconnect()
 
-    def test_system_prompt_preset(self, tmp_path):
-        session, client = _make_session(tmp_path)
+    async def test_system_prompt_preset(self, tmp_path):
+        session, client = await _make_session(tmp_path)
         sp = client._agent_options.system_prompt
         assert sp["type"] == "preset"
         assert sp["preset"] == "claude_code"
         assert sp["snapshot"] is True
         assert "Test methodology text." in sp["append"]
-        session.disconnect()
+        await session.disconnect()
 
-    def test_max_buffer_size(self, tmp_path):
-        session, client = _make_session(tmp_path)
+    async def test_max_buffer_size(self, tmp_path):
+        session, client = await _make_session(tmp_path)
         assert client._agent_options.max_buffer_size == DEFAULT_MAX_BUFFER_SIZE
         assert DEFAULT_MAX_BUFFER_SIZE == 32 * 1024 * 1024
-        session.disconnect()
+        await session.disconnect()
 
-    def test_env_includes_max_output_tokens(self, tmp_path):
-        session, client = _make_session(tmp_path)
+    async def test_env_includes_max_output_tokens(self, tmp_path):
+        session, client = await _make_session(tmp_path)
         env = client._agent_options.env
         assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
-        session.disconnect()
+        await session.disconnect()
 
-    def test_env_includes_work_dir(self, tmp_path):
-        session, client = _make_session(tmp_path)
+    async def test_env_includes_work_dir(self, tmp_path):
+        session, client = await _make_session(tmp_path)
         env = client._agent_options.env
         assert env["NOUS_WORK_DIR"] == str(tmp_path / "campaign")
-        session.disconnect()
+        await session.disconnect()
 
-    def test_env_max_output_for_sonnet(self, tmp_path):
-        session, client = _make_session(tmp_path, model="claude-sonnet-4-20250514")
+    async def test_env_max_output_for_sonnet(self, tmp_path):
+        session, client = await _make_session(tmp_path, model="claude-sonnet-4-20250514")
         env = client._agent_options.env
         assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "64000"
-        session.disconnect()
+        await session.disconnect()
 
-    def test_env_max_output_unknown_model_defaults(self, tmp_path):
-        session, client = _make_session(tmp_path, model="claude-future-99")
+    async def test_env_max_output_unknown_model_defaults(self, tmp_path):
+        session, client = await _make_session(tmp_path, model="claude-future-99")
         env = client._agent_options.env
         assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "128000"
-        session.disconnect()
+        await session.disconnect()
 
-    def test_effort_omitted_by_default(self, tmp_path):
-        session, client = _make_session(tmp_path)
+    async def test_effort_omitted_by_default(self, tmp_path):
+        session, client = await _make_session(tmp_path)
         assert client._agent_options.effort is None
-        session.disconnect()
+        await session.disconnect()
 
-    def test_effort_set_when_configured(self, tmp_path):
-        session, client = _make_session(tmp_path, effort="high")
+    async def test_effort_set_when_configured(self, tmp_path):
+        session, client = await _make_session(tmp_path, effort="high")
         assert client._agent_options.effort == "high"
-        session.disconnect()
+        await session.disconnect()
 
-    def test_cwd_set(self, tmp_path):
-        session, client = _make_session(tmp_path)
+    async def test_cwd_set(self, tmp_path):
+        session, client = await _make_session(tmp_path)
         assert client._agent_options.cwd == str(tmp_path / "worktree")
-        session.disconnect()
+        await session.disconnect()
 
-    def test_resume_set_when_session_id_provided(self, tmp_path):
-        session, client = _make_session(tmp_path, resume="ses-old-123")
+    async def test_resume_set_when_session_id_provided(self, tmp_path):
+        session, client = await _make_session(tmp_path, resume="ses-old-123")
         assert client._agent_options.resume == "ses-old-123"
-        session.disconnect()
+        await session.disconnect()
 
-    def test_resume_omitted_by_default(self, tmp_path):
-        session, client = _make_session(tmp_path)
+    async def test_resume_omitted_by_default(self, tmp_path):
+        session, client = await _make_session(tmp_path)
         assert client._agent_options.resume is None
-        session.disconnect()
+        await session.disconnect()
 
-    def test_hooks_passed_through(self, tmp_path):
+    async def test_hooks_passed_through(self, tmp_path):
         hooks = {"PostToolUse": [{"matcher": "Bash", "hooks": [], "timeout": 30.0}]}
-        session, client = _make_session(tmp_path, hooks=hooks)
+        session, client = await _make_session(tmp_path, hooks=hooks)
         assert client._agent_options.hooks == hooks
-        session.disconnect()
+        await session.disconnect()
 
-    def test_extra_env_merged(self, tmp_path):
-        session, client = _make_session(tmp_path, env={"MY_VAR": "hello"})
+    async def test_extra_env_merged(self, tmp_path):
+        session, client = await _make_session(tmp_path, env={"MY_VAR": "hello"})
         env = client._agent_options.env
         assert env["MY_VAR"] == "hello"
-        # defaults still present
         assert "CLAUDE_CODE_MAX_OUTPUT_TOKENS" in env
-        session.disconnect()
+        await session.disconnect()
 
-    def test_extra_env_overrides_defaults(self, tmp_path):
-        session, client = _make_session(
+    async def test_extra_env_overrides_defaults(self, tmp_path):
+        session, client = await _make_session(
             tmp_path, env={"CLAUDE_CODE_MAX_OUTPUT_TOKENS": "999"}
         )
         env = client._agent_options.env
         assert env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] == "999"
-        session.disconnect()
+        await session.disconnect()
 
 
 # ── Session lifecycle & state persistence ─────────────────────────────
 
 
 class TestSessionLifecycle:
-    def test_turn_persists_session_id(self, tmp_path):
-        session, _client = _make_session(tmp_path)
-        anyio.run(session.turn, "hello")
+    async def test_turn_persists_session_id(self, tmp_path):
+        session, _client = await _make_session(tmp_path)
+        await session.turn("hello")
 
         state_path = tmp_path / "campaign" / "state.json"
         assert state_path.exists()
         state = json.loads(state_path.read_text())
         assert state["session_id"] == "ses-abc-123"
-        session.disconnect()
+        await session.disconnect()
 
-    def test_state_includes_version_stamps(self, tmp_path):
-        session, _client = _make_session(tmp_path)
-        anyio.run(session.turn, "hello")
+    async def test_state_includes_version_stamps(self, tmp_path):
+        session, _client = await _make_session(tmp_path)
+        await session.turn("hello")
 
         state = json.loads((tmp_path / "campaign" / "state.json").read_text())
         assert state["sdk_version"] == SDK_VERSION
         assert state["cli_version"] == CLI_VERSION
-        session.disconnect()
+        await session.disconnect()
 
-    def test_state_preserves_existing_fields(self, tmp_path):
-        # Pre-populate state.json with extra fields
+    async def test_state_preserves_existing_fields(self, tmp_path):
         campaign_dir = tmp_path / "campaign"
         campaign_dir.mkdir(parents=True)
         (campaign_dir / "state.json").write_text(
             json.dumps({"repo_path": "/some/repo", "run_id": "run-42"})
         )
 
-        session, _client = _make_session(tmp_path)
-        anyio.run(session.turn, "hello")
+        session, _client = await _make_session(tmp_path)
+        await session.turn("hello")
 
         state = json.loads((campaign_dir / "state.json").read_text())
         assert state["repo_path"] == "/some/repo"
         assert state["run_id"] == "run-42"
         assert state["session_id"] == "ses-abc-123"
-        session.disconnect()
+        await session.disconnect()
 
-    def test_session_id_property(self, tmp_path):
-        session, _client = _make_session(tmp_path)
-        assert session.session_id is None  # no turn yet
-        anyio.run(session.turn, "hello")
+    async def test_session_id_property(self, tmp_path):
+        session, _client = await _make_session(tmp_path)
+        assert session.session_id is None
+        await session.turn("hello")
         assert session.session_id == "ses-abc-123"
-        session.disconnect()
+        await session.disconnect()
 
-    def test_turn_without_connect_raises(self, tmp_path):
+    async def test_turn_without_connect_raises(self, tmp_path):
         opts = {"work_dir": str(tmp_path), "method_text": "x"}
         session = Session(client_factory=FakeClient, options=opts)
         with pytest.raises(RuntimeError, match="connect"):
-            anyio.run(session.turn, "hello")
+            await session.turn("hello")
 
-    def test_disconnect(self, tmp_path):
-        session, client = _make_session(tmp_path)
+    async def test_disconnect(self, tmp_path):
+        session, client = await _make_session(tmp_path)
         assert client.connected
-        session.disconnect()
+        await session.disconnect()
         assert not client.connected
 
-    def test_atomic_write_creates_parent_dirs(self, tmp_path):
-        # work_dir doesn't exist yet
+    async def test_atomic_write_creates_parent_dirs(self, tmp_path):
         opts = {
             "work_dir": str(tmp_path / "deep" / "nested" / "campaign"),
             "method_text": "x",
@@ -224,13 +219,13 @@ class TestSessionLifecycle:
             return FakeClient(script=[result_msg])
 
         session = Session(client_factory=factory, options=opts)
-        session.connect()
-        anyio.run(session.turn, "hello")
+        await session.connect()
+        await session.turn("hello")
 
         state_path = tmp_path / "deep" / "nested" / "campaign" / "state.json"
         assert state_path.exists()
         assert json.loads(state_path.read_text())["session_id"] == "ses-new"
-        session.disconnect()
+        await session.disconnect()
 
 
 # ── Transient error classification ───────────────────────────────────

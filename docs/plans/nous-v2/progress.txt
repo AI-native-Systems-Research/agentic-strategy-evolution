@@ -19,7 +19,8 @@ SDK API check on 0.2.172 (spec said 0.2.163):
   SystemPromptPreset with append/snapshot, AssistantMessage.stop_reason
 - SystemPromptPreset is in claude_agent_sdk.types (not top-level module)
 - hooks on ClaudeAgentOptions takes dict[event_name, list[HookMatcher]] not flat list
-- connect() is sync, receive_response() is async
+- connect(), query(), interrupt(), disconnect() are async def coroutines
+- receive_response() is an async generator (yields messages, not a single return)
 - CLI bundled: 2.1.308 (spec said 2.1.306)
 
 Review decisions (pr-review-toolkit:review-pr):
@@ -33,4 +34,18 @@ Review decisions (pr-review-toolkit:review-pr):
   Skipped persist failure in turn() (correct per spec — disk-full is fatal).
   Skipped 5xx narrowing (pedantic, 501/505 are extremely rare in LLM APIs).
 - Added is_transient support for stdlib TimeoutError and OSError("timed out").
+
+## R1 fix: async mismatch (post-review)
+
+Session.connect/turn/disconnect were async but FakeClient had sync
+connect/query/interrupt/disconnect and receive_response returned a single
+value instead of being an async generator. Tests used anyio.run() for turn
+but called connect/disconnect synchronously.
+
+Fixed: FakeClient.connect, query, interrupt, disconnect are now async def.
+FakeClient.receive_response is now an async generator (yields each scripted
+message). All tests in test_session.py and test_fake_client.py use
+async def test methods (pytest-asyncio auto mode). Added signature tests
+verifying FakeClient methods are coroutines/async generators. Corrected
+progress.txt note about SDK API signatures.
 
