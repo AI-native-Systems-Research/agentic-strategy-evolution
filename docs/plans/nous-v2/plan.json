@@ -220,7 +220,7 @@
         "`--agent` warns and is ignored",
         "legacy campaign.yaml keys warn and are ignored"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R11b",

@@ -411,3 +411,26 @@ final_check.check_answer existed but was never called from loop.py (grep found n
 ## Reviewer fix: repro matcher normalizes commands (smoke 2)
 
 smoke/2.json: repro_recorded false although the repro ran, because _check_repro used exact equality. Now both strings are normalized (split on ; and &&, drop export/cd segments and leading VAR=val, cut at first pipe, strip redirections, collapse whitespace) and the repro must appear among the segments of a runs.jsonl row with exit_code 0. Checked against the real smoke-2 runs.jsonl: the 2>/dev/null row exited 134, the matching success row used `2>&1 | tail -30`; both forms are in the test. Tests before: 1 new failing (smoke-2 strings). After: 3 new tests pass; full suite 1811 passed. MVP limit (later candidate): no shell quoting, so a quoted ; or | in an argument splits wrongly.
+
+## R11a: CLI cutover (spec 4)
+
+`nous run`/`nous resume` now drive orchestrator.v2.loop.Campaign through the `cli._sdk_client` seam (tests swap in FakeClient). run: parse campaign.yaml with v2 parse_campaign_config before touching disk, find existing work dir (env-var or legacy location, #239), refuse if state.json exists, save campaign.yaml (incl. --max-iterations/--model overrides) in the work dir. resume: work dir / run_id / yaml, --note, prints which campaign.yaml it uses. --agent, --auto-approve, --timeout, --max-cli-retries, --sandbox warn and are ignored; --bundle/--problem-md/--handoff-md removed. config.py: any key outside the known set warns once and is ignored (examples/ load); added model, locked_parameters, locked_workload, rerun_repro; dropped unused prompts. Wiring gaps fixed: loop now passes the method prompt (build_system_prompt) and model to the session, and locked_parameters/locked_workload/task_limits/runs_jsonl/secrets reach every ValidatorContext (Stop hook, repair, final check) via config.validator_limits. status/cost/validate/schema read v2 artifacts; report/replay removed (exit 1); reports/create-campaign/lineage/clean/package warn as deprecated.
+
+Tests before: 1811 passed (new tests/v2/test_cli_v2.py failing first). After: 1816 passed (25 new CLI tests). Removed v1-CLI test functions (behaviour changed; v2 equivalents in test_cli_v2.py): test_cli.py TestCmdRun x2, TestCmdResume x2, TestCmdValidate x2, TestCmdStatus x1, TestCmdCost x2, TestCmdReport x2, TestCmdReplay x3; test_max_iterations_persist.py TestResumeReadsPersistedCap x4; test_sdk_sandbox.py TestCmdRunSandboxFlag x2. Changed: test_nous_schema_command.py::test_bundle_schema_renders.
+
+Review decisions (code-reviewer + silent-failure-hunter):
+- Fixed: invalid campaign.yaml crashed with a traceback after creating the work dir; now validated first, clean exit 1.
+- Fixed: run only checked the new location; now uses find_existing_work_dir (#239).
+- Fixed: `nous validate` ignored campaign locks; now loads work_dir/campaign.yaml limits.
+- Fixed: --max-iterations on resume and --model were not persisted; both saved into work_dir/campaign.yaml.
+- Fixed: repair and final check skipped the secret check; validator_limits now carries secrets.
+- Fixed: one malformed runs.jsonl line hid the rest of the file in _check_repro; now skipped per line with a warning.
+- Fixed: `nous cost` missed REPORT cost; ledger's last row gets report_cost_usd, cost sums it.
+- Fixed: report/replay message now says removed; test asserting factory not called replaced by on-disk asserts.
+- Fixed: resume now prints which campaign.yaml it uses (work dir copy wins, by design: it carries saved overrides).
+- Skipped: background repro with exit_code None never counts. Spec 3.8 counts it once wait_for succeeds; later candidate (needs wait_for result in runs.jsonl).
+- Skipped: `nous schema campaign` still shows the v1 schema, and create-campaign writes v1 yaml; left for R11d/R12 docs migration.
+- Skipped: `a || b` cut to `a` by the repro normalizer; acceptable MVP.
+- Kept: tests asserting options passed to the fake (model, resume id, append) — that is the seam contract.
+Follow-ups: rerun_repro parsed but unused (3.8 optional rerun); `stop --immediate` not honoured by v2.
+Line count: orchestrator/v2 runtime 2506 -> 2537; cli.py 1365 -> 1031.
