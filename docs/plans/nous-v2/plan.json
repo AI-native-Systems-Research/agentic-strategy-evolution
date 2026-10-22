@@ -300,6 +300,7 @@
     "Push only to origin nous-v2-wip. Open/update draft PRs from nous-v2-wip into nous-v2 (the branch exists). Never push to main or nous-v2.",
     "Per item: tests first (expect fail), implement, tests pass, /pr-review-toolkit:review-pr on the item diff, fix only valid findings (record each decision in progress.txt), pytest -q green, commit, push.",
     "Human checkpoints (R4c, R10, R13): if the required human result file is missing, write BLOCKED.md saying exactly what the human must run, commit+push, and stop. Never poll or loop. The human deletes BLOCKED.md to resume.",
-    "The 15-minute progress reporter is run by the human outside the session; not a plan item."
+    "The 15-minute progress reporter is run by the human outside the session; not a plan item.",
+    "Never enter plan mode or use any tool that asks an interactive question (EnterPlanMode, AskUserQuestion): this is an unattended background session. Plan in your reasoning or in a file."
   ]
 }
