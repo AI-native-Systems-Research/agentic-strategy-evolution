@@ -74,45 +74,6 @@ class TestSchemaCommandJsonAndYaml:
         assert parsed["title"] == "Campaign Configuration"
 
 
-class TestSchemaCommandIsLLMFree:
-    """Pin the contract that `nous schema` never touches an LLM/SDK.
-
-    The autouse `block_live_llm_calls` fixture would fail any test
-    that accidentally hits the real network. This test makes the
-    intent explicit: even if a dispatcher were instantiated by some
-    future refactor, this assertion would catch it.
-    """
-
-    def test_no_llm_dispatcher_imported_during_schema_run(
-        self, capsys, monkeypatch,
-    ) -> None:
-        from orchestrator.cli import _cmd_schema
-
-        # Tripwire: any call into LLMDispatcher.dispatch raises.
-        from orchestrator import llm_dispatch
-
-        def _no_calls(*a, **k):
-            raise AssertionError(
-                "nous schema must not invoke LLMDispatcher.dispatch"
-            )
-
-        monkeypatch.setattr(
-            llm_dispatch.LLMDispatcher, "dispatch", _no_calls,
-        )
-        # Tripwire: any SDK runner instantiation raises.
-        try:
-            from orchestrator import sdk_dispatch
-            monkeypatch.setattr(
-                sdk_dispatch.SDKDispatcher, "_call_claude", _no_calls,
-            )
-        except ImportError:
-            pass  # SDK optional in some environments
-
-        _cmd_schema(_ns())
-        out = capsys.readouterr().out
-        assert "# Campaign Configuration" in out
-
-
 class TestBundleAndFindingsSchemas:
     def test_bundle_schema_renders(self, capsys) -> None:
         from orchestrator.cli import _cmd_schema

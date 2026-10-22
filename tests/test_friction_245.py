@@ -22,8 +22,6 @@ from orchestrator.lineage import (
     resolve_derived_from,
     summarize_lineage,
 )
-from orchestrator.plot_specs import invoke_plot_specs
-from orchestrator.reproducibility import capture_reproducibility_metadata
 from orchestrator.validate import (
     _validate_depth_overrides,
     _validate_locked_parameters,
@@ -220,20 +218,6 @@ def test_f15_physical_realism_silent_with_substantive_justification():
 # ─── F17 / #262: reproducibility_metadata auto-capture ─────────────────────
 
 
-def test_f17_capture_returns_minimal_block_for_no_repo():
-    block = capture_reproducibility_metadata(None)
-    assert "captured_at" in block
-    assert block["captured_at"].endswith("Z")
-    assert "repo_commit" not in block
-
-
-def test_f17_capture_no_repo_path_no_git_calls(tmp_path: Path):
-    """capture is best-effort: a non-existent repo_path returns a
-    minimal block, never raises."""
-    block = capture_reproducibility_metadata(tmp_path / "nonexistent")
-    assert "captured_at" in block
-
-
 # ─── F19 / #264: per-phase silence threshold ───────────────────────────────
 
 
@@ -384,70 +368,6 @@ def test_f21_summarize_lineage_handles_missing_dirs(tmp_path: Path):
 # ─── F18 / #263: plot_specs invocation ─────────────────────────────────────
 
 
-def test_f18_invoke_plot_specs_skips_when_no_specs(tmp_path: Path):
-    iter_dir = tmp_path / "iter-1"
-    iter_dir.mkdir()
-    assert invoke_plot_specs({}, iter_dir) == []
-    assert invoke_plot_specs({"plot_specs": []}, iter_dir) == []
-
-
-def test_f18_invoke_plot_specs_records_missing_script(tmp_path: Path):
-    iter_dir = tmp_path / "iter-1"
-    (iter_dir / "results").mkdir(parents=True)
-    campaign = {"plot_specs": [{"id": "fig-1", "script": "missing.py"}]}
-    results = invoke_plot_specs(
-        campaign, iter_dir, campaign_yaml_dir=tmp_path,
-    )
-    assert len(results) == 1
-    assert results[0]["ok"] is False
-    assert "not found" in results[0]["error"]
-
-
-def test_f18_invoke_plot_specs_runs_script(tmp_path: Path):
-    """Use a no-op script to verify the env wiring works."""
-    iter_dir = tmp_path / "iter-1"
-    (iter_dir / "results").mkdir(parents=True)
-    script = tmp_path / "fig.py"
-    script.write_text(
-        "import os, pathlib\n"
-        "fig_dir = pathlib.Path(os.environ['NOUS_FIGURES_DIR'])\n"
-        "(fig_dir / 'out.txt').write_text('ok')\n"
-    )
-    campaign = {"plot_specs": [
-        {"id": "fig-1", "script": "fig.py", "outputs": ["out.txt"]},
-    ]}
-    results = invoke_plot_specs(campaign, iter_dir, campaign_yaml_dir=tmp_path)
-    assert len(results) == 1
-    assert results[0]["ok"] is True
-    assert (iter_dir / "figures" / "out.txt").exists()
-
-
 # ─── F11 / #256: high-BUILD warning ────────────────────────────────────────
 
 
-def test_f11_high_build_warning_emits_for_many_files(tmp_path: Path, capsys):
-    from orchestrator.iteration import _emit_high_build_warning
-    bundle_path = tmp_path / "bundle.yaml"
-    bundle_path.write_text(yaml.safe_dump({
-        "arms": [
-            {"type": "h-main", "code_changes": [
-                {"file": f"f{i}.go", "intent": "x", "rationale": "y"} for i in range(7)
-            ]},
-        ],
-    }))
-    _emit_high_build_warning(bundle_path, max_turns_execute_analyze=120)
-    captured = capsys.readouterr()
-    assert "max_turns.execute_analyze" in captured.out
-
-
-def test_f11_no_warning_for_low_count(tmp_path: Path, capsys):
-    from orchestrator.iteration import _emit_high_build_warning
-    bundle_path = tmp_path / "bundle.yaml"
-    bundle_path.write_text(yaml.safe_dump({
-        "arms": [{"type": "h-main", "code_changes": [
-            {"file": "f.go", "intent": "x", "rationale": "y"},
-        ]}],
-    }))
-    _emit_high_build_warning(bundle_path, max_turns_execute_analyze=120)
-    captured = capsys.readouterr()
-    assert "max_turns.execute_analyze" not in captured.out

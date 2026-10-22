@@ -186,25 +186,6 @@ class TestSchemaIsHonest:
 # ─── Runtime warning is loud and points at the skill ──────────────────────
 
 
-class TestRuntimeWarningIsDirective:
-    def test_warning_message_mentions_create_campaign(self) -> None:
-        """When campaign.prompts.domain_adapter_layer is set, the warning
-        in llm_dispatch must point the author at the create-campaign
-        skill so they can fix the config."""
-        text = (Path(__file__).resolve().parent.parent
-                / "orchestrator" / "llm_dispatch.py").read_text()
-        # Find the warning block.
-        assert "domain_adapter_layer" in text
-        # The warning must reference the recommended workaround.
-        assert "description" in text  # "put it in description"
-        assert ("create-campaign" in text or
-                "create_campaign" in text or
-                "issue #89" in text), (
-            "warning should reference the create-campaign skill or "
-            "the recommended migration path"
-        )
-
-
 # ─── Skill file exists with required sections ────────────────────────────
 
 

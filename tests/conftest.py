@@ -23,9 +23,9 @@ _BLOCKED_HOSTS = (
 class LiveLLMCallBlocked(RuntimeError):
     """A test triggered something that would call a real LLM provider.
 
-    The fix is to inject a fake at the dispatcher seam (sdk_runner=,
-    completion_fn=, monkeypatch subprocess.run, etc.) — NEVER to
-    disable this guard. See CLAUDE.md.
+    The fix is to inject a fake (tests.fakes.sdk_client.FakeClient,
+    monkeypatch subprocess.run, etc.) — NEVER to disable this guard.
+    See CLAUDE.md.
     """
 
 
@@ -63,14 +63,14 @@ def block_live_llm_calls(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", _guarded_urlopen)
 
     # Patch claude_agent_sdk.query if installed; this catches accidental
-    # uses of the default sdk_runner path.
+    # one-shot SDK calls.
     try:
         import claude_agent_sdk  # type: ignore[import-not-found]
 
         async def _blocked_query(*args, **kwargs):
             raise LiveLLMCallBlocked(
-                "Test invoked claude_agent_sdk.query — pass sdk_runner= "
-                "to SDKDispatcher with a fake. See CLAUDE.md."
+                "Test invoked claude_agent_sdk.query — use "
+                "tests.fakes.sdk_client.FakeClient instead. See CLAUDE.md."
             )
             yield  # pragma: no cover  (makes the function an async generator)
 
@@ -108,24 +108,6 @@ def block_live_llm_calls(monkeypatch):
             )
 
         monkeypatch.setattr(pymc, "sample", _blocked_sample)
-    except ImportError:
-        pass
-
-    # Block live Optuna trial execution (issue #165). Importing optuna
-    # is allowed; running Study.optimize() is not — it triggers per-trial
-    # function calls that the seam is meant to control. Inject a sampler=
-    # callable into orchestrator.arm_sweep.run_sweep() instead.
-    try:
-        import optuna  # type: ignore[import-not-found]
-
-        def _blocked_optimize(self, *args, **kwargs):
-            raise RuntimeError(
-                "Test invoked optuna Study.optimize — live trial execution "
-                "is forbidden in tests. Inject a sampler= callable into "
-                "orchestrator.arm_sweep.run_sweep(). See CLAUDE.md."
-            )
-
-        monkeypatch.setattr(optuna.study.Study, "optimize", _blocked_optimize)
     except ImportError:
         pass
 

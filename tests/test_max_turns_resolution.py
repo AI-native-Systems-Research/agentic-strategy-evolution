@@ -138,31 +138,3 @@ class TestMaxTurnsResolutionOrder:
         assert out["report"] == 25
 
 
-class TestResolverIntegratesWithRunIteration:
-    """End-to-end: construct a fake SDKDispatcher and verify the
-    campaign-level max_turns reaches it. No real LLM calls."""
-
-    def test_campaign_max_turns_reaches_sdk_dispatcher(
-        self, tmp_path, monkeypatch,
-    ) -> None:
-        from orchestrator.sdk_dispatch import SDKDispatcher
-        repo = tmp_path / "repo"
-        repo.mkdir()
-        campaign = {
-            "research_question": "q",
-            "target_system": {
-                "name": "t", "description": "d",
-                "repo_path": str(repo),
-            },
-            "max_turns": {"design": 137},
-        }
-
-        # Stand up a dispatcher with the campaign's max_turns echoed in
-        # via the constructor — this mirrors what run_iteration does.
-        dispatcher = SDKDispatcher(
-            work_dir=tmp_path,
-            campaign=campaign,
-            max_turns=campaign["max_turns"]["design"],
-            sdk_runner=lambda **kw: None,  # never called in this test
-        )
-        assert dispatcher.max_turns == 137

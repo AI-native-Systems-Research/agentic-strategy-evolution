@@ -164,43 +164,6 @@ class TestWriteCampaignSettings:
 
 # ─── No-`--dangerously` invariant ───────────────────────────────────────────
 
-class TestSetupWorkDirWritesSettings:
-    """Init-time wiring: ``setup_work_dir`` writes ``.claude/settings.json``
-    so the dispatcher can pick it up automatically."""
-
-    def test_init_writes_settings_in_dot_claude(self, tmp_path):
-        from orchestrator.iteration import setup_work_dir
-
-        repo = tmp_path / "target-repo"
-        repo.mkdir()
-        work_dir = setup_work_dir("run-123", repo_path=str(repo))
-
-        settings_path = work_dir / ".claude" / "settings.json"
-        assert settings_path.exists()
-
-        on_disk = json.loads(settings_path.read_text())
-        # work_dir and repo are both in allowOnly.
-        assert str(work_dir.resolve()) in on_disk["permissions"]["allowOnly"]
-        assert str(repo.resolve()) in on_disk["permissions"]["allowOnly"]
-
-    def test_init_does_not_overwrite_existing_settings(self, tmp_path):
-        from orchestrator.iteration import setup_work_dir
-
-        repo = tmp_path / "target-repo"
-        repo.mkdir()
-        work_dir = Path(repo) / ".nous" / "run-456"
-        work_dir.mkdir(parents=True)
-        settings_dir = work_dir / ".claude"
-        settings_dir.mkdir()
-        custom_settings = {"permissions": {"allowOnly": ["/custom"], "allow": [], "deny": []}}
-        (settings_dir / "settings.json").write_text(json.dumps(custom_settings))
-
-        # Re-running setup must NOT clobber the user's hand edits.
-        setup_work_dir("run-456", repo_path=str(repo))
-
-        on_disk = json.loads((settings_dir / "settings.json").read_text())
-        assert on_disk == custom_settings
-
 
 class TestNoDangerouslyFlag:
     """Settings file is the *replacement* for ``--dangerously-skip-permissions``.

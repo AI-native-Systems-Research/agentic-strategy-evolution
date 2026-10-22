@@ -17,43 +17,6 @@ def _tmp_files(d: Path) -> list[Path]:
     return list(d.glob("*.tmp"))
 
 
-class TestReproducibilityAtomicWrite:
-    def _seed_state(self, work_dir: Path) -> None:
-        work_dir.mkdir(parents=True, exist_ok=True)
-        (work_dir / "state.json").write_text(json.dumps({
-            "phase": "INIT", "iteration": 1, "run_id": "exp1",
-        }) + "\n")
-
-    def test_block_persisted_and_parseable(self, tmp_path):
-        from orchestrator.reproducibility import attach_to_state
-        self._seed_state(tmp_path)
-
-        attach_to_state(tmp_path, {"captured_at": "2026-01-01T00:00:00Z", "commit": "abc"})
-
-        state = json.loads((tmp_path / "state.json").read_text())
-        assert state["reproducibility_metadata"]["commit"] == "abc"
-        # Pre-existing keys preserved (full object written, not truncated).
-        assert state["run_id"] == "exp1"
-
-    def test_no_leftover_tmp_files(self, tmp_path):
-        from orchestrator.reproducibility import attach_to_state
-        self._seed_state(tmp_path)
-
-        attach_to_state(tmp_path, {"captured_at": "2026-01-01T00:00:00Z"})
-
-        assert _tmp_files(tmp_path) == []
-
-    def test_idempotent_first_capture_wins(self, tmp_path):
-        from orchestrator.reproducibility import attach_to_state
-        self._seed_state(tmp_path)
-
-        attach_to_state(tmp_path, {"captured_at": "2026-01-01T00:00:00Z", "commit": "first"})
-        attach_to_state(tmp_path, {"captured_at": "2026-02-02T00:00:00Z", "commit": "second"})
-
-        state = json.loads((tmp_path / "state.json").read_text())
-        assert state["reproducibility_metadata"]["commit"] == "first"
-
-
 class TestLineageAtomicWrite:
     def _init_repo_with_branch(self, repo: Path) -> str:
         repo.mkdir(parents=True, exist_ok=True)

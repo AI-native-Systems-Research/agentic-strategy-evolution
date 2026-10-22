@@ -236,19 +236,16 @@ def _cmd_stop(args):
     handle: an enclosing agent can write the sentinel without sending
     SIGINT to the parent process.
     """
-    from orchestrator.iteration import STOP_SENTINEL_NAME, check_stop_requested
-
     work_dir = resolve_work_dir(args.target)
     if not work_dir.exists():
         print(f"Error: work_dir does not exist: {work_dir}", file=sys.stderr)
         sys.exit(1)
 
-    sentinel = work_dir / STOP_SENTINEL_NAME
+    sentinel = work_dir / "STOP"
     immediate = work_dir / "STOP_IMMEDIATE"
-    existing = check_stop_requested(work_dir)
-    if existing is not None and not getattr(args, "immediate", False):
+    if sentinel.exists() and not getattr(args, "immediate", False):
         print(
-            f"STOP sentinel already present at {existing}. "
+            f"STOP sentinel already present at {sentinel}. "
             f"Campaign will halt at the next checkpoint.",
         )
         sys.exit(0)
