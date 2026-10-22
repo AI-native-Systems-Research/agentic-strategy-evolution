@@ -40,7 +40,7 @@ def _baseline() -> dict:
 def _problem() -> dict:
     return {
         "task_type": "optimize",
-        "claims_needed": [{"id": "c1", "test": "compare scores"}],
+        "claims_needed": [{"id": "c1", "description": "score improves", "test_method": "compare scores"}],
     }
 
 
@@ -190,6 +190,22 @@ class TestRepairLoop:
         # The repair message should mention the error
         assert any("repair" in q.lower() or "validation" in q.lower() or "error" in q.lower()
                     for q in client.queries[2:])
+
+    async def test_design_repaired_before_execute(self, tmp_path):
+        """Spec 3.5 applies to every phase: an invalid plan.json gets a repair turn
+        before EXECUTE, and the locked bundle is the repaired one."""
+        work_dir = tmp_path / "campaign"
+        work_dir.mkdir()
+        idir = iter_dir(work_dir, 1)
+        per_turn = _build_per_turn_files_valid(work_dir)
+        per_turn[1] = {**per_turn[1], str(idir / "plan.json"): json.dumps({"runs": "bad"})}
+        per_turn.insert(2, {str(idir / "plan.json"): json.dumps(_plan())})
+        client = FakeClient(script=[FakeResultMessage()] * 5, per_turn_files=per_turn)
+        campaign = Campaign(config=_config(), work_dir=work_dir, client_factory=lambda _o: client)
+        result = await campaign.run()
+        assert result["stop_reason"] == "answered"
+        assert "plan" in client.queries[2] and "EXECUTE" not in client.queries[2]
+        assert "EXECUTE" in client.queries[3]
 
     async def test_repair_exhausted_yields_partial(self, tmp_path):
         """After 2 repair tries, ledger gets status: partial, campaign moves on."""

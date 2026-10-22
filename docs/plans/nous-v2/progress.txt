@@ -488,3 +488,13 @@ Review decisions (silent-failure-hunter):
 - Fixed: method prompt never told the agent to write seeds/ci on claims, so declared min_seeds could never be met; one line added (method.md 3,542 bytes <= 6,144).
 - Skipped: retry of the very first turn before any session_id loses in-flight context; files on disk survive, low impact, MVP.
 Runtime line count: 2493 (target ~2500).
+
+## R12: docs for v2
+
+Rewrote README.md (450->144), docs/architecture.md (456->107), docs/data-model.md (250->74), protocol (211->45), quickstart (189->69), security (44->23), campaign-authoring-guide (144->42), CLAUDE.md (176->117, v2 test seams), tests/CLAUDE.md; workflow.md seam list. Deleted docs/friction-245-resolution.md (v1 file map) and its links. CLI help describes v2 phases; dropped `stop --immediate` (v2 never read STOP_IMMEDIATE); deprecated commands labelled in help.
+grep "bundle\.yaml|--agent inline" README.md docs (excl. plans): empty.
+Review decisions (comment-analyzer fact-check vs code):
+- Fixed (code, test-first): "session cannot end a phase until artifacts validate" was false. Spec 3.5 repair ran only after EXECUTE; BASELINE and DESIGN invalid artifacts slipped through after 6 Stop blocks. Added _repair after BASELINE and DESIGN (partial DESIGN makes the iteration partial). New test test_design_repaired_before_execute. This exposed invalid shared test fixtures (bundles without control, non-hex git_sha, debug baselines missing observation fields); fixtures fixed, no assertions weakened; one lock test gets the repair turn it now needs.
+- Fixed (docs): README Stop-hook wording, report/replay removed vs deprecated, run_id lookup location, state/digest.json written by Nous; CLAUDE.md/tests/CLAUDE.md FakeClient fires only PostToolUse; architecture evidence wording.
+Noted for R12b: human_gates and rerun_repro parsed but unused; EffortManager (effort ladder, 3.10/B12) not wired into the loop; task_limits.max_wall_seconds sums a field hooks never write; `nous schema campaign` prints the v1 schema; plugin/nous/skills mention --agent and v1 phases; examples/campaign.yaml has v1 `prompts:` key.
+Tests: 886 -> 887 passed. v2 runtime 2498 lines; orchestrator/*.py 3606.

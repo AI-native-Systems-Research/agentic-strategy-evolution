@@ -221,20 +221,11 @@ def _cmd_resume(args):
 
 
 def _cmd_stop(args):
-    """Ask a running campaign to wind down cleanly between phases.
+    """Write a ``STOP`` sentinel at the work_dir root.
 
-    Writes a ``STOP`` sentinel at the campaign work_dir root. The
-    next time the orchestrator passes a checkpoint — at the start of
-    each iteration AND at every phase transition within an iteration
-    (#198) — it raises ``CampaignStopped``, persists a
-    ``stopped_by_user`` ledger row, and exits without orphaning
-    worktrees or pending dispatcher calls.
-
-    For mid-iteration interruption, ``Ctrl+C`` still works — the
-    engine's atomic checkpoint means the next ``nous resume`` picks
-    up at the last completed phase. ``nous stop`` is the agent-friendly
-    handle: an enclosing agent can write the sentinel without sending
-    SIGINT to the parent process.
+    The v2 loop checks it after each iteration's EXECUTE phase and then
+    runs REPORT and exits (stop_reason ``stop_sentinel``). Ctrl+C still
+    works for a mid-phase halt; ``nous resume`` continues from state.json.
     """
     work_dir = resolve_work_dir(args.target)
     if not work_dir.exists():
@@ -242,8 +233,7 @@ def _cmd_stop(args):
         sys.exit(1)
 
     sentinel = work_dir / "STOP"
-    immediate = work_dir / "STOP_IMMEDIATE"
-    if sentinel.exists() and not getattr(args, "immediate", False):
+    if sentinel.exists():
         print(
             f"STOP sentinel already present at {sentinel}. "
             f"Campaign will halt at the next checkpoint.",
@@ -251,33 +241,14 @@ def _cmd_stop(args):
         sys.exit(0)
 
     reason = (args.reason or "").strip()
-    if not sentinel.exists():
-        sentinel.write_text(reason + ("\n" if reason else ""))
-        print(f"Wrote STOP sentinel: {sentinel}")
-    if getattr(args, "immediate", False):
-        # #250 (F5): event-boundary halt. Writes a second sentinel that
-        # the SDK turn loop checks at each tool-call return. The
-        # phase-boundary STOP is also written so the orchestrator's
-        # checkpoint loop terminates cleanly even if the SDK turn
-        # didn't notice the immediate sentinel.
-        immediate.write_text(reason + ("\n" if reason else ""))
-        print(f"Wrote STOP_IMMEDIATE sentinel: {immediate}")
-        print(
-            "The SDK turn will abort at the next event boundary "
-            "(typically within seconds), then the orchestrator's "
-            "phase-checkpoint will see the STOP sentinel and shut "
-            "down cleanly."
-        )
-        return
+    sentinel.write_text(reason + ("\n" if reason else ""))
+    print(f"Wrote STOP sentinel: {sentinel}")
     if reason:
         print(f"Reason: {reason}")
     print(
-        "The campaign will halt at the next phase boundary (a phase "
-        "transition within the current iteration, or the start of "
-        "the next iteration — whichever comes first). To cancel the "
-        "stop request, delete the sentinel file. For event-boundary "
-        "halt during a long EXECUTE_ANALYZE turn, use ``--immediate`` "
-        "(#250 / F5)."
+        "The campaign will halt at the next phase boundary it checks "
+        "(the end of the current iteration's EXECUTE phase), then write "
+        "its REPORT. To cancel the stop request, delete the sentinel file."
     )
 
 
@@ -366,11 +337,10 @@ def _render_schema_markdown(schema: dict, *, artifact: str) -> str:
     if artifact == "campaign":
         lines.append("## See also")
         lines.append("")
-        lines.append("- `nous create-campaign --to ./campaign.yaml` — scaffold a heavily-commented starting point.")
         lines.append("- `nous run campaign.yaml` — run a campaign in one Claude session (v2).")
         lines.append("- `nous resume <work_dir> [--note TEXT]` — continue a campaign.")
-        lines.append("- `nous stop <target>` — ask a running campaign to halt at the next phase boundary (#198).")
-        lines.append("- `nous status --watch <target>` — live progress, including a STUCK marker after 5 min of silence.")
+        lines.append("- `nous stop <target>` — ask a running campaign to halt at the next phase boundary.")
+        lines.append("- `nous status <target>` — phase, iteration, session id and ledger rows.")
     return "\n".join(lines)
 
 
@@ -780,9 +750,9 @@ def main():
         prog="nous",
         description=(
             "Nous v2: hypothesis-driven experimentation in one Claude "
-            "session (BASELINE, then DESIGN, EXECUTE per iteration, then "
-            "REPORT). Start with `nous run campaign.yaml`; continue with "
-            "`nous resume <work_dir>`."
+            "session. Phases: BASELINE once, then DESIGN and EXECUTE per "
+            "iteration, then REPORT. Start with `nous run campaign.yaml`; "
+            "continue with `nous resume <work_dir>`."
         ),
     )
     parser.add_argument(
@@ -814,8 +784,9 @@ def main():
     p_resume.add_argument("target", help="Work dir, run_id, or campaign.yaml.")
     p_resume.add_argument("--note", default=None,
                           help="Human note added to the next phase message and the ledger.")
-    p_resume.add_argument("--max-iterations", type=int)
-    p_resume.add_argument("--model")
+    p_resume.add_argument("--max-iterations", type=int,
+                          help="Iteration cap. Saved to the work dir's campaign.yaml.")
+    p_resume.add_argument("--model", help="Session model. Saved to the work dir's campaign.yaml.")
     add_legacy_flags(p_resume)
     p_resume.set_defaults(func=_cmd_resume)
 
@@ -843,46 +814,31 @@ def main():
 
     p_stop = subparsers.add_parser(
         "stop",
-        help="Ask a running campaign to halt cleanly at the next "
-             "phase boundary by writing a STOP sentinel (#198: honoured "
-             "at DESIGN / HUMAN_DESIGN_GATE / EXECUTE_ANALYZE / "
-             "HUMAN_FINDINGS_GATE transitions, not just between iterations).",
+        help="Ask a running campaign to halt cleanly at the next phase "
+             "boundary by writing a STOP sentinel.",
         description=(
-            "Write a STOP sentinel that the running campaign honours at "
-            "the next phase boundary (#198). Phase boundaries are DESIGN, "
-            "HUMAN_DESIGN_GATE, EXECUTE_ANALYZE, and HUMAN_FINDINGS_GATE — "
-            "so the operator can halt cleanly without waiting for the "
-            "next iteration. Mid-phase interruption (a wedged BLIS "
-            "subprocess, a stuck SDK turn) is still SIGINT's job."
+            "Write a STOP sentinel in the work dir. The v2 loop checks it "
+            "at the phase boundary after each iteration's EXECUTE phase, "
+            "then runs REPORT and exits. For a mid-phase halt use Ctrl+C; "
+            "`nous resume` continues from state.json."
         ),
     )
     p_stop.add_argument(
         "target",
-        help="Campaign target — either a path to the work_dir, a path "
-             "to campaign.yaml, or a run_id whose work_dir is under "
-             "the current repo's .nous/.",
+        help="Work dir, campaign.yaml, or run_id.",
     )
     p_stop.add_argument(
         "--reason", default=None,
-        help="Optional human-readable reason recorded in the sentinel "
-             "and surfaced in the campaign's halt message.",
-    )
-    p_stop.add_argument(
-        "--immediate", action="store_true",
-        help="Event-boundary halt (#250 / F5). Writes a STOP_IMMEDIATE "
-             "sentinel that the SDK turn loop checks at each tool-call "
-             "return — aborts within seconds rather than at the next "
-             "phase boundary. Use when EXECUTE_ANALYZE is building "
-             "wrong code and you want to halt promptly.",
+        help="Optional human-readable reason written into the sentinel.",
     )
     p_stop.set_defaults(func=_cmd_stop)
 
     p_status = subparsers.add_parser("status", help="Show v2 campaign state and ledger.")
-    p_status.add_argument("target")
+    p_status.add_argument("target", help="Work dir, campaign.yaml, or run_id.")
     p_status.set_defaults(func=_cmd_status)
 
     p_cost = subparsers.add_parser("cost", help="Sum the v2 cost meter from ledger.json.")
-    p_cost.add_argument("target")
+    p_cost.add_argument("target", help="Work dir, campaign.yaml, or run_id.")
     p_cost.set_defaults(func=_cmd_cost)
 
     for name in ("report", "replay"):
@@ -895,9 +851,7 @@ def main():
 
     p_reports = subparsers.add_parser(
         "reports",
-        help="Re-emit meta_findings.json on demand for any work_dir (#242). "
-             "Pure-Python; zero LLM tokens. Works against legacy or aborted "
-             "campaigns that never reached the in-line emitter.",
+        help="Deprecated (v1 artifacts): re-emit meta_findings.json for a work_dir.",
     )
     p_reports.add_argument(
         "target",
@@ -911,7 +865,7 @@ def main():
     # warns about the domain_adapter_layer trap.
     p_create = subparsers.add_parser(
         "create-campaign",
-        help="Scaffold a new campaign.yaml with inline guidance.",
+        help="Deprecated (writes a v1-style scaffold): create a campaign.yaml.",
     )
     p_create.add_argument(
         "--to", required=True, type=Path,
@@ -951,8 +905,7 @@ def main():
     # #266 (F21): cross-campaign lineage inspection.
     p_lineage = subparsers.add_parser(
         "lineage",
-        help="Show derivation chain + per-iteration cumulative-patch "
-             "availability for a campaign (#266 / F21).",
+        help="Deprecated (v1 artifacts): show derivation chain and cumulative patches.",
     )
     p_lineage.add_argument(
         "target",
@@ -967,7 +920,7 @@ def main():
     # #254 (F9): orphan-worktree cleanup.
     p_clean = subparsers.add_parser(
         "clean",
-        help="Remove stale nous-exp-* worktrees and branches (#254 / F9).",
+        help="Deprecated (v1 worktrees): remove stale nous-exp-* worktrees and branches.",
     )
     p_clean.add_argument(
         "--orphaned", action="store_true",
@@ -991,8 +944,7 @@ def main():
     # #263 (F18): paper-artifact tarball.
     p_package = subparsers.add_parser(
         "package",
-        help="Tarball a work_dir + reproduce.sh + Dockerfile + README "
-             "for paper artifact evaluation (#263 / F18).",
+        help="Deprecated (v1 artifacts): tarball a work_dir with reproduce.sh and Dockerfile.",
     )
     p_package.add_argument(
         "target",

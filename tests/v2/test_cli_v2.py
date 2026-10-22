@@ -300,6 +300,12 @@ class TestSessionWiring:
             str(idir / "bundle.json"): json.dumps(_valid_bundle()),
             str(idir / "plan.json"): json.dumps(plan),
         }
+        # The deviating plan is intentional; the DESIGN repair pass (spec 3.5)
+        # then gets one turn, which writes a plan that honours the lock.
+        fixed_plan = _plan()
+        for run in fixed_plan["runs"]:
+            run["parameters"] = {"rate": 20}
+        per_turn.insert(2, {str(idir / "plan.json"): json.dumps(fixed_plan)})
         decisions: list[dict | None] = []
 
         class StopHookClient(FakeClient):
@@ -309,7 +315,7 @@ class TestSessionWiring:
                 decisions.append(await self._run_event_hooks("Stop", {"stop_reason": "end_turn"}))
 
         def factory(opts):
-            return StopHookClient(script=_make_script(4), per_turn_files=per_turn, hooks=opts.hooks)
+            return StopHookClient(script=_make_script(5), per_turn_files=per_turn, hooks=opts.hooks)
 
         await Campaign(parse_campaign_config(raw), work_dir, client_factory=factory).run()
 

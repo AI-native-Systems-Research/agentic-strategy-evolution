@@ -143,7 +143,7 @@ def _baseline() -> dict:
 def _problem() -> dict:
     return {
         "task_type": "optimize",
-        "claims_needed": [{"id": "c1", "test": "compare scores"}],
+        "claims_needed": [{"id": "c1", "description": "score improves", "test_method": "compare scores"}],
     }
 
 

@@ -210,6 +210,7 @@ class Campaign:
                 "BASELINE phase. Do not design hypotheses yet. "
                 f"Get one real observation and write baseline.json.{task_hint}",
             )
+            await self._repair(session, self._work_dir, ["baseline"])
             self._commit_phase(0, "BASELINE")
 
         first_iter = max(start_iteration, 1)
@@ -223,6 +224,7 @@ class Campaign:
             idir = iter_dir(self._work_dir, iteration)
             idir.mkdir(parents=True, exist_ok=True)
 
+            design_status = "ok"
             if iteration != skip_design_for:
                 self._set_phase(hook_state, "DESIGN", iteration)
                 baseline = _read_json(self._work_dir / "baseline.json")
@@ -248,6 +250,7 @@ class Campaign:
                         stop_reason = "halt"
                         break
                     raise
+                design_status = await self._repair(session, idir, ["problem", "bundle", "plan"])
                 self._commit_phase(iteration, "DESIGN")
                 locked_hash = self._lock_bundle(idir)
             else:
@@ -282,6 +285,8 @@ class Campaign:
             self._commit_phase(iteration, "EXECUTE")
 
             status = await self._repair(session, idir, ["findings", "principle_updates"])
+            if design_status == "partial":
+                status = "partial"
             prereg = self._check_bundle_hash(idir, locked_hash)
 
             findings = _read_json(idir / "findings.json") or {}

@@ -136,8 +136,9 @@ class TestCampaignResume:
         _write_json(work_dir / "baseline.json", {
             "task_type": "debug",
             "command": "pytest",
-            "git_sha": "abc",
-            "observation": {"pass": True},
+            "git_sha": "abc1234",
+            "observation": {"reproduced": True, "symptom": "fails", "expected": "pass", "actual": "fail"},
+            "metrics_path": "m.json",
             "noise": {"deterministic": True},
         })
         idir = work_dir / "runs" / "iter-1"
@@ -150,11 +151,11 @@ class TestCampaignResume:
             "hypotheses": [{
                 "id": "h1", "role": "treatment", "family": "f1",
                 "mechanism": "fix bug", "prediction": {"metric": "pass", "direction": "increase"},
-                "falsified_if": "still fails", "claim_ids": ["c1"],
+                "control": "unfixed code", "falsified_if": "still fails", "claim_ids": ["c1"],
             }, {
                 "id": "h2", "role": "alternative", "family": "f2",
                 "mechanism": "alt fix", "prediction": {"metric": "pass", "direction": "increase"},
-                "falsified_if": "still fails", "claim_ids": ["c1"],
+                "control": "unfixed code", "falsified_if": "still fails", "claim_ids": ["c1"],
             }],
         })
         _write_json(idir / "plan.json", {
@@ -224,8 +225,8 @@ class TestCampaignResume:
             "iteration": 2,
         })
         _write_json(work_dir / "baseline.json", {
-            "task_type": "debug", "command": "pytest", "git_sha": "abc",
-            "observation": {"pass": True}, "noise": {"deterministic": True},
+            "task_type": "debug", "command": "pytest", "git_sha": "abc1234",
+            "observation": {"reproduced": True, "symptom": "fails", "expected": "pass", "actual": "fail"}, "metrics_path": "m.json", "noise": {"deterministic": True},
         })
         digest = {
             "iteration": 1,
@@ -268,11 +269,11 @@ class TestCampaignResume:
                     "hypotheses": [{
                         "id": "h1", "role": "treatment", "family": "f1",
                         "mechanism": "fix", "prediction": {"metric": "pass", "direction": "increase"},
-                        "falsified_if": "fails", "claim_ids": ["c1"],
+                        "control": "unfixed code", "falsified_if": "fails", "claim_ids": ["c1"],
                     }, {
                         "id": "h2", "role": "alternative", "family": "f2",
                         "mechanism": "alt", "prediction": {"metric": "pass", "direction": "increase"},
-                        "falsified_if": "fails", "claim_ids": ["c1"],
+                        "control": "unfixed code", "falsified_if": "fails", "claim_ids": ["c1"],
                     }],
                 }),
                 str(idir / "plan.json"): json.dumps({
@@ -326,8 +327,8 @@ class TestCampaignResume:
             "note": "try the greedy approach",
         })
         _write_json(work_dir / "baseline.json", {
-            "task_type": "optimize", "command": "bench.py", "git_sha": "abc",
-            "observation": {"score": 10}, "noise": {"deterministic": True},
+            "task_type": "optimize", "command": "bench.py", "git_sha": "abc1234",
+            "observation": {"score": 10}, "metrics_path": "m.json", "noise": {"deterministic": True},
         })
         idir = work_dir / "runs" / "iter-1"
         idir.mkdir(parents=True)
@@ -339,11 +340,11 @@ class TestCampaignResume:
             "hypotheses": [{
                 "id": "h1", "role": "treatment", "family": "f1",
                 "mechanism": "greedy", "prediction": {"metric": "score", "direction": "increase"},
-                "falsified_if": "no improvement", "claim_ids": ["c1"],
+                "control": "unfixed code", "falsified_if": "no improvement", "claim_ids": ["c1"],
             }, {
                 "id": "h2", "role": "alternative", "family": "f2",
                 "mechanism": "dp", "prediction": {"metric": "score", "direction": "increase"},
-                "falsified_if": "no improvement", "claim_ids": ["c1"],
+                "control": "unfixed code", "falsified_if": "no improvement", "claim_ids": ["c1"],
             }],
         })
         _write_json(idir / "plan.json", {
@@ -420,8 +421,8 @@ class TestCampaignResume:
 
         per_turn = [
             {str(work_dir / "baseline.json"): json.dumps({
-                "task_type": "debug", "command": "pytest", "git_sha": "abc",
-                "observation": {"pass": True}, "noise": {"deterministic": True},
+                "task_type": "debug", "command": "pytest", "git_sha": "abc1234",
+                "observation": {"reproduced": True, "symptom": "fails", "expected": "pass", "actual": "fail"}, "metrics_path": "m.json", "noise": {"deterministic": True},
             })},
             {
                 str(idir / "problem.json"): json.dumps({
@@ -432,11 +433,11 @@ class TestCampaignResume:
                     "hypotheses": [{
                         "id": "h1", "role": "treatment", "family": "f1",
                         "mechanism": "fix", "prediction": {"metric": "pass", "direction": "increase"},
-                        "falsified_if": "fails", "claim_ids": ["c1"],
+                        "control": "unfixed code", "falsified_if": "fails", "claim_ids": ["c1"],
                     }, {
                         "id": "h2", "role": "alternative", "family": "f2",
                         "mechanism": "alt", "prediction": {"metric": "pass", "direction": "increase"},
-                        "falsified_if": "fails", "claim_ids": ["c1"],
+                        "control": "unfixed code", "falsified_if": "fails", "claim_ids": ["c1"],
                     }],
                 }),
                 str(idir / "plan.json"): json.dumps({
@@ -486,8 +487,8 @@ class TestCampaignResume:
             "iteration": 2,
         })
         _write_json(work_dir / "baseline.json", {
-            "task_type": "debug", "command": "pytest", "git_sha": "abc",
-            "observation": {"pass": True}, "noise": {"deterministic": True},
+            "task_type": "debug", "command": "pytest", "git_sha": "abc1234",
+            "observation": {"reproduced": True, "symptom": "fails", "expected": "pass", "actual": "fail"}, "metrics_path": "m.json", "noise": {"deterministic": True},
         })
 
         idir = work_dir / "runs" / "iter-2"
@@ -518,11 +519,11 @@ class TestCampaignResume:
                     "hypotheses": [{
                         "id": "h1", "role": "treatment", "family": "f1",
                         "mechanism": "fix", "prediction": {"metric": "pass", "direction": "increase"},
-                        "falsified_if": "fails", "claim_ids": ["c1"],
+                        "control": "unfixed code", "falsified_if": "fails", "claim_ids": ["c1"],
                     }, {
                         "id": "h2", "role": "alternative", "family": "f2",
                         "mechanism": "alt", "prediction": {"metric": "pass", "direction": "increase"},
-                        "falsified_if": "fails", "claim_ids": ["c1"],
+                        "control": "unfixed code", "falsified_if": "fails", "claim_ids": ["c1"],
                     }],
                 }),
                 str(idir / "plan.json"): json.dumps({
@@ -595,8 +596,8 @@ class TestCampaignStateResumeFields:
 
         per_turn = [
             {str(work_dir / "baseline.json"): json.dumps({
-                "task_type": "debug", "command": "pytest", "git_sha": "abc",
-                "observation": {"pass": True}, "noise": {"deterministic": True},
+                "task_type": "debug", "command": "pytest", "git_sha": "abc1234",
+                "observation": {"reproduced": True, "symptom": "fails", "expected": "pass", "actual": "fail"}, "metrics_path": "m.json", "noise": {"deterministic": True},
             })},
             {
                 str(idir / "problem.json"): json.dumps({
@@ -607,11 +608,11 @@ class TestCampaignStateResumeFields:
                     "hypotheses": [{
                         "id": "h1", "role": "treatment", "family": "f1",
                         "mechanism": "fix", "prediction": {"metric": "pass", "direction": "increase"},
-                        "falsified_if": "fails", "claim_ids": ["c1"],
+                        "control": "unfixed code", "falsified_if": "fails", "claim_ids": ["c1"],
                     }, {
                         "id": "h2", "role": "alternative", "family": "f2",
                         "mechanism": "alt", "prediction": {"metric": "pass", "direction": "increase"},
-                        "falsified_if": "fails", "claim_ids": ["c1"],
+                        "control": "unfixed code", "falsified_if": "fails", "claim_ids": ["c1"],
                     }],
                 }),
                 str(idir / "plan.json"): json.dumps({
@@ -653,7 +654,7 @@ class TestCampaignStateResumeFields:
 _BUNDLE = {"hypotheses": [{
     "id": f"h{i}", "role": "treatment", "family": f"f{i}", "mechanism": "m",
     "prediction": {"metric": "pass", "direction": "increase"},
-    "falsified_if": "fails", "claim_ids": ["c1"]} for i in (1, 2)]}
+    "control": "unfixed code", "falsified_if": "fails", "claim_ids": ["c1"]} for i in (1, 2)]}
 _FINDINGS = {"hypotheses": [{
     "id": "h1", "status": "CONFIRMED", "error_type": "none", "evidence": [],
     "noise_unmeasured": True, "noise_reason": "single",
@@ -667,8 +668,8 @@ def _seed_execute_state(work_dir: Path, phase: str = "EXECUTE") -> Path:
 
     _write_json(work_dir / "state.json", {"session_id": "ses-1", "phase": phase, "iteration": 1})
     _write_json(work_dir / "baseline.json", {
-        "task_type": "debug", "command": "pytest", "git_sha": "abc",
-        "observation": {"pass": True}, "noise": {"deterministic": True}})
+        "task_type": "debug", "command": "pytest", "git_sha": "abc1234",
+        "observation": {"reproduced": True, "symptom": "fails", "expected": "pass", "actual": "fail"}, "metrics_path": "m.json", "noise": {"deterministic": True}})
     idir = work_dir / "runs" / "iter-1"
     _write_json(idir / "problem.json", {"task_type": "debug", "claims_needed": [
         {"id": "c1", "description": "fix", "test_method": "pytest"}]})

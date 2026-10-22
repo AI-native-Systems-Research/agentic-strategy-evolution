@@ -50,6 +50,7 @@ def _bundle() -> dict:
                 "family": "f1",
                 "mechanism": "fix the off-by-one",
                 "prediction": {"metric": "pass_rate", "direction": "increase"},
+                "control": "unfixed code",
                 "falsified_if": "test still fails",
                 "claim_ids": ["c1"],
             },
@@ -59,6 +60,7 @@ def _bundle() -> dict:
                 "family": "f2",
                 "mechanism": "rewrite the function",
                 "prediction": {"metric": "pass_rate", "direction": "increase"},
+                "control": "unfixed code",
                 "falsified_if": "test still fails",
                 "claim_ids": ["c1"],
             },
@@ -683,7 +685,7 @@ class TestLedgerPerIteration:
         work_dir.mkdir()
 
         baseline = {
-            "task_type": "debug", "command": "test", "git_sha": "abc",
+            "task_type": "debug", "command": "test", "git_sha": "abc1234",
             "observation": {"reproduced": True, "symptom": "crash",
                             "expected": 0, "actual": 1},
             "metrics_path": "m.json", "noise": {"deterministic": True},
@@ -707,9 +709,9 @@ class TestLedgerPerIteration:
                 return {str(work_dir / "baseline.json"): json.dumps(baseline)}
             elif turn_idx == 1:
                 return {
-                    str(iter1 / "problem.json"): json.dumps({"task_type": "debug", "claims_needed": []}),
-                    str(iter1 / "bundle.json"): json.dumps({"hypotheses": []}),
-                    str(iter1 / "plan.json"): json.dumps({"runs": []}),
+                    str(iter1 / "problem.json"): json.dumps(_problem()),
+                    str(iter1 / "bundle.json"): json.dumps(_bundle()),
+                    str(iter1 / "plan.json"): json.dumps(_plan()),
                 }
             elif turn_idx == 2:
                 return {
