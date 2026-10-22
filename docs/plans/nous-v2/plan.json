@@ -283,10 +283,25 @@
       "passes": false
     },
     {
+      "id": "R12b",
+      "title": "Lean pass before the merge bar: audit the whole v2 runtime against SPEC and cut anything not needed for (a) the core method (baseline first, locked predictions, controls, noise-aware claims, principles) or (b) lightweight repro/traceability (runs.jsonl, validators, ledger, evidence checks, resume). For every remaining module/function/config key, list the SPEC section it serves in docs/plans/nous-v2/LEAN_AUDIT.md; remove or merge what has none. Run /simplify and /pr-review-toolkit:code-simplifier over orchestrator/v2/ and apply valid simplifications. Behaviour must not change: pytest -q green.",
+      "depends_on": [
+        "R12"
+      ],
+      "tests": [],
+      "acceptance": [
+        "LEAN_AUDIT.md maps every v2 module and config key to a SPEC section, with removals listed",
+        "orchestrator/v2/ runtime (excluding schemas and tests) at or below ~2,500 lines, line counts before/after recorded in progress.txt",
+        "no new features added in this item",
+        "pytest -q green"
+      ],
+      "passes": false
+    },
+    {
       "id": "R13",
       "title": "Merge-bar evaluation (section 10): needs ~/nous_v2_eval/eval.sh set up by the human (results only); if missing, write BLOCKED.md and stop. Up to 3 improvement rounds of general fixes, up to 2 extra runs on a borderline task, then the held-out p225 run and docs/plans/nous-v2/EVAL_REPORT.md",
       "depends_on": [
-        "R12"
+        "R12b"
       ],
       "tests": [],
       "acceptance": [
