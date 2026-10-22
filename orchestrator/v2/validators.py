@@ -397,6 +397,7 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
             )
 
         # Noise honesty: CONFIRMED/REFUTED must declare noise measurement
+        # and show effect > 2x noise (spec 3.4)
         if status in ("CONFIRMED", "REFUTED"):
             has_noise_sd = "noise_sd" in h
             has_unmeasured = h.get("noise_unmeasured") is True
@@ -405,6 +406,19 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
                     f"hypothesis {hid!r}: {status} requires either "
                     "'noise_sd' or 'noise_unmeasured: true'"
                 )
+            elif has_noise_sd:
+                noise_sd = h["noise_sd"]
+                effect = h.get("effect", {})
+                effect_value = effect.get("value") if isinstance(effect, dict) else None
+                if effect_value is not None and isinstance(noise_sd, (int, float)):
+                    if abs(effect_value) <= 2 * noise_sd:
+                        errors.append(
+                            f"hypothesis {hid!r}: |effect| "
+                            f"{abs(effect_value):.4g} <= 2 * noise_sd "
+                            f"{noise_sd:.4g}; add seeds, set status to "
+                            "INCONCLUSIVE, or set noise_unmeasured with "
+                            "a reason"
+                        )
 
         # Evidence path checks
         base_dir = ctx.iter_dir or ctx.work_dir

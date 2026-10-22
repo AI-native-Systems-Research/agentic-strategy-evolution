@@ -68,9 +68,10 @@ Review decisions (pr-review-toolkit:review-pr):
   matching (spec 3.14 defines literal replacement). Skipped:
   _check_task_limits empty on missing runs.jsonl (intentional,
   file may not exist early). Skipped: _check_principle_updates
-  no-op when context is None (by design). Skipped: 2x noise
-  magnitude check (spec says check presence, not magnitude;
-  magnitude comparison belongs in analysis, not validation).
+  no-op when context is None (by design). Implemented 2x noise
+  magnitude check per spec 3.4: |effect.value| <= 2 * noise_sd
+  now triggers repair message. Added effect field to findings
+  schema. 6 new tests for magnitude check edge cases.
 
 ## R1 fix: async mismatch (post-review)
 

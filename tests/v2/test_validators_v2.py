@@ -76,6 +76,7 @@ def _valid_findings(tmp_path: Path) -> dict:
                 "status": "CONFIRMED",
                 "error_type": "none",
                 "evidence": [{"path": "results.json", "key": "/latency", "value": 1.5}],
+                "effect": {"value": 5.0},
                 "noise_sd": 0.1,
                 "question_answered": True,
                 "reason": "latency dropped",
@@ -425,6 +426,7 @@ class TestFindingsSemantics:
                     "evidence": [
                         {"path": "results.json", "key": "/latency", "value": 1.5}
                     ],
+                    "effect": {"value": 5.0},
                     "noise_sd": 0.1,
                     "question_answered": True,
                     "reason": "latency dropped",
@@ -438,6 +440,43 @@ class TestFindingsSemantics:
             and "got" in e
             for e in errs
         )
+
+    def test_effect_inside_noise_rejected(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        data["hypotheses"][0]["noise_sd"] = 10.0
+        data["hypotheses"][0]["effect"] = {"value": 0.5}
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert any("effect" in e and "noise_sd" in e for e in errs)
+
+    def test_effect_outside_noise_passes(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        data["hypotheses"][0]["noise_sd"] = 0.1
+        data["hypotheses"][0]["effect"] = {"value": 5.0}
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert not any("effect" in e and "noise_sd" in e for e in errs)
+
+    def test_deterministic_noise_zero_sd(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        data["hypotheses"][0]["noise_sd"] = 0.0
+        data["hypotheses"][0]["effect"] = {"value": 0.001}
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert not any("effect" in e and "noise_sd" in e for e in errs)
+
+    def test_unmeasured_noise_exempt_from_magnitude(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        del data["hypotheses"][0]["noise_sd"]
+        data["hypotheses"][0]["noise_unmeasured"] = True
+        data["hypotheses"][0]["noise_reason"] = "no seeds available"
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert not any("effect" in e and "noise_sd" in e for e in errs)
+
+    def test_no_effect_field_skips_magnitude_check(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        data["hypotheses"][0]["noise_sd"] = 10.0
+        if "effect" in data["hypotheses"][0]:
+            del data["hypotheses"][0]["effect"]
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert not any("effect" in e and "noise_sd" in e for e in errs)
 
 
 # ── Answer semantics ────────────────────────────────────────────────────

@@ -34,6 +34,27 @@
               "additionalProperties": false
             }
           },
+          "effect": {
+            "type": "object",
+            "required": ["value"],
+            "properties": {
+              "value": { "type": "number" },
+              "evidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": ["path", "key", "value"],
+                  "properties": {
+                    "path": { "type": "string" },
+                    "key": { "type": "string" },
+                    "value": {}
+                  },
+                  "additionalProperties": false
+                }
+              }
+            },
+            "additionalProperties": false
+          },
           "noise_sd": { "type": "number" },
           "noise_condition": { "type": "string" },
           "noise_unmeasured": { "const": true },
