@@ -248,7 +248,7 @@
         "pytest -q green",
         "grep: no bin/nous-execute-stop or bin/nous-plan-enforcer references remain"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R11d",
