@@ -51,6 +51,27 @@ task_limits (B11), bundle hash, secret masking (3.14),
 PARTIALLY_CONFIRMED partial_note, claims_needed coverage,
 per-task_type baseline observation rules.
 
+Review decisions (pr-review-toolkit:review-pr):
+- code-reviewer: Fixed path traversal in evidence checking (added
+  is_relative_to check). Fixed JSON Pointer "/" per RFC 6901 (was
+  returning root instead of doc[""]). Fixed paired-seed check to
+  compare all run pairs, not just first. Fixed baseline schema dead
+  $defs (wired noise to oneOf referencing the 3 noise shapes).
+- silent-failure-hunter: Fixed silent JSONL corruption swallow in
+  _check_task_limits (now reports corrupt line numbers). Fixed regex
+  no-capture-group silent pass (now errors instead of passing).
+  Fixed empty path/key acceptance in check_evidence_item (now
+  rejects early). Fixed misleading 2x noise comment (code checks
+  presence, not magnitude). Added IsADirectoryError to except clause.
+  Skipped: _load_schema exception propagation (schema files are
+  bundled code, exception is correct). Skipped: secrets.py literal
+  matching (spec 3.14 defines literal replacement). Skipped:
+  _check_task_limits empty on missing runs.jsonl (intentional,
+  file may not exist early). Skipped: _check_principle_updates
+  no-op when context is None (by design). Skipped: 2x noise
+  magnitude check (spec says check presence, not magnitude;
+  magnitude comparison belongs in analysis, not validation).
+
 ## R1 fix: async mismatch (post-review)
 
 Session.connect/turn/disconnect were async but FakeClient had sync

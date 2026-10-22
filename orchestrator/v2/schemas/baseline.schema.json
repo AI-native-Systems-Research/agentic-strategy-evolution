@@ -13,7 +13,13 @@
     "git_sha": { "type": "string", "pattern": "^[0-9a-f]{7,40}$" },
     "observation": { "type": "object" },
     "metrics_path": { "type": "string" },
-    "noise": { "type": "object" },
+    "noise": {
+      "oneOf": [
+        { "$ref": "#/$defs/noise_measured" },
+        { "$ref": "#/$defs/noise_deterministic" },
+        { "$ref": "#/$defs/noise_unmeasured" }
+      ]
+    },
     "extra": { "type": "object" }
   },
   "additionalProperties": false,

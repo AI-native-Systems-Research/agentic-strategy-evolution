@@ -97,11 +97,11 @@ def _resolve_json_pointer(doc: Any, pointer: str) -> Any:
 
     Raises ``KeyError`` or ``IndexError`` on miss.
     """
-    if pointer == "" or pointer == "/":
+    if pointer == "":
         return doc
     if not pointer.startswith("/"):
         raise KeyError(f"invalid JSON pointer: {pointer!r}")
-    parts = pointer.lstrip("/").split("/")
+    parts = pointer[1:].split("/")
     current = doc
     for part in parts:
         # RFC 6901 escapes
@@ -129,7 +129,14 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
     key = item.get("key", "")
     value = item.get("value")
 
-    evidence_path = base_dir / path_str
+    if not path_str:
+        errors.append("evidence item missing 'path'")
+        return errors
+
+    evidence_path = (base_dir / path_str).resolve()
+    if not evidence_path.is_relative_to(base_dir.resolve()):
+        errors.append(f"evidence path escapes base directory: {path_str!r}")
+        return errors
     if not evidence_path.exists():
         errors.append(f"evidence path does not exist: {path_str}")
         return errors
@@ -225,14 +232,19 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
                     f"evidence regex {key!r} not found in {path_str}"
                 )
                 return errors
-            if match.lastindex and match.lastindex >= 1:
+            if not match.lastindex or match.lastindex < 1:
+                errors.append(
+                    f"evidence regex {key!r} matched in {path_str} "
+                    "but has no capture group to compare against value"
+                )
+            else:
                 actual = match.group(1)
                 if not _values_match(value, actual):
                     errors.append(
                         f"evidence value mismatch at {path_str}#"
                         f"{key}: expected {value!r}, got {actual!r}"
                     )
-    except (KeyError, IndexError, json.JSONDecodeError) as exc:
+    except (KeyError, IndexError, json.JSONDecodeError, IsADirectoryError) as exc:
         errors.append(f"evidence lookup failed for {path_str}#{key}: {exc}")
 
     return errors
@@ -324,13 +336,17 @@ def _check_plan_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
             treatment_runs = groups.get("treatment", [])
             control_runs = groups.get("control", [])
             if treatment_runs and control_runs:
-                t_seeds = sorted(treatment_runs[0].get("seeds", []))
-                c_seeds = sorted(control_runs[0].get("seeds", []))
-                if t_seeds != c_seeds:
-                    errors.append(
-                        f"hypothesis {hid!r}: treatment and control "
-                        "runs must use the same seeds (paired comparison)"
-                    )
+                for t_run in treatment_runs:
+                    for c_run in control_runs:
+                        t_seeds = sorted(t_run.get("seeds", []))
+                        c_seeds = sorted(c_run.get("seeds", []))
+                        if t_seeds != c_seeds:
+                            errors.append(
+                                f"hypothesis {hid!r}: treatment run "
+                                f"{t_run.get('id')!r} and control run "
+                                f"{c_run.get('id')!r} must use the same "
+                                "seeds (paired comparison)"
+                            )
 
     # locked_parameters check
     if ctx.locked_parameters:
@@ -380,8 +396,7 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
                 "'partial_note'"
             )
 
-        # Noise honesty: CONFIRMED/REFUTED must show effect > 2x noise
-        # or carry noise_unmeasured
+        # Noise honesty: CONFIRMED/REFUTED must declare noise measurement
         if status in ("CONFIRMED", "REFUTED"):
             has_noise_sd = "noise_sd" in h
             has_unmeasured = h.get("noise_unmeasured") is True
@@ -461,12 +476,17 @@ def _check_task_limits(data: dict, ctx: ValidatorContext) -> list[str]:
     max_wall_s = ctx.task_limits.get("max_wall_seconds")
     if max_wall_s is not None:
         total_wall = 0.0
-        for line in lines:
+        corrupt_lines: list[int] = []
+        for i, line in enumerate(lines):
             try:
                 entry = json.loads(line)
                 total_wall += entry.get("wall_seconds", 0)
             except json.JSONDecodeError:
-                pass
+                corrupt_lines.append(i)
+        if corrupt_lines:
+            errors.append(
+                f"runs.jsonl: corrupt JSON on lines {corrupt_lines}"
+            )
         if total_wall > max_wall_s:
             errors.append(
                 f"task_limits: total wall time {total_wall:.1f}s "

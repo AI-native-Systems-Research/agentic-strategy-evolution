@@ -1,97 +1,53 @@
-"""Behavioral tests for orchestrator.v2.validators."""
+"""Tests for orchestrator.v2.validators — artifact validation public API."""
 
 from __future__ import annotations
 
+import hashlib
 import json
-from copy import deepcopy
 from pathlib import Path
 
 import pytest
 
 from orchestrator.v2.validators import (
     ValidatorContext,
+    _check_noise_schema,
+    _move_extras,
     bundle_hash,
     validate_artifact,
 )
 
 
-# ── Fixtures ─────────────────────────────────────────────────────────────
+# ── Helpers ──────────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def ctx(tmp_path):
-    return ValidatorContext(work_dir=tmp_path, iter_dir=tmp_path)
+def _ctx(tmp_path: Path, **kw) -> ValidatorContext:
+    return ValidatorContext(work_dir=tmp_path, **kw)
 
 
-def _make_hypothesis(
-    id_: str = "h1",
-    family: str = "fam-a",
-    control: str | None = "baseline run",
-    claim_ids: list[str] | None = None,
-):
-    h = {
-        "id": id_,
-        "role": "primary",
-        "family": family,
-        "mechanism": "increase batch size",
-        "prediction": {"metric": "throughput", "direction": "increase"},
-        "falsified_if": "throughput decreases",
-        "claim_ids": claim_ids or ["c1"],
-    }
-    if control:
-        h["control"] = control
-    return h
-
-
-def _valid_baseline(task_type: str = "debug") -> dict:
-    base = {
-        "task_type": task_type,
-        "command": "pytest -q",
+def _valid_baseline() -> dict:
+    return {
+        "task_type": "debug",
+        "command": "make test",
         "git_sha": "abc1234",
+        "observation": {"reproduced": True, "symptom": "crash", "expected": 0, "actual": 1},
         "metrics_path": "results/metrics.json",
         "noise": {"deterministic": True},
     }
-    if task_type == "debug":
-        base["observation"] = {
-            "reproduced": True,
-            "symptom": "crash on input X",
-            "expected": 0,
-            "actual": 1,
-        }
-    elif task_type == "verify":
-        base["observation"] = {
-            "points": [{"condition": "c1", "predicted": 1.0, "measured": 1.0}]
-        }
-    elif task_type == "optimize":
-        base["observation"] = {"score": 42.0}
-    elif task_type == "policy":
-        base["observation"] = {"metrics": {"latency": 10}}
-    elif task_type == "explain":
-        base["observation"] = {"symptom": "slow", "control": "fast"}
-    elif task_type == "other":
-        base["observation"] = {"metrics": {"foo": 1}}
-    return base
 
 
-def _valid_problem() -> dict:
-    return {
-        "task_type": "debug",
-        "claims_needed": [
-            {"id": "c1", "description": "fix crash", "test_method": "pytest"}
-        ],
-    }
-
-
-def _valid_bundle(families: int = 2) -> dict:
+def _valid_bundle(*, families: int = 2) -> dict:
     hyps = []
     for i in range(max(families, 1)):
-        hyps.append(
-            _make_hypothesis(
-                id_=f"h{i+1}",
-                family=f"fam-{'abcdefgh'[i]}",
-                claim_ids=["c1"],
-            )
-        )
+        hyps.append({
+            "id": f"h{i+1}",
+            "role": "treatment",
+            "family": f"fam{i+1}" if families > 1 else "fam1",
+            "mechanism": f"mech{i+1}",
+            "prediction": {"metric": "latency", "direction": "decrease"},
+            "control": "no-op",
+            "falsified_if": "latency >= baseline",
+            "claim_ids": [],
+        })
     return {"hypotheses": hyps}
 
 
@@ -102,8 +58,8 @@ def _valid_plan() -> dict:
                 "id": "r1",
                 "hypothesis_id": "h1",
                 "role": "treatment",
-                "command": "pytest -q",
-                "parameters": {},
+                "command": "run.sh",
+                "parameters": {"threads": 4},
                 "seeds": [42],
             }
         ]
@@ -111,27 +67,39 @@ def _valid_plan() -> dict:
 
 
 def _valid_findings(tmp_path: Path) -> dict:
-    evidence_file = tmp_path / "results.json"
-    evidence_file.write_text(json.dumps({"throughput": 100}))
+    ev_path = tmp_path / "results.json"
+    ev_path.write_text(json.dumps({"latency": 1.5}))
     return {
         "hypotheses": [
             {
                 "id": "h1",
                 "status": "CONFIRMED",
                 "error_type": "none",
-                "evidence": [
-                    {
-                        "path": "results.json",
-                        "key": "/throughput",
-                        "value": 100,
-                    }
-                ],
-                "noise_sd": 0.5,
-                "noise_condition": "3 seeds",
+                "evidence": [{"path": "results.json", "key": "/latency", "value": 1.5}],
+                "noise_sd": 0.1,
                 "question_answered": True,
-                "reason": "throughput increased as predicted",
+                "reason": "latency dropped",
             }
         ]
+    }
+
+
+def _valid_answer(tmp_path: Path) -> dict:
+    ev_path = tmp_path / "final.json"
+    ev_path.write_text(json.dumps({"metric": 42}))
+    return {
+        "answer": "Fixed the bug.",
+        "deliverable": "patch.diff",
+        "repro": "make test",
+        "claims": [
+            {
+                "id": "c1",
+                "metric": "latency",
+                "value": 42,
+                "condition": "default",
+                "evidence": {"path": "final.json", "key": "/metric", "value": 42},
+            }
+        ],
     }
 
 
@@ -140,7 +108,7 @@ def _valid_principle_updates() -> dict:
         "updates": [
             {
                 "id": "p1",
-                "text": "Batch size matters",
+                "text": "Use 4 threads.",
                 "finding_ref": "h1",
                 "action": "add",
             }
@@ -148,651 +116,450 @@ def _valid_principle_updates() -> dict:
     }
 
 
-def _valid_answer(tmp_path: Path) -> dict:
-    ev_file = tmp_path / "final.json"
-    ev_file.write_text(json.dumps({"metric": 42}))
+def _valid_problem() -> dict:
     return {
-        "answer": "The fix resolves the crash.",
-        "deliverable": "patch applied",
-        "repro": "run pytest -q",
-        "claims": [
-            {
-                "id": "c1",
-                "metric": "pass_rate",
-                "value": 1.0,
-                "condition": "all tests pass",
-                "evidence": {
-                    "path": "final.json",
-                    "key": "/metric",
-                    "value": 42,
-                },
-            }
+        "task_type": "debug",
+        "claims_needed": [
+            {"id": "c1", "description": "fix crash", "test_method": "unit test"},
         ],
     }
 
 
-def _valid_ledger_entry() -> dict:
-    return {
-        "bundle_hash": "a" * 64,
-        "cost_meter_usd": 0.05,
-        "status": "ok",
-        "input_tokens": 1000,
-        "output_tokens": 500,
-    }
+# ── Extra-field handling (B5) ────────────────────────────────────────────
 
 
-# ── 1. Extra-field handling (B5) ─────────────────────────────────────────
-
-
-class TestExtraFieldHandling:
-    def test_unknown_keys_moved_to_extra(self, ctx):
-        data = _valid_problem()
-        data["mystery_key"] = "hello"
-        errs = validate_artifact("problem", data, ctx)
-        assert "mystery_key" not in data
-        assert data["extra"]["mystery_key"] == "hello"
-        assert any("mystery_key" in e and "moved to extra" in e for e in errs)
-
-    def test_multiple_unknown_keys(self, ctx):
-        data = _valid_problem()
-        data["alpha"] = 1
-        data["beta"] = 2
-        errs = validate_artifact("problem", data, ctx)
-        assert data["extra"]["alpha"] == 1
-        assert data["extra"]["beta"] == 2
-        warnings = [e for e in errs if "moved to extra" in e]
+class TestMoveExtras:
+    def test_unknown_keys_moved_to_extra(self):
+        data = {"task_type": "debug", "unknown_key": "value", "another": 99}
+        schema = {"properties": {"task_type": {}}}
+        warnings = _move_extras(data, schema)
+        assert "unknown_key" not in data
+        assert "another" not in data
+        assert data["extra"]["unknown_key"] == "value"
+        assert data["extra"]["another"] == 99
         assert len(warnings) == 2
 
-    def test_no_unknown_keys_no_warnings(self, ctx):
-        data = _valid_problem()
-        errs = validate_artifact("problem", data, ctx)
-        assert not any("moved to extra" in e for e in errs)
-
-
-# ── 2. Unknown artifact type ─────────────────────────────────────────────
-
-
-class TestUnknownArtifactType:
-    def test_returns_error(self, ctx):
-        errs = validate_artifact("nonexistent", {}, ctx)
-        assert len(errs) == 1
-        assert "unknown artifact type" in errs[0]
-
-
-# ── 3. Schema failures ──────────────────────────────────────────────────
-
-
-class TestSchemaFailures:
-    def test_missing_required_field(self, ctx):
-        errs = validate_artifact("problem", {"task_type": "debug"}, ctx)
-        assert any(e.startswith("schema:") for e in errs)
-
-    def test_invalid_enum_value(self, ctx):
-        data = _valid_problem()
-        data["task_type"] = "not_a_type"
-        errs = validate_artifact("problem", data, ctx)
-        assert any("schema:" in e for e in errs)
-
-    def test_wrong_type(self, ctx):
-        errs = validate_artifact("problem", {"task_type": 123, "claims_needed": []}, ctx)
-        assert any("schema:" in e for e in errs)
-
-    def test_baseline_bad_git_sha(self, ctx):
-        data = _valid_baseline()
-        data["git_sha"] = "ZZZZ"
-        errs = validate_artifact("baseline", data, ctx)
-        assert any("schema:" in e for e in errs)
-
-    def test_plan_invalid_role(self, ctx):
-        data = _valid_plan()
-        data["runs"][0]["role"] = "observer"
-        errs = validate_artifact("plan", data, ctx)
-        assert any("schema:" in e for e in errs)
-
-    def test_plan_empty_seeds(self, ctx):
-        data = _valid_plan()
-        data["runs"][0]["seeds"] = []
-        errs = validate_artifact("plan", data, ctx)
-        assert any("schema:" in e for e in errs)
-
-    def test_findings_invalid_status(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        data["hypotheses"][0]["status"] = "UNKNOWN"
-        errs = validate_artifact("findings", data, ctx)
-        assert any("schema:" in e for e in errs)
-
-    def test_empty_hypotheses_bundle(self, ctx):
-        errs = validate_artifact("bundle", {"hypotheses": []}, ctx)
-        assert any("schema:" in e for e in errs)
-
-
-# ── 4. Bundle semantics ─────────────────────────────────────────────────
-
-
-class TestBundleSemantics:
-    def test_valid_bundle_two_families(self, ctx):
-        data = _valid_bundle(families=2)
-        errs = validate_artifact("bundle", data, ctx)
-        assert not errs
-
-    def test_single_family_no_reason(self, ctx):
-        data = _valid_bundle(families=1)
-        errs = validate_artifact("bundle", data, ctx)
-        assert any("2 distinct family" in e for e in errs)
-
-    def test_single_family_with_reason(self, ctx):
-        data = _valid_bundle(families=1)
-        data["single_family_reason"] = "Only one mechanism applies"
-        errs = validate_artifact("bundle", data, ctx)
-        assert not any("family" in e for e in errs)
-
-    def test_missing_control_and_no_reason(self, ctx):
-        data = _valid_bundle(families=2)
-        del data["hypotheses"][0]["control"]
-        errs = validate_artifact("bundle", data, ctx)
-        assert any("requires 'control' or 'no_control_reason'" in e for e in errs)
-
-    def test_no_control_with_reason(self, ctx):
-        data = _valid_bundle(families=2)
-        del data["hypotheses"][0]["control"]
-        data["hypotheses"][0]["no_control_reason"] = "Observational only"
-        errs = validate_artifact("bundle", data, ctx)
-        assert not any("no_control_reason" in e for e in errs)
-
-    def test_claims_needed_uncovered(self, ctx):
-        ctx.claims_needed = [
-            {"id": "c1"},
-            {"id": "c2"},
-        ]
-        data = _valid_bundle(families=2)
-        # hypotheses only cover c1
-        errs = validate_artifact("bundle", data, ctx)
-        assert any("c2" in e for e in errs)
-
-    def test_claims_needed_all_covered(self, ctx):
-        ctx.claims_needed = [{"id": "c1"}]
-        data = _valid_bundle(families=2)
-        errs = validate_artifact("bundle", data, ctx)
-        assert not any("claims_needed" in e for e in errs)
-
-
-# ── 5. Plan semantics ───────────────────────────────────────────────────
-
-
-class TestPlanSemantics:
-    def test_valid_plan(self, ctx):
-        data = _valid_plan()
-        errs = validate_artifact("plan", data, ctx)
-        assert not errs
-
-    def test_paired_seed_mismatch(self, ctx):
-        ctx.bundle_hypotheses = [
-            _make_hypothesis(id_="h1", control="baseline")
-        ]
-        data = {
-            "runs": [
-                {
-                    "id": "r1",
-                    "hypothesis_id": "h1",
-                    "role": "treatment",
-                    "command": "cmd",
-                    "parameters": {},
-                    "seeds": [1, 2, 3],
-                },
-                {
-                    "id": "r2",
-                    "hypothesis_id": "h1",
-                    "role": "control",
-                    "command": "cmd",
-                    "parameters": {},
-                    "seeds": [4, 5, 6],
-                },
-            ]
-        }
-        errs = validate_artifact("plan", data, ctx)
-        assert any("same seeds" in e for e in errs)
-
-    def test_paired_seed_match(self, ctx):
-        ctx.bundle_hypotheses = [
-            _make_hypothesis(id_="h1", control="baseline")
-        ]
-        data = {
-            "runs": [
-                {
-                    "id": "r1",
-                    "hypothesis_id": "h1",
-                    "role": "treatment",
-                    "command": "cmd",
-                    "parameters": {},
-                    "seeds": [1, 2, 3],
-                },
-                {
-                    "id": "r2",
-                    "hypothesis_id": "h1",
-                    "role": "control",
-                    "command": "cmd",
-                    "parameters": {},
-                    "seeds": [1, 2, 3],
-                },
-            ]
-        }
-        errs = validate_artifact("plan", data, ctx)
-        assert not any("same seeds" in e for e in errs)
-
-    def test_locked_parameters_violation(self, ctx):
-        ctx.locked_parameters = {"batch_size": 32}
-        data = _valid_plan()
-        data["runs"][0]["parameters"] = {"batch_size": 64}
-        errs = validate_artifact("plan", data, ctx)
-        assert any("locked value" in e and "batch_size" in e for e in errs)
-
-    def test_locked_parameters_with_workload_changes(self, ctx):
-        ctx.locked_parameters = {"batch_size": 32}
-        data = _valid_plan()
-        data["runs"][0]["parameters"] = {"batch_size": 64}
-        data["runs"][0]["workload_changes"] = ["batch_size"]
-        errs = validate_artifact("plan", data, ctx)
-        assert not any("locked value" in e for e in errs)
-
-    def test_locked_workload_violation(self, ctx):
-        ctx.locked_workload = {"dataset": "imagenet"}
-        data = _valid_plan()
-        data["runs"][0]["parameters"] = {"dataset": "cifar10"}
-        errs = validate_artifact("plan", data, ctx)
-        assert any("workload parameter" in e and "dataset" in e for e in errs)
-
-    def test_locked_workload_with_workload_changes(self, ctx):
-        ctx.locked_workload = {"dataset": "imagenet"}
-        data = _valid_plan()
-        data["runs"][0]["parameters"] = {"dataset": "cifar10"}
-        data["runs"][0]["workload_changes"] = ["dataset"]
-        errs = validate_artifact("plan", data, ctx)
-        assert not any("workload parameter" in e for e in errs)
-
-    def test_locked_params_matching_value_ok(self, ctx):
-        ctx.locked_parameters = {"batch_size": 32}
-        data = _valid_plan()
-        data["runs"][0]["parameters"] = {"batch_size": 32}
-        errs = validate_artifact("plan", data, ctx)
-        assert not any("locked value" in e for e in errs)
-
-    def test_no_bundle_hypotheses_skips_seed_check(self, ctx):
-        data = {
-            "runs": [
-                {
-                    "id": "r1",
-                    "hypothesis_id": "h1",
-                    "role": "treatment",
-                    "command": "cmd",
-                    "parameters": {},
-                    "seeds": [1],
-                },
-                {
-                    "id": "r2",
-                    "hypothesis_id": "h1",
-                    "role": "control",
-                    "command": "cmd",
-                    "parameters": {},
-                    "seeds": [99],
-                },
-            ]
-        }
-        errs = validate_artifact("plan", data, ctx)
-        assert not any("same seeds" in e for e in errs)
-
-
-# ── 6. Findings semantics ───────────────────────────────────────────────
-
-
-class TestFindingsSemantics:
-    def test_valid_findings(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        errs = validate_artifact("findings", data, ctx)
-        assert not errs
-
-    def test_partially_confirmed_without_note(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        data["hypotheses"][0]["status"] = "PARTIALLY_CONFIRMED"
-        errs = validate_artifact("findings", data, ctx)
-        assert any("partial_note" in e for e in errs)
-
-    def test_partially_confirmed_with_note(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        data["hypotheses"][0]["status"] = "PARTIALLY_CONFIRMED"
-        data["hypotheses"][0]["partial_note"] = "direction matched but magnitude too small"
-        errs = validate_artifact("findings", data, ctx)
-        assert not any("partial_note" in e for e in errs)
-
-    def test_confirmed_without_noise(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        del data["hypotheses"][0]["noise_sd"]
-        del data["hypotheses"][0]["noise_condition"]
-        errs = validate_artifact("findings", data, ctx)
-        assert any("noise_sd" in e and "noise_unmeasured" in e for e in errs)
-
-    def test_confirmed_with_noise_unmeasured(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        del data["hypotheses"][0]["noise_sd"]
-        del data["hypotheses"][0]["noise_condition"]
-        data["hypotheses"][0]["noise_unmeasured"] = True
-        data["hypotheses"][0]["noise_reason"] = "no repeated runs"
-        errs = validate_artifact("findings", data, ctx)
-        assert not any("noise" in e.lower() for e in errs)
-
-    def test_refuted_without_noise(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        data["hypotheses"][0]["status"] = "REFUTED"
-        data["hypotheses"][0]["error_type"] = "direction"
-        del data["hypotheses"][0]["noise_sd"]
-        del data["hypotheses"][0]["noise_condition"]
-        errs = validate_artifact("findings", data, ctx)
-        assert any("REFUTED requires" in e for e in errs)
-
-    def test_inconclusive_no_noise_ok(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        data["hypotheses"][0]["status"] = "INCONCLUSIVE"
-        del data["hypotheses"][0]["noise_sd"]
-        del data["hypotheses"][0]["noise_condition"]
-        errs = validate_artifact("findings", data, ctx)
-        assert not any("noise" in e.lower() for e in errs)
-
-    def test_evidence_path_not_found(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        data["hypotheses"][0]["evidence"][0]["path"] = "does_not_exist.json"
-        errs = validate_artifact("findings", data, ctx)
-        assert any("does not exist" in e for e in errs)
-
-    def test_evidence_value_mismatch(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        data["hypotheses"][0]["evidence"][0]["value"] = 999
-        errs = validate_artifact("findings", data, ctx)
-        assert any("mismatch" in e for e in errs)
-
-
-# ── 7. Principle updates ────────────────────────────────────────────────
-
-
-class TestPrincipleUpdates:
-    def test_valid(self, ctx):
-        ctx.bundle_hypotheses = [_make_hypothesis(id_="h1")]
-        data = _valid_principle_updates()
-        errs = validate_artifact("principle_updates", data, ctx)
-        assert not errs
-
-    def test_finding_ref_unknown(self, ctx):
-        ctx.bundle_hypotheses = [_make_hypothesis(id_="h1")]
-        data = _valid_principle_updates()
-        data["updates"][0]["finding_ref"] = "h999"
-        errs = validate_artifact("principle_updates", data, ctx)
-        assert any("h999" in e and "not a known hypothesis" in e for e in errs)
-
-    def test_no_bundle_hypotheses_skips_check(self, ctx):
-        data = _valid_principle_updates()
-        data["updates"][0]["finding_ref"] = "anything"
-        errs = validate_artifact("principle_updates", data, ctx)
-        assert not any("not a known hypothesis" in e for e in errs)
-
-
-# ── 8. Answer semantics ─────────────────────────────────────────────────
-
-
-class TestAnswerSemantics:
-    def test_valid_answer(self, ctx):
-        data = _valid_answer(ctx.work_dir)
-        errs = validate_artifact("answer", data, ctx)
-        assert not errs
-
-    def test_secret_in_answer(self, ctx):
-        ctx.secrets = {"API_KEY": "sk-abc123"}
-        data = _valid_answer(ctx.work_dir)
-        data["answer"] = "Used key sk-abc123 to access API"
-        errs = validate_artifact("answer", data, ctx)
-        assert any("answer.answer" in e and "API_KEY" in e for e in errs)
-
-    def test_secret_in_deliverable(self, ctx):
-        ctx.secrets = {"TOKEN": "ghp_secret"}
-        data = _valid_answer(ctx.work_dir)
-        data["deliverable"] = "deployed with token ghp_secret"
-        errs = validate_artifact("answer", data, ctx)
-        assert any("answer.deliverable" in e and "TOKEN" in e for e in errs)
-
-    def test_secret_in_repro(self, ctx):
-        ctx.secrets = {"DB_PASS": "hunter2"}
-        data = _valid_answer(ctx.work_dir)
-        data["repro"] = "connect with password hunter2"
-        errs = validate_artifact("answer", data, ctx)
-        assert any("answer.repro" in e and "DB_PASS" in e for e in errs)
-
-    def test_no_secrets_no_error(self, ctx):
-        data = _valid_answer(ctx.work_dir)
-        errs = validate_artifact("answer", data, ctx)
-        assert not any("secret" in e.lower() for e in errs)
-
-    def test_claim_evidence_checked(self, ctx):
-        data = _valid_answer(ctx.work_dir)
-        data["claims"][0]["evidence"]["path"] = "nonexistent.json"
-        errs = validate_artifact("answer", data, ctx)
-        assert any("does not exist" in e for e in errs)
-
-
-# ── 9. Task limits (B11) ────────────────────────────────────────────────
-
-
-class TestTaskLimits:
-    def test_exceeds_max_runs(self, ctx):
-        runs_file = ctx.work_dir / "runs.jsonl"
-        lines = [json.dumps({"wall_seconds": 1}) for _ in range(10)]
-        runs_file.write_text("\n".join(lines))
-        ctx.runs_jsonl = runs_file
-        ctx.task_limits = {"max_runs": 5}
-        data = _valid_findings(ctx.work_dir)
-        errs = validate_artifact("findings", data, ctx)
-        assert any("exceeds max_runs" in e for e in errs)
-
-    def test_within_max_runs(self, ctx):
-        runs_file = ctx.work_dir / "runs.jsonl"
-        lines = [json.dumps({"wall_seconds": 1}) for _ in range(3)]
-        runs_file.write_text("\n".join(lines))
-        ctx.runs_jsonl = runs_file
-        ctx.task_limits = {"max_runs": 5}
-        data = _valid_findings(ctx.work_dir)
-        errs = validate_artifact("findings", data, ctx)
-        assert not any("max_runs" in e for e in errs)
-
-    def test_exceeds_wall_time(self, ctx):
-        runs_file = ctx.work_dir / "runs.jsonl"
-        lines = [json.dumps({"wall_seconds": 100}) for _ in range(5)]
-        runs_file.write_text("\n".join(lines))
-        ctx.runs_jsonl = runs_file
-        ctx.task_limits = {"max_wall_seconds": 300}
-        data = _valid_findings(ctx.work_dir)
-        errs = validate_artifact("findings", data, ctx)
-        assert any("max_wall_seconds" in e for e in errs)
-
-    def test_no_task_limits_no_error(self, ctx):
-        data = _valid_findings(ctx.work_dir)
-        errs = validate_artifact("findings", data, ctx)
-        assert not any("task_limits" in e for e in errs)
-
-    def test_missing_runs_jsonl_no_error(self, ctx):
-        ctx.task_limits = {"max_runs": 1}
-        ctx.runs_jsonl = ctx.work_dir / "nonexistent.jsonl"
-        data = _valid_findings(ctx.work_dir)
-        errs = validate_artifact("findings", data, ctx)
-        assert not any("task_limits" in e for e in errs)
-
-
-# ── 10. Baseline noise variants ─────────────────────────────────────────
-
-
-class TestBaselineNoise:
-    def test_deterministic_noise(self, ctx):
-        data = _valid_baseline()
-        data["noise"] = {"deterministic": True}
-        errs = validate_artifact("baseline", data, ctx)
-        assert not any("noise" in e for e in errs)
-
-    def test_unmeasured_noise(self, ctx):
-        data = _valid_baseline()
-        data["noise"] = {"unmeasured": True, "reason": "single run only"}
-        errs = validate_artifact("baseline", data, ctx)
-        assert not any("noise" in e for e in errs)
-
-    def test_measured_noise(self, ctx):
-        data = _valid_baseline()
-        data["noise"] = {"seeds": [1, 2, 3], "values": [10.1, 10.2, 9.9], "sd": 0.15}
-        errs = validate_artifact("baseline", data, ctx)
-        assert not any("noise" in e for e in errs)
-
-    def test_empty_noise_error(self, ctx):
-        data = _valid_baseline()
-        data["noise"] = {}
-        errs = validate_artifact("baseline", data, ctx)
-        assert any("noise must be one of" in e for e in errs)
-
-    def test_measured_noise_missing_sd(self, ctx):
-        data = _valid_baseline()
-        data["noise"] = {"seeds": [1], "values": [10.0]}
-        errs = validate_artifact("baseline", data, ctx)
-        assert any("measured noise requires 'sd'" in e for e in errs)
-
-    def test_unmeasured_without_reason(self, ctx):
-        data = _valid_baseline()
-        data["noise"] = {"unmeasured": True}
-        errs = validate_artifact("baseline", data, ctx)
-        assert any("requires 'reason'" in e for e in errs)
-
-
-# ── 11. Bundle hash ─────────────────────────────────────────────────────
+    def test_known_keys_preserved(self):
+        data = {"task_type": "debug", "command": "test"}
+        schema = {"properties": {"task_type": {}, "command": {}}}
+        warnings = _move_extras(data, schema)
+        assert warnings == []
+        assert "extra" not in data
+        assert data["task_type"] == "debug"
+
+    def test_existing_extra_merged(self):
+        data = {"task_type": "debug", "extra": {"old": 1}, "new_key": 2}
+        schema = {"properties": {"task_type": {}, "extra": {}}}
+        _move_extras(data, schema)
+        assert data["extra"]["old"] == 1
+        assert data["extra"]["new_key"] == 2
+
+
+# ── Bundle hash ──────────────────────────────────────────────────────────
 
 
 class TestBundleHash:
-    def test_returns_hex_string(self):
-        h = bundle_hash({"hypotheses": [{"id": "h1"}]})
-        assert len(h) == 64
-        assert all(c in "0123456789abcdef" for c in h)
-
     def test_deterministic(self):
-        data = {"hypotheses": [{"id": "h1", "z": 1, "a": 2}]}
-        assert bundle_hash(data) == bundle_hash(data)
+        data = {"hypotheses": [{"id": "h1"}]}
+        h1 = bundle_hash(data)
+        h2 = bundle_hash(data)
+        assert h1 == h2
+
+    def test_matches_sha256(self):
+        data = {"a": 1, "b": [2, 3]}
+        canonical = json.dumps(data, sort_keys=True, separators=(",", ":"))
+        expected = hashlib.sha256(canonical.encode()).hexdigest()
+        assert bundle_hash(data) == expected
 
     def test_key_order_irrelevant(self):
-        d1 = {"b": 2, "a": 1}
-        d2 = {"a": 1, "b": 2}
-        assert bundle_hash(d1) == bundle_hash(d2)
-
-    def test_different_data_different_hash(self):
-        assert bundle_hash({"x": 1}) != bundle_hash({"x": 2})
+        assert bundle_hash({"a": 1, "b": 2}) == bundle_hash({"b": 2, "a": 1})
 
 
-# ── 12. Ledger entry ────────────────────────────────────────────────────
+# ── Noise schema ─────────────────────────────────────────────────────────
 
 
-class TestLedgerEntry:
-    def test_valid_entry(self, ctx):
-        data = _valid_ledger_entry()
-        errs = validate_artifact("ledger_entry", data, ctx)
-        assert not errs
+class TestNoiseSchema:
+    def test_deterministic_valid(self):
+        assert _check_noise_schema({"deterministic": True}) == []
 
-    def test_empty_entry(self, ctx):
-        errs = validate_artifact("ledger_entry", {}, ctx)
-        assert not errs  # all fields optional, additionalProperties: true
+    def test_deterministic_false_rejected(self):
+        errs = _check_noise_schema({"deterministic": False})
+        assert any("deterministic must be true" in e for e in errs)
 
-    def test_invalid_status_enum(self, ctx):
-        data = _valid_ledger_entry()
-        data["status"] = "broken"
-        errs = validate_artifact("ledger_entry", data, ctx)
+    def test_unmeasured_valid(self):
+        assert _check_noise_schema({"unmeasured": True, "reason": "no seeds"}) == []
+
+    def test_unmeasured_missing_reason(self):
+        errs = _check_noise_schema({"unmeasured": True})
+        assert any("reason" in e for e in errs)
+
+    def test_measured_valid(self):
+        assert _check_noise_schema({"seeds": [1, 2], "values": [1.0, 2.0], "sd": 0.5}) == []
+
+    @pytest.mark.parametrize("missing", ["seeds", "values", "sd"])
+    def test_measured_missing_field(self, missing):
+        noise = {"seeds": [1], "values": [1.0], "sd": 0.5}
+        del noise[missing]
+        errs = _check_noise_schema(noise)
+        assert any(missing in e for e in errs)
+
+    def test_no_recognized_form(self):
+        errs = _check_noise_schema({"foo": "bar"})
+        assert any("must be one of" in e for e in errs)
+
+
+# ── validate_artifact: main entry point ──────────────────────────────────
+
+
+class TestValidateArtifact:
+    def test_unknown_artifact_type(self, tmp_path):
+        errs = validate_artifact("bogus", {}, _ctx(tmp_path))
+        assert any("unknown artifact type" in e for e in errs)
+
+    def test_valid_baseline_passes(self, tmp_path):
+        errs = validate_artifact("baseline", _valid_baseline(), _ctx(tmp_path))
+        assert errs == [] or all("moved to extra" in e for e in errs)
+
+    def test_missing_required_field_returns_error(self, tmp_path):
+        data = {"task_type": "debug"}  # missing command, git_sha, etc.
+        errs = validate_artifact("baseline", data, _ctx(tmp_path))
         assert any("schema:" in e for e in errs)
 
-    def test_negative_cost_rejected(self, ctx):
-        data = _valid_ledger_entry()
-        data["cost_meter_usd"] = -1
-        errs = validate_artifact("ledger_entry", data, ctx)
-        assert any("schema:" in e for e in errs)
+    def test_extra_fields_moved_not_rejected(self, tmp_path):
+        data = _valid_baseline()
+        data["surprise_field"] = "hello"
+        errs = validate_artifact("baseline", data, _ctx(tmp_path))
+        assert data.get("extra", {}).get("surprise_field") == "hello"
+        assert "surprise_field" not in data
+        fatal = [e for e in errs if "schema:" in e]
+        assert fatal == []
 
-    def test_claims_matched_fraction_out_of_range(self, ctx):
-        data = _valid_ledger_entry()
-        data["claims_matched_fraction"] = 1.5
-        errs = validate_artifact("ledger_entry", data, ctx)
-        assert any("schema:" in e for e in errs)
-
-    def test_additional_properties_allowed(self, ctx):
-        data = _valid_ledger_entry()
-        data["custom_field"] = "anything"
-        errs = validate_artifact("ledger_entry", data, ctx)
-        # additionalProperties: true, so custom_field stays in data (not moved)
-        # but _move_extras will still move it since it's not in schema properties
-        # Wait -- ledger_entry has additionalProperties: true, but _move_extras
-        # uses schema["properties"] keys. "custom_field" is not in properties,
-        # so it WILL be moved to extra with a warning.
-        # That's fine -- warnings are returned but it's not a hard error.
-        assert not any("schema:" in e for e in errs)
+    def test_valid_content_not_discarded(self, tmp_path):
+        data = _valid_baseline()
+        original_cmd = data["command"]
+        validate_artifact("baseline", data, _ctx(tmp_path))
+        assert data["command"] == original_cmd
 
 
-# ── Baseline conditional observation shapes ──────────────────────────────
+# ── Bundle semantics ─────────────────────────────────────────────────────
 
 
-class TestBaselineTaskTypes:
-    @pytest.mark.parametrize("task_type", ["debug", "verify", "optimize", "policy", "explain", "other"])
-    def test_valid_per_type(self, ctx, task_type):
-        data = _valid_baseline(task_type)
-        errs = validate_artifact("baseline", data, ctx)
-        # Only noise-related or file-related errors should remain
-        schema_errors = [e for e in errs if "schema:" in e]
-        assert not schema_errors
+class TestBundleSemantics:
+    def test_two_families_passes(self, tmp_path):
+        data = _valid_bundle(families=2)
+        errs = validate_artifact("bundle", data, _ctx(tmp_path))
+        assert not any("family" in e for e in errs)
 
-    def test_debug_missing_reproduced(self, ctx):
-        data = _valid_baseline("debug")
-        del data["observation"]["reproduced"]
-        errs = validate_artifact("baseline", data, ctx)
-        assert any("schema:" in e for e in errs)
+    def test_single_family_without_reason_fails(self, tmp_path):
+        data = _valid_bundle(families=1)
+        errs = validate_artifact("bundle", data, _ctx(tmp_path))
+        assert any("single_family_reason" in e for e in errs)
 
-    def test_verify_empty_points(self, ctx):
-        data = _valid_baseline("verify")
-        data["observation"]["points"] = []
-        errs = validate_artifact("baseline", data, ctx)
-        assert any("schema:" in e for e in errs)
+    def test_single_family_with_reason_passes(self, tmp_path):
+        data = _valid_bundle(families=1)
+        data["single_family_reason"] = "only one mechanism relevant"
+        errs = validate_artifact("bundle", data, _ctx(tmp_path))
+        assert not any("single_family_reason" in e for e in errs)
 
-    def test_optimize_zero_score(self, ctx):
-        data = _valid_baseline("optimize")
-        data["observation"]["score"] = 0
-        errs = validate_artifact("baseline", data, ctx)
-        assert any("schema:" in e for e in errs)
+    def test_missing_control_and_no_control_reason(self, tmp_path):
+        data = _valid_bundle(families=2)
+        del data["hypotheses"][0]["control"]
+        errs = validate_artifact("bundle", data, _ctx(tmp_path))
+        assert any("no_control_reason" in e for e in errs)
 
-    def test_policy_empty_metrics(self, ctx):
-        data = _valid_baseline("policy")
-        data["observation"]["metrics"] = {}
-        errs = validate_artifact("baseline", data, ctx)
-        assert any("schema:" in e for e in errs)
+    def test_no_control_reason_accepted(self, tmp_path):
+        data = _valid_bundle(families=2)
+        del data["hypotheses"][0]["control"]
+        data["hypotheses"][0]["no_control_reason"] = "inherently monotonic"
+        errs = validate_artifact("bundle", data, _ctx(tmp_path))
+        assert not any("no_control_reason" in e for e in errs)
 
-
-# ── Problem schema ───────────────────────────────────────────────────────
-
-
-class TestProblemSchema:
-    def test_valid_problem(self, ctx):
-        data = _valid_problem()
-        errs = validate_artifact("problem", data, ctx)
-        assert not errs
-
-    def test_empty_claims_needed(self, ctx):
-        data = {"task_type": "debug", "claims_needed": []}
-        errs = validate_artifact("problem", data, ctx)
-        assert any("schema:" in e for e in errs)
-
-    def test_claim_with_optional_fields(self, ctx):
-        data = {
-            "task_type": "optimize",
-            "claims_needed": [
-                {
-                    "id": "c1",
-                    "description": "improve throughput",
-                    "test_method": "benchmark",
-                    "min_seeds": 5,
-                    "needs_ci": True,
-                    "conditions": ["batch=32", "batch=64"],
-                }
+    def test_claims_needed_coverage_check(self, tmp_path):
+        data = _valid_bundle(families=2)
+        data["hypotheses"][0]["claim_ids"] = ["c1"]
+        ctx = _ctx(
+            tmp_path,
+            claims_needed=[
+                {"id": "c1", "description": "x", "test_method": "y"},
+                {"id": "c2", "description": "z", "test_method": "w"},
             ],
+        )
+        errs = validate_artifact("bundle", data, ctx)
+        assert any("c2" in e for e in errs)
+
+
+# ── Plan semantics ───────────────────────────────────────────────────────
+
+
+class TestPlanSemantics:
+    def test_valid_plan_passes(self, tmp_path):
+        errs = validate_artifact("plan", _valid_plan(), _ctx(tmp_path))
+        assert errs == []
+
+    def test_paired_seed_mismatch(self, tmp_path):
+        data = {
+            "runs": [
+                {
+                    "id": "r1",
+                    "hypothesis_id": "h1",
+                    "role": "treatment",
+                    "command": "run.sh",
+                    "parameters": {},
+                    "seeds": [42, 99],
+                },
+                {
+                    "id": "r2",
+                    "hypothesis_id": "h1",
+                    "role": "control",
+                    "command": "run.sh",
+                    "parameters": {},
+                    "seeds": [42, 100],
+                },
+            ]
         }
-        errs = validate_artifact("problem", data, ctx)
-        assert not errs
+        ctx = _ctx(
+            tmp_path,
+            bundle_hypotheses=[{"id": "h1", "control": "no-op"}],
+        )
+        errs = validate_artifact("plan", data, ctx)
+        assert any("same seeds" in e for e in errs)
+
+    def test_paired_seed_match_passes(self, tmp_path):
+        data = {
+            "runs": [
+                {
+                    "id": "r1",
+                    "hypothesis_id": "h1",
+                    "role": "treatment",
+                    "command": "run.sh",
+                    "parameters": {},
+                    "seeds": [42, 99],
+                },
+                {
+                    "id": "r2",
+                    "hypothesis_id": "h1",
+                    "role": "control",
+                    "command": "run.sh",
+                    "parameters": {},
+                    "seeds": [42, 99],
+                },
+            ]
+        }
+        ctx = _ctx(
+            tmp_path,
+            bundle_hypotheses=[{"id": "h1", "control": "no-op"}],
+        )
+        errs = validate_artifact("plan", data, ctx)
+        assert not any("same seeds" in e for e in errs)
+
+    def test_locked_parameters_violation(self, tmp_path):
+        data = _valid_plan()
+        data["runs"][0]["parameters"]["threads"] = 8
+        ctx = _ctx(tmp_path, locked_parameters={"threads": 4})
+        errs = validate_artifact("plan", data, ctx)
+        assert any("locked value" in e for e in errs)
+
+    def test_locked_parameters_ok_with_workload_changes(self, tmp_path):
+        data = _valid_plan()
+        data["runs"][0]["parameters"]["threads"] = 8
+        data["runs"][0]["workload_changes"] = ["threads"]
+        ctx = _ctx(tmp_path, locked_parameters={"threads": 4})
+        errs = validate_artifact("plan", data, ctx)
+        assert not any("locked value" in e for e in errs)
+
+    def test_locked_workload_violation(self, tmp_path):
+        data = _valid_plan()
+        data["runs"][0]["parameters"]["input_size"] = 200
+        ctx = _ctx(tmp_path, locked_workload={"input_size": 100})
+        errs = validate_artifact("plan", data, ctx)
+        assert any("workload parameter" in e for e in errs)
+
+
+# ── Findings semantics ───────────────────────────────────────────────────
+
+
+class TestFindingsSemantics:
+    def test_valid_findings_passes(self, tmp_path):
+        errs = validate_artifact(
+            "findings", _valid_findings(tmp_path), _ctx(tmp_path)
+        )
+        assert errs == []
+
+    def test_partially_confirmed_requires_partial_note(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        data["hypotheses"][0]["status"] = "PARTIALLY_CONFIRMED"
+        data["hypotheses"][0]["noise_sd"] = 0.1
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert any("partial_note" in e for e in errs)
+
+    def test_partially_confirmed_with_note_passes(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        data["hypotheses"][0]["status"] = "PARTIALLY_CONFIRMED"
+        data["hypotheses"][0]["partial_note"] = "only for large inputs"
+        data["hypotheses"][0]["noise_sd"] = 0.1
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert not any("partial_note" in e for e in errs)
+
+    def test_confirmed_requires_noise_info(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        del data["hypotheses"][0]["noise_sd"]
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert any("noise_sd" in e or "noise_unmeasured" in e for e in errs)
+
+    def test_confirmed_with_unmeasured_noise_passes(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        del data["hypotheses"][0]["noise_sd"]
+        data["hypotheses"][0]["noise_unmeasured"] = True
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert not any("noise_sd" in e for e in errs)
+
+    def test_evidence_mismatch_reported(self, tmp_path):
+        ev_path = tmp_path / "results.json"
+        ev_path.write_text(json.dumps({"latency": 99.9}))
+        data = {
+            "hypotheses": [
+                {
+                    "id": "h1",
+                    "status": "CONFIRMED",
+                    "error_type": "none",
+                    "evidence": [
+                        {"path": "results.json", "key": "/latency", "value": 1.5}
+                    ],
+                    "noise_sd": 0.1,
+                    "question_answered": True,
+                    "reason": "latency dropped",
+                }
+            ]
+        }
+        errs = validate_artifact("findings", data, _ctx(tmp_path))
+        assert any(
+            "evidence value mismatch" in e
+            and "expected" in e
+            and "got" in e
+            for e in errs
+        )
+
+
+# ── Answer semantics ────────────────────────────────────────────────────
+
+
+class TestAnswerSemantics:
+    def test_valid_answer_passes(self, tmp_path):
+        errs = validate_artifact("answer", _valid_answer(tmp_path), _ctx(tmp_path))
+        assert errs == []
+
+    def test_secret_leak_detected(self, tmp_path):
+        data = _valid_answer(tmp_path)
+        data["answer"] = "The API key is sk-12345secret"
+        ctx = _ctx(tmp_path, secrets={"api_key": "sk-12345secret"})
+        errs = validate_artifact("answer", data, ctx)
+        assert any("secret" in e and "api_key" in e for e in errs)
+
+    def test_no_secrets_no_error(self, tmp_path):
+        data = _valid_answer(tmp_path)
+        ctx = _ctx(tmp_path, secrets={"api_key": "sk-12345secret"})
+        errs = validate_artifact("answer", data, ctx)
+        assert not any("secret" in e for e in errs)
+
+
+# ── Principle updates semantics ──────────────────────────────────────────
+
+
+class TestPrincipleUpdatesSemantics:
+    def test_valid_passes(self, tmp_path):
+        data = _valid_principle_updates()
+        ctx = _ctx(
+            tmp_path,
+            bundle_hypotheses=[{"id": "h1"}],
+        )
+        errs = validate_artifact("principle_updates", data, ctx)
+        assert errs == []
+
+    def test_invalid_finding_ref(self, tmp_path):
+        data = _valid_principle_updates()
+        data["updates"][0]["finding_ref"] = "nonexistent"
+        ctx = _ctx(
+            tmp_path,
+            bundle_hypotheses=[{"id": "h1"}],
+        )
+        errs = validate_artifact("principle_updates", data, ctx)
+        assert any("finding_ref" in e and "nonexistent" in e for e in errs)
+
+
+# ── Task limits (B11) ────────────────────────────────────────────────────
+
+
+class TestTaskLimits:
+    def test_max_runs_exceeded(self, tmp_path):
+        runs_path = tmp_path / "runs.jsonl"
+        lines = [json.dumps({"wall_seconds": 1.0}) for _ in range(5)]
+        runs_path.write_text("\n".join(lines))
+
+        data = _valid_findings(tmp_path)
+        ctx = _ctx(
+            tmp_path,
+            task_limits={"max_runs": 3},
+            runs_jsonl=runs_path,
+        )
+        errs = validate_artifact("findings", data, ctx)
+        assert any("max_runs" in e for e in errs)
+
+    def test_max_runs_within_limit(self, tmp_path):
+        runs_path = tmp_path / "runs.jsonl"
+        lines = [json.dumps({"wall_seconds": 1.0}) for _ in range(2)]
+        runs_path.write_text("\n".join(lines))
+
+        data = _valid_findings(tmp_path)
+        ctx = _ctx(
+            tmp_path,
+            task_limits={"max_runs": 5},
+            runs_jsonl=runs_path,
+        )
+        errs = validate_artifact("findings", data, ctx)
+        assert not any("max_runs" in e for e in errs)
+
+    def test_max_wall_seconds_exceeded(self, tmp_path):
+        runs_path = tmp_path / "runs.jsonl"
+        lines = [json.dumps({"wall_seconds": 100.0}) for _ in range(3)]
+        runs_path.write_text("\n".join(lines))
+
+        data = _valid_findings(tmp_path)
+        ctx = _ctx(
+            tmp_path,
+            task_limits={"max_wall_seconds": 200},
+            runs_jsonl=runs_path,
+        )
+        errs = validate_artifact("findings", data, ctx)
+        assert any("max_wall_seconds" in e for e in errs)
+
+    def test_no_limits_no_error(self, tmp_path):
+        data = _valid_findings(tmp_path)
+        ctx = _ctx(tmp_path)
+        errs = validate_artifact("findings", data, ctx)
+        assert not any("task_limits" in e for e in errs)
+
+
+# ── ValidatorContext ─────────────────────────────────────────────────────
+
+
+class TestValidatorContext:
+    def test_defaults(self, tmp_path):
+        ctx = ValidatorContext(work_dir=tmp_path)
+        assert ctx.iter_dir is None
+        assert ctx.locked_parameters is None
+        assert ctx.secrets is None
+
+    def test_all_fields(self, tmp_path):
+        ctx = ValidatorContext(
+            work_dir=tmp_path,
+            iter_dir=tmp_path / "iter-1",
+            locked_parameters={"k": "v"},
+            locked_workload={"w": 1},
+            task_limits={"max_runs": 10},
+            secrets={"key": "val"},
+            bundle_hypotheses=[{"id": "h1"}],
+            claims_needed=[{"id": "c1"}],
+            runs_jsonl=tmp_path / "runs.jsonl",
+        )
+        assert ctx.locked_parameters == {"k": "v"}
+        assert ctx.secrets == {"key": "val"}
