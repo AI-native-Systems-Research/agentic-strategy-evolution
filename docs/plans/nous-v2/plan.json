@@ -267,13 +267,34 @@
       "passes": true
     },
     {
+      "id": "R11e",
+      "title": "Spec gaps from the R11d branch review (minimal forms): (a) transient-error retry with backoff around Session turns/connect using errors.is_transient, incl. ResultMessage.is_error API 5xx (3.5/B9); (b) ValidatorContext gets bundle_hypotheses and claims_needed from the iteration's bundle.json/problem.json so paired-seed, finding_ref and claims_needed coverage checks run (3.4/B6); (c) stop rule 'answered' requires status ok and checks declared min_seeds / needs_ci / conditions only where declared (3.6); (d) phase commits check git return codes and never stage the campaign work dir when it lives inside the target repo (3.1/D5 minimal: commit on the target checkout, log failures)",
+      "depends_on": [
+        "R11d"
+      ],
+      "tests": [
+        "tests/v2/test_session.py",
+        "tests/v2/test_loop.py",
+        "tests/v2/test_stop_rule.py"
+      ],
+      "acceptance": [
+        "exit-143 ProcessError on a turn is retried and the campaign continues",
+        "paired-seed / claims_needed checks fire through the Stop hook",
+        "answered not returned when a declared min_seeds is unmet or status is partial",
+        "campaign files under <repo>/.nous are not committed; failed git commit is logged",
+        "pytest -q green; v2 runtime line count recorded"
+      ],
+      "passes": false
+    },
+    {
       "id": "R12",
       "title": "Docs: README.md, docs/architecture.md, docs/data-model.md, CLAUDE.md, CLI help updated for v2",
       "depends_on": [
         "R11a",
         "R11b",
         "R11c",
-        "R11d"
+        "R11d",
+        "R11e"
       ],
       "tests": [],
       "acceptance": [
