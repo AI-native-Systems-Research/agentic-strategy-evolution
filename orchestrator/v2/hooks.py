@@ -60,7 +60,7 @@ class HookState:
     secrets: dict[str, str] = field(default_factory=dict)
     experiment_commands: list[str] = field(default_factory=list)
     consecutive_blocks: int = 0
-    pending_wait_for: bool = False
+    pending_wait_for: list[str] = field(default_factory=list)
     now: Callable[[], float] = field(default=time.time)
 
 
@@ -68,7 +68,7 @@ class HookState:
 
 _PHASE_ARTIFACTS: dict[str, list[str]] = {
     "BASELINE": ["baseline"],
-    "DESIGN": ["problem", "bundle"],
+    "DESIGN": ["problem", "bundle", "plan"],
     "EXECUTE": ["findings", "principle_updates"],
     "REPORT": ["answer"],
 }
@@ -86,37 +86,36 @@ def _stringify_tool_response(tool_response: Any) -> str:
     return json.dumps(tool_response, default=str)
 
 
+def _build_row(
+    state: HookState, hook_input: dict, *, exit_code: int | None, background: bool,
+) -> dict[str, Any]:
+    tool_input = hook_input.get("tool_input", {})
+    command = tool_input.get("command", "")
+    response_str = _stringify_tool_response(hook_input.get("tool_response", ""))
+    return {
+        "ts": state.now(),
+        "phase": state.phase,
+        "iter": state.iteration,
+        "tool_use_id": hook_input.get("tool_use_id", ""),
+        "command": mask_secrets(command, state.secrets),
+        "exit_code": exit_code,
+        "output_bytes": len(response_str.encode("utf-8")),
+        "cwd": tool_input.get("cwd", ""),
+        "background": background,
+        "agent_id": hook_input.get("session_id", ""),
+        "experiment": is_experiment_command(command, state.experiment_commands),
+    }
+
+
 def make_post_tool_use_hook(state: HookState):
     """Create a PostToolUse callback that records Bash commands to runs.jsonl."""
 
     async def hook(hook_input: dict, _tool_use_id: str | None, _ctx: Any) -> dict:
         if hook_input.get("tool_name") != "Bash":
             return {}
-
         state.consecutive_blocks = 0
-
-        tool_input = hook_input.get("tool_input", {})
-        command = tool_input.get("command", "")
-        raw_response = hook_input.get("tool_response", "")
-        tool_response_str = _stringify_tool_response(raw_response)
-        is_background = bool(tool_input.get("run_in_background", False))
-
-        masked_command = mask_secrets(command, state.secrets)
-
-        row: dict[str, Any] = {
-            "ts": state.now(),
-            "phase": state.phase,
-            "iter": state.iteration,
-            "tool_use_id": hook_input.get("tool_use_id", ""),
-            "command": masked_command,
-            "exit_code": None if is_background else 0,
-            "output_bytes": len(tool_response_str.encode("utf-8")),
-            "cwd": tool_input.get("cwd", ""),
-            "background": is_background,
-            "agent_id": hook_input.get("session_id", ""),
-            "experiment": is_experiment_command(command, state.experiment_commands),
-        }
-
+        is_bg = bool(hook_input.get("tool_input", {}).get("run_in_background", False))
+        row = _build_row(state, hook_input, exit_code=None if is_bg else 0, background=is_bg)
         _append_runs_jsonl(state.work_dir, row)
         return {}
 
@@ -132,35 +131,11 @@ def make_post_tool_use_failure_hook(state: HookState):
     async def hook(hook_input: dict, _tool_use_id: str | None, _ctx: Any) -> dict:
         if hook_input.get("tool_name") != "Bash":
             return {}
-
         state.consecutive_blocks = 0
-
-        tool_input = hook_input.get("tool_input", {})
-        command = tool_input.get("command", "")
         error = hook_input.get("error", "")
-
         m = _EXIT_CODE_RE.search(error)
         exit_code = int(m.group(1)) if m else -1
-
-        masked_command = mask_secrets(command, state.secrets)
-
-        raw_response = hook_input.get("tool_response", "")
-        response_str = _stringify_tool_response(raw_response)
-
-        row: dict[str, Any] = {
-            "ts": state.now(),
-            "phase": state.phase,
-            "iter": state.iteration,
-            "tool_use_id": hook_input.get("tool_use_id", ""),
-            "command": masked_command,
-            "exit_code": exit_code,
-            "output_bytes": len(response_str.encode("utf-8")),
-            "cwd": tool_input.get("cwd", ""),
-            "background": False,
-            "agent_id": hook_input.get("session_id", ""),
-            "experiment": is_experiment_command(command, state.experiment_commands),
-        }
-
+        row = _build_row(state, hook_input, exit_code=exit_code, background=False)
         _append_runs_jsonl(state.work_dir, row)
         return {}
 
@@ -178,7 +153,7 @@ def make_stop_hook(state: HookState):
             state.consecutive_blocks = 0
             return {}
 
-        if state.pending_wait_for:
+        if state.pending_wait_for and _any_wait_pending(state.pending_wait_for):
             state.consecutive_blocks = 0
             return {}
 
@@ -351,6 +326,12 @@ def _iter_dir(state: HookState) -> Path | None:
     if state.iteration <= 0:
         return None
     return state.work_dir / "runs" / f"iter-{state.iteration}"
+
+
+def _any_wait_pending(wait_specs: list[str]) -> bool:
+    """True if at least one wait_for condition is still unmet."""
+    from .robustness import check_wait_condition
+    return any(not check_wait_condition(spec) for spec in wait_specs)
 
 
 def _artifact_path(state: HookState, artifact_type: str) -> Path:

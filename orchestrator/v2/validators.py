@@ -89,7 +89,6 @@ _JSON_EXTENSIONS = {".json"}
 _JSONL_EXTENSIONS = {".jsonl"}
 _CSV_EXTENSIONS = {".csv"}
 _TSV_EXTENSIONS = {".tsv"}
-_EVIDENCE_EXTENSIONS = _JSON_EXTENSIONS | _JSONL_EXTENSIONS | _CSV_EXTENSIONS | _TSV_EXTENSIONS
 
 
 def _resolve_json_pointer(doc: Any, pointer: str) -> Any:

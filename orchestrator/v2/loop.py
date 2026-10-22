@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import subprocess
 import time
 from dataclasses import dataclass, field
@@ -16,7 +17,7 @@ from typing import Any, Callable
 
 from .hooks import HookState, build_hooks
 from .preflight import run_preflight
-from .robustness import FailureBreaker, write_halt
+from .robustness import FailureBreaker, check_wait_condition, write_halt
 from .session import Session
 from .stop_rule import (
     best_changed,
@@ -104,19 +105,6 @@ def _write_json(path: Path, data: Any) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def _check_wait_condition(wait_spec: str) -> bool:
-    """Check a single wait_for condition (file exists or cmd exits 0)."""
-    if wait_spec.startswith("cmd:"):
-        try:
-            result = subprocess.run(
-                wait_spec[4:], shell=True, capture_output=True, timeout=30,
-            )
-            return result.returncode == 0
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            logger.warning("wait_for command error: %s", exc)
-            return False
-    return Path(wait_spec).exists()
-
 
 def _merge_principles(
     existing: list[dict], updates: dict | None
@@ -163,7 +151,7 @@ class Campaign:
         """Execute the full campaign. Returns summary dict."""
         hook_state = HookState(
             work_dir=self._work_dir,
-            secrets={k: "***" for k in self._config.secrets},
+            secrets={k: os.environ.get(k, "") for k in self._config.secrets},
             experiment_commands=self._config.experiment_commands,
         )
         hooks = build_hooks(hook_state)
@@ -180,6 +168,7 @@ class Campaign:
                 "work_dir": str(self._work_dir),
                 "effort": self._config.effort,
                 "hooks": hooks,
+                "cwd": self._config.target_system.get("path"),
             },
         )
         await session.connect()
@@ -219,9 +208,9 @@ class Campaign:
 
             hook_state.phase = "EXECUTE"
             pending_waits = self._get_pending_waits(idir)
-            hook_state.pending_wait_for = bool(pending_waits)
+            hook_state.pending_wait_for = [r["wait_for"] for r in pending_waits]
             await self._execute(session, iteration)
-            hook_state.pending_wait_for = False
+            hook_state.pending_wait_for = []
             await self._poll_and_resume(
                 session, idir, pending_waits, iteration, breaker,
             )
@@ -378,7 +367,7 @@ class Campaign:
         for _ in range(max_polls):
             done = [
                 rid for rid, wf in remaining.items()
-                if _check_wait_condition(wf)
+                if check_wait_condition(wf)
             ]
             for rid in done:
                 del remaining[rid]

@@ -688,3 +688,65 @@ class TestLedgerPerIteration:
         ledger = json.loads((work_dir / "ledger.json").read_text())
         assert len(ledger) == 1
         assert ledger[0]["iteration"] == 1
+
+
+class TestCwdPassedToSession:
+    """Spec 3.1: Campaign passes cwd=<campaign worktree> to Session."""
+
+    async def test_cwd_from_target_system_path(self, tmp_path):
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        target_path = str(tmp_path / "target_repo")
+
+        captured_opts: list = []
+
+        def capturing_factory(opts):
+            captured_opts.append(opts)
+            return FakeClient(
+                script=_make_script(4),
+                per_turn_files=_build_per_turn_files(work_dir, answered=True),
+            )
+
+        config = CampaignConfig(
+            research_question="test?",
+            run_id="test-cwd",
+            max_iterations=1,
+            target_system={"path": target_path},
+        )
+        campaign = Campaign(
+            config=config,
+            work_dir=work_dir,
+            client_factory=capturing_factory,
+        )
+        await campaign.run()
+
+        assert len(captured_opts) >= 1
+        assert captured_opts[0].cwd == target_path
+
+    async def test_cwd_none_when_no_path(self, tmp_path):
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+
+        captured_opts: list = []
+
+        def capturing_factory(opts):
+            captured_opts.append(opts)
+            return FakeClient(
+                script=_make_script(4),
+                per_turn_files=_build_per_turn_files(work_dir, answered=True),
+            )
+
+        config = CampaignConfig(
+            research_question="test?",
+            run_id="test-cwd-none",
+            max_iterations=1,
+            target_system={},
+        )
+        campaign = Campaign(
+            config=config,
+            work_dir=work_dir,
+            client_factory=capturing_factory,
+        )
+        await campaign.run()
+
+        assert getattr(captured_opts[0], "cwd", None) is None

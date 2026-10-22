@@ -268,3 +268,32 @@ message sent, two runs polled together.
 Tests after: 1715 passed, 0 failed
 Runtime line count: 2,159 lines (target ~2,500)
 
+## R4b fix: reviewer round 2 + branch simplification
+
+Two reviewer issues fixed:
+1. Stop-gate bypass too broad — pending_wait_for changed from bool to
+   list[str]; Stop hook evaluates conditions live via check_wait_condition.
+2. Missing cwd — Campaign.run() now passes cwd=config.target_system["path"]
+   to Session options per spec 3.1.
+
+Branch review findings addressed:
+- Critical: secrets={k: "***"} never read env values — fixed to os.environ.get.
+- Critical: plan.json missing from DESIGN Stop hook — added to _PHASE_ARTIFACTS.
+- Skipped (noted for later): repair loop only on EXECUTE (spec says all phases),
+  _check_bundle_hash silent on deleted bundle, stall check on iteration 1.
+
+Simplifications applied:
+- Removed dead _EVIDENCE_EXTENSIONS from validators.py.
+- Removed unused asyncio/json imports from preflight.py.
+- Extracted check_wait_condition into robustness.py; removed duplicates
+  from loop.py and hooks.py _any_wait_pending.
+- Extracted _build_row helper in hooks.py (PostToolUse + PostToolUseFailure
+  shared 11 fields).
+- Removed dead FailureBreaker.reset().
+
+4 new tests: stop gate validates when waits met, cwd passed to Session,
+cwd None when target has no path.
+
+Tests after: 1718 passed, 0 failed
+Runtime line count: 2,123 lines (target ~2,500)
+

@@ -46,9 +46,6 @@ class FailureBreaker:
             return fp
         return None
 
-    def reset(self) -> None:
-        self._recent = []
-
 
 def write_halt(work_dir: Path, fingerprint: str, phase: str, message: str) -> None:
     """Write halt.json to trigger stop rule."""
@@ -65,6 +62,20 @@ def write_halt(work_dir: Path, fingerprint: str, phase: str, message: str) -> No
 # ── Wait-for polling (3.2 step 4) ───────────────────────────────────────
 
 
+def check_wait_condition(wait_spec: str) -> bool:
+    """Check a single wait_for condition (file exists or cmd exits 0)."""
+    if wait_spec.startswith("cmd:"):
+        try:
+            result = subprocess.run(
+                wait_spec[4:], shell=True, capture_output=True, timeout=30,
+            )
+            return result.returncode == 0
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("wait_for command error: %s", exc)
+            return False
+    return Path(wait_spec).exists()
+
+
 def poll_wait_for(
     wait_spec: str,
     *,
@@ -74,27 +85,13 @@ def poll_wait_for(
 ) -> bool:
     """Poll a wait_for spec until satisfied or timeout.
 
-    wait_spec is either a file path (must exist) or "cmd:<command>" (must exit 0).
     No model calls are made during polling.
     """
-    is_command = wait_spec.startswith("cmd:")
     deadline = time.monotonic() + timeout
 
     while time.monotonic() < deadline:
-        if is_command:
-            cmd = wait_spec[4:]
-            try:
-                result = subprocess.run(
-                    cmd, shell=True, capture_output=True, timeout=30,
-                )
-                if result.returncode == 0:
-                    return True
-            except (subprocess.TimeoutExpired, OSError) as exc:
-                logger.warning("wait_for command error: %s", exc)
-        else:
-            if Path(wait_spec).exists():
-                return True
-
+        if check_wait_condition(wait_spec):
+            return True
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break

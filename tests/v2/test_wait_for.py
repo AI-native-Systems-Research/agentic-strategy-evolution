@@ -204,14 +204,26 @@ class TestWaitForIntegration:
     """Integration: pending wait_for → stop allowed → poll → resume message."""
 
     async def test_stop_hook_allows_stop_with_pending_wait(self, tmp_path):
-        """Stop hook does not block when pending_wait_for is True."""
-        state = HookState(work_dir=tmp_path, phase="EXECUTE", iteration=1, pending_wait_for=True)
+        """Stop hook does not block when pending_wait_for has unmet conditions."""
+        missing = str(tmp_path / "not_yet.txt")
+        state = HookState(work_dir=tmp_path, phase="EXECUTE", iteration=1, pending_wait_for=[missing])
         hooks = build_hooks(state)
-        # Get the Stop hook callback
         stop_matchers = hooks["Stop"]
         cb = stop_matchers[0].hooks[0]
         result = await cb({"stop_reason": "end_turn"}, None, {"signal": None})
         assert result == {} or result.get("decision") != "block"
+
+    async def test_stop_hook_validates_when_all_waits_met(self, tmp_path):
+        """Stop hook validates artifacts when all wait_for conditions are met."""
+        done = tmp_path / "done.txt"
+        done.write_text("done")
+        state = HookState(work_dir=tmp_path, phase="EXECUTE", iteration=1, pending_wait_for=[str(done)])
+        idir = iter_dir(tmp_path, 1)
+        idir.mkdir(parents=True, exist_ok=True)
+        hooks = build_hooks(state)
+        cb = hooks["Stop"][0].hooks[0]
+        result = await cb({"stop_reason": "end_turn"}, None, {"signal": None})
+        assert result.get("decision") == "block"
 
     async def test_agent_receives_resume_after_wait(self, tmp_path):
         """After wait_for is satisfied, agent receives 'Runs X finished' message."""
