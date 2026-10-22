@@ -27,6 +27,7 @@ You are running a structured scientific investigation. Follow this loop exactly.
 - For each hypothesis, write its `status`: CONFIRMED, REFUTED, PARTIALLY_CONFIRMED, or INCONCLUSIVE.
 - Write `findings.json`: per-hypothesis results with:
   - `status`, `error_type` (prediction/measurement/design/scope), `evidence` (list of {path, key, value} pointing to real files).
+  - per claim: `claim_id` (from claims_needed), `metric`, `condition`, `value`, plus `seeds` (list) and `ci` when claims_needed declares min_seeds / needs_ci.
   - `question_answered`: true/false — did the findings resolve the campaign question?
   - `finding_ref`: identifier linking back to the hypothesis.
   - If noise was measured, include `noise_sd`. A finding resting on unmeasured noise must set `noise_unmeasured: true`.

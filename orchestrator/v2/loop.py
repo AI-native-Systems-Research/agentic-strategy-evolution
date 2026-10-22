@@ -329,7 +329,7 @@ class Campaign:
                 halt_path=self._work_dir / "halt.json",
                 stop_sentinel_path=self._work_dir / "STOP",
                 current_claims_changed=cc, current_best_changed=bc,
-                claims_needed=problem.get("claims_needed"),
+                claims_needed=problem.get("claims_needed"), status=status,
             )
             if stop_reason is not None:
                 entry["stop_reason"] = stop_reason
@@ -396,30 +396,29 @@ class Campaign:
         return False
 
     def _commit_phase(self, iteration: int, phase: str) -> None:
+        """Commit the target checkout (spec 3.1 / D5); never the campaign work dir."""
         target = self._config.target_system.get("repo_path")
-        if not target:
+        if not target or not (Path(target) / ".git").exists():
             return
-        target_path = Path(target)
-        if not (target_path / ".git").exists():
-            return
+        target_path = Path(target).resolve()
+        work = self._work_dir.resolve()
+        spec = ["."]
+        if work.is_relative_to(target_path) and work != target_path:
+            spec.append(f":(exclude){work.relative_to(target_path).as_posix()}")
+        msg = f"nous: {phase}" if iteration == 0 else f"nous: iter-{iteration} {phase}"
+        steps = (["add", "-A", "--", *spec], ["commit", "-q", "-m", msg])
         try:
-            status = subprocess.run(
-                ["git", "status", "--porcelain"],
-                cwd=str(target_path), capture_output=True, text=True, timeout=30,
-            )
-            if not status.stdout.strip():
-                return
-            subprocess.run(
-                ["git", "add", "-A"],
-                cwd=str(target_path), capture_output=True, timeout=30,
-            )
-            msg = f"nous: {phase}" if iteration == 0 else f"nous: iter-{iteration} {phase}"
-            subprocess.run(
-                ["git", "commit", "-m", msg, "--allow-empty"],
-                cwd=str(target_path), capture_output=True, timeout=30,
-            )
-        except (subprocess.TimeoutExpired, OSError):
-            logger.warning("failed to commit target worktree after %s", phase)
+            for args in steps:
+                r = subprocess.run(
+                    ["git", *args], cwd=str(target_path), capture_output=True, text=True, timeout=30,
+                )
+                if r.returncode != 0:
+                    if args[0] == "commit" and "nothing" in r.stdout + r.stderr:
+                        return
+                    logger.warning("git %s failed after %s: %s", args[0], phase, (r.stderr or r.stdout).strip())
+                    return
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            logger.warning("failed to commit target worktree after %s: %s", phase, exc)
 
     def _objective_direction(self) -> str:
         obj = self._config.objective

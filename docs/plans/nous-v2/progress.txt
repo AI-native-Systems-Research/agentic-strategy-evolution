@@ -478,3 +478,13 @@ Branch-review bugs fixed (test-first, 19 new tests):
 - pending_wait_for cleared before polling Stop-gated intermediate turns -> cleared after poll.
 Recorded, not fixed (later candidates, beyond MVP or need design): bundle_hypotheses/claims_needed never set in ValidatorContext so paired-seed/finding_ref/claims coverage checks skip; no baseline semantic check; phase commit does `git add -A` on the user's branch without a campaign worktree (D5) and unchecked return codes; transient-error retry (B9 is_transient) not wired into Session.turn; stop rule ignores min_seeds/needs_ci/conditions and partial status; background repro (exit_code None). Note duplicated when fallback lands at REPORT (harmless).
 Tests: 842 -> 861 passed. v2 runtime 2429 lines.
+
+## R11e: spec gaps from the R11d branch review
+
+(a) Session.connect/turn retry transient errors (errors.is_transient; ResultMessage.is_error with 5xx/overloaded) 3x with injectable backoff, reconnecting with resume=session_id (3.5/B9). (b) validators.iter_context loads bundle hypotheses + problem claims_needed so paired-seed, finding_ref and claims_needed coverage run in the Stop hook and repair path (3.4/B6). (c) check_stop 'answered' needs status ok and checks declared min_seeds / needs_ci / conditions only (3.6); findings.schema.json claims gain optional seeds[] and ci. (d) _commit_phase excludes the work dir when it is inside the target repo, checks git return codes and logs failures; no empty commits.
+Tests before: 861 passed. After: 886 passed (25 new).
+Review decisions (silent-failure-hunter):
+- Fixed: check_stop crashed on malformed seeds when status partial (claims checked before status guard); guard now short-circuits; test added.
+- Fixed: method prompt never told the agent to write seeds/ci on claims, so declared min_seeds could never be met; one line added (method.md 3,542 bytes <= 6,144).
+- Skipped: retry of the very first turn before any session_id loses in-flight context; files on disk survive, low impact, MVP.
+Runtime line count: 2493 (target ~2500).

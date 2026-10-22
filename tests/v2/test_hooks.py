@@ -680,3 +680,72 @@ class TestBuildHooks:
                 assert len(m.hooks) > 0, f"{event} has empty hooks after Options"
                 for cb in m.hooks:
                     assert inspect.iscoroutinefunction(cb)
+
+
+# ── R11e: Stop hook loads bundle/problem context ─────────────────────────
+
+
+def _hyp(hid, family, claim_ids, control="ctrl"):
+    return {
+        "id": hid, "role": "main", "family": family, "mechanism": "m",
+        "prediction": {"metric": "x", "direction": "increase"},
+        "control": control, "falsified_if": "f", "claim_ids": claim_ids,
+    }
+
+
+def _write_design(iter_dir: Path, *, claim_ids, seeds_ctrl):
+    iter_dir.mkdir(parents=True, exist_ok=True)
+    (iter_dir / "problem.json").write_text(json.dumps({
+        "task_type": "optimize",
+        "claims_needed": [
+            {"id": "c1", "description": "d", "test_method": "t"},
+            {"id": "c2", "description": "d", "test_method": "t"},
+        ],
+    }))
+    (iter_dir / "bundle.json").write_text(json.dumps({"hypotheses": [
+        _hyp("h1", "f1", claim_ids), _hyp("h2", "f2", claim_ids),
+    ]}))
+    (iter_dir / "plan.json").write_text(json.dumps({"runs": [
+        {"id": "r1", "hypothesis_id": "h1", "role": "treatment",
+         "command": "c", "parameters": {}, "seeds": [1, 2]},
+        {"id": "r2", "hypothesis_id": "h1", "role": "control",
+         "command": "c", "parameters": {}, "seeds": seeds_ctrl},
+    ]}))
+
+
+class TestStopHookContext:
+    async def test_design_blocks_uncovered_claims_needed(self, tmp_path):
+        state = _make_state(tmp_path, phase="DESIGN", iteration=1)
+        _write_design(state.work_dir / "runs" / "iter-1", claim_ids=["c1"], seeds_ctrl=[1, 2])
+        result = await make_stop_hook(state)(_stop_input(), None, None)
+        assert result.get("decision") == "block"
+        assert "c2" in result["reason"]
+
+    async def test_design_blocks_unpaired_seeds(self, tmp_path):
+        state = _make_state(tmp_path, phase="DESIGN", iteration=1)
+        _write_design(state.work_dir / "runs" / "iter-1", claim_ids=["c1", "c2"], seeds_ctrl=[7])
+        result = await make_stop_hook(state)(_stop_input(), None, None)
+        assert result.get("decision") == "block"
+        assert "paired" in result["reason"]
+
+    async def test_design_allows_when_covered_and_paired(self, tmp_path):
+        state = _make_state(tmp_path, phase="DESIGN", iteration=1)
+        _write_design(state.work_dir / "runs" / "iter-1", claim_ids=["c1", "c2"], seeds_ctrl=[2, 1])
+        result = await make_stop_hook(state)(_stop_input(), None, None)
+        assert result == {}
+
+    async def test_execute_blocks_unknown_finding_ref(self, tmp_path):
+        state = _make_state(tmp_path, phase="EXECUTE", iteration=1)
+        idir = state.work_dir / "runs" / "iter-1"
+        _write_design(idir, claim_ids=["c1", "c2"], seeds_ctrl=[1, 2])
+        (idir / "findings.json").write_text(json.dumps({
+            "hypotheses": [{"id": "h1", "status": "INCONCLUSIVE", "error_type": "none",
+                            "evidence": []}],
+            "question_answered": False, "reason": "r",
+        }))
+        (idir / "principle_updates.json").write_text(json.dumps({"updates": [
+            {"id": "p1", "text": "t", "finding_ref": "h9", "action": "add"},
+        ]}))
+        result = await make_stop_hook(state)(_stop_input(), None, None)
+        assert result.get("decision") == "block"
+        assert "h9" in result["reason"]

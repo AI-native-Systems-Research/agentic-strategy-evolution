@@ -484,3 +484,69 @@ class TestBestChangedNonNumeric:
         curr = {"best": {"value": 2.0}}
         assert best_changed(prev, curr) is False
         assert best_changed({"best": {"value": 1.0}}, {"best": {"value": "x"}}) is False
+
+
+# ── R11e: answered requires status ok and declared claims_needed reqs ─
+
+
+def _claim_findings(claims: list[dict]) -> dict:
+    return _findings(hypotheses=[{
+        "id": "h1", "status": "CONFIRMED", "error_type": "none", "evidence": [],
+        "noise_unmeasured": True, "noise_reason": "n/a", "claims": claims,
+    }])
+
+
+def _stop(tmp_path, findings, claims_needed=None, status="ok"):
+    return check_stop(
+        iteration=1, findings=findings, principle_updates=None, ledger=[],
+        max_iterations=5, stall_iterations=2,
+        halt_path=tmp_path / "halt.json", stop_sentinel_path=tmp_path / "STOP",
+        claims_needed=claims_needed, status=status,
+    )
+
+
+def _c(cond="a", **kw):
+    return {"claim_id": "c1", "metric": "m", "condition": cond, "value": 1, **kw}
+
+
+class TestAnsweredRequirements:
+    def test_partial_status_not_answered(self, tmp_path):
+        assert _stop(tmp_path, _claim_findings([_c()]), status="partial") is None
+
+    def test_partial_with_malformed_seeds_does_not_crash(self, tmp_path):
+        need = [{"id": "c1", "min_seeds": 5}]
+        assert _stop(tmp_path, _claim_findings([_c(seeds=5)]), need, status="partial") is None
+
+    def test_min_seeds_unmet(self, tmp_path):
+        need = [{"id": "c1", "min_seeds": 5}]
+        assert _stop(tmp_path, _claim_findings([_c(seeds=[1])]), need) is None
+
+    def test_min_seeds_unmet_when_no_seeds_reported(self, tmp_path):
+        need = [{"id": "c1", "min_seeds": 2}]
+        assert _stop(tmp_path, _claim_findings([_c()]), need) is None
+
+    def test_min_seeds_met_across_claims(self, tmp_path):
+        need = [{"id": "c1", "min_seeds": 3}]
+        f = _claim_findings([_c("a", seeds=[1, 2]), _c("b", seeds=[2, 3])])
+        assert _stop(tmp_path, f, need) == "answered"
+
+    def test_needs_ci_unmet(self, tmp_path):
+        need = [{"id": "c1", "needs_ci": True}]
+        assert _stop(tmp_path, _claim_findings([_c()]), need) is None
+
+    def test_needs_ci_met(self, tmp_path):
+        need = [{"id": "c1", "needs_ci": True}]
+        f = _claim_findings([_c(ci=[0.9, 1.1])])
+        assert _stop(tmp_path, f, need) == "answered"
+
+    def test_conditions_unmet(self, tmp_path):
+        need = [{"id": "c1", "conditions": ["wl-a", "wl-b"]}]
+        assert _stop(tmp_path, _claim_findings([_c("wl-a")]), need) is None
+
+    def test_conditions_met(self, tmp_path):
+        need = [{"id": "c1", "conditions": ["wl-a", "wl-b"]}]
+        f = _claim_findings([_c("wl-a"), _c("wl-b")])
+        assert _stop(tmp_path, f, need) == "answered"
+
+    def test_undeclared_requirements_not_added(self, tmp_path):
+        assert _stop(tmp_path, _claim_findings([_c()]), [{"id": "c1"}]) == "answered"

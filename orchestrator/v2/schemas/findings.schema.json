@@ -68,7 +68,9 @@
                 "claim_id": { "type": "string" },
                 "metric": { "type": "string" },
                 "condition": { "type": "string" },
-                "value": {}
+                "value": {},
+                "seeds": { "type": "array" },
+                "ci": {}
               },
               "additionalProperties": false
             }

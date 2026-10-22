@@ -824,3 +824,88 @@ class TestExperimentCommandsDefault:
         await cb({"tool_name": "Bash", "tool_input": {"command": "blis run --x"}}, None, {})
         row = json.loads((tmp_path / "runs.jsonl").read_text().splitlines()[0])
         assert row["experiment"] is True
+
+
+# ── R11e: transient retry inside a campaign ─────────────────────────────
+
+
+class TestTransientRetryInCampaign:
+    async def test_exit_143_on_turn_retried_and_campaign_continues(self, tmp_path, monkeypatch):
+        from orchestrator.v2 import session as session_mod
+        from orchestrator.v2.errors import ProcessError
+
+        monkeypatch.setattr(session_mod, "RETRY_DELAYS_S", (0.0, 0.0))
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(_campaign_yaml())
+        per_turn = _build_per_turn_files(work_dir, answered=True)
+
+        class Flaky(FakeClient):
+            calls = 0
+
+            async def query(self, prompt):
+                Flaky.calls += 1
+                if Flaky.calls == 2:  # DESIGN turn dies once with SIGTERM
+                    raise ProcessError(143)
+                await super().query(prompt)
+
+        client = Flaky(script=_make_script(4), per_turn_files=per_turn)
+        campaign = Campaign(config=config, work_dir=work_dir, client_factory=lambda _o: client)
+        result = await campaign.run()
+
+        assert result["stop_reason"] == "answered"
+        assert (work_dir / "answer.json").exists()
+
+
+# ── R11e: phase commits on the target checkout ──────────────────────────
+
+
+def _git(repo: Path, *args: str) -> str:
+    import subprocess
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True,
+    ).stdout
+
+
+def _init_repo(tmp_path: Path) -> Path:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git(repo, "init", "-q")
+    _git(repo, "config", "user.email", "t@example.com")
+    _git(repo, "config", "user.name", "t")
+    (repo / "README").write_text("x\n")
+    _git(repo, "add", "README")
+    _git(repo, "commit", "-qm", "init")
+    return repo
+
+
+def _repo_campaign(repo: Path) -> tuple[Campaign, Path]:
+    work_dir = repo / ".nous" / "run-1"
+    work_dir.mkdir(parents=True)
+    config = parse_campaign_config(_campaign_yaml(repo_path=str(repo)))
+    per_turn = _build_per_turn_files(work_dir, answered=True)
+    per_turn[1][str(repo / "src.py")] = "print('fix')\n"  # agent edits code in DESIGN
+    client = FakeClient(script=_make_script(4), per_turn_files=per_turn)
+    return Campaign(config=config, work_dir=work_dir, client_factory=lambda _o: client), work_dir
+
+
+class TestCommitPhase:
+    async def test_campaign_work_dir_inside_repo_not_committed(self, tmp_path):
+        repo = _init_repo(tmp_path)
+        campaign, _wd = _repo_campaign(repo)
+        await campaign.run()
+        tracked = _git(repo, "ls-files").split()
+        assert "src.py" in tracked
+        assert not any(p.startswith(".nous/") for p in tracked)
+        assert "nous: iter-1 DESIGN" in _git(repo, "log", "--format=%s")
+
+    async def test_failed_commit_is_logged_not_raised(self, tmp_path, caplog):
+        repo = _init_repo(tmp_path)
+        hook = repo / ".git" / "hooks" / "pre-commit"
+        hook.write_text("#!/bin/sh\nexit 1\n")
+        hook.chmod(0o755)
+        campaign, _wd = _repo_campaign(repo)
+        with caplog.at_level(logging.WARNING):
+            result = await campaign.run()
+        assert result["stop_reason"] == "answered"
+        assert any("commit" in r.message for r in caplog.records)

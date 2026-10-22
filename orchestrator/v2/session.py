@@ -5,13 +5,22 @@ Spec reference: R1 / spec 3.1.
 
 from __future__ import annotations
 
+import asyncio
+import logging
+import re
 from pathlib import Path
 from typing import Any, Callable
 
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import SystemPromptPreset
 
+from .errors import APIServerError, is_transient
 from .resume import update_state
+
+logger = logging.getLogger(__name__)
+
+RETRY_DELAYS_S = (5.0, 30.0)  # 3 tries in all (spec 3.5 / B9)
+_API_5XX = re.compile(r"\b5\d\d\b|overloaded", re.IGNORECASE)
 
 
 MODEL_MAX_OUTPUT: dict[str, int] = {
@@ -43,7 +52,9 @@ class Session:
         self,
         client_factory: Callable[..., Any],
         options: dict[str, Any],
+        sleep: Callable[[float], Any] = asyncio.sleep,
     ) -> None:
+        self._sleep = sleep
         self._client_factory = client_factory
         self._options = dict(options)
         self._client: Any | None = None
@@ -99,19 +110,48 @@ class Session:
 
     # ── Lifecycle ─────────────────────────────────────────────────────
 
-    async def connect(self) -> Any:
-        """Create and connect the SDK client."""
-        opts = self.build_agent_options()
-        self._client = self._client_factory(opts)
+    async def _retry(self, fn: Callable[[], Any]) -> Any:
+        """Await fn(), retrying transient errors with backoff (spec 3.5)."""
+        for delay in (*RETRY_DELAYS_S, None):
+            try:
+                return await fn()
+            except Exception as exc:
+                if delay is None or not is_transient(exc):
+                    raise
+                logger.warning("transient SDK error (%s); retrying in %.0fs", exc, delay)
+                await self._sleep(delay)
+
+    async def _connect_once(self) -> Any:
+        if self._client is not None:  # drop a dead client; resume picks up session_id
+            try:
+                await self._client.disconnect()
+            except Exception:
+                pass
+        self._client = self._client_factory(self.build_agent_options())
         await self._client.connect()
         return self._client
+
+    async def connect(self) -> Any:
+        """Create and connect the SDK client."""
+        return await self._retry(self._connect_once)
 
     async def turn(
         self, prompt: str, on_message: Callable[..., Any] | None = None,
     ) -> Any:
         if self._client is None:
             raise RuntimeError("Session.connect() must be called first")
+        first = True
 
+        async def attempt() -> Any:
+            nonlocal first
+            if not first:
+                await self._connect_once()
+            first = False
+            return await self._turn_once(prompt, on_message)
+
+        return await self._retry(attempt)
+
+    async def _turn_once(self, prompt: str, on_message: Callable[..., Any] | None) -> Any:
         await self._client.query(prompt)
 
         result = None
@@ -124,6 +164,9 @@ class Session:
             self._session_id = result.session_id
             self._persist_session_id()
 
+        text = str(getattr(result, "result", "") or "")
+        if getattr(result, "is_error", False) and _API_5XX.search(text):
+            raise APIServerError(500, text)
         return result
 
     async def disconnect(self) -> None:

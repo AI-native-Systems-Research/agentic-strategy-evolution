@@ -14,7 +14,7 @@ from typing import Any
 from claude_agent_sdk.types import HookMatcher
 
 from .secrets import mask_secrets
-from .validators import ValidatorContext, read_json, validate_artifact
+from .validators import iter_context, read_json, validate_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -156,9 +156,7 @@ def make_stop_hook(state: HookState):
                 all_errors.append(f"{artifact_type}: invalid JSON — {exc}")
                 continue
 
-            ctx = ValidatorContext(
-                work_dir=state.work_dir, iter_dir=_iter_dir(state), **state.limits,
-            )
+            ctx = iter_context(state.work_dir, _iter_dir(state), **state.limits)
             errors = validate_artifact(artifact_type, data, ctx)
             for e in errors:
                 all_errors.append(f"{artifact_type}: {e}")

@@ -357,3 +357,17 @@ class TestBreakerReset:
         assert b.record("E", "EXECUTE", "boom") is None
         assert b.record("E", "EXECUTE", "boom") is None
         assert b.record("E", "EXECUTE", "boom") is not None
+
+
+def test_validate_phase_artifacts_loads_bundle_context(tmp_path):
+    """R11e: repair path sees bundle hypotheses (finding_ref check runs)."""
+    import json as _json
+    from orchestrator.v2.validators import validate_phase_artifacts
+    idir = tmp_path / "runs" / "iter-1"
+    idir.mkdir(parents=True)
+    (idir / "bundle.json").write_text(_json.dumps({"hypotheses": [{"id": "h1"}]}))
+    (idir / "principle_updates.json").write_text(_json.dumps({"updates": [
+        {"id": "p1", "text": "t", "finding_ref": "h9", "action": "add"},
+    ]}))
+    errors = validate_phase_artifacts(tmp_path, idir, ["principle_updates"])
+    assert any("h9" in e for e in errors)

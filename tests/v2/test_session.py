@@ -271,3 +271,115 @@ class TestTransientErrors:
     def test_os_error_timed_out_is_transient(self):
         from orchestrator.v2.errors import is_transient
         assert is_transient(OSError("Operation timed out"))
+
+
+# ── Transient retry (spec 3.5 / B9) ──────────────────────────────────
+
+
+class _FlakyClient(FakeClient):
+    """FakeClient whose query() raises the queued errors before succeeding."""
+
+    def __init__(self, errors: list[BaseException], **kw):
+        super().__init__(**kw)
+        self.errors = errors
+
+    async def query(self, prompt: str) -> None:
+        if self.errors:
+            raise self.errors.pop(0)
+        await super().query(prompt)
+
+
+def _flaky_session(tmp_path, errors, script, sleeps, connect_errors=None):
+    seen_opts: list = []
+    client = _FlakyClient(errors, script=script)
+    connect_errors = connect_errors if connect_errors is not None else []
+
+    def factory(opts):
+        seen_opts.append(opts)
+        if connect_errors:
+            raise connect_errors.pop(0)
+        return client
+
+    async def fake_sleep(s):
+        sleeps.append(s)
+
+    session = Session(
+        client_factory=factory,
+        options={"work_dir": str(tmp_path / "campaign"), "method_text": "x"},
+        sleep=fake_sleep,
+    )
+    return session, client, seen_opts
+
+
+class TestTransientRetry:
+    async def test_process_error_143_retried_then_succeeds(self, tmp_path):
+        from orchestrator.v2.errors import ProcessError
+        sleeps: list = []
+        session, client, _ = _flaky_session(
+            tmp_path, [ProcessError(143)], [FakeResultMessage(session_id="s1")], sleeps,
+        )
+        await session.connect()
+        result = await session.turn("hello")
+        assert result.session_id == "s1"
+        assert client.queries == ["hello"]
+        assert len(sleeps) == 1
+
+    async def test_retry_reconnects_with_resume(self, tmp_path):
+        from orchestrator.v2.errors import ProcessError
+        script = [FakeResultMessage(session_id="s1"), FakeResultMessage(session_id="s1")]
+        session, _client, seen = _flaky_session(tmp_path, [], script, [])
+        await session.connect()
+        await session.turn("first")
+        _client.errors.append(ProcessError(143))
+        await session.turn("second")
+        assert seen[-1].resume == "s1"
+
+    async def test_non_transient_not_retried(self, tmp_path):
+        sleeps: list = []
+        session, _c, _ = _flaky_session(
+            tmp_path, [ValueError("bad")], [FakeResultMessage()], sleeps,
+        )
+        await session.connect()
+        with pytest.raises(ValueError):
+            await session.turn("hello")
+        assert sleeps == []
+
+    async def test_gives_up_after_three_tries(self, tmp_path):
+        from orchestrator.v2.errors import ProcessError
+        sleeps: list = []
+        errs = [ProcessError(143), ProcessError(143), ProcessError(143)]
+        session, _c, _ = _flaky_session(tmp_path, errs, [FakeResultMessage()], sleeps)
+        await session.connect()
+        with pytest.raises(ProcessError):
+            await session.turn("hello")
+        assert len(sleeps) == 2
+
+    async def test_result_is_error_5xx_retried(self, tmp_path):
+        sleeps: list = []
+        script = [
+            FakeResultMessage(is_error=True, result="API Error: 529 Overloaded"),
+            FakeResultMessage(session_id="ok"),
+        ]
+        session, _c, _ = _flaky_session(tmp_path, [], script, sleeps)
+        await session.connect()
+        result = await session.turn("hello")
+        assert result.session_id == "ok"
+        assert len(sleeps) == 1
+
+    async def test_result_is_error_non_api_not_retried(self, tmp_path):
+        sleeps: list = []
+        script = [FakeResultMessage(is_error=True, result="max turns", session_id="x")]
+        session, _c, _ = _flaky_session(tmp_path, [], script, sleeps)
+        await session.connect()
+        result = await session.turn("hello")
+        assert result.is_error and sleeps == []
+
+    async def test_connect_retried_on_transient(self, tmp_path):
+        from orchestrator.v2.errors import ProcessError
+        sleeps: list = []
+        session, client, _ = _flaky_session(
+            tmp_path, [], [FakeResultMessage()], sleeps,
+            connect_errors=[ProcessError(143, "Fatal error in message reader")],
+        )
+        await session.connect()
+        assert client.connected and len(sleeps) == 1

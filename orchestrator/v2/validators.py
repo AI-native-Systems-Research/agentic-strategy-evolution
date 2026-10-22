@@ -69,6 +69,17 @@ class ValidatorContext:
     runs_jsonl: Path | None = None
 
 
+def iter_context(work_dir: Path, iter_dir: Path | None, **limits: Any) -> ValidatorContext:
+    """Context with bundle hypotheses and claims_needed read from *iter_dir* (spec 3.4)."""
+    bundle = (read_json(iter_dir / "bundle.json") or {}) if iter_dir else {}
+    problem = (read_json(iter_dir / "problem.json") or {}) if iter_dir else {}
+    return ValidatorContext(
+        work_dir=work_dir, iter_dir=iter_dir, **limits,
+        bundle_hypotheses=bundle.get("hypotheses") if isinstance(bundle, dict) else None,
+        claims_needed=problem.get("claims_needed") if isinstance(problem, dict) else None,
+    )
+
+
 def _move_extras(data: dict, schema: dict) -> list[str]:
     """Move unknown top-level keys into ``data["extra"]``.
 
@@ -268,7 +279,7 @@ def _check_bundle_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
 
     # claims_needed coverage
     if ctx.claims_needed:
-        needed_ids = {c["id"] for c in ctx.claims_needed}
+        needed_ids = {c.get("id") for c in ctx.claims_needed if isinstance(c, dict)}
         covered = set()
         for h in hypotheses:
             covered.update(h.get("claim_ids", []))
@@ -291,7 +302,7 @@ def _check_plan_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
     # treatment and control runs must use the same seeds
     if ctx.bundle_hypotheses:
         hyps_with_control = {
-            h["id"] for h in ctx.bundle_hypotheses if h.get("control")
+            h.get("id") for h in ctx.bundle_hypotheses if isinstance(h, dict) and h.get("control")
         }
         # Group runs by hypothesis_id
         by_hyp: dict[str, dict[str, list]] = {}
@@ -421,7 +432,7 @@ def _check_principle_updates_semantics(
     """Check that finding_ref values are valid hypothesis ids."""
     errors: list[str] = []
     if ctx.bundle_hypotheses:
-        known_ids = {h["id"] for h in ctx.bundle_hypotheses}
+        known_ids = {h.get("id") for h in ctx.bundle_hypotheses if isinstance(h, dict)}
         for upd in data.get("updates", []):
             ref = upd.get("finding_ref", "")
             if ref not in known_ids:
@@ -568,7 +579,7 @@ def validate_phase_artifacts(
         except (json.JSONDecodeError, OSError) as exc:
             all_errors.append(f"{atype}: invalid JSON — {exc}")
             continue
-        ctx = ValidatorContext(work_dir=work_dir, iter_dir=phase_dir, **limits)
+        ctx = iter_context(work_dir, phase_dir, **limits)
         for e in validate_artifact(atype, data, ctx):
             all_errors.append(f"{atype}: {e}")
     return all_errors

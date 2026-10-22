@@ -87,6 +87,7 @@ def check_stop(
     current_claims_changed: bool = False,
     current_best_changed: bool = False,
     claims_needed: list[dict] | None = None,
+    status: str = "ok",
 ) -> str | None:
     """Return stop reason string or None to continue.
 
@@ -104,8 +105,8 @@ def check_stop(
         h.get("status") is not None and h["status"] != "INCONCLUSIVE"
         for h in hypotheses
     )
-    claims_met = _claims_needed_met(findings, claims_needed)
-    if question_answered and has_non_inconclusive and claims_met:
+    if (status == "ok" and question_answered and has_non_inconclusive
+            and _claims_needed_met(findings, claims_needed)):
         return "answered"
 
     if iteration >= max_iterations:
@@ -133,9 +134,21 @@ def check_stop(
 def _claims_needed_met(
     findings: dict, claims_needed: list[dict] | None
 ) -> bool:
-    """True if every required claim_id appears in the findings' claims."""
-    if not claims_needed:
-        return True
-    produced = _collect_claims(findings)
-    produced_ids = {c[0] for c in produced}
-    return all(cn.get("id") in produced_ids for cn in claims_needed)
+    """True if every claims_needed entry is produced and meets its declared
+    min_seeds / needs_ci / conditions (spec 3.6). Undeclared ones are not checked."""
+    by_id: dict = {}
+    for hyp in findings.get("hypotheses", []):
+        for c in hyp.get("claims", []):
+            by_id.setdefault(c.get("claim_id"), []).append(c)
+    for need in claims_needed or []:
+        got = by_id.get(need.get("id"))
+        if not got:
+            return False
+        seeds = {repr(s) for c in got for s in c.get("seeds") or []}
+        if len(seeds) < need.get("min_seeds", 0):
+            return False
+        if need.get("needs_ci") and not any(c.get("ci") is not None for c in got):
+            return False
+        if not set(need.get("conditions", [])) <= {c.get("condition") for c in got}:
+            return False
+    return True
