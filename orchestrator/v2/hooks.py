@@ -56,6 +56,8 @@ class HookState:
     consecutive_blocks: int = 0
     pending_wait_for: list[str] = field(default_factory=list)
     now: Callable[[], float] = field(default=time.time)
+    # Campaign limits passed to every ValidatorContext (spec 3.4).
+    limits: dict[str, Any] = field(default_factory=dict)
 
 
 
@@ -163,8 +165,7 @@ def make_stop_hook(state: HookState):
                 continue
 
             ctx = ValidatorContext(
-                work_dir=state.work_dir,
-                iter_dir=_iter_dir(state),
+                work_dir=state.work_dir, iter_dir=_iter_dir(state), **state.limits,
             )
             errors = validate_artifact(artifact_type, data, ctx)
             for e in errors:

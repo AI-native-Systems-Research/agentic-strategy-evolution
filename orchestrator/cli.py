@@ -120,248 +120,104 @@ def resolve_work_dir(target):
     return work_dir
 
 
-def _warn_tracked_worktree_extras(repo_path, extras: list[str]) -> None:
-    """#251 (F6): emit a soft warning at campaign load time for any
-    worktree_extras entry that is tracked in the target repo's main
-    branch. Tracked paths are already in every git worktree checkout;
-    declaring them in worktree_extras triggers a per-iteration
-    collision warning. Catching this at load time saves the operator
-    from re-investing in a doomed run.
+_LEGACY_FLAGS = ("agent", "auto_approve", "timeout", "max_cli_retries", "sandbox")
 
-    Best-effort — git failures fall through silently (the per-iteration
-    warning still fires as the second line of defense).
-    """
-    if not repo_path or not extras:
-        return
-    import subprocess as _sp
 
-    repo = Path(repo_path)
-    if not repo.is_dir():
-        return
-    for entry in extras:
-        if not isinstance(entry, str) or not entry.strip():
-            continue
-        result = _sp.run(
-            ["git", "-C", str(repo), "ls-files", "--error-unmatch", entry],
-            capture_output=True, text=True, check=False, timeout=5,
-        )
-        if result.returncode == 0:
-            print(
-                f"  ⚠  worktree_extras entry {entry!r} is tracked in the "
-                f"target repo's main branch. Tracked paths are already "
-                f"in every git worktree checkout; declaring them here "
-                f"will trigger per-iteration collision warnings (#251 / F6). "
-                f"Remove this entry from campaign.target_system.worktree_extras, "
-                f"or move the file out of git tracking if you intend "
-                f"to override it."
-            )
+def _sdk_client(options):
+    """Client factory seam; tests replace this with a fake."""
+    from claude_agent_sdk import ClaudeSDKClient
+    return ClaudeSDKClient(options)
+
+
+def _warn_ignored_flags(args) -> None:
+    for name in _LEGACY_FLAGS:
+        if getattr(args, name, None) not in (None, False):
+            flag = "--" + name.replace("_", "-")
+            print(f"Warning: {flag} is ignored (Nous v2 always uses one Claude SDK session).",
+                  file=sys.stderr)
+
+
+def _parse_or_exit(raw):
+    from orchestrator.v2.config import parse_campaign_config
+
+    try:
+        return parse_campaign_config(raw)
+    except (ValueError, TypeError, AttributeError) as exc:
+        print(f"Campaign validation error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
+def _drive_campaign(raw: dict, work_dir: Path, args, *, resume: bool = False) -> None:
+    import asyncio
+    import logging
+
+    from orchestrator.v2.loop import Campaign
+
+    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
+    if args.max_iterations is not None:
+        raw["max_iterations"] = args.max_iterations
+    if args.model:
+        raw["models"] = {**(raw.get("models") or {}), "session": args.model}
+    cfg = _parse_or_exit(raw)
+    # Save overrides so a later resume without flags keeps them.
+    (work_dir / "campaign.yaml").write_text(yaml.safe_dump(raw, sort_keys=False))
+    campaign = Campaign(cfg, work_dir, client_factory=_sdk_client)
+    if resume:
+        summary = asyncio.run(campaign.resume(note=args.note))
+    else:
+        summary = asyncio.run(campaign.run())
+    print(json.dumps(summary, indent=2))
 
 
 def _cmd_run(args):
-    import json
-    import logging
+    from orchestrator.work_dir_resolver import find_existing_work_dir
+    from orchestrator.work_dir_resolver import resolve_work_dir as resolve_new
 
-    import jsonschema
-
-    from orchestrator.campaign import run_campaign
-    from orchestrator.iteration import setup_work_dir
-
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
-
+    _warn_ignored_flags(args)
     campaign_path = Path(args.campaign)
     if not campaign_path.exists():
         print(f"Campaign file not found: {campaign_path}", file=sys.stderr)
         sys.exit(1)
-
-    with open(campaign_path) as f:
-        campaign = yaml.safe_load(f)
-
-    schemas_dir = Path(__file__).resolve().parent / "schemas"
-    schema = yaml.safe_load((schemas_dir / "campaign.schema.yaml").read_text())
-    try:
-        jsonschema.validate(campaign, schema)
-    except jsonschema.ValidationError as exc:
-        print(f"Campaign validation error: {exc.message}", file=sys.stderr)
+    raw = yaml.safe_load(campaign_path.read_text())
+    if not isinstance(raw, dict):
+        print(f"Campaign file {campaign_path} is not a YAML mapping", file=sys.stderr)
         sys.exit(1)
-
-    run_id = args.run_id or campaign.get("run_id") or (campaign_path.parent.name + "-run")
-    repo_path = campaign["target_system"].get("repo_path")
-
-    # #251 (F6): warn at campaign load time about ``worktree_extras``
-    # entries that are tracked in the target repo's main branch.
-    # Tracked paths are already in every git worktree checkout;
-    # declaring them here triggers a per-iteration collision warning
-    # that is preventable here.
-    _warn_tracked_worktree_extras(
-        repo_path, campaign.get("target_system", {}).get("worktree_extras") or [],
-    )
-
-    # #239: in-progress detection must check BOTH the legacy and
-    # env-var locations — otherwise toggling NOUS_CAMPAIGN_PARENT
-    # between runs would silently allow a parallel run that corrupts
-    # shared worktrees. find_existing_work_dir consults all candidates
-    # plus state.json's recorded work_dir.
-    import os as _os
-
-    from orchestrator.work_dir_resolver import (
-        ENV_VAR,
-        find_existing_work_dir,
-    )
+    raw["run_id"] = args.run_id or raw.get("run_id") or (campaign_path.parent.name + "-run")
+    repo_path = _parse_or_exit(raw).target_system["repo_path"]
     try:
-        existing = find_existing_work_dir(run_id, repo_path)
+        existing = find_existing_work_dir(raw["run_id"], repo_path)
+        work_dir = existing or resolve_new(raw["run_id"], repo_path)
     except (ValueError, FileNotFoundError) as exc:
         print(f"Campaign location resolution failed: {exc}", file=sys.stderr)
         sys.exit(1)
-    if existing is not None:
-        state = json.loads((existing / "state.json").read_text())
-        # #236: read via helper so legacy ``phase`` keys still resolve.
-        from orchestrator.engine import read_phase_field
-        phase = read_phase_field(state)
-        if phase != "INIT":
-            print(
-                f"Run '{run_id}' already in progress at {existing} "
-                f"(phase={phase}). Use 'nous resume' to continue.",
-                file=sys.stderr,
-            )
-            sys.exit(1)
-        # Migration hint: if env var is set but the existing campaign
-        # lives at the legacy location, point the user at `mv`.
-        if _os.environ.get(ENV_VAR) and ".nous" in existing.parts:
-            print(
-                f"Note: campaign found at legacy location {existing}. "
-                f"To migrate to {ENV_VAR}: "
-                f"`mv {existing} ${ENV_VAR}/{run_id}` and re-run. "
-                f"Continuing at the legacy location for now.",
-                file=sys.stderr,
-            )
-
-    work_dir = setup_work_dir(
-        run_id, repo_path=repo_path,
-        campaign_path=campaign_path, campaign=campaign,
-    )
-
-    max_iterations = args.max_iterations if args.max_iterations is not None else campaign.get("max_iterations", 10)
-    # #188: --bundle / --problem-md / --handoff-md only apply to iter-1.
-    # run_campaign passes them through to run_iteration with iter==1.
-    pre_authored_bundle = getattr(args, "bundle", None)
-    pre_authored_problem_md = getattr(args, "problem_md", None)
-    pre_authored_handoff_md = getattr(args, "handoff_md", None)
-    if pre_authored_bundle is not None and not pre_authored_bundle.exists():
-        print(
-            f"Error: --bundle path does not exist: {pre_authored_bundle}",
-            file=sys.stderr,
-        )
+    if (work_dir / "state.json").exists():
+        print(f"Campaign already exists at {work_dir}. Use `nous resume {work_dir}` to continue.",
+              file=sys.stderr)
         sys.exit(1)
-    # #193: --sandbox CLI flag overrides campaign.sandbox if both present;
-    # leaving it unset preserves whatever the campaign.yaml declares (or
-    # the SDKDispatcher default of "bypass").
-    if getattr(args, "sandbox", None) is not None:
-        campaign["sandbox"] = args.sandbox
-    run_campaign(
-        campaign,
-        work_dir,
-        max_iterations=max_iterations,
-        model=args.model,
-        auto_approve=args.auto_approve,
-        timeout=args.timeout,
-        agent=args.agent,
-        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
-        pre_authored_bundle=pre_authored_bundle,
-        pre_authored_problem_md=pre_authored_problem_md,
-        pre_authored_handoff_md=pre_authored_handoff_md,
-    )
+    work_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Working directory: {work_dir}")
+    _drive_campaign(raw, work_dir, args)
 
 
 def _cmd_resume(args):
-    import logging
-
-    from orchestrator.campaign import run_campaign, read_persisted_max_iterations
-
-    logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
-
-    # #253 (F8): a frequent user trip-up is passing a work_dir to
-    # ``nous resume`` (because ``nous status <work_dir>`` works that
-    # way). Detect it and emit a diagnostic error rather than the
-    # confusing "Work directory not found" message that doesn't
-    # explain the argument-type expectation.
-    target_path = Path(args.target)
-    if (
-        not (args.target.endswith(".yaml") or args.target.endswith(".yml"))
-        and target_path.is_dir()
-    ):
-        # Looks like a directory, not a campaign.yaml. If a
-        # campaign.yaml.copy exists at the work_dir, hint to the user
-        # to point ``nous resume`` at the original campaign.yaml.
-        candidate = target_path / "campaign.yaml.copy"
-        hint = ""
-        if candidate.exists():
-            hint = (
-                f"\nNote: a copy of the campaign yaml is at:\n  {candidate}\n"
-                f"You can pass that to ``nous resume`` (it will be schema-"
-                f"validated like the original)."
-            )
-        print(
-            f"Error: ``nous resume`` expects a campaign.yaml path "
-            f"(the same target you passed to ``nous run``). "
-            f"Got: {args.target}\n"
-            f"This appears to be a work_dir. Use ``nous status "
-            f"{args.target}`` to inspect the work_dir; ``nous resume`` "
-            f"needs the campaign yaml so it can re-validate the spec "
-            f"and re-emit reproducibility metadata (#253 / F8)."
-            f"{hint}",
-            file=sys.stderr,
-        )
-        sys.exit(2)
-
+    _warn_ignored_flags(args)
+    target = Path(args.target)
+    if target.is_dir() and not (target / "state.json").exists():
+        print(f"No state.json in {target}. Nothing to resume; use `nous run`.", file=sys.stderr)
+        sys.exit(1)
     work_dir = resolve_work_dir(args.target)
-
-    state_path = work_dir / "state.json"
-    if not state_path.exists():
-        print(f"No state.json found in {work_dir}. Nothing to resume.", file=sys.stderr)
+    if not (work_dir / "state.json").exists():
+        print(f"No state.json in {work_dir}. Nothing to resume; use `nous run`.", file=sys.stderr)
         sys.exit(1)
-
-    if args.target.endswith(".yaml") or args.target.endswith(".yml"):
-        with open(args.target) as f:
-            campaign = yaml.safe_load(f)
-    else:
-        print("resume requires campaign.yaml", file=sys.stderr)
+    campaign_path = work_dir / "campaign.yaml"
+    if not campaign_path.exists() and args.target.endswith((".yaml", ".yml")):
+        campaign_path = target
+    if not campaign_path.exists():
+        print(f"No campaign.yaml in {work_dir}.", file=sys.stderr)
         sys.exit(1)
-
-    # #197: max_iterations resolution chain on resume:
-    #   1. CLI --max-iterations (explicit override wins).
-    #   2. state.json (preserves the cap from the original `nous run`).
-    #   3. campaign.yaml.max_iterations, or the hardcoded default 10 if
-    #      campaign.yaml doesn't pin it. (Both flow through the same
-    #      `campaign.get("max_iterations", 10)` call — legacy state files
-    #      pre-dating #197 land here.)
-    if args.max_iterations is not None:
-        max_iterations = args.max_iterations
-        print(f"Resuming with max_iterations={max_iterations} (CLI override).")
-    else:
-        persisted = read_persisted_max_iterations(work_dir)
-        if persisted is not None:
-            max_iterations = persisted
-            print(
-                f"Resuming with max_iterations={max_iterations} "
-                f"(persisted from original `nous run`)."
-            )
-        else:
-            max_iterations = campaign.get("max_iterations", 10)
-            print(
-                f"Resuming with max_iterations={max_iterations} "
-                f"(from campaign.yaml / default — state.json had no "
-                f"persisted value)."
-            )
-    run_campaign(
-        campaign,
-        work_dir,
-        max_iterations=max_iterations,
-        model=args.model,
-        auto_approve=args.auto_approve,
-        timeout=args.timeout,
-        agent=args.agent,
-        max_cli_retries=None if args.max_cli_retries == -1 else args.max_cli_retries,
-    )
+    print(f"Using campaign config {campaign_path}")
+    raw = yaml.safe_load(campaign_path.read_text())
+    _drive_campaign(raw, work_dir, args, resume=True)
 
 
 def _cmd_stop(args):
@@ -428,6 +284,9 @@ def _cmd_stop(args):
     )
 
 
+_V2_SCHEMAS = Path(__file__).resolve().parent / "v2" / "schemas"
+
+
 def _cmd_schema(args):
     """Print the JSON Schema for a Nous artifact in a friendly form.
 
@@ -443,14 +302,11 @@ def _cmd_schema(args):
     zero-cost context.
     """
     import json as _json
-    SCHEMAS_DIR = Path(__file__).resolve().parent / "schemas"
-    schema_files = {
-        "campaign": SCHEMAS_DIR / "campaign.schema.yaml",
-        "bundle": SCHEMAS_DIR / "bundle.schema.yaml",
-        "findings": SCHEMAS_DIR / "findings.schema.json",
-    }
     target = args.artifact
-    schema_path = schema_files[target]
+    if target == "campaign":
+        schema_path = Path(__file__).resolve().parent / "schemas" / "campaign.schema.yaml"
+    else:
+        schema_path = _V2_SCHEMAS / f"{target}.schema.json"
     if schema_path.suffix in (".yaml", ".yml"):
         schema = yaml.safe_load(schema_path.read_text())
     else:
@@ -514,8 +370,8 @@ def _render_schema_markdown(schema: dict, *, artifact: str) -> str:
         lines.append("## See also")
         lines.append("")
         lines.append("- `nous create-campaign --to ./campaign.yaml` — scaffold a heavily-commented starting point.")
-        lines.append("- `nous run campaign.yaml` — run a campaign (default `--agent sdk`).")
-        lines.append("- `nous run campaign.yaml --bundle ./bundle.yaml` — skip DESIGN with a pre-authored bundle (#188).")
+        lines.append("- `nous run campaign.yaml` — run a campaign in one Claude session (v2).")
+        lines.append("- `nous resume <work_dir> [--note TEXT]` — continue a campaign.")
         lines.append("- `nous stop <target>` — ask a running campaign to halt at the next phase boundary (#198).")
         lines.append("- `nous status --watch <target>` — live progress, including a STUCK marker after 5 min of silence.")
     return "\n".join(lines)
@@ -560,109 +416,74 @@ def _render_property_md(name: str, spec: dict) -> list[str]:
     return out
 
 
+_V2_PHASE_ARTIFACTS = {
+    "baseline": ["baseline"],
+    "design": ["problem", "bundle", "plan"],
+    "execute": ["findings", "principle_updates"],
+    "report": ["answer"],
+}
+
+
 def _cmd_validate(args):
-    import json
+    """Validate v2 phase artifacts in --dir (an iter dir, or the work dir for baseline/report)."""
+    from orchestrator.v2.validators import validate_phase_artifacts
 
-    from orchestrator.validate import validate_design, validate_execution
+    from orchestrator.v2.config import validator_limits
 
-    if args.phase == "design":
-        result = validate_design(args.dir)
-    else:
-        result = validate_execution(args.dir)
-
-    print(json.dumps(result, indent=2))
-    if result["status"] != "pass":
+    d = args.dir.resolve()
+    work_dir = d.parent.parent if d.parent.name == "runs" else d
+    limits = {}
+    if (work_dir / "campaign.yaml").exists():  # same locks the loop checks
+        cfg = _parse_or_exit(yaml.safe_load((work_dir / "campaign.yaml").read_text()))
+        limits = validator_limits(cfg, work_dir)
+    errors = validate_phase_artifacts(work_dir, d, _V2_PHASE_ARTIFACTS[args.phase], **limits)
+    print(json.dumps({"status": "fail" if errors else "pass", "errors": errors}, indent=2))
+    if errors:
         sys.exit(1)
 
 
-def _cmd_status(args):
-    """Status surface — one-shot, single-line, or live --watch (#127)."""
-    import time as _time
-    from orchestrator.status import (
-        format_one_liner,
-        format_watch_panel,
-        read_status_snapshot,
-    )
-
-    work_dir = resolve_work_dir(args.target)
+def _read_v2_run(target) -> tuple[Path, dict, list]:
+    work_dir = resolve_work_dir(target)
     if not (work_dir / "state.json").exists():
         print(f"Error: no state.json at {work_dir}", file=sys.stderr)
         sys.exit(1)
+    state = json.loads((work_dir / "state.json").read_text())
+    ledger_path = work_dir / "ledger.json"
+    ledger = json.loads(ledger_path.read_text()) if ledger_path.exists() else []
+    return work_dir, state, ledger if isinstance(ledger, list) else []
 
-    if getattr(args, "line", False):
-        print(format_one_liner(read_status_snapshot(work_dir)))
-        return
 
-    if getattr(args, "watch", False):
-        try:
-            while True:
-                snap = read_status_snapshot(work_dir)
-                # Clear screen + home cursor (ANSI). Falls back gracefully
-                # in non-tty contexts to a separator line.
-                if sys.stdout.isatty():
-                    sys.stdout.write("\033[2J\033[H")
-                else:
-                    sys.stdout.write("\n" + "─" * 60 + "\n")
-                sys.stdout.write(format_watch_panel(snap) + "\n")
-                sys.stdout.flush()
-                _time.sleep(args.interval if args.interval > 0 else 2)
-        except KeyboardInterrupt:
-            print()
-            return
-
-    print(format_watch_panel(read_status_snapshot(work_dir)))
+def _cmd_status(args):
+    work_dir, state, ledger = _read_v2_run(args.target)
+    print(f"Work dir:   {work_dir}")
+    print(f"Phase:      {state.get('phase')}  iteration {state.get('iteration')}")
+    print(f"Session id: {state.get('session_id')}")
+    for row in ledger:
+        print(f"  iter-{row.get('iteration')}: status={row.get('status')} "
+              f"stop_reason={row.get('stop_reason')}")
 
 
 def _cmd_cost(args):
-    from orchestrator.metrics import summarize_metrics
-
-    work_dir = resolve_work_dir(args.target)
-    metrics_path = work_dir / "llm_metrics.jsonl"
-    if not metrics_path.exists():
-        print("No metrics recorded yet.")
-        return
-
-    s = summarize_metrics(metrics_path)
-    total_tokens = s["total_input_tokens"] + s["total_output_tokens"]
-    duration_min = s.get("total_duration_ms", 0) / 60000
-
-    print(f"Total calls:   {s['total_calls']}")
-    print(f"Total cost:    ${s['total_cost_usd']:.4f}")
-    print(f"Total tokens:  {total_tokens} (in: {s['total_input_tokens']}, out: {s['total_output_tokens']})")
-    print(f"Total time:    {duration_min:.1f} min")
-
-    if s.get("by_phase"):
-        print(f"\nBy phase:")
-        for phase, b in s["by_phase"].items():
-            print(f"  {phase:20s}  {b['calls']} calls  ${b['cost_usd']:.4f}  {b['input_tokens']+b['output_tokens']} tok")
-
-    if getattr(args, "cache_stats", False):
-        from orchestrator.cache_stats import cache_stats, format_cache_stats
-        print("\nCache stats:")
-        print(format_cache_stats(cache_stats(metrics_path)))
+    _, _, ledger = _read_v2_run(args.target)
+    cost = sum((r.get("cost_meter_usd") or 0) + (r.get("report_cost_usd") or 0) for r in ledger)
+    tin = sum((r.get("tokens") or {}).get("input", 0) for r in ledger)
+    tout = sum((r.get("tokens") or {}).get("output", 0) for r in ledger)
+    print(f"Iterations:   {len(ledger)}")
+    print(f"Total cost:   ${cost:.4f} (cost meter)")
+    print(f"Total tokens: {tin + tout} (in: {tin}, out: {tout})")
 
 
-def _cmd_report(args):
-    import logging
-    import yaml
-    from orchestrator.campaign import _generate_report
-
-    logging.basicConfig(
-        level=logging.DEBUG if args.verbose else logging.INFO,
-        format="%(asctime)s %(name)s %(levelname)s %(message)s",
-    )
-
-    if not args.target.endswith((".yaml", ".yml")):
-        print(
-            "Error: report requires campaign.yaml for LLM configuration.\n"
-            "Use: nous report <campaign.yaml>",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
-    work_dir = resolve_work_dir(args.target)
-    campaign = yaml.safe_load(Path(args.target).read_text())
-    _generate_report(campaign, work_dir, args.model, agent=args.agent, timeout=args.timeout)
+def _deprecated(name: str, func=None):
+    """Wrap a v1 command: warn on stderr, then run it (or exit 1 if func is None)."""
+    def handler(args):
+        if func is None:
+            print(f"Error: `nous {name}` was removed in Nous v2 (it only read v1 artifacts).",
+                  file=sys.stderr)
+            sys.exit(1)
+        print(f"Warning: `nous {name}` is deprecated; it reads v1 artifacts, not Nous v2 runs.",
+              file=sys.stderr)
+        func(args)
+    return handler
 
 
 def _cmd_reports(args):
@@ -746,73 +567,6 @@ def _cmd_reports(args):
             "meta_findings.json `notes` field.",
             file=sys.stderr,
         )
-
-
-def _cmd_replay(args):
-    import subprocess
-    import yaml
-    from orchestrator.worktree import create_experiment_worktree, remove_experiment_worktree
-
-    if not args.target.endswith((".yaml", ".yml")):
-        print("Error: replay requires campaign.yaml.\nUse: nous replay <campaign.yaml> --iter N", file=sys.stderr)
-        sys.exit(1)
-
-    work_dir = resolve_work_dir(args.target)
-    iteration = args.iter
-    iter_dir = work_dir / "runs" / f"iter-{iteration}"
-
-    if not iter_dir.is_dir():
-        print(f"Error: {iter_dir} does not exist.", file=sys.stderr)
-        sys.exit(1)
-
-    plan_path = iter_dir / "experiment_plan.yaml"
-    if not plan_path.exists():
-        print(f"Error: no experiment_plan.yaml in {iter_dir}", file=sys.stderr)
-        sys.exit(1)
-
-    campaign = yaml.safe_load(Path(args.target).read_text())
-    raw_repo = campaign.get("target_system", {}).get("repo_path")
-    if not raw_repo:
-        print("Error: replay requires target_system.repo_path in campaign.yaml", file=sys.stderr)
-        sys.exit(1)
-    repo_path = Path(raw_repo)
-
-    plan = yaml.safe_load(plan_path.read_text())
-    if not isinstance(plan, dict):
-        print(f"Error: experiment_plan.yaml is empty or malformed in {iter_dir}", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Replaying iteration {iteration} from {iter_dir}")
-    experiment_id = None
-    experiment_dir, experiment_id = create_experiment_worktree(repo_path, iteration)
-    print(f"  Worktree: {experiment_dir}")
-
-    try:
-        for step in plan.get("setup", []):
-            print(f"  [setup] {step.get('description', step['cmd'][:60])}")
-            result = subprocess.run(step["cmd"], shell=True, cwd=experiment_dir)
-            if result.returncode != 0:
-                print(f"Error: setup command failed (exit {result.returncode})", file=sys.stderr)
-                sys.exit(1)
-
-        total = sum(len(arm.get("conditions", [])) for arm in plan.get("arms", []))
-        done = 0
-        for arm in plan.get("arms", []):
-            arm_id = arm.get("arm_id", "unknown")
-            for cond in arm.get("conditions", []):
-                done += 1
-                name = cond.get("name", "unnamed")
-                print(f"  [{done}/{total}] {arm_id}/{name}")
-                result = subprocess.run(cond["cmd"], shell=True, cwd=experiment_dir)
-                if result.returncode != 0:
-                    print(f"Error: {arm_id}/{name} failed (exit {result.returncode})", file=sys.stderr)
-                    sys.exit(1)
-
-        print(f"  Replay complete: {done}/{total} conditions passed.")
-    finally:
-        if experiment_id:
-            remove_experiment_worktree(repo_path, experiment_id)
-            print("  Worktree cleaned up.")
 
 
 def _cmd_create_campaign(args):
@@ -1028,12 +782,10 @@ def main():
     parser = argparse.ArgumentParser(
         prog="nous",
         description=(
-            "Nous — hypothesis-driven experimentation framework for "
-            "software systems. Author a campaign.yaml describing your "
-            "target system, then run iterative DESIGN → EXECUTE_ANALYZE "
-            "→ REPORT cycles with a Claude Agent SDK-driven inner loop. "
-            "Use `nous schema` to discover the campaign.yaml shape and "
-            "`nous create-campaign --to ./campaign.yaml` to scaffold one."
+            "Nous v2: hypothesis-driven experimentation in one Claude "
+            "session (BASELINE, then DESIGN, EXECUTE per iteration, then "
+            "REPORT). Start with `nous run campaign.yaml`; continue with "
+            "`nous resume <work_dir>`."
         ),
     )
     parser.add_argument(
@@ -1042,108 +794,41 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    p_run = subparsers.add_parser(
-        "run",
-        help=(
-            "Run a Nous campaign end-to-end. Default `--agent sdk` uses "
-            "the Claude Agent SDK; pass `--bundle` to skip DESIGN."
-        ),
-    )
-    p_run.add_argument(
-        "campaign",
-        help="Path to a campaign.yaml. See `nous schema` for the shape.",
-    )
-    p_run.add_argument(
-        "--max-iterations", type=int,
-        help="Total iteration cap. Overrides campaign.max_iterations. "
-             "Default: campaign value, or 10.",
-    )
-    p_run.add_argument(
-        "--model",
-        help="Fallback model for any phase whose model is not pinned in "
-             "the campaign or defaults.yaml.",
-    )
-    p_run.add_argument(
-        "--run-id",
-        help="Working directory name under <repo>/.nous/. Defaults to "
-             "campaign.run_id or a value derived from the file path.",
-    )
-    p_run.add_argument(
-        "--auto-approve", action="store_true",
-        help="Auto-approve all human gates — required for unattended "
-             "runs (CI, agent-driven invocation). See README "
-             "'--auto-approve safety preconditions' (#255 / F10) "
-             "for when this is safe — at minimum, declare "
-             "campaign.locked_parameters (#246 / F1) for every "
-             "campaign-spec-critical knob.",
-    )
-    p_run.add_argument(
-        "--timeout", type=int, default=1800,
-        help="Per-phase wall-clock timeout in seconds (default 1800 = "
-             "30 minutes).",
-    )
-    p_run.add_argument(
-        "--max-cli-retries", type=int, default=10,
-        help="Max retries per phase on transient SDK failures. -1 means "
-             "unbounded (default: 10).",
-    )
-    p_run.add_argument(
-        "--agent", choices=["inline", "sdk"], default="sdk",
-        help="Dispatch backend. 'sdk' (default) uses the Claude Agent "
-             "SDK for code phases; 'inline' emits prompts to stdout for "
-             "an enclosing agent framework. The legacy 'api' backend "
-             "was removed in #183.",
-    )
-    p_run.add_argument(
-        "--sandbox", choices=["bypass", "default"], default=None,
-        help="SDK filesystem sandbox mode (#193). Default 'bypass' (set "
-             "via campaign.sandbox). Pass 'default' to use the SDK's "
-             "default permission gating — only sensible when the "
-             "campaign's writes all land under the launched cwd.",
-    )
-    p_run.add_argument(
-        "--bundle", type=Path, default=None,
-        help="Path to a pre-authored bundle.yaml. Skips DESIGN's agent "
-             "turn entirely and uses the supplied bundle as iter-1's "
-             "design output (#188). The bundle is schema-validated, "
-             "hashed, and recorded in iter-1/bundle_manifest.json for "
-             "reviewer-defensible provenance.",
-    )
-    p_run.add_argument(
-        "--problem-md", type=Path, default=None,
-        help="Optional path to a pre-authored problem.md. Used with "
-             "--bundle. When omitted, a stub is generated from the "
-             "campaign's research_question (#188).",
-    )
-    p_run.add_argument(
-        "--handoff-md", type=Path, default=None,
-        help="Optional path to a pre-authored handoff_snapshot.md. Used "
-             "with --bundle. When omitted, a stub is generated from "
-             "the bundle's metadata block (#188).",
-    )
+    def add_legacy_flags(sp):
+        """v1 flags: accepted, warned about, ignored (spec section 4)."""
+        sp.add_argument("--agent", choices=["inline", "sdk"], default=None,
+                        help="Ignored (v2 always uses one Claude SDK session).")
+        sp.add_argument("--auto-approve", action="store_true", help="Ignored.")
+        sp.add_argument("--timeout", type=int, default=None, help="Ignored.")
+        sp.add_argument("--max-cli-retries", type=int, default=None, help="Ignored.")
+        sp.add_argument("--sandbox", choices=["bypass", "default"], default=None, help="Ignored.")
+
+    p_run = subparsers.add_parser("run", help="Run a Nous v2 campaign in one Claude session.")
+    p_run.add_argument("campaign", help="Path to a campaign.yaml.")
+    p_run.add_argument("--max-iterations", type=int,
+                       help="Iteration cap. Overrides campaign.max_iterations.")
+    p_run.add_argument("--model", help="Session model. Overrides campaign.models.")
+    p_run.add_argument("--run-id", help="Work dir name. Defaults to campaign.run_id "
+                       "or a value derived from the file path.")
+    add_legacy_flags(p_run)
     p_run.set_defaults(func=_cmd_run)
 
-    p_resume = subparsers.add_parser("resume")
-    p_resume.add_argument("target")
+    p_resume = subparsers.add_parser("resume", help="Resume a v2 campaign from its work dir.")
+    p_resume.add_argument("target", help="Work dir, run_id, or campaign.yaml.")
+    p_resume.add_argument("--note", default=None,
+                          help="Human note added to the next phase message and the ledger.")
     p_resume.add_argument("--max-iterations", type=int)
     p_resume.add_argument("--model")
-    p_resume.add_argument("--auto-approve", action="store_true")
-    p_resume.add_argument("--timeout", type=int, default=1800)
-    p_resume.add_argument("--max-cli-retries", type=int, default=10)
-    p_resume.add_argument("--agent", choices=["inline", "sdk"], default="sdk")
+    add_legacy_flags(p_resume)
     p_resume.set_defaults(func=_cmd_resume)
 
     p_schema = subparsers.add_parser(
-        "schema",
-        help="Print a friendly reference for a Nous artifact schema "
-             "(campaign / bundle / findings). The schema YAML is the "
-             "single source of truth — this is just a renderer.",
+        "schema", help="Print the schema for campaign.yaml or a v2 artifact.",
     )
     p_schema.add_argument(
         "artifact",
-        choices=["campaign", "bundle", "findings"],
-        nargs="?",
-        default="campaign",
+        choices=["campaign"] + sorted(p.name.split(".")[0] for p in _V2_SCHEMAS.glob("*.schema.json")),
+        nargs="?", default="campaign",
         help="Which schema to print. Defaults to 'campaign'.",
     )
     p_schema.add_argument(
@@ -1153,9 +838,10 @@ def main():
     )
     p_schema.set_defaults(func=_cmd_schema)
 
-    p_validate = subparsers.add_parser("validate")
-    p_validate.add_argument("phase", choices=["design", "execution"])
-    p_validate.add_argument("--dir", required=True, type=Path)
+    p_validate = subparsers.add_parser("validate", help="Validate v2 phase artifacts.")
+    p_validate.add_argument("phase", choices=list(_V2_PHASE_ARTIFACTS))
+    p_validate.add_argument("--dir", required=True, type=Path,
+                            help="runs/iter-N for design/execute; the work dir for baseline/report.")
     p_validate.set_defaults(func=_cmd_validate)
 
     p_stop = subparsers.add_parser(
@@ -1194,41 +880,21 @@ def main():
     )
     p_stop.set_defaults(func=_cmd_stop)
 
-    p_status = subparsers.add_parser("status")
+    p_status = subparsers.add_parser("status", help="Show v2 campaign state and ledger.")
     p_status.add_argument("target")
-    p_status.add_argument(
-        "--watch", action="store_true",
-        help="Loop and redraw every --interval seconds (#127).",
-    )
-    p_status.add_argument(
-        "--line", action="store_true",
-        help="Print a single-line summary suitable for shell prompts (#127).",
-    )
-    p_status.add_argument(
-        "--interval", type=float, default=2.0,
-        help="Watch redraw interval in seconds (default: 2).",
-    )
     p_status.set_defaults(func=_cmd_status)
 
-    p_cost = subparsers.add_parser("cost")
+    p_cost = subparsers.add_parser("cost", help="Sum the v2 cost meter from ledger.json.")
     p_cost.add_argument("target")
-    p_cost.add_argument(
-        "--cache-stats", action="store_true",
-        help="Include prompt-cache hit-rate stats (#122).",
-    )
     p_cost.set_defaults(func=_cmd_cost)
 
-    p_report = subparsers.add_parser("report")
-    p_report.add_argument("target")
-    p_report.add_argument("--model")
-    p_report.add_argument("--timeout", type=int, default=1800)
-    p_report.add_argument("--agent", choices=["inline", "sdk"], default="sdk")
-    p_report.set_defaults(func=_cmd_report)
-
-    p_replay = subparsers.add_parser("replay")
-    p_replay.add_argument("target")
-    p_replay.add_argument("--iter", required=True, type=int)
-    p_replay.set_defaults(func=_cmd_replay)
+    for name in ("report", "replay"):
+        p_old = subparsers.add_parser(name, help="Deprecated (v1 only).")
+        p_old.add_argument("target")
+        p_old.add_argument("--iter", type=int)
+        p_old.add_argument("--model")
+        add_legacy_flags(p_old)
+        p_old.set_defaults(func=_deprecated(name))
 
     p_reports = subparsers.add_parser(
         "reports",
@@ -1241,7 +907,7 @@ def main():
         help="campaign.yaml (preferred — supplies target_system context) "
              "OR a work_dir / run_id resolvable via NOUS_CAMPAIGN_PARENT.",
     )
-    p_reports.set_defaults(func=_cmd_reports)
+    p_reports.set_defaults(func=_deprecated("reports", _cmd_reports))
 
     # `create-campaign` (issue #89): scaffold a heavily-commented
     # campaign.yaml that names the four agent-reachable fields and
@@ -1283,7 +949,7 @@ def main():
         "--force", action="store_true",
         help="Overwrite if the target file already exists.",
     )
-    p_create.set_defaults(func=_cmd_create_campaign)
+    p_create.set_defaults(func=_deprecated("create-campaign", _cmd_create_campaign))
 
     # #266 (F21): cross-campaign lineage inspection.
     p_lineage = subparsers.add_parser(
@@ -1299,7 +965,7 @@ def main():
         "--json", action="store_true",
         help="Emit JSON instead of human-readable text.",
     )
-    p_lineage.set_defaults(func=_cmd_lineage)
+    p_lineage.set_defaults(func=_deprecated("lineage", _cmd_lineage))
 
     # #254 (F9): orphan-worktree cleanup.
     p_clean = subparsers.add_parser(
@@ -1323,7 +989,7 @@ def main():
         "--dry-run", action="store_true",
         help="Print what would be removed without acting.",
     )
-    p_clean.set_defaults(func=_cmd_clean)
+    p_clean.set_defaults(func=_deprecated("clean", _cmd_clean))
 
     # #263 (F18): paper-artifact tarball.
     p_package = subparsers.add_parser(
@@ -1339,7 +1005,7 @@ def main():
         "--output", type=Path, default=None,
         help="Path to write the tarball. Default: <work_dir>.tar.gz.",
     )
-    p_package.set_defaults(func=_cmd_package)
+    p_package.set_defaults(func=_deprecated("package", _cmd_package))
 
     args = parser.parse_args()
     if not args.command:

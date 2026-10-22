@@ -603,7 +603,7 @@ def validate_artifact(
 
 
 def validate_phase_artifacts(
-    work_dir: Path, phase_dir: Path, artifact_types: list[str],
+    work_dir: Path, phase_dir: Path, artifact_types: list[str], **limits: Any,
 ) -> list[str]:
     """Run validators on phase artifacts, return error list."""
     all_errors: list[str] = []
@@ -617,7 +617,7 @@ def validate_phase_artifacts(
         except (json.JSONDecodeError, OSError) as exc:
             all_errors.append(f"{atype}: invalid JSON — {exc}")
             continue
-        ctx = ValidatorContext(work_dir=work_dir, iter_dir=phase_dir)
+        ctx = ValidatorContext(work_dir=work_dir, iter_dir=phase_dir, **limits)
         for e in validate_artifact(atype, data, ctx):
             all_errors.append(f"{atype}: {e}")
     return all_errors

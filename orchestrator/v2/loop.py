@@ -12,13 +12,14 @@ import subprocess
 from pathlib import Path
 from typing import Any, Callable
 
-from .config import CampaignConfig
+from .config import CampaignConfig, validator_limits
 from .cost import CostMeter, load_prices
 from .hooks import HookState, build_hooks
 from .preflight import run_preflight
 from .resume import build_fallback_message, load_campaign_state, resume_phase
 from .robustness import FailureBreaker, poll_and_resume, write_halt
-from .session import Session
+from .prompts import build_system_prompt
+from .session import DEFAULT_MODEL, Session
 from .final_check import check_answer
 from .stop_rule import (
     best_changed,
@@ -97,15 +98,21 @@ class Campaign:
             work_dir=self._work_dir,
             secrets={k: os.environ.get(k, "") for k in self._config.secrets},
             experiment_commands=self._config.experiment_commands,
+            limits=self._limits(),
         )
         hooks = build_hooks(hook_state)
         session_opts = {
             "work_dir": str(self._work_dir),
+            "method_text": build_system_prompt(self._config.task_type),
+            "model": self._config.model or DEFAULT_MODEL,
             "effort": self._config.effort,
             "hooks": hooks,
             "cwd": self._config.target_system.get("repo_path"),
         }
         return hook_state, hooks, session_opts
+
+    def _limits(self) -> dict:
+        return validator_limits(self._config, self._work_dir)
 
     async def _start_session(self, session_opts: dict) -> Session:
         session = Session(client_factory=self._client_factory, options=session_opts)
@@ -174,7 +181,7 @@ class Campaign:
 
     async def _repair(self, session: Session, idir: Path, artifact_types: list[str]) -> str:
         for attempt in range(3):
-            errors = validate_phase_artifacts(self._work_dir, idir, artifact_types)
+            errors = validate_phase_artifacts(self._work_dir, idir, artifact_types, **self._limits())
             if not errors:
                 return "ok"
             if attempt >= 2:
@@ -339,9 +346,10 @@ class Campaign:
 
     def _record_final_check(self) -> None:
         """Spec 3.8: check answer.json against the record and log the result in the ledger."""
-        report = check_answer(self._work_dir)
+        report = check_answer(self._work_dir, self._limits())
         if self._ledger:
             self._ledger[-1].update(
+                report_cost_usd=self._meter.iter_delta()["cost_usd"],
                 repro_recorded=report["repro_recorded"],
                 claims_matched_fraction=report["claims_matched_fraction"],
             )

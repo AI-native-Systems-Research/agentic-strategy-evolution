@@ -7,10 +7,13 @@ No LLM calls.  No re-running experiments by default.
 from __future__ import annotations
 
 import json
+import logging
 import re
 from pathlib import Path
 
 from .validators import ValidatorContext, check_evidence_item, validate_artifact
+
+logger = logging.getLogger(__name__)
 
 
 def _read_json(path: Path) -> dict | None:
@@ -62,15 +65,16 @@ def _check_repro(work_dir: Path, repro_command: str | None) -> bool:
     for jsonl_path in paths:
         if not jsonl_path.exists():
             continue
-        try:
-            for line in jsonl_path.read_text().strip().splitlines():
+        for n, line in enumerate(jsonl_path.read_text().splitlines(), 1):
+            try:
                 entry = json.loads(line)
-                if entry.get("exit_code") == 0 and set(wanted) <= set(
-                    _normalize(entry.get("command") or "")
-                ):
-                    return True
-        except (json.JSONDecodeError, OSError):
-            continue
+            except json.JSONDecodeError:
+                logger.warning("%s:%d: skipping malformed row", jsonl_path, n)
+                continue
+            if entry.get("exit_code") == 0 and set(wanted) <= set(
+                _normalize(entry.get("command") or "")
+            ):
+                return True
     return False
 
 
@@ -100,7 +104,7 @@ def _find_unmeasured_noise(findings_list: list[dict]) -> list[str]:
     ]
 
 
-def check_answer(work_dir: Path) -> dict:
+def check_answer(work_dir: Path, limits: dict | None = None) -> dict:
     """Check answer.json against the on-disk record.
 
     Returns a report dict with answer_valid, evidence_errors,
@@ -118,7 +122,7 @@ def check_answer(work_dir: Path) -> dict:
     if answer is None:
         return report
 
-    ctx = ValidatorContext(work_dir=work_dir)
+    ctx = ValidatorContext(work_dir=work_dir, **(limits or {}))
     evidence_errors: list[str] = list(validate_artifact("answer", answer, ctx))
     for claim in answer.get("claims", []):
         ev = claim.get("evidence")

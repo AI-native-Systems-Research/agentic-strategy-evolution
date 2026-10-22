@@ -118,9 +118,8 @@ class TestBundleAndFindingsSchemas:
         from orchestrator.cli import _cmd_schema
         _cmd_schema(_ns(artifact="bundle"))
         out = capsys.readouterr().out
-        # Required: metadata + arms.
-        assert "metadata" in out
-        assert "arms" in out
+        # v2 bundle (R11a): required hypotheses list.
+        assert "hypotheses" in out
 
     def test_findings_schema_renders(self, capsys) -> None:
         from orchestrator.cli import _cmd_schema
