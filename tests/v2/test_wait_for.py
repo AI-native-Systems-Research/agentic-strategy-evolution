@@ -122,7 +122,7 @@ def _config(**overrides) -> CampaignConfig:
         research_question="Does X improve Y?",
         run_id="test-waitfor",
         max_iterations=1,
-        target_system={"path": "/nonexistent"},
+        target_system={"repo_path": "/nonexistent"},
         experiment_commands=[],
     )
     defaults.update(overrides)

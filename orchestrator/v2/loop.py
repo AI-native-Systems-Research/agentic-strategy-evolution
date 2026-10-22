@@ -68,6 +68,13 @@ def parse_campaign_config(raw: dict) -> CampaignConfig:
         if key not in raw:
             raise ValueError(f"campaign.yaml missing required key: {key}")
 
+    ts = raw["target_system"]
+    if not isinstance(ts, dict) or "repo_path" not in ts:
+        raise ValueError(
+            "campaign.yaml: target_system must contain 'repo_path' "
+            "(the path to the target git repo)"
+        )
+
     for key in _LEGACY_KEYS & raw.keys():
         logger.warning("campaign.yaml: ignoring legacy key %r", key)
 
@@ -168,7 +175,7 @@ class Campaign:
                 "work_dir": str(self._work_dir),
                 "effort": self._config.effort,
                 "hooks": hooks,
-                "cwd": self._config.target_system.get("path"),
+                "cwd": self._config.target_system.get("repo_path"),
             },
         )
         await session.connect()
@@ -471,7 +478,7 @@ class Campaign:
 
     def _commit_phase(self, iteration: int, phase: str) -> None:
         """Commit the target worktree if there are changes."""
-        target = self._config.target_system.get("path")
+        target = self._config.target_system.get("repo_path")
         if not target:
             return
         target_path = Path(target)

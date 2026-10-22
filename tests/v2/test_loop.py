@@ -260,6 +260,18 @@ class TestParseCampaignConfig:
         with pytest.raises(ValueError, match="target_system"):
             parse_campaign_config(raw)
 
+    def test_missing_repo_path_raises(self):
+        raw = _campaign_yaml()
+        del raw["target_system"]["repo_path"]
+        with pytest.raises(ValueError, match="repo_path"):
+            parse_campaign_config(raw)
+
+    def test_target_system_not_dict_raises(self):
+        raw = _campaign_yaml()
+        raw["target_system"] = "just-a-string"
+        with pytest.raises(ValueError, match="repo_path"):
+            parse_campaign_config(raw)
+
     def test_legacy_keys_warn(self, caplog):
         raw = _campaign_yaml()
         raw["critic"] = True
@@ -608,7 +620,7 @@ class TestBaselineValidation:
             research_question="test?",
             run_id="test-run",
             max_iterations=1,
-            target_system={"path": "/tmp/target"},
+            target_system={"repo_path": "/tmp/target"},
         )
         # FakeClient produces results but no baseline.json is written
         script = [FakeResultMessage()] * 5
@@ -676,7 +688,7 @@ class TestLedgerPerIteration:
             research_question="test?",
             run_id="test-run",
             max_iterations=1,
-            target_system={"path": "/tmp/target"},
+            target_system={"repo_path": "/tmp/target"},
         )
         campaign = Campaign(
             config=config,
@@ -711,7 +723,7 @@ class TestCwdPassedToSession:
             research_question="test?",
             run_id="test-cwd",
             max_iterations=1,
-            target_system={"path": target_path},
+            target_system={"repo_path": target_path},
         )
         campaign = Campaign(
             config=config,
@@ -740,7 +752,7 @@ class TestCwdPassedToSession:
             research_question="test?",
             run_id="test-cwd-none",
             max_iterations=1,
-            target_system={},
+            target_system={"repo_path": None},
         )
         campaign = Campaign(
             config=config,
