@@ -7,6 +7,7 @@ No LLM calls.  No re-running experiments by default.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 from .validators import ValidatorContext, check_evidence_item, validate_artifact
@@ -33,9 +34,26 @@ def _find_latest_iter_dir(work_dir: Path) -> Path | None:
     return iters[-1] if iters else None
 
 
+_SETUP = re.compile(r"^(export|cd)(\s|$)")
+_ASSIGN = re.compile(r"^([A-Za-z_]\w*=\S*\s*)+")
+_REDIRECT = re.compile(r"\s+(\d*>>?(&\d+|\s*\S+)|<\s*\S+)")
+
+
+def _normalize(command: str) -> list[str]:
+    """Split on ; and &&, drop export/cd segments and VAR=val prefixes, strip pipes and redirections."""
+    out = []
+    for seg in re.split(r";|&&", command):
+        seg = _REDIRECT.sub("", seg.split("|", 1)[0])
+        seg = _ASSIGN.sub("", " ".join(seg.split()))
+        if seg and not _SETUP.match(seg):
+            out.append(seg)
+    return out
+
+
 def _check_repro(work_dir: Path, repro_command: str | None) -> bool:
-    """Check if the repro command appears in runs.jsonl."""
-    if not repro_command:
+    """True if runs.jsonl has a successful run of the (normalized) repro command."""
+    wanted = _normalize(repro_command or "")
+    if not wanted:
         return False
     paths = [work_dir / "runs.jsonl"]
     runs_dir = work_dir / "runs"
@@ -47,7 +65,9 @@ def _check_repro(work_dir: Path, repro_command: str | None) -> bool:
         try:
             for line in jsonl_path.read_text().strip().splitlines():
                 entry = json.loads(line)
-                if entry.get("command") == repro_command:
+                if entry.get("exit_code") == 0 and set(wanted) <= set(
+                    _normalize(entry.get("command") or "")
+                ):
                     return True
         except (json.JSONDecodeError, OSError):
             continue

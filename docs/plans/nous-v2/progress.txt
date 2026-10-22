@@ -407,3 +407,7 @@ Tests after: 1806 passed, 0 failed
 ## Reviewer fix: final check wired into REPORT (spec 3.8)
 
 final_check.check_answer existed but was never called from loop.py (grep found no caller), so repro_recorded never reached the ledger. Added Campaign._record_final_check after REPORT (both normal and resumed paths): writes final_check.json and sets repro_recorded + claims_matched_fraction on the last ledger row. check_answer now reports schema errors without returning early, so repro is still checked. Tests: test_final_check_recorded_from_runs_jsonl, test_final_check_repro_missing_from_record. 1808 passed. Runtime 2486 lines.
+
+## Reviewer fix: repro matcher normalizes commands (smoke 2)
+
+smoke/2.json: repro_recorded false although the repro ran, because _check_repro used exact equality. Now both strings are normalized (split on ; and &&, drop export/cd segments and leading VAR=val, cut at first pipe, strip redirections, collapse whitespace) and the repro must appear among the segments of a runs.jsonl row with exit_code 0. Checked against the real smoke-2 runs.jsonl: the 2>/dev/null row exited 134, the matching success row used `2>&1 | tail -30`; both forms are in the test. Tests before: 1 new failing (smoke-2 strings). After: 3 new tests pass; full suite 1811 passed. MVP limit (later candidate): no shell quoting, so a quoted ; or | in an argument splits wrongly.

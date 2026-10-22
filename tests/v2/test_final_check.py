@@ -342,3 +342,35 @@ class TestAnswerValidation:
 
         result = check_answer(tmp_path)
         assert len(result["evidence_errors"]) > 0
+
+
+SMOKE2_REPRO = "./blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600"
+SMOKE2_PREFIX = 'export PATH="$HOME/go-local/go/bin:$PATH"; cd /tmp/ws && '
+
+
+class TestReproNormalized:
+    """Smoke 2: the agent wraps the repro in env/cd prefixes and redirections."""
+
+    def _check(self, tmp_path, rows):
+        from orchestrator.v2.final_check import check_answer
+
+        _make_answer(tmp_path, repro=SMOKE2_REPRO)
+        _make_runs_jsonl(tmp_path, rows)
+        return check_answer(tmp_path)["repro_recorded"]
+
+    def test_smoke2_wrapped_command_matches(self, tmp_path):
+        assert self._check(tmp_path, [
+            {"command": SMOKE2_PREFIX + SMOKE2_REPRO + " 2>/dev/null", "exit_code": 134},
+            {"command": SMOKE2_PREFIX + SMOKE2_REPRO + " 2>&1 | tail -30", "exit_code": 0},
+        ]) is True
+
+    def test_different_command_does_not_match(self, tmp_path):
+        assert self._check(tmp_path, [
+            {"command": SMOKE2_PREFIX + SMOKE2_REPRO.replace("600", "1200") + " 2>/dev/null",
+             "exit_code": 0},
+        ]) is False
+
+    def test_failed_run_does_not_count(self, tmp_path):
+        assert self._check(tmp_path, [
+            {"command": SMOKE2_PREFIX + SMOKE2_REPRO + " 2>/dev/null", "exit_code": 134},
+        ]) is False
