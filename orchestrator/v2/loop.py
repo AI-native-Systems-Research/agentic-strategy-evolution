@@ -24,6 +24,12 @@ from .validators import bundle_hash, validate_artifact, ValidatorContext
 
 logger = logging.getLogger(__name__)
 
+
+def iter_dir(work_dir: Path, iteration: int) -> Path:
+    """Return the canonical iteration directory: work_dir/runs/iter-N."""
+    return work_dir / "runs" / f"iter-{iteration}"
+
+
 _LEGACY_KEYS = frozenset({
     "critic", "pre_work", "arm_sweep", "parallel_arms",
     "complexity_tiers", "iteration_mode",
@@ -167,21 +173,21 @@ class Campaign:
 
         stop_reason: str | None = None
         for iteration in range(1, self._config.max_iterations + 1):
-            iter_dir = self._work_dir / f"iter-{iteration}"
-            iter_dir.mkdir(parents=True, exist_ok=True)
+            idir = iter_dir(self._work_dir, iteration)
+            idir.mkdir(parents=True, exist_ok=True)
 
             hook_state.phase = "DESIGN"
             hook_state.iteration = iteration
             await self._design(session, iteration)
             self._commit_phase(iteration, "DESIGN")
-            locked_hash = self._lock_bundle(iter_dir)
+            locked_hash = self._lock_bundle(idir)
             hook_state.phase = "EXECUTE"
             await self._execute(session, iteration)
             self._commit_phase(iteration, "EXECUTE")
-            prereg = self._check_bundle_hash(iter_dir, locked_hash)
+            prereg = self._check_bundle_hash(idir, locked_hash)
 
-            findings = _read_json(iter_dir / "findings.json") or {}
-            pu = _read_json(iter_dir / "principle_updates.json")
+            findings = _read_json(idir / "findings.json") or {}
+            pu = _read_json(idir / "principle_updates.json")
 
             cc = claims_changed(self._prev_findings, findings)
             bc = best_changed(
@@ -194,7 +200,7 @@ class Campaign:
             self._principles = _merge_principles(self._principles, pu)
             _write_json(self._work_dir / "principles.json", self._principles)
 
-            problem = _read_json(iter_dir / "problem.json") or {}
+            problem = _read_json(idir / "problem.json") or {}
             cn = problem.get("claims_needed")
 
             entry = {
@@ -271,9 +277,9 @@ class Campaign:
             f"Iteration {iteration}, DESIGN phase. "
             f"Read state/digest.json and baseline.json. "
             f"Frame each prediction as a change relative to the baseline. "
-            f"Write iter-{iteration}/problem.json, "
-            f"iter-{iteration}/bundle.json, "
-            f"iter-{iteration}/plan.json."
+            f"Write runs/iter-{iteration}/problem.json, "
+            f"runs/iter-{iteration}/bundle.json, "
+            f"runs/iter-{iteration}/plan.json."
             f"{principles_text}"
         )
         await session.turn(prompt)
@@ -283,8 +289,8 @@ class Campaign:
             f"Iteration {iteration}, EXECUTE phase. "
             f"Run plan.json; fix anything that does not run. "
             f"If a run has wait_for, it will be polled automatically. "
-            f"Write iter-{iteration}/findings.json "
-            f"and iter-{iteration}/principle_updates.json."
+            f"Write runs/iter-{iteration}/findings.json "
+            f"and runs/iter-{iteration}/principle_updates.json."
         )
         await session.turn(prompt)
 

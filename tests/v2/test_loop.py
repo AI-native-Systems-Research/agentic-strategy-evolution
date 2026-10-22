@@ -189,7 +189,7 @@ def _build_per_turn_files(work_dir: Path, *, answered: bool = True) -> list[dict
 
     Turn order: BASELINE, DESIGN, EXECUTE, REPORT.
     """
-    iter_dir = work_dir / "iter-1"
+    iter_dir = work_dir / "runs" / "iter-1"
     return [
         {
             str(work_dir / "baseline.json"): json.dumps(_baseline()),
@@ -309,8 +309,8 @@ class TestCampaignLifecycle:
             _campaign_yaml(max_iterations=2)
         )
 
-        iter1_dir = work_dir / "iter-1"
-        iter2_dir = work_dir / "iter-2"
+        iter1_dir = work_dir / "runs" / "iter-1"
+        iter2_dir = work_dir / "runs" / "iter-2"
 
         per_turn = [
             {str(work_dir / "baseline.json"): json.dumps(_baseline())},
@@ -363,8 +363,8 @@ class TestCampaignLifecycle:
             _campaign_yaml(max_iterations=5)
         )
 
-        iter1_dir = work_dir / "iter-1"
-        iter2_dir = work_dir / "iter-2"
+        iter1_dir = work_dir / "runs" / "iter-1"
+        iter2_dir = work_dir / "runs" / "iter-2"
 
         quiet_findings = _findings(
             answered=False, status="INCONCLUSIVE", with_claims=False
@@ -432,7 +432,7 @@ class TestBundleHashLock:
         work_dir = tmp_path / "work"
         work_dir.mkdir()
         config = parse_campaign_config(_campaign_yaml())
-        iter_dir = work_dir / "iter-1"
+        iter_dir = work_dir / "runs" / "iter-1"
 
         modified_bundle = _bundle()
         modified_bundle["hypotheses"][0]["mechanism"] = "CHANGED during execute"
@@ -505,8 +505,8 @@ class TestPrinciples:
             _campaign_yaml(max_iterations=2)
         )
 
-        iter1_dir = work_dir / "iter-1"
-        iter2_dir = work_dir / "iter-2"
+        iter1_dir = work_dir / "runs" / "iter-1"
+        iter2_dir = work_dir / "runs" / "iter-2"
 
         per_turn = [
             {str(work_dir / "baseline.json"): json.dumps(_baseline())},
@@ -637,7 +637,7 @@ class TestLedgerPerIteration:
                             "expected": 0, "actual": 1},
             "metrics_path": "m.json", "noise": {"deterministic": True},
         }
-        iter1 = work_dir / "iter-1"
+        iter1 = work_dir / "runs" / "iter-1"
         iter1.mkdir(parents=True)
         findings = {
             "hypotheses": [{

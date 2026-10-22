@@ -345,7 +345,7 @@ def _append_runs_jsonl(work_dir: Path, row: dict) -> None:
 def _iter_dir(state: HookState) -> Path | None:
     if state.iteration <= 0:
         return None
-    return state.work_dir / f"iter-{state.iteration}"
+    return state.work_dir / "runs" / f"iter-{state.iteration}"
 
 
 def _artifact_path(state: HookState, artifact_type: str) -> Path:
