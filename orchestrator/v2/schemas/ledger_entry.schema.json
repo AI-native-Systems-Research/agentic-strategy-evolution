@@ -1,29 +1,37 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "Nous v2 ledger entry additions",
-  "description": "Additional fields that v2 adds to each ledger iteration entry",
+  "title": "Nous v2 ledger entry",
+  "description": "One ledger.json row per iteration, written by orchestrator/v2/loop.py (not by the agent).",
   "type": "object",
+  "required": [
+    "iteration", "bundle_hash", "claims_changed", "best_changed", "principles_changed",
+    "prereg_violation", "status", "stop_reason", "cost_meter_usd", "tokens"
+  ],
   "properties": {
-    "bundle_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
-    "cost_meter_usd": { "type": "number", "minimum": 0 },
-    "cost_sdk_usd": { "type": "number", "minimum": 0 },
-    "input_tokens": { "type": "integer", "minimum": 0 },
-    "output_tokens": { "type": "integer", "minimum": 0 },
-    "cache_read_tokens": { "type": "integer", "minimum": 0 },
-    "cache_write_tokens": { "type": "integer", "minimum": 0 },
+    "iteration": { "type": "integer", "minimum": 1 },
+    "bundle_hash": { "type": "string", "pattern": "^([0-9a-f]{64})?$", "description": "sha256 of the locked bundle; empty when no bundle was found on resume" },
     "claims_changed": { "type": "boolean" },
     "best_changed": { "type": "boolean" },
     "principles_changed": { "type": "boolean" },
-    "repro_recorded": { "type": "boolean" },
-    "claims_matched_fraction": { "type": "number", "minimum": 0, "maximum": 1 },
-    "note": { "type": "string" },
-    "stop_reason": { "type": "string" },
-    "status": {
-      "type": "string",
-      "enum": ["ok", "partial", "failed", "skipped"]
+    "prereg_violation": { "type": "boolean", "description": "bundle.json was edited after the DESIGN lock (the locked copy was restored)" },
+    "status": { "type": "string", "enum": ["ok", "partial"] },
+    "stop_reason": {
+      "enum": [null, "halt", "stop_sentinel", "answered", "max_iterations", "stall"]
     },
-    "prereg_violation": { "type": "string" },
-    "extra": { "type": "object" }
+    "cost_meter_usd": { "type": "number", "minimum": 0 },
+    "tokens": {
+      "type": "object",
+      "required": ["input", "output"],
+      "properties": {
+        "input": { "type": "integer", "minimum": 0 },
+        "output": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "note": { "type": "string", "description": "--note text from nous resume, on the first iteration after the resume" },
+    "report_cost_usd": { "type": "number", "minimum": 0, "description": "last row only: cost meter for REPORT" },
+    "repro_recorded": { "type": "boolean", "description": "last row only: copied from final_check.json" },
+    "claims_matched_fraction": { "type": "number", "minimum": 0, "maximum": 1, "description": "last row only: copied from final_check.json" }
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

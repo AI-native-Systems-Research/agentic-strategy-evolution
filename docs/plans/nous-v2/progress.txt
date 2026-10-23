@@ -603,3 +603,9 @@ Evidence: dbg rep2 (816d677) had C1 = R2 = 0 while final_check was fully valid: 
 
 dbg 1/2: correct, $4.84/$3.97 (1.42x/1.17x L2), C1/R2 1.0 / 0.0 (numeric-string values; fixed in 33df08e). pd 1/2: wrong/correct, $10.30/$8.58 (0.99x/0.82x), C1/R2 1.0. search 1/2: search-works no, facts 2/3, $13.39/$13.48 (4.1x), C1/R2 1.0. 0 lost rounds, 0 crashes, 0 prereg violations.
 Bar fails after round 3 (formula accuracy, search accuracy and cost, dbg cost borderline). Per SPEC 10 wrote docs/plans/nous-v2/EVAL_REPORT.md; R13 marked done (acceptance: "bar passes, or EVAL_REPORT.md written after round 3"). Next: R14 docs pass.
+
+## R14: docs final pass
+
+method.md checked field-by-field against the schemas (deliverable string, noise_condition, nous_evidence/evidence_detail note; 5,390 bytes). data-model.md: per-task_type observation keys, answer evidence forms, full ledger row, state.json cut_offs. architecture.md: effort ladder, repair after every phase, REPORT sequence (repro repair, evidence export, numeric values), Stop-hook counter, evidence roots + key formats, append-only claims_needed, wait_for, cost meter, --note scope. README: --note scope, run_id for yaml targets, links to quickstart/security, nous_evidence/ in layout. examples/campaign.yaml v2 keys (parses with no warnings). ledger_entry.schema.json now exactly the loop's row (FakeClient rows validate); defaults.yaml trimmed to prices. Deleted v1 wiki commands/scripts/docs (they read v1-only ledger fields) and docs/superpowers/. Added docs/example-campaign/ (SYNTHETIC toy cache/p99 campaign, every artifact + evidence files; nothing from benchmark runs). tests/v2/test_docs_examples.py: example JSONs validate, answer follows contract, yamls parse warning-free, method.md names match schema both ways, v1-term grep empty.
+Left as follow-up: s390x/campaign.yaml + README still use v1 keys (max_turns, execute_analyze; they warn and are ignored).
+Tests: 633 -> 653 passed.

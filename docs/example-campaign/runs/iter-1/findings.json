@@ -1,0 +1,32 @@
+{
+  "hypotheses": [
+    {
+      "id": "H1",
+      "status": "CONFIRMED",
+      "error_type": "magnitude",
+      "evidence": [
+        {"path": "results/R1.json", "key": "/p99_ms", "value": 41.8},
+        {"path": "results/R2.jsonl", "key": "1@/p99_ms", "value": 63.0},
+        {"path": "results/R1.json", "key": "/hit_rate", "value": 0.78}
+      ],
+      "effect": {"value": -20.4},
+      "claims": [
+        {"claim_id": "C1", "metric": "p99_ms", "condition": "cache_size=256", "value": 41.8, "seeds": [1, 2, 3]},
+        {"claim_id": "C2", "metric": "hit_rate", "condition": "cache_size=256", "value": 0.78, "seeds": [1, 2, 3]}
+      ]
+    },
+    {
+      "id": "H2",
+      "status": "REFUTED",
+      "error_type": "direction",
+      "evidence": [
+        {"path": "results/R3.csv", "key": "lookup_us@0", "value": 0.9},
+        {"path": "runs/iter-1/results/R4.txt", "key": "p99_ms=([0-9.]+)", "value": 62.2}
+      ],
+      "effect": {"value": -20.4}
+    }
+  ],
+  "best": {"metric": "p99_ms", "value": 41.8},
+  "question_answered": true,
+  "reason": "Cache 256 lowers p99 by 20.4 ms (sd 0.75) and doubles the hit rate; lookup cost rose by only 0.1 us."
+}

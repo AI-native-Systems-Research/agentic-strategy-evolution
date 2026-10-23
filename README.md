@@ -9,7 +9,7 @@ Nous runs the scientific method on a software system. It drives one Claude Code 
 
 DESIGN and EXECUTE repeat per iteration until the question is answered, the campaign stalls, or `max_iterations` is reached. Principles from one iteration feed the next DESIGN.
 
-Nous enforces the method with in-process hooks and validators. Every Bash command is recorded in `runs.jsonl`. The Stop hook blocks the end of a phase until its artifacts validate (up to 6 times); after each phase Nous re-validates and sends up to 2 repair messages, then records the iteration as `partial` and keeps the valid content. See [docs/architecture.md](docs/architecture.md) for internals, [docs/data-model.md](docs/data-model.md) for artifact shapes, and [docs/protocol.md](docs/protocol.md) for the method.
+Nous enforces the method with in-process hooks and validators. Every Bash command is recorded in `runs.jsonl`. The Stop hook blocks the end of a phase until its artifacts validate (up to 6 blocks in a row; any Bash command resets the count); after each phase Nous re-validates and sends up to 2 repair messages, then records the iteration as `partial` and keeps the valid content. Start with [docs/quickstart.md](docs/quickstart.md) and read [docs/security.md](docs/security.md) before pointing Nous at a real repo (the session runs with all tool calls auto-approved). [docs/example-campaign/](docs/example-campaign/README.md) is a complete worked example. See [docs/architecture.md](docs/architecture.md) for internals, [docs/data-model.md](docs/data-model.md) for artifact shapes, and [docs/protocol.md](docs/protocol.md) for the method.
 
 ## Install
 
@@ -26,25 +26,25 @@ pip install -e ".[dev]"
 
 ## Campaign file
 
-A minimal `campaign.yaml`:
+A minimal `campaign.yaml` ([examples/campaign.yaml](examples/campaign.yaml) adds `task_type`, `objective` and `locked_parameters`):
 
 ```yaml
 research_question: >
-  With total input length held fixed, does a longer cached prefix
-  reduce TTFT under moderate load?
-run_id: blis-prefix
+  Does raising the cache size from 64 to 256 entries lower p99 latency,
+  with the workload held fixed?
+run_id: cache-p99
 max_iterations: 3
 target_system:
-  name: BLIS
-  description: Discrete-event simulator for LLM inference serving.
-  repo_path: /path/to/blis          # required: the target git checkout
+  name: My service
+  description: What the system does and how to run its benchmark.
+  repo_path: /path/to/repo          # required: the target git checkout
 ```
 
 Required keys are `research_question` and `target_system.repo_path`. Optional keys:
 
 | Key | Meaning |
 |---|---|
-| `run_id` | Work dir name. `--run-id` overrides it; if both are absent, `<campaign file's dir name>-run`. |
+| `run_id` | Work dir name. `--run-id` overrides it; if both are absent, `<campaign file's dir name>-run`. Passing the yaml to `resume`, `stop` or `status` needs `run_id` in the file (or use the work dir path). |
 | `max_iterations` | Iteration cap (default 5). |
 | `models.session` | Session model (default `claude-opus-4-6`). |
 | `effort` | SDK effort level passed to the session. |
@@ -74,7 +74,7 @@ nous schema {answer|baseline|bundle|findings|ledger_entry|plan|principle_updates
 ```
 
 - `run` refuses to start if the work dir already has `state.json`; use `resume`.
-- `resume` reconnects to the saved session id. If that fails before any turn succeeds, it starts a fresh session primed from `state/digest.json`. `--note` is added to the next phase message and stored in the ledger.
+- `resume` reconnects to the saved session id. If that fails before any turn succeeds, it starts a fresh session primed from `state/digest.json`. `--note` is appended to the next phase message (the first EXECUTE after the resume, or REPORT when resuming there) and stored as `note` in that iteration's ledger row.
 - `stop` writes a `STOP` sentinel. The loop checks it after each EXECUTE phase, then writes the REPORT and exits.
 - `status` prints phase, iteration, session id and ledger rows. `cost` sums the cost meter from `ledger.json`.
 - `validate` runs the same validators as the loop. `--dir` is `runs/iter-N` for `design`/`execute`, the work dir for `baseline`/`report`.
@@ -100,6 +100,7 @@ export NOUS_CAMPAIGN_PARENT=~/nous-campaigns   # work dirs go to $NOUS_CAMPAIGN_
   runs.jsonl             one row per Bash command
   baseline.json          BASELINE observation and noise
   answer.json, report.md REPORT output
+  nous_evidence/         copies of the files answer.json cites
   final_check.json       answer check against the record
   halt.json              written only when the failure breaker trips
   STOP                   written by `nous stop`
@@ -109,11 +110,7 @@ export NOUS_CAMPAIGN_PARENT=~/nous-campaigns   # work dirs go to $NOUS_CAMPAIGN_
     findings.json  principle_updates.json
 ```
 
-Nous writes `state.json`, `ledger.json`, `principles.json`, `runs.jsonl`, `.bundle.locked.json`, `final_check.json`, `halt.json` and `state/digest.json`. The agent writes every other JSON file, and Nous validates it. Nous also commits the target checkout after each phase (`nous: iter-N DESIGN`, ...), never the work dir.
-
-## Campaign knowledge wiki
-
-After a campaign, the Claude Code skills `/post-campaign`, `/visualize-campaign`, `/visualize-registry` and `/suggest-next` index `ledger.json` and `principles.json` into a cross-campaign wiki. See [docs/nous-wiki.md](docs/nous-wiki.md).
+Nous writes `state.json`, `ledger.json`, `principles.json`, `runs.jsonl`, `.bundle.locked.json`, `final_check.json`, `halt.json`, `state/digest.json` and `nous_evidence/`. The agent writes every other JSON file, and Nous validates it. After REPORT, Nous copies each claim's evidence file to `<repo_path>/nous_evidence/` (and the same path in the work dir) and rewrites `answer.json` to cite those repo-relative paths, so the answer is self-contained in the target repo. Nous also commits the target checkout after each phase (`nous: iter-N DESIGN`, ...), never the work dir.
 
 ## Tests
 
@@ -130,7 +127,8 @@ orchestrator/cli.py      `nous` CLI
 orchestrator/v2/         loop, session, hooks, validators, resume, cost, final check
 orchestrator/v2/schemas/ JSON Schemas for v2 artifacts
 prompts/v2/              method prompt and task-type checklists
-examples/                example campaign
+examples/                example campaign.yaml
+docs/example-campaign/   worked example: every artifact of a one-iteration campaign
 tests/                   test suite (tests/v2/ for the v2 runtime)
 s390x/                   running Nous on IBM Z via Podman (see s390x/README.md)
 ```

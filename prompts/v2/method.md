@@ -36,15 +36,15 @@ Field lists below match the validators exactly; `?` marks optional. Put any othe
   - `id`, `status`: CONFIRMED|PARTIALLY_CONFIRMED|REFUTED|INCONCLUSIVE (`partial_note` required for PARTIALLY_CONFIRMED)
   - `error_type`: direction|magnitude|regime|shape|none (how the prediction missed; none if it held)
   - `evidence: [{path, key, value}]` pointing to real files
-  - `effect?: {value, evidence?}`; noise: `noise_sd`, or `noise_unmeasured: true` + `noise_reason`
+  - `effect?: {value, evidence?}`; noise: `noise_sd` (+ `noise_condition?`), or `noise_unmeasured: true` + `noise_reason`
   - `claims?: [{claim_id, metric, condition, value, seeds?, ci?}]`; give `seeds` and `ci` when claims_needed sets min_seeds / needs_ci.
 - `principle_updates.json`: `updates: [{id, text, finding_ref (a hypothesis id), action: add|revise|remove}]`.
 
 **REPORT**: answer the research question.
 - `answer.json`: `{answer, deliverable, repro, claims}`.
   - `answer`: prose that answers every question and sub-question of the research question.
-  - `deliverable`: path or null. `repro`: one shell command, run from the repository root (no `cd`), that regenerates the headline numbers.
-  - `claims: [{id, metric, value, condition, evidence}]`: every quantitative conclusion you rely on. `evidence` is the path of the file holding the number, or `{path, key, value}`; `value` is copied exactly from that file.
+  - `deliverable`: a path or a short description (string). `repro`: one shell command, run from the repository root (no `cd`), that regenerates the headline numbers.
+  - `claims: [{id, metric, value, condition, evidence}]`: every quantitative conclusion you rely on. `evidence` is the path of the file holding the number, or `{path, key, value}`; `value` is copied exactly from that file. After REPORT Nous copies the file to `nous_evidence/`, sets `evidence` to that path and keeps `{path, key, value}` as `evidence_detail`.
 - `report.md`: a human-readable summary.
 
 ## Evidence keys

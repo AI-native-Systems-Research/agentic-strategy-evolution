@@ -518,6 +518,27 @@ class TestLedger:
         assert "status" in entry
         assert "stop_reason" in entry
 
+    async def test_ledger_rows_match_schema(self, tmp_path):
+        """Rows loop.py writes (incl. the REPORT fields) validate against ledger_entry.schema.json."""
+        import jsonschema
+
+        work_dir = tmp_path / "work"
+        work_dir.mkdir()
+        config = parse_campaign_config(_campaign_yaml())
+        per_turn = _build_per_turn_files(work_dir, answered=True)
+
+        def factory(_opts):
+            return FakeClient(script=_make_script(4), per_turn_files=per_turn)
+
+        await Campaign(config=config, work_dir=work_dir, client_factory=factory).run()
+
+        schema_path = Path(__file__).resolve().parents[2] / "orchestrator" / "v2" / "schemas" / "ledger_entry.schema.json"
+        schema = json.loads(schema_path.read_text())
+        ledger = json.loads((work_dir / "ledger.json").read_text())
+        assert {"report_cost_usd", "repro_recorded", "claims_matched_fraction"} <= set(ledger[-1])
+        for row in ledger:
+            jsonschema.validate(row, schema)
+
 
     async def test_final_check_recorded_from_runs_jsonl(self, tmp_path):
         """Spec 3.8: REPORT ends with the final check; repro is proven from runs.jsonl, not re-run."""

@@ -1,0 +1,17 @@
+[
+  {
+    "iteration": 1,
+    "bundle_hash": "9d4c1f0e5b7a3c2d8e6f1a0b9c8d7e6f5a4b3c2d1e0f9a8b7c6d5e4f3a2b1c0d",
+    "claims_changed": true,
+    "best_changed": true,
+    "principles_changed": true,
+    "prereg_violation": false,
+    "status": "ok",
+    "stop_reason": "answered",
+    "cost_meter_usd": 1.84,
+    "tokens": {"input": 2150, "output": 9400},
+    "report_cost_usd": 0.31,
+    "repro_recorded": true,
+    "claims_matched_fraction": 1.0
+  }
+]

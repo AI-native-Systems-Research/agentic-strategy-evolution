@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import jsonschema
 import pytest
 
 from orchestrator.v2.resume import (
@@ -396,6 +397,10 @@ class TestCampaignResume:
         # Note should be in ledger
         ledger = json.loads((work_dir / "ledger.json").read_text())
         assert any(e.get("note") == "try the greedy approach" for e in ledger)
+        schema = json.loads((Path(__file__).resolve().parents[2] / "orchestrator" / "v2"
+                             / "schemas" / "ledger_entry.schema.json").read_text())
+        for row in ledger:  # the note row matches the documented ledger shape
+            jsonschema.validate(row, schema)
 
     async def test_missing_state_starts_fresh(self, tmp_path):
         """No state.json means a fresh campaign from the beginning."""

@@ -35,7 +35,7 @@ locked_parameters:          # optional: values every planned run must use
   duration_seconds: 600
 ```
 
-See the README for every key. [examples/campaign.yaml](../examples/campaign.yaml) is a working example (set its `repo_path`).
+See the README for every key. [examples/campaign.yaml](../examples/campaign.yaml) is a working example (set its `repo_path`). [example-campaign/](example-campaign/README.md) shows every artifact a finished campaign leaves behind.
 
 ## Run
 
@@ -60,7 +60,7 @@ nous resume <work_dir> --note "use 5 seeds per arm"
 
 ## Read the results
 
-- `answer.json`, `report.md`: the answer and its evidence.
+- `answer.json`, `report.md`: the answer and its evidence. The cited files are also copied to `<repo>/nous_evidence/`.
 - `final_check.json`: whether the answer's evidence resolves and the repro command was actually run.
 - `ledger.json`: one row per iteration (stop reason, cost, prereg violations). `nous cost <work_dir>` sums the cost.
 - `runs/iter-N/`: problem, bundle, plan, findings and principle updates for each iteration.

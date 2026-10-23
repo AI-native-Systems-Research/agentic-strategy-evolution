@@ -131,12 +131,21 @@ def _valid_answer() -> dict:
 
 
 def _valid_ledger_entry() -> dict:
+    """A row exactly as loop.py writes it (last row, after REPORT)."""
     return {
+        "iteration": 1,
         "bundle_hash": "a" * 64,
-        "cost_meter_usd": 0.05,
+        "claims_changed": True,
+        "best_changed": False,
+        "principles_changed": True,
+        "prereg_violation": False,
         "status": "ok",
-        "input_tokens": 1000,
-        "output_tokens": 500,
+        "stop_reason": "answered",
+        "cost_meter_usd": 0.05,
+        "tokens": {"input": 1000, "output": 500},
+        "report_cost_usd": 0.01,
+        "repro_recorded": True,
+        "claims_matched_fraction": 1.0,
     }
 
 
@@ -544,44 +553,42 @@ class TestLedgerEntrySchema:
     def test_valid_full(self):
         jsonschema.validate(_valid_ledger_entry(), self.schema)
 
-    def test_empty_object_valid(self):
-        """All fields are optional; additionalProperties is true."""
-        jsonschema.validate({}, self.schema)
-
-    def test_additional_properties_allowed(self):
+    def test_mid_campaign_row_with_note(self):
         doc = _valid_ledger_entry()
-        doc["iteration"] = 3
-        doc["whatever"] = "allowed"
+        for k in ("report_cost_usd", "repro_recorded", "claims_matched_fraction"):
+            del doc[k]
+        doc.update(stop_reason=None, note="use 5 seeds")
         jsonschema.validate(doc, self.schema)
 
-    def test_invalid_bundle_hash_pattern(self):
-        doc = {"bundle_hash": "not-a-sha256"}
-        with pytest.raises(jsonschema.ValidationError, match="pattern"):
+    def test_unknown_field_rejected(self):
+        doc = _valid_ledger_entry()
+        doc["whatever"] = 1
+        with pytest.raises(jsonschema.ValidationError):
             jsonschema.validate(doc, self.schema)
 
-    def test_bundle_hash_valid_64_hex(self):
-        doc = {"bundle_hash": "f" * 64}
-        jsonschema.validate(doc, self.schema)
+    def test_missing_required_rejected(self):
+        doc = _valid_ledger_entry()
+        del doc["tokens"]
+        with pytest.raises(jsonschema.ValidationError, match="required"):
+            jsonschema.validate(doc, self.schema)
 
-    @pytest.mark.parametrize("status", ["ok", "partial", "failed", "skipped"])
+    def test_invalid_bundle_hash_pattern(self):
+        doc = {**_valid_ledger_entry(), "bundle_hash": "not-a-sha256"}
+        with pytest.raises(jsonschema.ValidationError, match="does not match"):
+            jsonschema.validate(doc, self.schema)
+
+    @pytest.mark.parametrize("status", ["ok", "partial"])
     def test_valid_statuses(self, status):
-        jsonschema.validate({"status": status}, self.schema)
+        jsonschema.validate({**_valid_ledger_entry(), "status": status}, self.schema)
 
     def test_invalid_status(self):
         with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate({"status": "error"}, self.schema)
+            jsonschema.validate({**_valid_ledger_entry(), "status": "error"}, self.schema)
 
     def test_cost_must_be_non_negative(self):
         with pytest.raises(jsonschema.ValidationError, match="minimum"):
-            jsonschema.validate({"cost_meter_usd": -0.01}, self.schema)
+            jsonschema.validate({**_valid_ledger_entry(), "cost_meter_usd": -0.01}, self.schema)
 
     def test_claims_matched_fraction_range(self):
-        jsonschema.validate({"claims_matched_fraction": 0.0}, self.schema)
-        jsonschema.validate({"claims_matched_fraction": 1.0}, self.schema)
         with pytest.raises(jsonschema.ValidationError, match="maximum"):
-            jsonschema.validate({"claims_matched_fraction": 1.5}, self.schema)
-
-    def test_token_counts_must_be_non_negative_integers(self):
-        jsonschema.validate({"input_tokens": 0}, self.schema)
-        with pytest.raises(jsonschema.ValidationError):
-            jsonschema.validate({"input_tokens": -1}, self.schema)
+            jsonschema.validate({**_valid_ledger_entry(), "claims_matched_fraction": 1.5}, self.schema)
