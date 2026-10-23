@@ -33,11 +33,6 @@ from orchestrator.work_dir_resolver import (
 )
 
 
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
-
-
-def _load_state_schema() -> dict:
-    return json.loads((SCHEMAS_DIR / "state.schema.json").read_text())
 
 
 # ─── resolve_work_dir: pure path computation (no I/O) ────────────────────

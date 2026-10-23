@@ -59,7 +59,7 @@ Required keys are `research_question` and `target_system.repo_path`. Optional ke
 | `session_scope` | `campaign` (default) resumes the same session; `iteration` always resumes into a fresh session primed from the digest. |
 | `human_gates`, `rerun_repro` | Accepted, not yet acted on. |
 
-Any other key (for example v1 keys such as `prompts`, `critic`, `arm_sweep`) logs a warning and is ignored. `nous schema <artifact>` prints a v2 artifact schema; `nous schema campaign` still prints the older v1 campaign schema, so this table is the reference for v2 keys.
+Any other key (for example v1 keys such as `prompts`, `critic`, `arm_sweep`) logs a warning and is ignored. `nous schema <artifact>` prints a v2 artifact schema; this table is the reference for `campaign.yaml` keys.
 
 ## Commands
 
@@ -70,7 +70,7 @@ nous stop <target> [--reason "text"]
 nous status <target>
 nous cost <target>
 nous validate {baseline,design,execute,report} --dir <dir>
-nous schema [campaign|answer|baseline|bundle|findings|ledger_entry|plan|principle_updates|problem] [--format md|json|yaml]
+nous schema {answer|baseline|bundle|findings|ledger_entry|plan|principle_updates|problem} [--format md|json|yaml]
 ```
 
 - `run` refuses to start if the work dir already has `state.json`; use `resume`.
@@ -79,7 +79,7 @@ nous schema [campaign|answer|baseline|bundle|findings|ledger_entry|plan|principl
 - `status` prints phase, iteration, session id and ledger rows. `cost` sums the cost meter from `ledger.json`.
 - `validate` runs the same validators as the loop. `--dir` is `runs/iter-N` for `design`/`execute`, the work dir for `baseline`/`report`.
 
-`--agent`, `--auto-approve`, `--timeout`, `--max-cli-retries` and `--sandbox` are accepted for v1 compatibility, print a warning and do nothing. `report` and `replay` were removed (they exit 1). `reports`, `create-campaign`, `lineage`, `clean` and `package` are deprecated v1 commands that still run with a warning.
+`--agent`, `--auto-approve`, `--timeout`, `--max-cli-retries` and `--sandbox` are accepted for v1 compatibility, print a warning and do nothing. The v1-only commands `report`, `replay`, `reports`, `create-campaign`, `lineage`, `clean` and `package` were removed; they only read v1 artifacts.
 
 ## Work dir
 

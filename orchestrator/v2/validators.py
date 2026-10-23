@@ -34,7 +34,6 @@ _SCHEMA_MAP: dict[str, str] = {
     "findings": "findings.schema.json",
     "principle_updates": "principle_updates.schema.json",
     "answer": "answer.schema.json",
-    "ledger_entry": "ledger_entry.schema.json",
 }
 
 
@@ -493,15 +492,6 @@ def _check_task_limits(data: dict, ctx: ValidatorContext) -> list[str]:
             f"task_limits: {run_count} runs exceeds max_runs={max_runs}"
         )
 
-    max_wall_s = ctx.task_limits.get("max_wall_seconds")
-    if max_wall_s is not None:
-        total_wall = sum(r.get("wall_seconds", 0) for r in rows)
-        if total_wall > max_wall_s:
-            errors.append(
-                f"task_limits: total wall time {total_wall:.1f}s "
-                f"exceeds max_wall_seconds={max_wall_s}"
-            )
-
     return errors
 
 
@@ -572,11 +562,11 @@ def validate_phase_artifacts(
     for atype in artifact_types:
         path = phase_dir / f"{atype}.json"
         if not path.exists():
-            all_errors.append(f"{atype}: file not found")
+            all_errors.append(f"{atype}: file not found at {path.name}")
             continue
         try:
             data = json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError) as exc:
+        except (ValueError, OSError) as exc:  # bad JSON or undecodable bytes
             all_errors.append(f"{atype}: invalid JSON — {exc}")
             continue
         ctx = iter_context(work_dir, phase_dir, **limits)

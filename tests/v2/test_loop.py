@@ -834,7 +834,7 @@ class TestExperimentCommandsDefault:
 class TestTransientRetryInCampaign:
     async def test_exit_143_on_turn_retried_and_campaign_continues(self, tmp_path, monkeypatch):
         from orchestrator.v2 import session as session_mod
-        from orchestrator.v2.errors import ProcessError
+        from claude_agent_sdk import ProcessError
 
         monkeypatch.setattr(session_mod, "RETRY_DELAYS_S", (0.0, 0.0))
         work_dir = tmp_path / "work"
@@ -848,7 +848,7 @@ class TestTransientRetryInCampaign:
             async def query(self, prompt):
                 Flaky.calls += 1
                 if Flaky.calls == 2:  # DESIGN turn dies once with SIGTERM
-                    raise ProcessError(143)
+                    raise ProcessError("killed", exit_code=143)
                 await super().query(prompt)
 
         client = Flaky(script=_make_script(4), per_turn_files=per_turn)

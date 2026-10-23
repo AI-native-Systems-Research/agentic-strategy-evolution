@@ -378,7 +378,6 @@ class Campaign:
     def _set_phase(self, hook_state: HookState, phase: str, iteration: int) -> None:
         hook_state.phase = phase
         hook_state.iteration = iteration
-        self._meter.set_phase(phase)
         update_state(self._work_dir, phase=phase, iteration=iteration)
 
     def _lock_bundle(self, idir: Path) -> str:

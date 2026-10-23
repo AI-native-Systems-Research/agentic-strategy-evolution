@@ -1,4 +1,4 @@
-"""Nous v2 robustness: repair loop, failure breaker, wait_for polling (spec 3.5, 3.2 step 4)."""
+"""Nous v2 robustness: failure breaker and wait_for polling (spec 3.5, 3.2 step 4)."""
 
 from __future__ import annotations
 
@@ -76,30 +76,6 @@ def check_wait_condition(wait_spec: str, cwd: str | None = None) -> bool:
             logger.warning("wait_for command error: %s", exc)
             return False
     return (Path(cwd or ".") / wait_spec).exists()
-
-
-def poll_wait_for(
-    wait_spec: str,
-    *,
-    poll_interval: float = 60.0,
-    timeout: float = 14400.0,
-    sleep_fn=time.sleep,
-) -> bool:
-    """Poll a wait_for spec until satisfied or timeout.
-
-    No model calls are made during polling.
-    """
-    deadline = time.monotonic() + timeout
-
-    while time.monotonic() < deadline:
-        if check_wait_condition(wait_spec):
-            return True
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            break
-        sleep_fn(min(poll_interval, remaining))
-
-    return False
 
 
 async def poll_and_resume(

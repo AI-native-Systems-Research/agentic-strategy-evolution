@@ -14,13 +14,30 @@ from typing import Any, Callable
 from claude_agent_sdk import ClaudeAgentOptions
 from claude_agent_sdk.types import SystemPromptPreset
 
-from .errors import APIServerError, is_transient
 from .resume import update_state
 
 logger = logging.getLogger(__name__)
 
 RETRY_DELAYS_S = (5.0, 30.0)  # 3 tries in all (spec 3.5 / B9)
 _API_5XX = re.compile(r"\b5\d\d\b|overloaded", re.IGNORECASE)
+
+
+class APIServerError(Exception):
+    """An API 5xx / overloaded reply surfaced as ResultMessage.is_error."""
+
+    def __init__(self, status_code: int, body: str = ""):
+        self.status_code = status_code
+        super().__init__(f"API returned {status_code}: {body}")
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Spec 3.5 / B9: exit 143, 'Fatal error in message reader', timeouts, API 5xx."""
+    if isinstance(exc, OSError) and "timed out" in str(exc).lower():
+        return True
+    if getattr(exc, "exit_code", None) == 143 or "Fatal error in message reader" in str(exc):
+        return True
+    code = getattr(exc, "status_code", None)
+    return isinstance(code, int) and 500 <= code < 600
 
 
 MODEL_MAX_OUTPUT: dict[str, int] = {

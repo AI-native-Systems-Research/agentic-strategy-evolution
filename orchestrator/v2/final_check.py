@@ -11,9 +11,7 @@ import logging
 import re
 from pathlib import Path
 
-from .validators import (
-    ValidatorContext, check_evidence_item, read_json, validate_artifact,
-)
+from .validators import ValidatorContext, read_json, validate_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -51,23 +49,19 @@ def _check_repro(work_dir: Path, repro_command: str | None) -> bool:
     wanted = _normalize(repro_command or "")
     if not wanted:
         return False
-    paths = [work_dir / "runs.jsonl"]
-    runs_dir = work_dir / "runs"
-    if runs_dir.exists():
-        paths.extend(runs_dir.rglob("runs.jsonl"))
-    for jsonl_path in paths:
-        if not jsonl_path.exists():
+    jsonl_path = work_dir / "runs.jsonl"
+    if not jsonl_path.exists():
+        return False
+    for n, line in enumerate(jsonl_path.read_text().splitlines(), 1):
+        try:
+            entry = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("%s:%d: skipping malformed row", jsonl_path, n)
             continue
-        for n, line in enumerate(jsonl_path.read_text().splitlines(), 1):
-            try:
-                entry = json.loads(line)
-            except json.JSONDecodeError:
-                logger.warning("%s:%d: skipping malformed row", jsonl_path, n)
-                continue
-            if entry.get("exit_code") == 0 and set(wanted) <= set(
-                _normalize(entry.get("command") or "")
-            ):
-                return True
+        if entry.get("exit_code") == 0 and set(wanted) <= set(
+            _normalize(entry.get("command") or "")
+        ):
+            return True
     return False
 
 
@@ -116,11 +110,7 @@ def check_answer(work_dir: Path, limits: dict | None = None) -> dict:
         return report
 
     ctx = ValidatorContext(work_dir=work_dir, **(limits or {}))
-    evidence_errors: list[str] = list(validate_artifact("answer", answer, ctx))
-    for claim in answer.get("claims", []):
-        ev = claim.get("evidence")
-        if isinstance(ev, dict):
-            evidence_errors.extend(check_evidence_item(ev, work_dir))
+    evidence_errors = validate_artifact("answer", answer, ctx)  # includes each claim's evidence
     report["evidence_errors"] = evidence_errors
     report["answer_valid"] = len(evidence_errors) == 0
 

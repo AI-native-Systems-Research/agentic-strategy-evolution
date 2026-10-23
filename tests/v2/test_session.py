@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+from claude_agent_sdk import ProcessError
 
 from orchestrator.v2.session import (
     DEFAULT_MAX_BUFFER_SIZE,
@@ -233,43 +234,43 @@ class TestSessionLifecycle:
 
 class TestTransientErrors:
     def test_process_error_143_is_transient(self):
-        from orchestrator.v2.errors import ProcessError, is_transient
-        assert is_transient(ProcessError(143))
+        from orchestrator.v2.session import is_transient
+        assert is_transient(ProcessError("killed", exit_code=143))
 
-    def test_process_error_1_is_transient_as_subclass(self):
-        from orchestrator.v2.errors import ProcessError, is_transient
-        assert is_transient(ProcessError(1))
+    def test_process_error_1_is_not_transient(self):
+        from orchestrator.v2.session import is_transient
+        assert not is_transient(ProcessError("failed", exit_code=1))
 
     def test_fatal_message_reader_is_transient(self):
-        from orchestrator.v2.errors import is_transient
+        from orchestrator.v2.session import is_transient
         assert is_transient(RuntimeError("Fatal error in message reader"))
 
     def test_api_5xx_is_transient(self):
-        from orchestrator.v2.errors import APIServerError, is_transient
+        from orchestrator.v2.session import APIServerError, is_transient
         assert is_transient(APIServerError(502))
 
     def test_generic_exc_with_status_code_500(self):
-        from orchestrator.v2.errors import is_transient
+        from orchestrator.v2.session import is_transient
         exc = RuntimeError("oops")
         exc.status_code = 500  # type: ignore[attr-defined]
         assert is_transient(exc)
 
     def test_generic_runtime_error_is_not_transient(self):
-        from orchestrator.v2.errors import is_transient
+        from orchestrator.v2.session import is_transient
         assert not is_transient(RuntimeError("something broke"))
 
     def test_exit_143_on_generic_exc(self):
-        from orchestrator.v2.errors import is_transient
+        from orchestrator.v2.session import is_transient
         exc = RuntimeError("process died")
         exc.exit_code = 143  # type: ignore[attr-defined]
         assert is_transient(exc)
 
     def test_stdlib_timeout_is_transient(self):
-        from orchestrator.v2.errors import is_transient
+        from orchestrator.v2.session import is_transient
         assert is_transient(TimeoutError("connection timed out"))
 
     def test_os_error_timed_out_is_transient(self):
-        from orchestrator.v2.errors import is_transient
+        from orchestrator.v2.session import is_transient
         assert is_transient(OSError("Operation timed out"))
 
 
@@ -313,10 +314,9 @@ def _flaky_session(tmp_path, errors, script, sleeps, connect_errors=None):
 
 class TestTransientRetry:
     async def test_process_error_143_retried_then_succeeds(self, tmp_path):
-        from orchestrator.v2.errors import ProcessError
         sleeps: list = []
         session, client, _ = _flaky_session(
-            tmp_path, [ProcessError(143)], [FakeResultMessage(session_id="s1")], sleeps,
+            tmp_path, [ProcessError("killed", exit_code=143)], [FakeResultMessage(session_id="s1")], sleeps,
         )
         await session.connect()
         result = await session.turn("hello")
@@ -325,12 +325,11 @@ class TestTransientRetry:
         assert len(sleeps) == 1
 
     async def test_retry_reconnects_with_resume(self, tmp_path):
-        from orchestrator.v2.errors import ProcessError
         script = [FakeResultMessage(session_id="s1"), FakeResultMessage(session_id="s1")]
         session, _client, seen = _flaky_session(tmp_path, [], script, [])
         await session.connect()
         await session.turn("first")
-        _client.errors.append(ProcessError(143))
+        _client.errors.append(ProcessError("killed", exit_code=143))
         await session.turn("second")
         assert seen[-1].resume == "s1"
 
@@ -345,9 +344,8 @@ class TestTransientRetry:
         assert sleeps == []
 
     async def test_gives_up_after_three_tries(self, tmp_path):
-        from orchestrator.v2.errors import ProcessError
         sleeps: list = []
-        errs = [ProcessError(143), ProcessError(143), ProcessError(143)]
+        errs = [ProcessError("killed", exit_code=143), ProcessError("killed", exit_code=143), ProcessError("killed", exit_code=143)]
         session, _c, _ = _flaky_session(tmp_path, errs, [FakeResultMessage()], sleeps)
         await session.connect()
         with pytest.raises(ProcessError):
@@ -375,11 +373,10 @@ class TestTransientRetry:
         assert result.is_error and sleeps == []
 
     async def test_connect_retried_on_transient(self, tmp_path):
-        from orchestrator.v2.errors import ProcessError
         sleeps: list = []
         session, client, _ = _flaky_session(
             tmp_path, [], [FakeResultMessage()], sleeps,
-            connect_errors=[ProcessError(143, "Fatal error in message reader")],
+            connect_errors=[ProcessError("Fatal error in message reader", exit_code=143)],
         )
         await session.connect()
         assert client.connected and len(sleeps) == 1

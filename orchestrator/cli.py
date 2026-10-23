@@ -256,40 +256,14 @@ _V2_SCHEMAS = Path(__file__).resolve().parent / "v2" / "schemas"
 
 
 def _cmd_schema(args):
-    """Print the JSON Schema for a Nous artifact in a friendly form.
-
-    Surface the canonical campaign / bundle / findings shape directly
-    from the CLI so agents and humans don't need to grep the source to
-    learn what fields are required, optional, or rejected. The Markdown
-    rendering walks the schema deterministically; JSON / YAML modes
-    print the schema verbatim for tooling.
-
-    **Pure deterministic Python — no LLM, no SDK, no network.** The
-    schema YAML/JSON file is the single source of truth; this command
-    is just a renderer. Safe to invoke from CI, hooks, or any
-    zero-cost context.
-    """
-    import json as _json
-    target = args.artifact
-    if target == "campaign":
-        schema_path = Path(__file__).resolve().parent / "schemas" / "campaign.schema.yaml"
-    else:
-        schema_path = _V2_SCHEMAS / f"{target}.schema.json"
-    if schema_path.suffix in (".yaml", ".yml"):
-        schema = yaml.safe_load(schema_path.read_text())
-    else:
-        schema = _json.loads(schema_path.read_text())
-
-    fmt = args.format
-    if fmt == "json":
-        print(_json.dumps(schema, indent=2))
-        return
-    if fmt == "yaml":
+    """Print a v2 artifact JSON Schema (md, json or yaml). Pure Python, no LLM."""
+    schema = json.loads((_V2_SCHEMAS / f"{args.artifact}.schema.json").read_text())
+    if args.format == "json":
+        print(json.dumps(schema, indent=2))
+    elif args.format == "yaml":
         print(yaml.safe_dump(schema, sort_keys=False))
-        return
-
-    # Markdown mode (default).
-    print(_render_schema_markdown(schema, artifact=target))
+    else:
+        print(_render_schema_markdown(schema, artifact=args.artifact))
 
 
 def _render_schema_markdown(schema: dict, *, artifact: str) -> str:
@@ -334,13 +308,6 @@ def _render_schema_markdown(schema: dict, *, artifact: str) -> str:
             lines.extend(_render_property_md(name, spec))
         lines.append("")
 
-    if artifact == "campaign":
-        lines.append("## See also")
-        lines.append("")
-        lines.append("- `nous run campaign.yaml` — run a campaign in one Claude session (v2).")
-        lines.append("- `nous resume <work_dir> [--note TEXT]` — continue a campaign.")
-        lines.append("- `nous stop <target>` — ask a running campaign to halt at the next phase boundary.")
-        lines.append("- `nous status <target>` — phase, iteration, session id and ledger rows.")
     return "\n".join(lines)
 
 
@@ -383,12 +350,9 @@ def _render_property_md(name: str, spec: dict) -> list[str]:
     return out
 
 
-_V2_PHASE_ARTIFACTS = {
-    "baseline": ["baseline"],
-    "design": ["problem", "bundle", "plan"],
-    "execute": ["findings", "principle_updates"],
-    "report": ["answer"],
-}
+def _phase_artifacts() -> dict[str, list[str]]:
+    from orchestrator.v2.hooks import PHASE_ARTIFACTS
+    return {phase.lower(): names for phase, names in PHASE_ARTIFACTS.items()}
 
 
 def _cmd_validate(args):
@@ -403,7 +367,7 @@ def _cmd_validate(args):
     if (work_dir / "campaign.yaml").exists():  # same locks the loop checks
         cfg = _parse_or_exit(yaml.safe_load((work_dir / "campaign.yaml").read_text()))
         limits = validator_limits(cfg, work_dir)
-    errors = validate_phase_artifacts(work_dir, d, _V2_PHASE_ARTIFACTS[args.phase], **limits)
+    errors = validate_phase_artifacts(work_dir, d, _phase_artifacts()[args.phase], **limits)
     print(json.dumps({"status": "fail" if errors else "pass", "errors": errors}, indent=2))
     if errors:
         sys.exit(1)
@@ -438,311 +402,6 @@ def _cmd_cost(args):
     print(f"Iterations:   {len(ledger)}")
     print(f"Total cost:   ${cost:.4f} (cost meter)")
     print(f"Total tokens: {tin + tout} (in: {tin}, out: {tout})")
-
-
-def _deprecated(name: str, func=None):
-    """Wrap a v1 command: warn on stderr, then run it (or exit 1 if func is None)."""
-    def handler(args):
-        if func is None:
-            print(f"Error: `nous {name}` was removed in Nous v2 (it only read v1 artifacts).",
-                  file=sys.stderr)
-            sys.exit(1)
-        print(f"Warning: `nous {name}` is deprecated; it reads v1 artifacts, not Nous v2 runs.",
-              file=sys.stderr)
-        func(args)
-    return handler
-
-
-def _cmd_reports(args):
-    """On-demand re-emission of meta_findings.json (#242).
-
-    Runs the pure-Python emitter against any work_dir, regardless of
-    whether the campaign reached a clean terminal transition. Useful for
-    legacy campaigns that pre-date the in-line emission wired into
-    campaign.py, and for campaigns that aborted mid-phase and so never
-    reached the four call sites that invoke the emitter automatically.
-
-    Target may be a campaign.yaml (preferred — gives full target_system
-    context for the heuristics) or a work_dir / run_id (emitted with an
-    empty target_system stub).
-    """
-    import json as _json
-    import yaml as _yaml
-    from orchestrator.meta_findings import (
-        emit_meta_findings,
-        write_meta_findings,
-    )
-    from orchestrator.validate import validate_meta_findings
-
-    work_dir = resolve_work_dir(args.target)
-
-    campaign: dict = {"target_system": {}}
-    if args.target.endswith((".yaml", ".yml")):
-        try:
-            data = _yaml.safe_load(Path(args.target).read_text())
-            if isinstance(data, dict):
-                campaign = data
-        except (_yaml.YAMLError, OSError) as exc:
-            print(
-                f"Warning: could not parse {args.target} ({exc}); "
-                f"emitting against empty target_system context.",
-                file=sys.stderr,
-            )
-
-    payload = emit_meta_findings(work_dir, campaign)
-
-    state_path = work_dir / "state.json"
-    is_terminal = False
-    if state_path.exists():
-        try:
-            state = _json.loads(state_path.read_text())
-            phase = state.get("last_entered_phase") or state.get("phase")
-            is_terminal = phase in ("DONE", "STOPPED")
-        except (_json.JSONDecodeError, OSError):
-            pass
-
-    if not is_terminal:
-        prior = payload.get("notes") or ""
-        suffix = (
-            f"Emitted on-demand via `nous reports` against a non-terminal "
-            f"work_dir (state.json: phase is not DONE/STOPPED). The "
-            f"three streams reflect partial state — re-emit after "
-            f"campaign termination for the canonical record."
-        )
-        payload["notes"] = (prior + " " + suffix).strip() if prior else suffix
-
-    target = write_meta_findings(work_dir, payload)
-    result = validate_meta_findings(work_dir)
-    if result["status"] == "fail":
-        print(
-            f"Warning: emitted meta_findings.json failed self-validation: "
-            f"{result['errors']}",
-            file=sys.stderr,
-        )
-
-    n_lessons = len(payload.get("campaign_design_lessons") or [])
-    n_repo = len(payload.get("target_system_asks") or [])
-    n_nous = len(payload.get("nous_asks") or [])
-    print(
-        f"{target}  "
-        f"({n_lessons} design lesson(s), {n_repo} repo ask(s), "
-        f"{n_nous} nous ask(s))"
-    )
-    if not is_terminal:
-        print(
-            "Note: emitted against a non-terminal work_dir; see "
-            "meta_findings.json `notes` field.",
-            file=sys.stderr,
-        )
-
-
-def _cmd_create_campaign(args):
-    """Scaffold a heavily-commented campaign.yaml (issue #89)."""
-    from orchestrator.create_campaign import scaffold_campaign
-
-    kwargs: dict = {"force": args.force}
-    if args.target_name:
-        kwargs["target_name"] = args.target_name
-    if args.target_description:
-        kwargs["target_description"] = args.target_description
-    if args.research_question:
-        kwargs["research_question"] = args.research_question
-    if args.run_id:
-        kwargs["run_id"] = args.run_id
-    # #184: --target-repo-path overrides; otherwise scaffold_campaign
-    # defaults to CWD at scaffold time.
-    if args.target_repo_path is not None:
-        kwargs["target_repo_path"] = args.target_repo_path
-
-    try:
-        path = scaffold_campaign(args.to, **kwargs)
-    except FileExistsError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
-        print("Pass --force to overwrite.", file=sys.stderr)
-        sys.exit(1)
-
-    print(f"Wrote {path}")
-    print()
-    print("Next steps:")
-    print(f"  1. Edit {path} — replace TODO markers, especially")
-    print(f"     target_system.description (that's the channel the LLM reads).")
-    print(f"  2. Skim the AUTHORING CHECKLIST near the top of the file.")
-    print(f"  3. Run: nous run {path}")
-
-
-def _cmd_lineage(args):
-    """#266 (F21): print derivation chain + cumulative-patch availability."""
-    from orchestrator.lineage import summarize_lineage
-
-    work_dir = resolve_work_dir(args.target)
-    summary = summarize_lineage(work_dir)
-    if getattr(args, "json", False):
-        print(json.dumps(summary, indent=2))
-        return
-    print(f"Campaign:    {summary.get('run_id', '?')}")
-    print(f"Work dir:    {summary.get('work_dir')}")
-    if summary.get("repo_commit"):
-        print(f"Repo commit: {summary['repo_commit'][:12]}")
-    derived = summary.get("derived_from")
-    if derived:
-        print(
-            f"derived_from: campaign={derived.get('campaign')}, "
-            f"iteration={derived.get('iteration', 'final')}"
-        )
-    else:
-        print("derived_from: (none — this campaign is a fresh root)")
-    print()
-    print("Iterations:")
-    for it in summary.get("iterations", []):
-        marker = "✓ cumulative" if it.get("cumulative_patch") else "✗ no cumulative"
-        print(f"  {it['iteration']}  [{marker}]")
-    if not summary.get("iterations"):
-        print("  (no iterations completed yet)")
-
-
-def _cmd_clean(args):
-    """#254 (F9): remove orphaned nous-exp-* worktrees + branches."""
-    import subprocess as _sp
-
-    target_repo = args.target_repo or Path.cwd()
-    target_repo = Path(target_repo).resolve()
-    experiments_dir = target_repo / ".nous-experiments"
-    if not experiments_dir.is_dir():
-        print(f"No .nous-experiments/ under {target_repo}; nothing to clean.")
-        return
-
-    candidates: list[Path] = []
-    for entry in sorted(experiments_dir.iterdir()):
-        if not entry.is_dir():
-            continue
-        if args.campaign and args.campaign not in entry.name:
-            continue
-        candidates.append(entry)
-
-    if args.dry_run:
-        print(f"Would remove {len(candidates)} worktree(s) under {experiments_dir}:")
-        for p in candidates:
-            print(f"  - {p}")
-        return
-
-    removed = 0
-    for entry in candidates:
-        # Best-effort liveness check via .nous-pid (matches gc_orphan_worktrees).
-        pid_file = entry / ".nous-pid"
-        if pid_file.exists():
-            try:
-                pid = int(pid_file.read_text().strip())
-                import os as _os
-                _os.kill(pid, 0)
-                # Process is alive — skip.
-                print(f"  skip {entry.name} (active pid {pid})")
-                continue
-            except (ValueError, ProcessLookupError, OSError):
-                pass
-        # Remove worktree + branch.
-        _sp.run(
-            ["git", "worktree", "remove", str(entry), "--force"],
-            cwd=target_repo, capture_output=True, text=True, check=False,
-        )
-        branch = f"nous-exp-{entry.name}"
-        _sp.run(
-            ["git", "branch", "-D", branch],
-            cwd=target_repo, capture_output=True, text=True, check=False,
-        )
-        if entry.exists():
-            import shutil as _shutil
-            _shutil.rmtree(entry, ignore_errors=True)
-        print(f"  removed {entry.name} (+ branch {branch})")
-        removed += 1
-    print(f"Removed {removed} orphaned worktree(s).")
-
-
-def _cmd_package(args):
-    """#263 (F18): tarball work_dir + reproduce.sh + Dockerfile + README."""
-    import tarfile
-    import textwrap
-
-    work_dir = resolve_work_dir(args.target)
-    if not (work_dir / "state.json").exists():
-        print(f"Error: {work_dir} has no state.json; not a campaign work dir.",
-              file=sys.stderr)
-        sys.exit(1)
-
-    output = args.output or work_dir.parent / f"{work_dir.name}.tar.gz"
-
-    state = json.loads((work_dir / "state.json").read_text())
-    repro = state.get("reproducibility_metadata") or {}
-
-    repro_section = "\n".join(
-        f"#   {k}: {v}" for k, v in repro.items()
-    ) if repro else "#   (no reproducibility_metadata recorded — pre-#262 campaign)"
-
-    repo_commit = repro.get("repo_commit", "<UNKNOWN>")
-    reproduce_sh = textwrap.dedent(f"""\
-        #!/usr/bin/env bash
-        # Generated by ``nous package`` (#263 / F18).
-        # Reproducibility metadata captured at INIT (#262 / F17):
-        {repro_section}
-        set -euo pipefail
-        echo "Re-running campaign {state.get('run_id', '?')}"
-        echo "Target repo commit at INIT: {repo_commit}"
-        echo
-        echo "1. Clone the target repo at the captured commit:"
-        echo "     git clone <repo-url> target/"
-        echo "     cd target && git checkout {repo_commit}"
-        echo "2. Re-apply the cumulative patch from any iteration of interest:"
-        echo "     git apply ../runs/iter-N/patches/cumulative.patch"
-        echo "3. Re-run from this campaign yaml:"
-        echo "     nous run campaign.yaml.copy --auto-approve"
-    """)
-
-    dockerfile = textwrap.dedent(f"""\
-        # Generated by ``nous package`` (#263 / F18).
-        # Pins language versions captured by ``capture_reproducibility_metadata`` at INIT.
-        FROM ubuntu:24.04
-        ENV DEBIAN_FRONTEND=noninteractive
-        RUN apt-get update && apt-get install -y --no-install-recommends \\
-            git ca-certificates curl python3 python3-pip && \\
-            rm -rf /var/lib/apt/lists/*
-        # Captured language versions (informational):
-        {repro_section.replace(chr(10), chr(10) + '# ')}
-        WORKDIR /work
-        COPY . /work/
-        ENTRYPOINT ["/bin/bash", "/work/reproduce.sh"]
-    """)
-
-    readme = textwrap.dedent(f"""\
-        # Campaign artifact: {state.get('run_id', '?')}
-
-        Generated by ``nous package`` (#263 / F18). Self-contained
-        bundle for paper artifact evaluation.
-
-        ## Contents
-
-        * Campaign work directory (state.json, ledger.json, principles.json,
-          per-iter runs/, meta_findings.json).
-        * ``reproduce.sh`` — operator-runnable reproduction script
-          using the captured reproducibility metadata (#262 / F17).
-        * ``Dockerfile`` — pins language versions captured at INIT.
-        * Cumulative patches per iteration (``runs/iter-N/patches/cumulative.patch``).
-
-        ## Reproducibility metadata
-
-        ```
-        {json.dumps(repro, indent=2)}
-        ```
-    """)
-
-    # Stage these alongside the work_dir for tar inclusion.
-    pkg_root = work_dir
-    (pkg_root / "reproduce.sh").write_text(reproduce_sh)
-    (pkg_root / "reproduce.sh").chmod(0o755)
-    (pkg_root / "Dockerfile").write_text(dockerfile)
-    (pkg_root / "PACKAGE_README.md").write_text(readme)
-
-    with tarfile.open(output, "w:gz") as tar:
-        tar.add(work_dir, arcname=work_dir.name)
-    print(f"Wrote {output}")
 
 
 def main():
@@ -791,13 +450,12 @@ def main():
     p_resume.set_defaults(func=_cmd_resume)
 
     p_schema = subparsers.add_parser(
-        "schema", help="Print the schema for campaign.yaml or a v2 artifact.",
+        "schema", help="Print the JSON Schema for a v2 artifact.",
     )
     p_schema.add_argument(
         "artifact",
-        choices=["campaign"] + sorted(p.name.split(".")[0] for p in _V2_SCHEMAS.glob("*.schema.json")),
-        nargs="?", default="campaign",
-        help="Which schema to print. Defaults to 'campaign'.",
+        choices=sorted(p.name.split(".")[0] for p in _V2_SCHEMAS.glob("*.schema.json")),
+        help="Which artifact schema to print.",
     )
     p_schema.add_argument(
         "--format", choices=["md", "json", "yaml"], default="md",
@@ -807,7 +465,7 @@ def main():
     p_schema.set_defaults(func=_cmd_schema)
 
     p_validate = subparsers.add_parser("validate", help="Validate v2 phase artifacts.")
-    p_validate.add_argument("phase", choices=list(_V2_PHASE_ARTIFACTS))
+    p_validate.add_argument("phase", choices=list(_phase_artifacts()))
     p_validate.add_argument("--dir", required=True, type=Path,
                             help="runs/iter-N for design/execute; the work dir for baseline/report.")
     p_validate.set_defaults(func=_cmd_validate)
@@ -840,121 +498,6 @@ def main():
     p_cost = subparsers.add_parser("cost", help="Sum the v2 cost meter from ledger.json.")
     p_cost.add_argument("target", help="Work dir, campaign.yaml, or run_id.")
     p_cost.set_defaults(func=_cmd_cost)
-
-    for name in ("report", "replay"):
-        p_old = subparsers.add_parser(name, help="Deprecated (v1 only).")
-        p_old.add_argument("target")
-        p_old.add_argument("--iter", type=int)
-        p_old.add_argument("--model")
-        add_legacy_flags(p_old)
-        p_old.set_defaults(func=_deprecated(name))
-
-    p_reports = subparsers.add_parser(
-        "reports",
-        help="Deprecated (v1 artifacts): re-emit meta_findings.json for a work_dir.",
-    )
-    p_reports.add_argument(
-        "target",
-        help="campaign.yaml (preferred — supplies target_system context) "
-             "OR a work_dir / run_id resolvable via NOUS_CAMPAIGN_PARENT.",
-    )
-    p_reports.set_defaults(func=_deprecated("reports", _cmd_reports))
-
-    # `create-campaign` (issue #89): scaffold a heavily-commented
-    # campaign.yaml that names the four agent-reachable fields and
-    # warns about the domain_adapter_layer trap.
-    p_create = subparsers.add_parser(
-        "create-campaign",
-        help="Deprecated (writes a v1-style scaffold): create a campaign.yaml.",
-    )
-    p_create.add_argument(
-        "--to", required=True, type=Path,
-        help="Path to write the new campaign.yaml.",
-    )
-    p_create.add_argument(
-        "--target-name", default="TODO-SET-SYSTEM-NAME",
-        help="target_system.name in the scaffolded YAML.",
-    )
-    p_create.add_argument(
-        "--target-description", default=None,
-        help="target_system.description (the field the agent actually reads). "
-             "Use heredoc / file substitution for multi-line content.",
-    )
-    p_create.add_argument(
-        "--research-question", default=None,
-        help="Top-level research_question (one falsifiable sentence).",
-    )
-    p_create.add_argument(
-        "--run-id", default="TODO-SET-RUN-ID",
-        help="Working directory name for campaign output.",
-    )
-    p_create.add_argument(
-        "--target-repo-path", default=None, type=Path,
-        help="target_system.repo_path in the scaffold (#184). When "
-             "omitted, the current working directory at scaffold time "
-             "is written — which is almost always the right answer "
-             "since authors typically scaffold from inside the target "
-             "repo. Override with this flag for cross-repo authoring.",
-    )
-    p_create.add_argument(
-        "--force", action="store_true",
-        help="Overwrite if the target file already exists.",
-    )
-    p_create.set_defaults(func=_deprecated("create-campaign", _cmd_create_campaign))
-
-    # #266 (F21): cross-campaign lineage inspection.
-    p_lineage = subparsers.add_parser(
-        "lineage",
-        help="Deprecated (v1 artifacts): show derivation chain and cumulative patches.",
-    )
-    p_lineage.add_argument(
-        "target",
-        help="Campaign run_id, work_dir, or path to campaign.yaml.",
-    )
-    p_lineage.add_argument(
-        "--json", action="store_true",
-        help="Emit JSON instead of human-readable text.",
-    )
-    p_lineage.set_defaults(func=_deprecated("lineage", _cmd_lineage))
-
-    # #254 (F9): orphan-worktree cleanup.
-    p_clean = subparsers.add_parser(
-        "clean",
-        help="Deprecated (v1 worktrees): remove stale nous-exp-* worktrees and branches.",
-    )
-    p_clean.add_argument(
-        "--orphaned", action="store_true",
-        help="Remove worktrees whose owning campaign run is dead. "
-             "Default mode when --campaign and --target-repo are both unset.",
-    )
-    p_clean.add_argument(
-        "--target-repo", type=Path, default=None,
-        help="Target repo to scan. Default: current directory.",
-    )
-    p_clean.add_argument(
-        "--campaign", default=None,
-        help="Scope cleanup to a single campaign run_id.",
-    )
-    p_clean.add_argument(
-        "--dry-run", action="store_true",
-        help="Print what would be removed without acting.",
-    )
-    p_clean.set_defaults(func=_deprecated("clean", _cmd_clean))
-
-    # #263 (F18): paper-artifact tarball.
-    p_package = subparsers.add_parser(
-        "package",
-        help="Deprecated (v1 artifacts): tarball a work_dir with reproduce.sh and Dockerfile.",
-    )
-    p_package.add_argument(
-        "target",
-        help="Campaign run_id, work_dir, or path to campaign.yaml.",
-    )
-    p_package.add_argument(
-        "--output", type=Path, default=None,
-        help="Path to write the tarball. Default: <work_dir>.tar.gz.",
-    )
-    p_package.set_defaults(func=_deprecated("package", _cmd_package))
 
     args = parser.parse_args()
     if not args.command:

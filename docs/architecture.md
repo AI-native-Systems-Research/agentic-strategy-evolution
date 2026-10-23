@@ -11,7 +11,7 @@ Nous v2 wraps one Claude Code session and forces it through a fixed scientific l
 - `env`: `CLAUDE_CODE_MAX_OUTPUT_TOKENS` at the model maximum and `NOUS_WORK_DIR`.
 - `hooks` from `hooks.py`, and `resume=<session_id>` when resuming.
 
-After each turn the session id is saved to `state.json` with the SDK and CLI versions. Transient errors (process errors, timeouts, API 5xx, "overloaded" results) are retried twice, after 5 s and 30 s, reconnecting with the saved session id (`errors.py`).
+After each turn the session id is saved to `state.json` with the SDK and CLI versions. Transient errors (process errors, timeouts, API 5xx, "overloaded" results) are retried twice, after 5 s and 30 s, reconnecting with the saved session id (`session.is_transient`).
 
 The client is created through a `client_factory` argument. The CLI passes `cli._sdk_client`; tests pass `tests/fakes/sdk_client.FakeClient`.
 
@@ -96,7 +96,7 @@ After REPORT, Nous checks `answer.json` against the record without calling the m
 
 ## Cost meter (`cost.py`)
 
-The meter counts each SDK message once by message id and costs it from the `prices` table in `orchestrator/defaults.yaml` (cache reads at 0.1 × input price, cache writes at 1.25 ×). It tracks totals per phase. Each ledger row records `cost_meter_usd` and `tokens` for that iteration; the last row also gets `report_cost_usd`. Cost is reported only and never drives a decision. `nous cost` sums these fields.
+The meter counts each SDK message once by message id and costs it from the `prices` table in `orchestrator/defaults.yaml` (cache reads at 0.1 × input price, cache writes at 1.25 ×). Each ledger row records `cost_meter_usd` and `tokens` for that iteration; the last row also gets `report_cost_usd`. Cost is reported only and never drives a decision. `nous cost` sums these fields.
 
 ## Effort (`effort.py`)
 

@@ -1,7 +1,7 @@
 """Transcript cost meter (spec 3.10).
 
 Counts tokens per message id (dedup), computes cost from a price table,
-tracks per-phase totals. Reporting only — cost never drives a decision.
+tracks campaign totals. Reporting only — cost never drives a decision.
 """
 
 from __future__ import annotations
@@ -32,12 +32,8 @@ class CostMeter:
     def __init__(self, prices: dict[str, dict[str, float]]) -> None:
         self._prices = prices
         self._seen_ids: set[str] = set()
-        self._phase_totals: dict[str, dict[str, Any]] = {}
-        self._current_phase: str = "BASELINE"
-        self._last_snapshot: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
-
-    def set_phase(self, phase: str) -> None:
-        self._current_phase = phase
+        self._total: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
+        self._last_snapshot: dict[str, Any] = dict(self._total)
 
     def record(self, message: Any) -> None:
         msg_id = getattr(message, "message_id", None) or getattr(message, "uuid", None)
@@ -64,37 +60,16 @@ class CostMeter:
             input_t * pin + output_t * price.get("output_tokens", 0)
             + cache_r * pin * 0.1 + cache_w * pin * 1.25
         ) / 1_000_000
-
-        totals = self._phase_totals.setdefault(
-            self._current_phase,
-            {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
-        )
-        totals["input_tokens"] += input_t
-        totals["output_tokens"] += output_t
-        totals["cost_usd"] += cost
-
-    def phase_summary(self, phase: str) -> dict[str, Any]:
-        return dict(
-            self._phase_totals.get(
-                phase, {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
-            )
-        )
+        self._total["input_tokens"] += input_t
+        self._total["output_tokens"] += output_t
+        self._total["cost_usd"] += cost
 
     def total(self) -> dict[str, Any]:
-        t: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
-        for v in self._phase_totals.values():
-            t["input_tokens"] += v["input_tokens"]
-            t["output_tokens"] += v["output_tokens"]
-            t["cost_usd"] += v["cost_usd"]
-        return t
+        return dict(self._total)
 
     def iter_delta(self) -> dict[str, Any]:
         """Return cost since the last call to iter_delta (per-iteration)."""
         current = self.total()
-        delta = {
-            "input_tokens": current["input_tokens"] - self._last_snapshot["input_tokens"],
-            "output_tokens": current["output_tokens"] - self._last_snapshot["output_tokens"],
-            "cost_usd": current["cost_usd"] - self._last_snapshot["cost_usd"],
-        }
+        delta = {k: current[k] - self._last_snapshot[k] for k in current}
         self._last_snapshot = current
         return delta

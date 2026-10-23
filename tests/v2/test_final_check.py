@@ -47,10 +47,9 @@ def _make_answer(work_dir: Path, **overrides) -> dict:
 
 
 def _make_runs_jsonl(work_dir: Path, entries: list[dict]) -> None:
-    runs_dir = work_dir / "runs" / "iter-1"
-    runs_dir.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
     lines = [json.dumps(e) for e in entries]
-    (runs_dir / "runs.jsonl").write_text("\n".join(lines) + "\n")
+    (work_dir / "runs.jsonl").write_text("\n".join(lines) + "\n")
 
 
 def _make_findings(work_dir: Path, hypotheses: list[dict] | None = None) -> dict:

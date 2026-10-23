@@ -393,8 +393,10 @@ class TestOtherCommands:
         assert _nous(monkeypatch, "schema", "bundle") == 0
         assert "hypotheses" in capsys.readouterr().out
 
-    @pytest.mark.parametrize("command", ["report", "replay"])
-    def test_v1_only_commands_deprecated(self, tmp_path, monkeypatch, capsys, command):
-        argv = [command, str(tmp_path)] + (["--iter", "1"] if command == "replay" else [])
-        assert _nous(monkeypatch, *argv) == 1
-        assert "removed in Nous v2" in capsys.readouterr().err
+    @pytest.mark.parametrize("command", ["report", "replay", "reports", "lineage", "package"])
+    def test_v1_only_commands_removed(self, tmp_path, monkeypatch, capsys, command):
+        assert _nous(monkeypatch, command, str(tmp_path)) == 2
+        assert "invalid choice" in capsys.readouterr().err
+
+    def test_schema_campaign_choice_removed(self, monkeypatch, capsys):
+        assert _nous(monkeypatch, "schema", "campaign") == 2

@@ -5,7 +5,7 @@ description: Start a Nous campaign from a campaign.yaml. Use when the user wants
 
 # `nous-run`
 
-Start (or resume) a Nous campaign from a `campaign.yaml`.
+Start a Nous campaign from a `campaign.yaml`.
 
 ## When to use
 
@@ -14,22 +14,19 @@ Start (or resume) a Nous campaign from a `campaign.yaml`.
 
 ## What this does
 
-Shells out to the `nous run` CLI with the campaign path. The orchestrator drives the standard 6-phase loop (DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE → HUMAN_FINDINGS_GATE → DONE → next iteration) until `max_iterations` is reached or the user aborts at a gate.
+Shells out to `nous run`. Nous v2 drives one Claude session through BASELINE (once), then DESIGN and EXECUTE per iteration, then REPORT. It stops when the question is answered, the campaign stalls, or `max_iterations` is reached.
 
 ## Inputs
 
-- `campaign` (required): path to a `campaign.yaml`. May be relative or absolute.
+- `campaign` (required): path to a `campaign.yaml`.
 - `max-iterations` (optional): override the iteration cap declared in the campaign.
-- `auto-approve` (optional, default false): skip human gates for unattended runs. Sets `NOUS_ALLOW_AUTO_APPROVE=1`.
-- `agent` (optional, default `api`): one of `inline`, `api`, `sdk`.
 
 ## Run
 
 ```bash
-nous run "$CAMPAIGN" --max-iterations "$MAX" --agent "$AGENT" $([ "$AUTO_APPROVE" = "true" ] && echo --auto-approve)
+nous run "$CAMPAIGN" ${MAX:+--max-iterations "$MAX"}
 ```
 
 ## Notes
 
-- For unattended overnight runs, prefer `--agent sdk --auto-approve` and configure `channels:` in the campaign so gate approvals can come from Slack (#130).
-- If the campaign already has a state.json mid-flight, use `nous-resume` instead.
+- If the campaign already has a `state.json`, use `nous-resume` instead.

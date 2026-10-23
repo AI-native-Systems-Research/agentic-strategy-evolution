@@ -247,18 +247,14 @@ For each selected recommendation, produce a YAML document with these field mappi
 | `target_system.repo_path` | The project key (path) from the registry |
 | `target_system.observable_metrics` | Inferred from recommendation's Impact rationale (omit field entirely if not confidently inferable) |
 | `target_system.controllable_knobs` | Parameter names from "Builds on" section (omit field entirely if not confidently inferable) |
-| `prompts.methodology_layer` | `"prompts/methodology"` (standard default) |
-| `prompts.domain_adapter_layer` | `null` |
 | `models.design` | From recommendation's "Model configuration → Design phase" model name |
 | `models.execute_analyze` | From recommendation's "Model configuration → Execute phase" model name |
 | `metadata` | Traceability block (see E3) |
 
 **Schema compliance rules:**
-- Do NOT include any fields not in `orchestrator/schemas/campaign.schema.yaml`
-- Root object: only `research_question`, `run_id`, `max_iterations`, `target_system`, `prompts`, `models`, `metadata`
-- `target_system`: only `name`, `description`, `repo_path`, `observable_metrics`, `controllable_knobs`, `live_target`
-- `prompts`: only `methodology_layer`, `domain_adapter_layer`
-- `models`: only `design`, `execute_analyze`, `report`
+- Use only the `campaign.yaml` keys listed in `README.md` (other keys are ignored with a warning)
+- `target_system` needs `repo_path`; `models` may set `session` (or `design`)
+- Put traceability notes (`metadata`, `prompts`) in comments: v2 ignores those keys with a warning
 - Omit optional fields rather than including empty values
 - Model values default: `claude-opus-4-6` (design), `claude-sonnet-4-6` (execute_analyze)
 

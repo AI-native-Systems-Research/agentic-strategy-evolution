@@ -5,11 +5,9 @@ Closes #239: campaign artifacts polluted target repo's working tree
 because every campaign defaulted to ``<target_repo>/.nous/<run_id>/``.
 
 This module is the **single source of truth** for campaign-location
-resolution. Three call sites (``setup_work_dir``,
-``cli.resolve_work_dir``, ``cli._cmd_run``) all delegate here. If
-you add a fourth resolution rule, update the docstrings of those
-three call sites + ``create_campaign.py:_TEMPLATE`` + ``README.md``
-to match. Search for the marker comment ``# RESOLUTION RULES``.
+resolution. Its call sites (``cli.resolve_work_dir``, ``cli._cmd_run``)
+delegate here. If you add a resolution rule, update their docstrings
+and ``README.md`` to match. Search for the marker comment ``# RESOLUTION RULES``.
 
 API
 ---

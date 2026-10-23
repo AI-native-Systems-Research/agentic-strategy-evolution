@@ -498,3 +498,13 @@ Review decisions (comment-analyzer fact-check vs code):
 - Fixed (docs): README Stop-hook wording, report/replay removed vs deprecated, run_id lookup location, state/digest.json written by Nous; CLAUDE.md/tests/CLAUDE.md FakeClient fires only PostToolUse; architecture evidence wording.
 Noted for R12b: human_gates and rerun_repro parsed but unused; EffortManager (effort ladder, 3.10/B12) not wired into the loop; task_limits.max_wall_seconds sums a field hooks never write; `nous schema campaign` prints the v1 schema; plugin/nous/skills mention --agent and v1 phases; examples/campaign.yaml has v1 `prompts:` key.
 Tests: 886 -> 887 passed. v2 runtime 2498 lines; orchestrator/*.py 3606.
+
+## R12b: lean pass
+
+Audit in docs/plans/nous-v2/LEAN_AUDIT.md (every v2 module/function and campaign.yaml key -> SPEC section; non-v2 keep/delete table; Removals; Gaps).
+v2 runtime: errors.py merged into session.py (is_transient + APIServerError; SDK ProcessError used directly); robustness.poll_wait_for, CostMeter phase tracking, task_limits.max_wall_seconds branch (field never written), final_check per-iter runs.jsonl scan and duplicate evidence loop removed; Stop hook reuses validate_phase_artifacts; CLI reuses hooks.PHASE_ARTIFACTS.
+Non-v2: deleted meta_findings, deployment_recommendation, composite_score, create_campaign, lineage, campaign_index, engine, validate, util, bin/nous-mcp, 4 plugin skills, orchestrator/schemas/*, orchestrator/templates/* and their tests. cli.py keeps run/resume/status/cost/validate/schema/stop; report/replay/reports/create-campaign/lineage/clean/package removed; `nous schema campaign` dropped. pyproject: openai, scipy, optuna, pymc dropped (uv.lock not regenerated: needs network).
+Gaps kept (spec sections, not wired): EffortManager (3.10/B12), human_gates, rerun_repro, per-phase cost/cost_sdk_usd in ledger.
+Lines: orchestrator/v2 runtime 2498 -> 2362; orchestrator/*.py outside v2 3606 -> 714 (cli 980 -> 523, work_dir_resolver 193 -> 191); all orchestrator/ 6104 -> 3076.
+Tests: 887 -> 590 passed (297 removed with deleted v1 modules/schemas; no v2 assertion weakened beyond the removed helpers).
+R12b review decisions (code-reviewer): kept v2 behaviour verified (runs.jsonl location, Stop-hook paths/blocking, is_transient incl. exit 143); no refs to deleted modules; guards intact; CLI matches SPEC 4; LEAN_AUDIT accurate. Fixed: "file not found at <name>" message restored in validate_phase_artifacts; suggest-next.md campaign rules updated for v2 keys; unused v1 state-schema loader removed from test_work_dir_resolver. pytest 590 passed.

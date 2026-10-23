@@ -21,7 +21,6 @@ class TestCostMeter:
         from orchestrator.v2.cost import CostMeter
 
         meter = CostMeter(PRICES)
-        meter.set_phase("BASELINE")
 
         # opus: 1000 input @ $15/M + 500 output @ $75/M = $0.015 + $0.0375 = $0.0525
         meter.record(FakeAssistantMessage(
@@ -74,18 +73,16 @@ class TestCostMeter:
         assert total["output_tokens"] == 5000
         assert total["cost_usd"] == 0.0
 
-    def test_phase_tracking(self):
+    def test_totals_across_messages(self):
         from orchestrator.v2.cost import CostMeter
 
         meter = CostMeter(PRICES)
 
-        meter.set_phase("BASELINE")
         meter.record(FakeAssistantMessage(
             message_id="msg-b1", model="claude-opus-4-6",
             usage={"input_tokens": 1000, "output_tokens": 200},
         ))
 
-        meter.set_phase("DESIGN")
         meter.record(FakeAssistantMessage(
             message_id="msg-d1", model="claude-opus-4-6",
             usage={"input_tokens": 2000, "output_tokens": 400},
@@ -95,24 +92,9 @@ class TestCostMeter:
             usage={"input_tokens": 3000, "output_tokens": 600},
         ))
 
-        baseline = meter.phase_summary("BASELINE")
-        assert baseline["input_tokens"] == 1000
-        assert baseline["output_tokens"] == 200
-
-        design = meter.phase_summary("DESIGN")
-        assert design["input_tokens"] == 5000
-        assert design["output_tokens"] == 1000
-
         total = meter.total()
         assert total["input_tokens"] == 6000
         assert total["output_tokens"] == 1200
-
-    def test_empty_phase_summary(self):
-        from orchestrator.v2.cost import CostMeter
-
-        meter = CostMeter(PRICES)
-        s = meter.phase_summary("EXECUTE")
-        assert s == {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
 
     def test_message_without_usage_skipped(self):
         from orchestrator.v2.cost import CostMeter

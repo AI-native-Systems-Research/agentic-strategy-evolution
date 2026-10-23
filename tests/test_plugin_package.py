@@ -22,9 +22,9 @@ class TestPluginManifest:
         assert data["name"] == "nous"
         assert isinstance(data["skills"], list)
 
-    def test_plugin_lists_at_least_five_skills(self):
+    def test_plugin_lists_the_cli_skills(self):
         data = json.loads((PLUGIN_ROOT / "plugin.json").read_text())
-        assert len(data["skills"]) >= 5
+        assert len(data["skills"]) == 3
 
     def test_each_listed_skill_file_exists(self):
         data = json.loads((PLUGIN_ROOT / "plugin.json").read_text())
@@ -75,19 +75,15 @@ class TestSkillFrontmatter:
         data = json.loads((PLUGIN_ROOT / "plugin.json").read_text())
         for rel in data["skills"]:
             body = (PLUGIN_ROOT / rel).read_text()
-            assert "nous " in body or "campaign_index" in body, (
-                f"{rel}: body should invoke a nous command or campaign_index"
+            assert "nous " in body, (
+                f"{rel}: body should invoke a nous command"
             )
 
 
 class TestSkillCoverage:
-    """Acceptance criterion: at least 5 skills must be present and
-    cover the documented operations."""
+    """The plugin wraps the v2 CLI commands run, status and resume."""
 
-    EXPECTED_SKILLS = {
-        "nous-run", "nous-status", "nous-resume",
-        "nous-list", "nous-bisect", "nous-find-principle",
-    }
+    EXPECTED_SKILLS = {"nous-run", "nous-status", "nous-resume"}
 
     def test_all_expected_skills_present(self):
         present = {p.stem for p in (PLUGIN_ROOT / "skills").glob("*.md")}

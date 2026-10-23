@@ -597,7 +597,8 @@ class TestTaskLimits:
         errs = validate_artifact("findings", data, ctx)
         assert not any("max_runs" in e for e in errs)
 
-    def test_max_wall_seconds_exceeded(self, tmp_path):
+    def test_max_wall_seconds_not_checked(self, tmp_path):
+        """runs.jsonl has no wall time field (spec 3.3), so only max_runs is a task limit."""
         runs_path = tmp_path / "runs.jsonl"
         lines = [json.dumps({"wall_seconds": 100.0}) for _ in range(3)]
         runs_path.write_text("\n".join(lines))
@@ -609,7 +610,7 @@ class TestTaskLimits:
             runs_jsonl=runs_path,
         )
         errs = validate_artifact("findings", data, ctx)
-        assert any("max_wall_seconds" in e for e in errs)
+        assert not any("max_wall_seconds" in e for e in errs)
 
     def test_no_limits_no_error(self, tmp_path):
         data = _valid_findings(tmp_path)

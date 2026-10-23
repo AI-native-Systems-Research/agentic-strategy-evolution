@@ -14,7 +14,7 @@ from typing import Any
 from claude_agent_sdk.types import HookMatcher
 
 from .secrets import mask_secrets
-from .validators import iter_context, read_json, validate_artifact
+from .validators import read_json, validate_phase_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +59,7 @@ class HookState:
     limits: dict[str, Any] = field(default_factory=dict)
 
 
-_PHASE_ARTIFACTS: dict[str, list[str]] = {
+PHASE_ARTIFACTS: dict[str, list[str]] = {
     "BASELINE": ["baseline"],
     "DESIGN": ["problem", "bundle", "plan"],
     "EXECUTE": ["findings", "principle_updates"],
@@ -141,25 +141,13 @@ def make_stop_hook(state: HookState):
             state.consecutive_blocks = 0
             return {}
 
-        artifact_types = _PHASE_ARTIFACTS.get(state.phase, [])
-        all_errors: list[str] = []
-
-        for artifact_type in artifact_types:
-            path = _artifact_path(state, artifact_type)
-            if not path.exists():
-                all_errors.append(f"{artifact_type}: file not found at {path.name}")
-                continue
-
-            try:
-                data = json.loads(path.read_text())
-            except (json.JSONDecodeError, OSError, UnicodeDecodeError) as exc:
-                all_errors.append(f"{artifact_type}: invalid JSON — {exc}")
-                continue
-
-            ctx = iter_context(state.work_dir, _iter_dir(state), **state.limits)
-            errors = validate_artifact(artifact_type, data, ctx)
-            for e in errors:
-                all_errors.append(f"{artifact_type}: {e}")
+        # baseline.json and answer.json live in the work dir; the rest in runs/iter-N
+        phase_dir = state.work_dir
+        if state.phase in ("DESIGN", "EXECUTE"):
+            phase_dir = _iter_dir(state) or state.work_dir
+        all_errors = validate_phase_artifacts(
+            state.work_dir, phase_dir, PHASE_ARTIFACTS.get(state.phase, []), **state.limits,
+        )
 
         if all_errors:
             state.consecutive_blocks += 1
@@ -281,14 +269,3 @@ def _any_wait_pending(wait_specs: list[str], cwd: str | None = None) -> bool:
     """True if at least one wait_for condition is still unmet."""
     from .robustness import check_wait_condition
     return any(not check_wait_condition(spec, cwd) for spec in wait_specs)
-
-
-def _artifact_path(state: HookState, artifact_type: str) -> Path:
-    if artifact_type == "baseline":
-        return state.work_dir / "baseline.json"
-    if artifact_type == "answer":
-        return state.work_dir / "answer.json"
-    iter_dir = _iter_dir(state)
-    if iter_dir is None:
-        return state.work_dir / f"{artifact_type}.json"
-    return iter_dir / f"{artifact_type}.json"
