@@ -297,6 +297,15 @@ def _check_plan_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
     errors: list[str] = []
     runs = data.get("runs", [])
 
+    # wait_for names a file (path) or a command; a bare run id would be polled for hours
+    for run in runs:
+        wf = run.get("wait_for")
+        if isinstance(wf, str) and wf and not wf.startswith("cmd:") and not any(c in wf for c in "/."):
+            errors.append(
+                f"run {run.get('id')!r}: wait_for {wf!r} must be a file path or cmd:<command>; "
+                "omit it for runs that finish within the turn"
+            )
+
     # Paired-seed check: for each hypothesis with a control,
     # treatment and control runs must use the same seeds
     if ctx.bundle_hypotheses:

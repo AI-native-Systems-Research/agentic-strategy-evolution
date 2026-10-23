@@ -288,12 +288,17 @@ class Campaign:
             exec_prompt = (
                 f"Iteration {iteration}, EXECUTE phase. "
                 f"Run plan.json; fix anything that does not run. "
+                f"Use wait_for only for runs started in the background. "
                 f"Write runs/iter-{iteration}/findings.json "
                 f"and runs/iter-{iteration}/principle_updates.json."
             )
             if execute_note:
                 exec_prompt += f"\n\nHuman note: {execute_note}"
             await self._turn(session, exec_prompt)
+            if not validate_phase_artifacts(
+                self._work_dir, idir, ["findings", "principle_updates"], **self._limits(),
+            ):
+                pending_waits = []  # results are in: nothing left to wait for
             # Keep waits armed while polling so "still pending" turns are not Stop-gated
             await poll_and_resume(
                 pending_waits, iteration, breaker, functools.partial(self._turn, session),

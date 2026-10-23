@@ -19,7 +19,7 @@ You are running a structured scientific investigation. Follow this loop exactly.
   - `control`: what stays unchanged to isolate the variable.
   - `falsified_if`: the observation that would refute this hypothesis.
   - Parameters and workload must match locked values exactly.
-- Write `plan.json`: the runs to execute, with commands and expected outputs.
+- Write `plan.json`: the runs to execute, with commands and expected outputs. Set a run's `wait_for` (a file path, or `cmd:<command>` that exits 0 when done) only for runs started in the background that outlast the turn.
 - Predictions are locked after DESIGN. Do not change them during EXECUTE.
 
 **EXECUTE** — Run the plan and record what happened.

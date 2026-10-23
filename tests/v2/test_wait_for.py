@@ -330,3 +330,42 @@ class TestStopGateDuringPolling:
         assert result["stop_reason"] == "answered"
         # turn index 3 is the intermediate resume turn
         assert holder["c"].stop_decisions[3] != "block"
+
+
+class TestWaitForMisuse:
+    """R13: an agent wrote wait_for: "R1" (its run id) and Nous polled for 4 hours."""
+
+    def test_bare_word_wait_for_rejected(self, tmp_path):
+        from orchestrator.v2.validators import ValidatorContext, validate_artifact
+        plan = {"runs": [{"id": "R1", "hypothesis_id": "h1", "role": "treatment",
+                          "command": "x", "parameters": {}, "seeds": [1], "wait_for": "R1"}]}
+        errs = validate_artifact("plan", plan, ValidatorContext(work_dir=tmp_path))
+        assert any("wait_for" in e and "cmd:" in e for e in errs)
+        for ok in ("results/done.json", "cmd:test -f out", "done.flag"):
+            plan["runs"][0]["wait_for"] = ok
+            assert not any("wait_for" in e for e in validate_artifact(
+                "plan", plan, ValidatorContext(work_dir=tmp_path)))
+
+    async def test_no_polling_when_findings_already_valid(self, tmp_path, monkeypatch):
+        import orchestrator.v2.robustness as rb
+        polls: list = []
+        monkeypatch.setattr(rb, "check_wait_condition", lambda *a, **k: polls.append(a) or False)
+        work_dir = tmp_path / "campaign"
+        work_dir.mkdir()
+        idir = iter_dir(work_dir, 1)
+        plan = {"runs": [{"id": "r1", "hypothesis_id": "h1", "role": "treatment", "command": "x",
+                          "parameters": {}, "seeds": [1], "wait_for": str(tmp_path / "never.txt")}]}
+        per_turn = [
+            {str(work_dir / "baseline.json"): json.dumps(_baseline())},
+            {str(idir / "problem.json"): json.dumps(_problem()),
+             str(idir / "bundle.json"): json.dumps(_bundle()),
+             str(idir / "plan.json"): json.dumps(plan)},
+            {str(idir / "findings.json"): json.dumps(_findings()),
+             str(idir / "principle_updates.json"): json.dumps(_principle_updates())},
+            {str(work_dir / "answer.json"): json.dumps(_answer())},
+        ]
+        client = FakeClient(script=[FakeResultMessage()] * 4, per_turn_files=per_turn)
+        result = await Campaign(config=_config(), work_dir=work_dir,
+                                client_factory=lambda _o: client).run()
+        assert result["stop_reason"] == "answered"
+        assert polls == []
