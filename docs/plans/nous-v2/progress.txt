@@ -567,3 +567,15 @@ Transcript evidence for round-2 general fixes (no task content used):
 - method.md field lists match the schemas exactly (baseline observation per task_type, noise shapes, error_type enum, findings/principle_updates fields); rule: claims_needed covers every question the research question asks and stays inside its fixed setup/ranges -> 15-25 baseline rewrites and 12 answer rewrites per run in round-1 transcripts; verify runs left sub-questions unanswered and ran out of range (accuracy rule 1).
 - Checklists: optimize scores with the task's own stated criterion, checked independently; verify answers each question explicitly within fixed ranges -> search runs scored themselves with a self-made count (accuracy rule 1).
 No task content in any change (grep for task terms empty). Tests 608 -> 617. v2 runtime 2488 lines; method.md 4,916 bytes.
+
+## R13 round 2 results (code 95d6c3b)
+
+| task rep | stop | iters | cost $ | accuracy | C1 | R2 | lost |
+|---|---|---|---|---|---|---|---|
+| dbg 1 | answered | 3 | 9.80 | O1 true (D1-D5 true) | 0.5 | 0.5 | 0 |
+| dbg 2 | answered | 1 | 6.06 | O1 true (D1-D5 true) | 1.0 | 1.0 | 0 |
+| pd 1 | max_iterations | 5 | 8.60 | O1 false (K1-K4 false) | 0.938 | 0.938 | 0 |
+| pd 2 | max_iterations | 5 | 9.35 | O1 true (K1-K3 true, K4 false) | 1.0 | 1.0 | 0 |
+| search 1 | answered | 6 | 7.93 | O1 false, B1/B2 false, limits ok, T=1 | 1.0 | 1.0 | 0 |
+| search 2 | max_iterations | 10 | 11.57 | O1 false, B1/B2 false, limits ok, T=2 | 1.0 | 0.0 | 0 |
+vs round 1: trail C1/R2 up from 0-0.33 to 0.5-1.0 on 5 of 6 runs; formula 0/2 -> 1/2 (borderline vs baseline 2/3: spec allows up to 2 extra runs); debugging stays 2/2; search still fails. Costs $6-12 per run, within the baseline's $3-16 range (eval.sh does not print the baseline mean, so the 1.25x ratio is for the human).
