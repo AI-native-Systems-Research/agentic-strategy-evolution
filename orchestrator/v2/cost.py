@@ -27,28 +27,22 @@ def load_prices(defaults_path: Path) -> dict[str, dict[str, float]]:
 
 
 class CostMeter:
-    """One count per message id, subagents included."""
+    """One count per message id (largest usage wins: a streamed reply repeats its id), subagents included."""
 
     def __init__(self, prices: dict[str, dict[str, float]]) -> None:
         self._prices = prices
-        self._seen_ids: set[str] = set()
+        self._by_id: dict[str, tuple[float, int, int]] = {}  # id -> (cost, input, output)
         self._total: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
         self._last_snapshot: dict[str, Any] = dict(self._total)
 
     def record(self, message: Any) -> None:
-        msg_id = getattr(message, "message_id", None) or getattr(message, "uuid", None)
-        if msg_id and msg_id in self._seen_ids:
-            return
-        if msg_id:
-            self._seen_ids.add(msg_id)
-
         # ResultMessage carries no model and repeats the per-message usage: skip it
         model = getattr(message, "model", None)
         usage = getattr(message, "usage", None)
         if not model or not usage:
             return
-        input_t = usage.get("input_tokens", 0)
-        output_t = usage.get("output_tokens", 0)
+        input_t = usage.get("input_tokens", 0) or 0
+        output_t = usage.get("output_tokens", 0) or 0
         cache_r = usage.get("cache_read_input_tokens", 0) or 0
         cache_w = usage.get("cache_creation_input_tokens", 0) or 0
         price = self._prices.get(model, {})
@@ -60,9 +54,14 @@ class CostMeter:
             input_t * pin + output_t * price.get("output_tokens", 0)
             + cache_r * pin * 0.1 + cache_w * pin * 1.25
         ) / 1_000_000
-        self._total["input_tokens"] += input_t
-        self._total["output_tokens"] += output_t
-        self._total["cost_usd"] += cost
+        msg_id = getattr(message, "message_id", None) or getattr(message, "uuid", None) or id(message)
+        prev = self._by_id.get(msg_id, (0.0, 0, 0))
+        if cost <= prev[0] and (input_t, output_t) <= prev[1:]:
+            return
+        self._by_id[msg_id] = (cost, input_t, output_t)
+        self._total["input_tokens"] += input_t - prev[1]
+        self._total["output_tokens"] += output_t - prev[2]
+        self._total["cost_usd"] += cost - prev[0]
 
     def total(self) -> dict[str, Any]:
         return dict(self._total)

@@ -911,3 +911,26 @@ class TestCommitPhase:
             result = await campaign.run()
         assert result["stop_reason"] == "answered"
         assert any("commit" in r.message for r in caplog.records)
+
+
+class TestAnswerEvidenceInRepo:
+    async def test_report_copies_evidence_into_repo(self, tmp_path):
+        """answer.json is the deliverable: its evidence must resolve from the target repo root too."""
+        repo, work_dir = tmp_path / "repo", tmp_path / "work"
+        repo.mkdir(); work_dir.mkdir()
+        (work_dir / "runs.jsonl").write_text(
+            json.dumps({"command": "pytest test_bug.py", "exit_code": 0}) + "\n")
+        (work_dir / "runs" / "iter-1").mkdir(parents=True)
+        (work_dir / "runs" / "iter-1" / "results.json").write_text(json.dumps({"pass_rate": 1.0}))
+        config = parse_campaign_config(_campaign_yaml(repo_path=str(repo)))
+        per_turn = _build_per_turn_files(work_dir, answered=True)
+        client = FakeClient(script=_make_script(4), per_turn_files=per_turn)
+        await Campaign(config=config, work_dir=work_dir, client_factory=lambda _o: client).run()
+
+        answer = json.loads((work_dir / "answer.json").read_text())
+        path = answer["claims"][0]["evidence"]["path"]
+        assert path == "nous_evidence/runs/iter-1/results.json"
+        assert json.loads((repo / path).read_text()) == {"pass_rate": 1.0}
+        assert (work_dir / path).exists()
+        check = json.loads((work_dir / "final_check.json").read_text())
+        assert check["answer_valid"] is True and check["evidence_errors"] == []

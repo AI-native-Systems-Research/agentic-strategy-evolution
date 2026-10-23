@@ -152,7 +152,7 @@ class TestLoadPrices:
         assert "claude-opus-4-6" in prices
         assert "input_tokens" in prices["claude-opus-4-6"]
         assert "output_tokens" in prices["claude-opus-4-6"]
-        assert prices["claude-opus-4-6"]["input_tokens"] == 15.0
+        assert prices["claude-opus-4-6"]["input_tokens"] == 5.0  # CLI pricing
 
     def test_missing_file_returns_empty(self, tmp_path):
         from orchestrator.v2.cost import load_prices
@@ -193,3 +193,30 @@ class TestCacheAndResult:
         meter.record(FakeResultMessage(usage={"input_tokens": 1000, "output_tokens": 500}))
         assert meter.total()["input_tokens"] == 1000
         assert meter.total()["output_tokens"] == 500
+
+
+class TestStreamedUsage:
+    def test_streamed_chunks_keep_largest_usage(self):
+        """One reply arrives as several messages with the same id and growing usage."""
+        from orchestrator.v2.cost import CostMeter
+
+        meter = CostMeter(PRICES)
+        for out in (1, 200, 500):
+            meter.record(FakeAssistantMessage(
+                message_id="msg-1", model="claude-opus-4-6",
+                usage={"input_tokens": 10, "output_tokens": out},
+            ))
+        assert meter.total()["output_tokens"] == 500
+        assert meter.total()["input_tokens"] == 10
+
+    def test_default_opus_price_reproduces_cli_total(self):
+        """dbg rep1 transcript totals at the shipped price table give $11.21 (CLI pricing)."""
+        from orchestrator.v2.cost import CostMeter, load_prices
+
+        prices = load_prices(Path(__file__).resolve().parents[2] / "orchestrator" / "defaults.yaml")
+        meter = CostMeter(prices)
+        meter.record(FakeAssistantMessage(message_id="m", model="claude-opus-4-6", usage={
+            "input_tokens": 277, "output_tokens": 48_510,
+            "cache_creation_input_tokens": 201_796, "cache_read_input_tokens": 17_459_397,
+        }))
+        assert round(meter.total()["cost_usd"], 2) == 11.21

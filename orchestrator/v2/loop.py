@@ -9,6 +9,7 @@ import functools
 import json
 import logging
 import os
+import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Callable
@@ -32,6 +33,8 @@ from .stop_rule import (
 from .validators import bundle_hash, read_json as _read_json, validate_phase_artifacts
 
 logger = logging.getLogger(__name__)
+
+EVIDENCE_DIR = "nous_evidence"  # answer evidence copied into the target repo
 
 
 def iter_dir(work_dir: Path, iteration: int) -> Path:
@@ -372,8 +375,35 @@ class Campaign:
         self._set_phase(hook_state, "REPORT", phase_iteration)
         msg = "REPORT phase. Write answer.json and report.md."
         await self._turn(session, msg + (f"\n\nHuman note: {note}" if note else ""))
+        self._export_evidence()
         self._commit_phase(commit_iteration, "REPORT")
         self._record_final_check()
+
+    def _export_evidence(self) -> None:
+        """Make answer.json self-contained in the deliverable: copy each claim's evidence file
+        into <repo>/nous_evidence/<path> (and the same path under the work dir, so the final
+        check still resolves it) and point the claim there."""
+        repo = self._config.target_system.get("repo_path")
+        answer = _read_json(self._work_dir / "answer.json")
+        if not repo or not isinstance(answer, dict):
+            return
+        changed = False
+        for claim in answer.get("claims") or []:
+            ev = claim.get("evidence") if isinstance(claim, dict) else None
+            path = ev.get("path") if isinstance(ev, dict) else None
+            if not isinstance(path, str) or path.startswith(EVIDENCE_DIR + "/"):
+                continue
+            src = (self._work_dir / path).resolve()
+            if not src.is_file() or not src.is_relative_to(self._work_dir.resolve()):
+                continue  # left as is; the final check reports it
+            new = f"{EVIDENCE_DIR}/{path}"
+            for root in (Path(repo), self._work_dir):
+                (root / new).parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, root / new)
+            ev["path"] = new
+            changed = True
+        if changed:
+            _write_json(self._work_dir / "answer.json", answer)
 
     def _save_ledger(self) -> None:
         _write_json(self._work_dir / "ledger.json", self._ledger)

@@ -36,14 +36,15 @@ sdk_options:
   execute_analyze: {}  # effort unset -> SDK default (high)
 
 # Per-model token prices (USD per million tokens) for the cost meter (3.10).
-# Used for reporting only — cost never drives a Nous decision.
+# Used for reporting only — cost never drives a Nous decision. Matches the Claude Code
+# CLI's own pricing (cache write 1.25x input, cache read 0.1x input; see cost.py).
 prices:
   claude-opus-4-6:
-    input_tokens: 15.0
-    output_tokens: 75.0
+    input_tokens: 5.0
+    output_tokens: 25.0
   claude-sonnet-4-6:
     input_tokens: 3.0
     output_tokens: 15.0
   claude-haiku-4-5:
-    input_tokens: 0.80
-    output_tokens: 4.0
+    input_tokens: 1.0
+    output_tokens: 5.0
