@@ -15,6 +15,7 @@ from orchestrator.v2.session import (
     SDK_VERSION,
     CLI_VERSION,
     Session,
+    SessionResultError,
 )
 from tests.fakes.sdk_client import FakeClient, FakeResultMessage
 
@@ -369,8 +370,9 @@ class TestTransientRetry:
         script = [FakeResultMessage(is_error=True, result="max turns", session_id="x")]
         session, _c, _ = _flaky_session(tmp_path, [], script, sleeps)
         await session.connect()
-        result = await session.turn("hello")
-        assert result.is_error and sleeps == []
+        with pytest.raises(SessionResultError, match="max turns"):  # P2: never a normal turn
+            await session.turn("hello")
+        assert sleeps == []
 
     async def test_connect_retried_on_transient(self, tmp_path):
         sleeps: list = []

@@ -20,14 +20,25 @@ logger = logging.getLogger(__name__)
 
 RETRY_DELAYS_S = (5.0, 30.0)  # 3 tries in all (spec 3.5 / B9)
 _API_5XX = re.compile(r"\b5\d\d\b|overloaded", re.IGNORECASE)
+_API_429 = re.compile(r"\b429\b|rate.?limit", re.IGNORECASE)
+_CONTEXT_FULL = re.compile(
+    r"prompt is too long|context (window|length|limit)|context_length_exceeded", re.IGNORECASE)
 
 
 class APIServerError(Exception):
-    """An API 5xx / overloaded reply surfaced as ResultMessage.is_error."""
+    """An API 5xx / overloaded / 429 reply surfaced as ResultMessage.is_error."""
 
     def __init__(self, status_code: int, body: str = ""):
         self.status_code = status_code
         super().__init__(f"API returned {status_code}: {body}")
+
+
+class ContextOverflowError(Exception):
+    """The session context is full (spec 3.10): continue in a fresh session from the digest."""
+
+
+class SessionResultError(Exception):
+    """Any other ResultMessage.is_error (auth, max turns, ...): a phase failure."""
 
 
 def is_transient(exc: BaseException) -> bool:
@@ -37,7 +48,7 @@ def is_transient(exc: BaseException) -> bool:
     if getattr(exc, "exit_code", None) == 143 or "Fatal error in message reader" in str(exc):
         return True
     code = getattr(exc, "status_code", None)
-    return isinstance(code, int) and 500 <= code < 600
+    return isinstance(code, int) and (code == 429 or 500 <= code < 600)
 
 
 MODEL_MAX_OUTPUT: dict[str, int] = {
@@ -187,9 +198,19 @@ class Session:
             self._session_id = result.session_id
             self._persist_session_id()
 
-        text = str(getattr(result, "result", "") or "")
-        if getattr(result, "is_error", False) and _API_5XX.search(text):
-            raise APIServerError(500, text)
+        if getattr(result, "is_error", False):
+            text = str(getattr(result, "result", "") or "") + " " + " ".join(
+                getattr(result, "errors", None) or [])
+            status = getattr(result, "api_error_status", None)
+            if isinstance(status, int) and (status == 429 or 500 <= status < 600):
+                raise APIServerError(status, text)
+            if _CONTEXT_FULL.search(text):
+                raise ContextOverflowError(text)
+            if _API_5XX.search(text):
+                raise APIServerError(500, text)
+            if _API_429.search(text):
+                raise APIServerError(429, text)
+            raise SessionResultError(f"session returned an error result: {text.strip()}")
         return result
 
     @property
@@ -199,6 +220,12 @@ class Session:
     async def reconnect(self, effort: str | None) -> None:
         """Resume the same session with a new effort level (spec 3.10)."""
         self._options["effort"] = effort
+        await self._retry(self._connect_once)
+
+    async def restart_fresh(self) -> None:
+        """Drop the session id and connect a new session (spec 3.10 context-full fallback)."""
+        self._session_id = None
+        self._options.pop("resume", None)
         await self._retry(self._connect_once)
 
     async def disconnect(self) -> None:

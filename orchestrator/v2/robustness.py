@@ -30,9 +30,14 @@ def failure_fingerprint(exc_type: str, phase: str, message: str) -> str:
 class FailureBreaker:
     """Track consecutive identical failures; trigger halt after threshold."""
 
-    def __init__(self, threshold: int = 3):
+    def __init__(self, threshold: int = 3, recent: list[str] | None = None):
         self._threshold = threshold
-        self._recent: list[str] = []
+        self._recent: list[str] = list(recent or [])[-threshold:]
+
+    @property
+    def recent(self) -> list[str]:
+        """Fingerprints of the current failure run (persisted in state.json across resumes)."""
+        return list(self._recent)
 
     def record(self, exc_type: str, phase: str, message: str) -> str | None:
         """Record a failure. Returns the fingerprint if breaker triggers, else None."""

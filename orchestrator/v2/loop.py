@@ -23,7 +23,7 @@ from .resume import build_fallback_message, load_campaign_state, resume_phase, u
 from .robustness import FailureBreaker, poll_and_resume, write_halt
 from .prompts import build_system_prompt
 from .effort import CUT_RESUME_MSG, EFFORT_LADDER, EffortManager
-from .session import DEFAULT_MODEL, Session
+from .session import DEFAULT_MODEL, ContextOverflowError, Session
 from .final_check import _check_repro, check_answer
 from .stop_rule import (
     best_changed,
@@ -37,6 +37,7 @@ from .validators import (bundle_hash, campaign_record, evidence_hint, read_json 
 logger = logging.getLogger(__name__)
 
 EVIDENCE_DIR = "nous_evidence"  # answer evidence copied into the target repo
+EXPERIMENTS_DIR = ".nous-experiments"  # the campaign's code worktree: <repo>/.nous-experiments/<run_id>/
 REPRO_REPAIR_MSG = ("Run the repro command from answer.json exactly as written, from the "
                     "repository root, and fix answer.json until it succeeds.")
 
@@ -94,6 +95,53 @@ class Campaign:
         self._prev_findings: dict | None = None
         self._turns_ok = 0
         self._effort = EffortManager(config.effort)
+        self._breaker = FailureBreaker()
+        # Spec 3.1/D5: the agent works and Nous commits in one campaign worktree, never the
+        # user's checkout. _prepare_code_dir() sets it; a non-git repo_path is used as is.
+        self._code_dir: str | None = config.target_system.get("repo_path")
+        self._commits = False
+
+    def _prepare_code_dir(self) -> None:
+        """Create (or reuse on resume) <repo>/.nous-experiments/<run_id>/ on branch nous/<run_id>."""
+        repo = self._config.target_system.get("repo_path")
+        is_git = bool(repo) and Path(repo).is_dir() and subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"], cwd=repo, capture_output=True, text=True,
+        ).stdout.strip() == "true"
+        if not is_git:
+            logger.warning("repo_path %s is not a git repo: the agent works in it directly and "
+                           "Nous makes no phase commits", repo)
+            return
+        wt = Path(repo).resolve() / EXPERIMENTS_DIR / self._config.run_id
+        if not (wt / ".git").exists():
+            branch = f"nous/{self._config.run_id}"
+            has_branch = subprocess.run(
+                ["git", "rev-parse", "--verify", "--quiet", f"refs/heads/{branch}"],
+                cwd=repo, capture_output=True).returncode == 0
+            args = [str(wt), branch] if has_branch else ["-b", branch, str(wt), "HEAD"]
+            try:
+                r = subprocess.run(["git", "worktree", "add", "-q", *args], cwd=repo,
+                                   capture_output=True, text=True, timeout=60)
+            except (subprocess.TimeoutExpired, OSError) as exc:
+                raise ValueError(f"Preflight failed:\n  - git worktree add {wt}: {exc}") from exc
+            if r.returncode != 0:
+                raise ValueError(f"Preflight failed:\n  - git worktree add {wt}: "
+                                 f"{(r.stderr or r.stdout).strip()}")
+        self._code_dir, self._commits = str(wt), True
+
+    def _breaker_record(self, exc_type: str, phase: str, message: str) -> str | None:
+        fp = self._breaker.record(exc_type, phase, message)
+        self._persist_breaker()
+        return fp
+
+    def _persist_breaker(self) -> None:
+        update_state(self._work_dir, breaker_recent=self._breaker.recent)
+
+    def _phase_failed(self, exc: Exception, phase: str) -> bool:
+        """Spec 3.5: count a phase failure; True when the breaker trips (halt.json written)."""
+        fp = self._breaker_record(type(exc).__name__, phase, str(exc))
+        if fp:
+            write_halt(self._work_dir, fp, phase, str(exc))
+        return fp is not None
 
     def _init_meter(self) -> None:
         defaults_path = Path(__file__).resolve().parent.parent / "defaults.yaml"
@@ -105,7 +153,7 @@ class Campaign:
             secrets={k: os.environ.get(k, "") for k in self._config.secrets},
             experiment_commands=self._config.experiment_commands or DEFAULT_EXPERIMENT_COMMANDS,
             limits=self._limits(),
-            cwd=self._config.target_system.get("repo_path"),
+            cwd=self._code_dir,
         )
         hooks = build_hooks(hook_state)
         session_opts = {
@@ -114,12 +162,15 @@ class Campaign:
             "model": self._config.model or DEFAULT_MODEL,
             "effort": self._config.effort,
             "hooks": hooks,
-            "cwd": self._config.target_system.get("repo_path"),
+            "cwd": self._code_dir,
         }
         return hook_state, hooks, session_opts
 
     def _limits(self) -> dict:
-        return validator_limits(self._config, self._work_dir)
+        limits = validator_limits(self._config, self._work_dir)
+        if self._code_dir:
+            limits["repo_dir"] = Path(self._code_dir)
+        return limits
 
     async def _start_session(self, session_opts: dict) -> Session:
         session = Session(client_factory=self._client_factory, options=session_opts)
@@ -128,6 +179,7 @@ class Campaign:
 
     async def run(self) -> dict:
         self._init_meter()
+        self._prepare_code_dir()
         hook_state, hooks, session_opts = self._build_hooks_and_session_opts()
         preflight_errors = await run_preflight(hooks, work_dir=self._work_dir)
         if preflight_errors:
@@ -141,12 +193,13 @@ class Campaign:
             await session.disconnect()
 
     async def resume(self, *, note: str | None = None) -> dict:
-        self._init_meter()
-        hook_state, hooks, session_opts = self._build_hooks_and_session_opts()
-
         state = load_campaign_state(self._work_dir)
         if state is None:
             return await self.run()
+        self._init_meter()
+        self._prepare_code_dir()
+        hook_state, hooks, session_opts = self._build_hooks_and_session_opts()
+        self._breaker = FailureBreaker(recent=state.get("breaker_recent"))
         # Keep the campaign-wide cut-off count across resume
         self._effort = EffortManager(self._config.effort, state.get("cut_offs", 0))
 
@@ -189,9 +242,8 @@ class Campaign:
         principles = _read_json(self._work_dir / "principles.json")
         if isinstance(principles, list):
             self._principles = principles
-        if up_to_iteration >= 1:
-            prev_iter = max(up_to_iteration - 1, 1)
-            prev = _read_json(iter_dir(self._work_dir, prev_iter) / "findings.json")
+        if up_to_iteration > 1:  # iteration 1 has no previous findings
+            prev = _read_json(iter_dir(self._work_dir, up_to_iteration - 1) / "findings.json")
             if prev:
                 self._prev_findings = prev
 
@@ -199,7 +251,17 @@ class Campaign:
         """One turn; on an output cut-off, resume one effort level lower (spec 3.10, B12)."""
         if session.effort != self._effort.level:  # phase reset after a cut
             await session.reconnect(self._effort.level)
-        result = await session.turn(prompt, on_message=self._meter.record)
+        try:
+            result = await session.turn(prompt, on_message=self._meter.record)
+        except ContextOverflowError as exc:  # spec 3.10: once, a fresh session from the digest
+            state = load_campaign_state(self._work_dir) or {}
+            logger.warning("context full (%s); continuing in a fresh session", exc)
+            await session.restart_fresh()
+            await session.turn(build_fallback_message(
+                phase=state.get("phase", "BASELINE"), iteration=state.get("iteration", 0),
+                digest=_read_json(self._work_dir / "state" / "digest.json"), note=None,
+            ), on_message=self._meter.record)
+            result = await session.turn(prompt, on_message=self._meter.record)
         for _ in EFFORT_LADDER:  # bounded: a reply cut even at "low" is accepted as is
             if not session.cut:
                 break
@@ -228,8 +290,9 @@ class Campaign:
         self, session: Session, hook_state: HookState,
         start_phase: str, start_iteration: int, *, note: str | None = None,
     ) -> dict:
-        breaker = FailureBreaker()
-        skip_baseline = start_phase != "BASELINE" or start_iteration > 0
+        breaker = self._breaker
+        skip_baseline = (start_phase != "BASELINE" or start_iteration > 0) \
+            and (self._work_dir / "baseline.json").is_file()  # resume re-runs a missing BASELINE
         skip_design_for = start_iteration if start_phase in ("EXECUTE", "REPORT") else 0
 
         if not skip_baseline:
@@ -238,13 +301,23 @@ class Campaign:
                 " Determine the task_type (debug/verify/optimize/policy/"
                 "explain/other) and include task_type_reason."
             )
-            await self._turn(
-                session,
-                "BASELINE phase. Do not design hypotheses yet. "
-                f"Get one real observation and write {self._work_dir / 'baseline.json'}.{task_hint}",
-            )
-            await self._repair(session, self._work_dir, ["baseline"])
+            try:
+                await self._turn(
+                    session,
+                    "BASELINE phase. Do not design hypotheses yet. "
+                    f"Get one real observation and write {self._work_dir / 'baseline.json'}.{task_hint}",
+                )
+            except Exception as exc:
+                if not self._phase_failed(exc, "BASELINE"):
+                    raise
+            baseline_status = await self._repair(session, self._work_dir, ["baseline"])
             self._commit_phase(0, "BASELINE")
+            if baseline_status != "ok":  # spec 3.5: no baseline, so no DESIGN; still answer
+                logger.warning("no valid baseline.json after repair; going to REPORT")
+                update_state(self._work_dir, baseline_status=baseline_status,
+                             stop_reason="no_baseline")
+                await self._report(session, hook_state, 0, 0)
+                return {"stop_reason": "no_baseline", "iterations": 0}
 
         first_iter = max(start_iteration, 1)
         if start_phase == "REPORT":
@@ -277,9 +350,7 @@ class Campaign:
                         f"{idir / 'plan.json'}.{principles_text}",
                     )
                 except Exception as exc:
-                    fp = breaker.record(type(exc).__name__, "DESIGN", str(exc))
-                    if fp:
-                        write_halt(self._work_dir, fp, "DESIGN", str(exc))
+                    if self._phase_failed(exc, "DESIGN"):
                         stop_reason = "halt"
                         break
                     raise
@@ -308,7 +379,13 @@ class Campaign:
             )
             if execute_note:
                 exec_prompt += f"\n\nHuman note: {execute_note}"
-            await self._turn(session, exec_prompt)
+            try:
+                await self._turn(session, exec_prompt)
+            except Exception as exc:
+                if self._phase_failed(exc, "EXECUTE"):
+                    stop_reason = "halt"
+                    break
+                raise
             if not validate_phase_artifacts(
                 self._work_dir, idir, ["findings", "principle_updates"], **self._limits(),
             ):
@@ -319,6 +396,7 @@ class Campaign:
                 cwd=hook_state.cwd,
             )
             hook_state.pending_wait_for = []
+            self._persist_breaker()  # poll_and_resume may record wait_for timeouts
             self._commit_phase(iteration, "EXECUTE")
 
             status = await self._repair(session, idir, ["findings", "principle_updates"])
@@ -358,8 +436,9 @@ class Campaign:
 
             if status == "ok":
                 breaker.reset()
+                self._persist_breaker()
             else:
-                fp = breaker.record("ValidationError", "EXECUTE", "repair exhausted")
+                fp = self._breaker_record("ValidationError", "EXECUTE", "repair exhausted")
                 if fp:
                     write_halt(self._work_dir, fp, "EXECUTE", "repair exhausted")
 
@@ -421,7 +500,7 @@ class Campaign:
         dir, so the final check still resolves it). A file already in the repo is cited in place.
         Per the output contract, `evidence` becomes that path string; the structured
         {path, key, value} item moves to `evidence_detail`."""
-        repo = self._config.target_system.get("repo_path")
+        repo = self._code_dir
         answer = _read_json(self._work_dir / "answer.json")
         if not repo or not isinstance(answer, dict):
             return
@@ -497,11 +576,10 @@ class Campaign:
         return False
 
     def _commit_phase(self, iteration: int, phase: str) -> None:
-        """Commit the target checkout (spec 3.1 / D5); never the campaign work dir."""
-        target = self._config.target_system.get("repo_path")
-        if not target or not (Path(target) / ".git").exists():
+        """Commit the campaign worktree (spec 3.1 / D5); never the user's checkout or work dir."""
+        if not self._commits or not self._code_dir:
             return
-        target_path = Path(target).resolve()
+        target_path = Path(self._code_dir).resolve()
         work = self._work_dir.resolve()
         spec = ["."]
         if work.is_relative_to(target_path) and work != target_path:

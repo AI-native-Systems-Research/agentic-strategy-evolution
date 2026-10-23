@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 import yaml
+from claude_agent_sdk.types import HookMatcher
 
 from orchestrator import cli
 from orchestrator.v2.config import parse_campaign_config
@@ -295,25 +296,25 @@ class TestSessionWiring:
         for run in fixed_plan["runs"]:
             run["parameters"] = {"rate": 20}
         per_turn.insert(2, {str(idir / "plan.json"): json.dumps(fixed_plan)})
-        decisions: list[dict | None] = []
-
-        class StopHookClient(FakeClient):
-            async def receive_response(self):
-                async for msg in super().receive_response():
-                    yield msg
-                decisions.append(await self._run_event_hooks("Stop", {"stop_reason": "end_turn"}))
+        reasons: list[str] = []
+        holder: dict = {}
 
         def factory(opts):
-            return StopHookClient(script=_make_script(5), per_turn_files=per_turn, hooks=opts.hooks)
+            async def spy(hook_input, _tid, _ctx):  # records the gate's block reason
+                out = await opts.hooks["Stop"][0].hooks[0](hook_input, _tid, _ctx)
+                reasons.append(out.get("reason", ""))
+                return out
+            hooks = {**opts.hooks, "Stop": [HookMatcher(matcher="", hooks=[spy])]}
+            holder["c"] = FakeClient(script=_make_script(5), per_turn_files=per_turn, hooks=hooks)
+            return holder["c"]
 
         await Campaign(parse_campaign_config(raw), work_dir, client_factory=factory).run()
 
-        design = decisions[1]
-        assert design is not None and design.get("decision") == "block"
-        reason = json.dumps(design)
+        # The fake fires the Stop gate per turn: BASELINE allowed, DESIGN blocked, then allowed
+        assert holder["c"].stop_decisions[:3] == [None, "block", None]
+        reason = reasons[1]
         assert "deviates from locked value 20" in reason
         assert "control" not in reason  # rejected for the lock, not the bundle
-        assert decisions[0] is None  # BASELINE was valid
 
 
 # ── Other commands ───────────────────────────────────────────────────────

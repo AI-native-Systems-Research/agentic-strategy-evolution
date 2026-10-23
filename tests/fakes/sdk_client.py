@@ -60,6 +60,15 @@ class FakeResultMessage:
     )
     result: str = ""
     uuid: str = "uuid-result-1"
+    api_error_status: int | None = None
+    errors: list[str] | None = None
+
+
+@dataclasses.dataclass
+class FakePreCompact:
+    """Script item: fire the PreCompact hooks here (not yielded)."""
+
+    trigger: str = "auto"
 
 
 @dataclasses.dataclass
@@ -81,7 +90,13 @@ class FakeClient:
         Ordered sequence of messages the client will yield.  The final
         element should be a ``FakeResultMessage``.  Any ``FakeAssistantMessage``
         whose ``content`` contains tool-use dicts will trigger registered
-        hook callbacks.
+        hook callbacks: ``PostToolUse``, or ``PostToolUseFailure`` when the
+        block has ``"is_error": True`` (its ``"response"`` is the error text).
+        A ``FakePreCompact`` item fires the PreCompact hooks.  Before each
+        ``FakeResultMessage`` the Stop hooks fire (``stop_hook_active`` is
+        True on a re-fire); a "block" decision drops that result, applies the
+        next ``per_turn_files`` entry and runs the next scripted turn, as the
+        CLI does when a Stop hook blocks.
     files_to_write:
         Dict of ``{path: content}`` that ``connect()`` writes to disk,
         simulating agent file creation.
@@ -108,6 +123,7 @@ class FakeClient:
         self._queries: list[str] = []
         self._response_index = 0
         self._turn_count = 0
+        self.stop_decisions: list[str | None] = []  # one per Stop firing
 
     # ── ClaudeSDKClient interface ─────────────────────────────────────
 
@@ -122,6 +138,9 @@ class FakeClient:
         if not self._connected:
             raise RuntimeError("FakeClient.connect() not called")
         self._queries.append(prompt)
+        self._write_turn_files()
+
+    def _write_turn_files(self) -> None:
         if self._turn_count < len(self._per_turn_files):
             for path, content in self._per_turn_files[self._turn_count].items():
                 p = Path(path)
@@ -140,14 +159,34 @@ class FakeClient:
         if self._response_index >= len(self._script):
             raise RuntimeError("FakeClient script exhausted — add more messages to the script")
 
+        stop_hook_active = False
         while self._response_index < len(self._script):
             msg = self._script[self._response_index]
             self._response_index += 1
+
+            if isinstance(msg, FakePreCompact):
+                await self._run_event_hooks("PreCompact", {
+                    "hook_event_name": "PreCompact", "trigger": msg.trigger,
+                    "session_id": "fake-session-1", "transcript_path": "", "cwd": "",
+                })
+                continue
 
             if hasattr(msg, "content") and isinstance(msg.content, list):
                 for block in msg.content:
                     if isinstance(block, dict) and block.get("type") == "tool_use":
                         await self._invoke_hooks(msg, block)
+
+            if isinstance(msg, FakeResultMessage) and "Stop" in self._internal_hooks:
+                out = await self._run_event_hooks("Stop", {
+                    "hook_event_name": "Stop", "stop_hook_active": stop_hook_active,
+                    "session_id": msg.session_id, "transcript_path": "", "cwd": "",
+                })
+                decision = (out or {}).get("decision")
+                self.stop_decisions.append(decision)
+                if decision == "block" and self._response_index < len(self._script):
+                    stop_hook_active = True
+                    self._write_turn_files()  # the agent's next turn answers the block
+                    continue
 
             yield msg
 
@@ -168,17 +207,21 @@ class FakeClient:
         tool_name = tool_block.get("name", "")
         tool_use_id = tool_block.get("id", "tu-fake")
         response = tool_block.get("response", "")
-
-        await self._run_event_hooks("PostToolUse", {
+        event = "PostToolUseFailure" if tool_block.get("is_error") else "PostToolUse"
+        hook_input = {
             "session_id": getattr(msg, "session_id", "fake-session-1"),
-            "hook_event_name": "PostToolUse",
+            "hook_event_name": event,
             "tool_name": tool_name,
             "tool_input": tool_block.get("input", {}),
-            "tool_response": response,
             "tool_use_id": tool_use_id,
             "transcript_path": "",
             "cwd": "",
-        }, tool_use_id)
+        }
+        if event == "PostToolUseFailure":
+            hook_input["error"] = response
+        else:
+            hook_input["tool_response"] = response
+        await self._run_event_hooks(event, hook_input, tool_use_id)
 
     async def _run_event_hooks(
         self,

@@ -679,8 +679,8 @@ class TestFakeClientMultiTurn:
 
 
 class TestBaselineValidation:
-    async def test_design_rejects_missing_baseline(self, tmp_path):
-        """DESIGN must reject when baseline.json is missing."""
+    async def test_missing_baseline_goes_to_report(self, tmp_path):
+        """P1: no valid baseline.json after repair -> no DESIGN; REPORT still runs (spec 3.5)."""
         from orchestrator.v2.loop import Campaign, CampaignConfig
         from tests.fakes.sdk_client import FakeClient, FakeResultMessage
 
@@ -693,16 +693,19 @@ class TestBaselineValidation:
             max_iterations=1,
             target_system={"repo_path": "/tmp/target"},
         )
-        # FakeClient produces results but no baseline.json is written
-        script = [FakeResultMessage()] * 5
+        # No baseline.json is ever written: BASELINE + 2 repairs, REPORT + 2 repairs
+        script = [FakeResultMessage()] * 6
         client = FakeClient(script=script)
         campaign = Campaign(
             config=config,
             work_dir=work_dir,
             client_factory=lambda _opts: client,
         )
-        with pytest.raises(ValueError, match="baseline.json"):
-            await campaign.run()
+        result = await campaign.run()
+        assert result == {"stop_reason": "no_baseline", "iterations": 0}
+        state = json.loads((work_dir / "state.json").read_text())
+        assert state["phase"] == "REPORT" and state["stop_reason"] == "no_baseline"
+        assert (work_dir / "final_check.json").exists()
 
 
 class TestLedgerPerIteration:
@@ -916,7 +919,8 @@ def _repo_campaign(repo: Path) -> tuple[Campaign, Path]:
     work_dir.mkdir(parents=True)
     config = parse_campaign_config(_campaign_yaml(repo_path=str(repo)))
     per_turn = _build_per_turn_files(work_dir, answered=True)
-    per_turn[1][str(repo / "src.py")] = "print('fix')\n"  # agent edits code in DESIGN
+    wt = repo / ".nous-experiments" / "test-run"  # the campaign worktree (spec 3.1/D5)
+    per_turn[1][str(wt / "src.py")] = "print('fix')\n"  # agent edits code in DESIGN
     client = FakeClient(script=_make_script(4), per_turn_files=per_turn)
     return Campaign(config=config, work_dir=work_dir, client_factory=lambda _o: client), work_dir
 
@@ -926,10 +930,10 @@ class TestCommitPhase:
         repo = _init_repo(tmp_path)
         campaign, _wd = _repo_campaign(repo)
         await campaign.run()
-        tracked = _git(repo, "ls-files").split()
+        tracked = _git(repo, "ls-tree", "-r", "--name-only", "nous/test-run").split()
         assert "src.py" in tracked
         assert not any(p.startswith(".nous/") for p in tracked)
-        assert "nous: iter-1 DESIGN" in _git(repo, "log", "--format=%s")
+        assert "nous: iter-1 DESIGN" in _git(repo, "log", "--format=%s", "nous/test-run")
 
     async def test_failed_commit_is_logged_not_raised(self, tmp_path, caplog):
         repo = _init_repo(tmp_path)
