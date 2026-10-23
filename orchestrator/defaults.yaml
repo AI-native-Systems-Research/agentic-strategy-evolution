@@ -1,36 +1,15 @@
-# Nous Default Configuration
+# Nous defaults. Only `prices` is read (orchestrator/v2/cost.py).
 #
-# Per-phase model defaults. Override in campaign.yaml under `models:`.
-# Model names depend on your LLM backend (LiteLLM, OpenAI, Bedrock, etc.).
-#
-# Examples:
-#   LiteLLM proxy:    claude-sonnet-4-6, aws/claude-haiku-4-5
-#   OpenAI direct:    gpt-4o, gpt-4o-mini
-#   Anthropic direct: claude-sonnet-4-5-20250514, claude-haiku-4-5-20251001
-#   Claude CLI:       sonnet, haiku, opus
-
-models:
-  # DESIGN — explores repo via claude -p, frames problem, designs hypothesis bundle.
-  # Uses Opus for better regime validation, parameter selection, and hypothesis quality.
-  design: "claude-opus-4-6"
-
-  # EXECUTE_ANALYZE — builds, patches, runs experiments, analyzes results, extracts principles.
-  # All in one session with full context.
-  execute_analyze: "claude-sonnet-4-6"
-
-  # REPORT — generates final report.md at campaign end.
-  report: "claude-sonnet-4-6"
-
-# Max tool-use turns for claude -p phases.
-max_turns:
-  design: 80
-  execute_analyze: 120
-
-# Per-phase SDK effort (#282). Controls how hard the model thinks each turn.
-# Valid: low | medium | high (SDK default) | xhigh | max
-# Omit a phase or the effort key to use the SDK default (high) — behaviour
-# is then unchanged. design benefits from high; execute_analyze (coding,
-# simulations, JSON parsing) is often adequate at medium and much cheaper.
-sdk_options:
-  design: {}           # effort unset -> SDK default (high)
-  execute_analyze: {}  # effort unset -> SDK default (high)
+# Per-model token prices (USD per million tokens) for the cost meter.
+# Reporting only: cost never drives a Nous decision. Matches the Claude Code
+# CLI's own pricing (cache write 1.25x input, cache read 0.1x input; see cost.py).
+prices:
+  claude-opus-4-6:
+    input_tokens: 5.0
+    output_tokens: 25.0
+  claude-sonnet-4-6:
+    input_tokens: 3.0
+    output_tokens: 15.0
+  claude-haiku-4-5:
+    input_tokens: 1.0
+    output_tokens: 5.0

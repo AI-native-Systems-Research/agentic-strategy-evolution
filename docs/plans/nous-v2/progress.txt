@@ -1,0 +1,626 @@
+# Nous v2 build progress (append-only)
+
+## R1: Session core (354b4bf)
+
+Files created: orchestrator/v2/__init__.py, orchestrator/v2/errors.py,
+orchestrator/v2/session.py, tests/fakes/__init__.py, tests/fakes/sdk_client.py,
+tests/v2/__init__.py, tests/v2/test_session.py, tests/v2/test_fake_client.py
+
+Files modified: pyproject.toml (pinned SDK ==0.2.172, added pytest-asyncio,
+asyncio_mode=auto), tests/conftest.py (ClaudeSDKClient.connect guard),
+tests/test_no_live_llm_guard.py (added connect guard test class), uv.lock
+
+Tests before: 1352 passed (baseline on main)
+Tests after: 1393 passed, 0 failed
+
+SDK API check on 0.2.172 (spec said 0.2.163):
+- All APIs in spec 3.1 confirmed: hooks, HookMatcher.timeout, PostToolUseFailure
+  (as PostToolUseFailureHookInput), env, max_buffer_size, resume, effort,
+  SystemPromptPreset with append/snapshot, AssistantMessage.stop_reason
+- SystemPromptPreset is in claude_agent_sdk.types (not top-level module)
+- hooks on ClaudeAgentOptions takes dict[event_name, list[HookMatcher]] not flat list
+- connect(), query(), interrupt(), disconnect() are async def coroutines
+- receive_response() is an async generator (yields messages, not a single return)
+- CLI bundled: 2.1.308 (spec said 2.1.306)
+
+Review decisions (pr-review-toolkit:review-pr):
+- code-reviewer: Fixed _make_session helper key leak (pop before spread).
+  Removed dead original_connect capture in conftest. Skipped ProcessError
+  hierarchy concern (all ProcessError is transient by design; R4 will use
+  is_transient for non-subclass errors).
+- silent-failure-hunter: Fixed FakeClient.receive_response to raise on
+  script exhaustion instead of returning None. Skipped state.json
+  corruption logging (defensive behavior is intentional; no logger yet).
+  Skipped persist failure in turn() (correct per spec — disk-full is fatal).
+  Skipped 5xx narrowing (pedantic, 501/505 are extremely rare in LLM APIs).
+- Added is_transient support for stdlib TimeoutError and OSError("timed out").
+
+## R2: JSON schemas + validators (13903b8)
+
+Files created: orchestrator/v2/schemas/ (8 schema JSON files),
+orchestrator/v2/validators.py, orchestrator/v2/secrets.py,
+tests/v2/test_schemas_v2.py, tests/v2/test_validators_v2.py,
+tests/v2/test_evidence_rules.py, tests/v2/test_secrets.py
+
+Tests before: 1413 passed
+Tests after: 1617 passed, 0 failed
+
+Covers: B5 extra-field handling, JSON/JSONL/CSV/TSV evidence checking,
+3 noise shapes, paired-seed check, locked_parameters/workload checks,
+task_limits (B11), bundle hash, secret masking (3.14),
+PARTIALLY_CONFIRMED partial_note, claims_needed coverage,
+per-task_type baseline observation rules.
+
+Review decisions (pr-review-toolkit:review-pr):
+- code-reviewer: Fixed path traversal in evidence checking (added
+  is_relative_to check). Fixed JSON Pointer "/" per RFC 6901 (was
+  returning root instead of doc[""]). Fixed paired-seed check to
+  compare all run pairs, not just first. Fixed baseline schema dead
+  $defs (wired noise to oneOf referencing the 3 noise shapes).
+- silent-failure-hunter: Fixed silent JSONL corruption swallow in
+  _check_task_limits (now reports corrupt line numbers). Fixed regex
+  no-capture-group silent pass (now errors instead of passing).
+  Fixed empty path/key acceptance in check_evidence_item (now
+  rejects early). Fixed misleading 2x noise comment (code checks
+  presence, not magnitude). Added IsADirectoryError to except clause.
+  Skipped: _load_schema exception propagation (schema files are
+  bundled code, exception is correct). Skipped: secrets.py literal
+  matching (spec 3.14 defines literal replacement). Skipped:
+  _check_task_limits empty on missing runs.jsonl (intentional,
+  file may not exist early). Skipped: _check_principle_updates
+  no-op when context is None (by design). Implemented 2x noise
+  magnitude check per spec 3.4: |effect.value| <= 2 * noise_sd
+  now triggers repair message. Added effect field to findings
+  schema. 6 new tests for magnitude check edge cases.
+
+## R1 fix: async mismatch (post-review)
+
+Session.connect/turn/disconnect were async but FakeClient had sync
+connect/query/interrupt/disconnect and receive_response returned a single
+value instead of being an async generator. Tests used anyio.run() for turn
+but called connect/disconnect synchronously.
+
+Fixed: FakeClient.connect, query, interrupt, disconnect are now async def.
+FakeClient.receive_response is now an async generator (yields each scripted
+message). All tests in test_session.py and test_fake_client.py use
+async def test methods (pytest-asyncio auto mode). Added signature tests
+verifying FakeClient methods are coroutines/async generators. Corrected
+progress.txt note about SDK API signatures.
+
+## R2 fix: baseline noise fallback (c780cea)
+
+Added _get_baseline_noise_sd() helper that reads baseline.json and returns
+noise sd (0.0 for deterministic, sd for measured, None otherwise).
+CONFIRMED/REFUTED hypotheses without noise_sd now fall back to baseline
+noise before requiring noise_unmeasured. Missing effect.value with noise_sd
+present is now an error, not a silent pass. Four new tests.
+
+## R3: In-process hooks (dd7d0e9)
+
+Files created: orchestrator/v2/hooks.py, tests/v2/test_hooks.py
+
+Implements spec 3.3: PostToolUse (records Bash commands to runs.jsonl),
+PostToolUseFailure (records failed commands with exit code parsing),
+Stop (validates phase artifacts, blocks up to 6 times),
+PreCompact (writes state/digest.json).
+
+Tests after: 1633 passed, 0 failed
+
+Review decisions (pr-review-toolkit:review-pr):
+- code-reviewer: Fixed output_bytes in failure hook to use .encode("utf-8")
+  for byte count (was counting chars). Injected deterministic now= in test
+  helper per tests/CLAUDE.md. Skipped _PHASE_ARTIFACTS plan in EXECUTE
+  (plan belongs to DESIGN phase, mapping is correct per spec).
+- silent-failure-hunter: Fixed output_bytes char/byte mismatch (same as
+  code-reviewer). Widened stop hook exception catch to include OSError and
+  UnicodeDecodeError (was only json.JSONDecodeError). Skipped runs.jsonl
+  write propagation (logging was the prior review's fix; propagating would
+  crash hook framework). Skipped digest write propagation (same reasoning).
+  Skipped eager regex validation (patterns from campaign config, crash at
+  first use is acceptable). Skipped error field in failure rows (exit_code
+  sufficient; error text may contain secrets). Skipped corrupt-JSON markers
+  in digest (best-effort, warning is fine). Skipped write-failure test
+  (low priority).
+
+## R3 fix: B1 recurred — hooks used dicts instead of HookMatcher objects
+
+B1 recurred in R3: build_hooks() returned plain dicts instead of
+HookMatcher objects. The SDK's _hooks_to_internal_format reads
+matcher.hooks via hasattr, so dicts produce empty hook lists.
+
+Five fixes applied:
+1. build_hooks now returns HookMatcher objects (from claude_agent_sdk.types).
+2. All hook callbacks are async def (input, tool_use_id, context) — the SDK
+   awaits them at query.py:648.
+3. All callbacks return dict ({} for no action, {"decision": "block", ...}
+   for Stop blocks) — query.py calls _convert_hook_output_for_cli which
+   calls .items() on the return value.
+4. PostToolUse/PostToolUseFailure: tool_response is Any (dict for Bash);
+   added _stringify_tool_response() to json.dumps non-string responses
+   before masking and measuring output_bytes.
+5. FakeClient now uses the real SDK contract: takes dict[event, list[HookMatcher]]
+   hooks, runs _hooks_to_internal_format, awaits every callback, passes output
+   through _convert_hook_output_for_cli, and raises TypeError if a callback
+   is not a coroutine function.
+
+New tests: async signature assertions on all 4 hooks, dict tool_response
+serialization (PostToolUse + PostToolUseFailure), return-value assertions
+(all hooks return {}), HookMatcher isinstance checks, _hooks_to_internal_format
+non-empty hooks, ClaudeAgentOptions integration, sync-callback TypeError.
+
+Tests before: 1633 passed
+Tests after: 1648 passed, 0 failed
+
+## R4a: Stop rule + campaign loop (0fd1533)
+
+Files created: orchestrator/v2/stop_rule.py (139 lines),
+orchestrator/v2/loop.py (285 lines), tests/v2/test_stop_rule.py,
+tests/v2/test_loop.py
+
+Files modified: tests/fakes/sdk_client.py (per_turn_files, _turn_count)
+
+stop_rule.py: check_stop() with halt > stop_sentinel > answered >
+max_iterations > stall priority. Helpers: claims_changed, best_changed,
+principles_changed, _is_quiet, _collect_claims, _claims_needed_met.
+
+loop.py: CampaignConfig dataclass, parse_campaign_config(), Campaign
+class driving BASELINE → (DESIGN → EXECUTE)* → REPORT, bundle hash
+lock with pre-registration violation detection, per-iteration ledger
+writes, principle accumulation via _merge_principles.
+
+Tests before: 1648 passed
+Tests after: 1692 passed, 0 failed (42 new tests)
+
+Runtime line count: 1,694 lines (target ~2,500)
+
+Review decisions (pr-review-toolkit:review-pr):
+Accepted (9): best_changed .get("value") None guard, answered requires
+non-INCONCLUSIVE status, answered gated on claims_needed_met, stall
+uses current_claims_changed/current_best_changed params, _read_json
+catches JSONDecodeError, _merge_principles skips entries without id,
+_design validates baseline.json exists, _lock_bundle warns on missing
+bundle, ledger written after each iteration AND after stop_reason set.
+
+Skipped (5): B4 optional-fields docstring (this is an add-only function,
+docstring is noise), _merge_principles deepcopy (no aliasing — fresh
+dicts built per merge), config min_improvement < 0 validation (YAGNI,
+campaign.yaml is author-controlled), iter-dir creation race (single-
+threaded campaign loop), _check_bundle_hash warn+continue on missing
+locked (empty locked_hash already returns False).
+
+## R4a fix: 6 spec gaps + 1 review fix (57835ac)
+
+Cross-session reviewer identified 6 spec gaps:
+1. Hooks wired into loop (HookState + build_hooks in Campaign.run,
+   phase/iteration set before each turn).
+2. Campaign worktree commit per phase (_commit_phase helper).
+3. Phase messages completed per 3.2 (BASELINE task_type, DESIGN
+   read digest + frame relative to baseline, EXECUTE wait_for).
+4. Bundle lock raises on missing bundle after DESIGN.
+5. question_answered moved to findings top level per 3.4 (schema,
+   stop_rule, all tests updated).
+6. hooks.py _iter_dir fixed (removed erroneous "runs/" subdir).
+
+Code review fix: _commit_phase guard logic (.git check only),
+experiment_commands from CampaignConfig field.
+
+Runtime line count: 1,758 lines (target ~2,500)
+Tests after: 1692 passed, 0 failed
+
+## Iter-dir fix: runs/ prefix per spec 3.13 (ca0f096)
+
+SPEC.md line 271: "iter-N/... is short for <work_dir>/runs/iter-N/..."
+Added iter_dir() helper in loop.py. Updated hooks.py _iter_dir and
+phase messages. All tests updated to use runs/iter-N/ layout.
+
+## R4b: Robustness (repair loop, failure breaker, wait_for, preflight)
+
+Files created: orchestrator/v2/robustness.py (102 lines),
+orchestrator/v2/preflight.py (121 lines),
+tests/v2/test_repair_and_breaker.py, tests/v2/test_wait_for.py,
+tests/v2/test_preflight.py
+
+Files modified: orchestrator/v2/loop.py (added repair loop integration,
+breaker, async wait_for polling, preflight at campaign start)
+
+robustness.py: failure_fingerprint (normalizes numbers/paths),
+FailureBreaker (threshold=3, record/reset), write_halt,
+poll_wait_for (file exists or cmd:exit-0, configurable interval/timeout).
+
+preflight.py: run_preflight (async) checks validators on known-good
+and known-bad fixtures, runs Stop hook callback on fake input.
+
+loop.py integration: preflight before session.connect, repair loop
+(2 tries then partial) around EXECUTE validation, breaker tracks
+consecutive identical failures across iterations, wait_for polling
+runs in executor to avoid blocking async event loop.
+
+Tests before: 1692 passed
+Tests after: 1712 passed, 0 failed (20 new tests)
+
+Runtime line count: 2,086 lines (target ~2,500)
+
+Review decisions (code-reviewer + silent-failure-hunter):
+Accepted (3): poll_wait_for blocks event loop (fixed: run_in_executor),
+_poll_wait_for discards timeout (fixed: log warning), poll_wait_for
+swallows command errors (fixed: log warning).
+Skipped (2): EXECUTE breaker doesn't explicitly break (by design:
+check_stop reads halt.json at top priority), _read_json corruption
+yields empty dict (pre-existing pattern, not R4b).
+
+## R4b fix: wait_for flow (spec 3.2 step 4)
+
+Cross-session reviewer identified 3 wait_for issues:
+1. Agent never resumed after wait — added resume message
+   "Runs X finished; continue EXECUTE." via session.turn.
+2. Stop hook blocked during pending wait — added pending_wait_for
+   flag to HookState; Stop hook allows stop when set.
+3. Sequential polling — rewrote _poll_and_resume to check all
+   wait_for conditions together in one 60s loop.
+
+Also: _check_wait_condition helper in loop.py replaces the old
+poll_wait_for call; poll_wait_for stays in robustness.py for unit
+tests. Timeout counts as a breaker failure.
+
+3 new integration tests: stop allowed with pending wait, resume
+message sent, two runs polled together.
+
+Tests after: 1715 passed, 0 failed
+Runtime line count: 2,159 lines (target ~2,500)
+
+## R4b fix: reviewer round 2 + branch simplification
+
+Two reviewer issues fixed:
+1. Stop-gate bypass too broad — pending_wait_for changed from bool to
+   list[str]; Stop hook evaluates conditions live via check_wait_condition.
+2. Missing cwd — Campaign.run() now passes cwd=config.target_system["path"]
+   to Session options per spec 3.1.
+
+Branch review findings addressed:
+- Critical: secrets={k: "***"} never read env values — fixed to os.environ.get.
+- Critical: plan.json missing from DESIGN Stop hook — added to _PHASE_ARTIFACTS.
+- Skipped (noted for later): repair loop only on EXECUTE (spec says all phases),
+  _check_bundle_hash silent on deleted bundle, stall check on iteration 1.
+
+Simplifications applied:
+- Removed dead _EVIDENCE_EXTENSIONS from validators.py.
+- Removed unused asyncio/json imports from preflight.py.
+- Extracted check_wait_condition into robustness.py; removed duplicates
+  from loop.py and hooks.py _any_wait_pending.
+- Extracted _build_row helper in hooks.py (PostToolUse + PostToolUseFailure
+  shared 11 fields).
+- Removed dead FailureBreaker.reset().
+
+4 new tests: stop gate validates when waits met, cwd passed to Session,
+cwd None when target has no path.
+
+Tests after: 1718 passed, 0 failed
+Runtime line count: 2,123 lines (target ~2,500)
+
+## R5: Cost meter (7dc84ed)
+
+Files created: orchestrator/v2/cost.py (98 lines),
+tests/v2/test_cost.py
+
+CostMeter: per-message-id dedup, per-phase tracking, price table from
+defaults.yaml. load_prices from YAML with warning on failure. Added
+iter_delta() for per-iteration cost (vs cumulative). Prices section
+added to defaults.yaml (opus-4-6, sonnet-4-6, haiku-4-5).
+
+Tests after: 1806 passed, 0 failed (11 new cost tests)
+
+Review decisions (code-reviewer + silent-failure-hunter):
+- Fixed: load_prices now logs warning on failure instead of silent {}.
+- Fixed: unknown model now logs debug instead of silent $0.
+- Fixed: ledger uses iter_delta() not total() (was cumulative, not
+  per-iteration; both reviewers flagged).
+
+## R6: Effort ladder (d79a37f)
+
+Files created: orchestrator/v2/effort.py (68 lines),
+tests/v2/test_effort.py
+
+EffortManager: EFFORT_LADDER ["max".."low"], consecutive-cut gating
+(low only after 2 consecutive cuts), phase reset, persist_cut_offs.
+Not yet wired into the on_message callback (deferred to integration).
+
+Tests after: 1806 passed, 0 failed (13 new effort tests)
+
+Review decisions: effort.py is a standalone module. Wiring into the
+loop's on_message callback (detecting stop_reason=max_tokens, calling
+interrupt, reconnecting) is deferred — it requires Session.interrupt()
+which is available but untested in integration.
+
+## R7: Resume (f6c664c)
+
+Files created: orchestrator/v2/resume.py (59 lines),
+tests/v2/test_resume.py
+
+Campaign.resume(): load state.json, reconnect by session_id or
+fallback from digest, --note support. _run_phases_from() for
+fresh and resumed campaigns. _reload_state() restores ledger,
+principles, prev_findings from disk.
+
+Tests after: 1806 passed, 0 failed (18 new resume tests)
+
+Review decisions (code-reviewer + silent-failure-hunter):
+- Fixed: fallback turn now metered (was missing on_message callback).
+- Fixed: skipped-design path empty locked_hash now logged in ledger
+  (prereg_violation field shows the gap).
+- Skipped: resume() skips preflight (by design — hooks already
+  verified on first run; adding preflight to resume would add
+  latency for no signal on a warm campaign).
+
+## R8: Method prompt (a3a6f2c)
+
+Files created: orchestrator/v2/prompts.py (29 lines),
+prompts/v2/method.md (3,383 bytes, limit 6,144),
+prompts/v2/checklists/ (debug.md, verify.md, optimize.md,
+policy.md, explain.md), tests/v2/test_method_prompt.py
+
+Core scientific method in method.md: BASELINE→DESIGN→EXECUTE→REPORT.
+Contains all required field names per spec 3.12. No arm menus or
+complexity-tier prose. Task-type checklists loaded per task_type.
+
+Tests after: 1806 passed, 0 failed (32 new prompt tests)
+
+Review decisions: no issues found by reviewers in prompt files.
+
+## R9: Final answer check (50f1b6f)
+
+Files created: orchestrator/v2/final_check.py (134 lines),
+tests/v2/test_final_check.py
+
+check_answer(): validates answer.json from disk records. Checks:
+schema validity, evidence paths, repro command, claims_matched_fraction,
+unmeasured noise findings. No LLM calls, no re-running.
+
+Tests after: 1806 passed, 0 failed (12 new final_check tests)
+
+Review decisions (code-reviewer + silent-failure-hunter):
+- Fixed: repro check now uses answer.repro (falls back to
+  baseline.command). Was using only baseline.command.
+- Fixed: _check_repro now searches work_dir/runs.jsonl (root) in
+  addition to runs/*/runs.jsonl. Hook writes to root.
+- Fixed: _claims_matched_fraction uses .get("id") not ["id"]
+  (KeyError on malformed claim dicts).
+- Fixed: _find_unmeasured_noise uses .get("id", "<unknown>").
+
+## R5-R9 simplification (post-review)
+
+Extracted from loop.py to reduce from 649→401 lines:
+- CampaignConfig + parse_campaign_config → config.py (new, 67 lines)
+- poll_and_resume → robustness.py (standalone async function)
+- validate_phase_artifacts → validators.py (standalone function)
+- Inlined phase prompt methods (_baseline, _design, _execute, _report)
+- Merged _update_state_phase into _set_phase
+- Removed _get_pending_waits, _validate_phase_artifacts, _poll_and_resume
+  methods from Campaign class
+
+Also trimmed: docstrings in session.py, section headers across files,
+compacted preflight fixtures.
+
+Runtime line count: 2,477 lines (target ~2,500)
+  loop.py: 401, validators.py: 623, hooks.py: 332, session.py: 181
+Tests after: 1806 passed, 0 failed
+
+## Reviewer fix: final check wired into REPORT (spec 3.8)
+
+final_check.check_answer existed but was never called from loop.py (grep found no caller), so repro_recorded never reached the ledger. Added Campaign._record_final_check after REPORT (both normal and resumed paths): writes final_check.json and sets repro_recorded + claims_matched_fraction on the last ledger row. check_answer now reports schema errors without returning early, so repro is still checked. Tests: test_final_check_recorded_from_runs_jsonl, test_final_check_repro_missing_from_record. 1808 passed. Runtime 2486 lines.
+
+## Reviewer fix: repro matcher normalizes commands (smoke 2)
+
+smoke/2.json: repro_recorded false although the repro ran, because _check_repro used exact equality. Now both strings are normalized (split on ; and &&, drop export/cd segments and leading VAR=val, cut at first pipe, strip redirections, collapse whitespace) and the repro must appear among the segments of a runs.jsonl row with exit_code 0. Checked against the real smoke-2 runs.jsonl: the 2>/dev/null row exited 134, the matching success row used `2>&1 | tail -30`; both forms are in the test. Tests before: 1 new failing (smoke-2 strings). After: 3 new tests pass; full suite 1811 passed. MVP limit (later candidate): no shell quoting, so a quoted ; or | in an argument splits wrongly.
+
+## R11a: CLI cutover (spec 4)
+
+`nous run`/`nous resume` now drive orchestrator.v2.loop.Campaign through the `cli._sdk_client` seam (tests swap in FakeClient). run: parse campaign.yaml with v2 parse_campaign_config before touching disk, find existing work dir (env-var or legacy location, #239), refuse if state.json exists, save campaign.yaml (incl. --max-iterations/--model overrides) in the work dir. resume: work dir / run_id / yaml, --note, prints which campaign.yaml it uses. --agent, --auto-approve, --timeout, --max-cli-retries, --sandbox warn and are ignored; --bundle/--problem-md/--handoff-md removed. config.py: any key outside the known set warns once and is ignored (examples/ load); added model, locked_parameters, locked_workload, rerun_repro; dropped unused prompts. Wiring gaps fixed: loop now passes the method prompt (build_system_prompt) and model to the session, and locked_parameters/locked_workload/task_limits/runs_jsonl/secrets reach every ValidatorContext (Stop hook, repair, final check) via config.validator_limits. status/cost/validate/schema read v2 artifacts; report/replay removed (exit 1); reports/create-campaign/lineage/clean/package warn as deprecated.
+
+Tests before: 1811 passed (new tests/v2/test_cli_v2.py failing first). After: 1816 passed (25 new CLI tests). Removed v1-CLI test functions (behaviour changed; v2 equivalents in test_cli_v2.py): test_cli.py TestCmdRun x2, TestCmdResume x2, TestCmdValidate x2, TestCmdStatus x1, TestCmdCost x2, TestCmdReport x2, TestCmdReplay x3; test_max_iterations_persist.py TestResumeReadsPersistedCap x4; test_sdk_sandbox.py TestCmdRunSandboxFlag x2. Changed: test_nous_schema_command.py::test_bundle_schema_renders.
+
+Review decisions (code-reviewer + silent-failure-hunter):
+- Fixed: invalid campaign.yaml crashed with a traceback after creating the work dir; now validated first, clean exit 1.
+- Fixed: run only checked the new location; now uses find_existing_work_dir (#239).
+- Fixed: `nous validate` ignored campaign locks; now loads work_dir/campaign.yaml limits.
+- Fixed: --max-iterations on resume and --model were not persisted; both saved into work_dir/campaign.yaml.
+- Fixed: repair and final check skipped the secret check; validator_limits now carries secrets.
+- Fixed: one malformed runs.jsonl line hid the rest of the file in _check_repro; now skipped per line with a warning.
+- Fixed: `nous cost` missed REPORT cost; ledger's last row gets report_cost_usd, cost sums it.
+- Fixed: report/replay message now says removed; test asserting factory not called replaced by on-disk asserts.
+- Fixed: resume now prints which campaign.yaml it uses (work dir copy wins, by design: it carries saved overrides).
+- Skipped: background repro with exit_code None never counts. Spec 3.8 counts it once wait_for succeeds; later candidate (needs wait_for result in runs.jsonl).
+- Skipped: `nous schema campaign` still shows the v1 schema, and create-campaign writes v1 yaml; left for R11d/R12 docs migration.
+- Skipped: `a || b` cut to `a` by the repro normalizer; acceptable MVP.
+- Kept: tests asserting options passed to the fake (model, resume id, append) — that is the seam contract.
+Follow-ups: rerun_repro parsed but unused (3.8 optional rerun); `stop --immediate` not honoured by v2.
+Line count: orchestrator/v2 runtime 2506 -> 2537; cli.py 1365 -> 1031.
+
+R11b: deleted old v1 loop and dispatch code.
+- Deleted modules (named): iteration, campaign, inline_dispatch, cli_dispatch, llm_dispatch, sdk_dispatch, dispatch; run_iteration.py, run_campaign.py.
+- Deleted modules (only callers were deleted modules): channels, claude_md, gates, iteration_mode, ledger, plot_specs, prompt_loader, repo_cache, reproducibility, principles_classifier, metrics, worktree, parallel_arms (via worktree), arm_sweep (via parallel_arms).
+- Deleted test files -> module: test_campaign, test_max_iterations_persist, test_handoff, test_iteration_finalize, test_pre_authored_bundle, test_design_artifact_assertion, test_execute_artifact_assertion, test_integration, test_integration_llm, test_integration_real_execution, test_live_target -> iteration/campaign; test_inline_dispatch, test_cli_dispatch, test_llm_dispatch, test_sdk_dispatch, test_dispatch -> same-named; test_channels, test_claude_md, test_gates, test_iteration_mode, test_ledger, test_prompt_loader, test_repo_cache, test_metrics, test_worktree, test_worktree_gc, test_parallel_arms, test_arm_sweep -> same-named.
+- Deleted test functions/classes in surviving files (they exercised deleted modules): nous_stop (sentinel helpers, loop/phase/run_iteration halts), nous_schema_command (LLM-free tripwire), campaign_ground_truth (llm_dispatch context), experiment_spec (amendment summaries, report context, SDK watchdog, end-to-end), sdk_sandbox (SDKDispatcher), sdk_silence_detector (summarize/dispatcher), max_turns_resolution (SDK integration), status (SDK event tee), execute_stop_hook (2 StubDispatcher pass/block cases), settings_template (setup_work_dir), work_dir_resolver (setup_work_dir classes), atomic_state_writes (reproducibility), friction_245 (f17/f18/f11), principles_classifier (classifier classes), create_campaign (llm_dispatch source check). Schema-only tests kept.
+- cli.py `nous stop`: inlined the "STOP" sentinel name (was imported from iteration). conftest: dropped optuna guard (arm_sweep gone); kept env, urllib, sdk query, ClaudeSDKClient.connect, pymc guards.
+- pytest 1816 -> 1232 passed. orchestrator/*.py 15526 -> 7271 lines.
+Follow-ups (R11c/d, R12): stale docstrings mention deleted modules (create_campaign, status, goal_driven, cache_stats, explore_design, tests/CLAUDE.md, CLAUDE.md test-seam table, plugin skill); bin/nous-execute-stop and settings_template still present.
+Review decisions (code-reviewer): runtime refs, conftest guards, cli.py stop all OK. Flagged: execute_stop_hook pass/block tests deleted though bin/nous-execute-stop survives. Decision: accept for one item; bin/nous-execute-stop is deleted in R11c (next), and its remaining test file goes with it. Not rewriting fixtures for a hook about to be removed.
+
+## R11c: delete shell hooks, settings wiring, gate summaries
+
+Deleted bin/nous-execute-stop, bin/nous-plan-enforcer, orchestrator/settings_template.py (the only .claude/settings.json hook writer), orchestrator/schemas/gate_summary.schema.json, prompts/methodology/summarize_gate.md, and the v1 thin templates design_thin.md / execute_analyze_thin.md (unused by code; the latter pointed at the deleted Stop hook). Deleted tests with their modules: test_settings_template, test_plan_enforcer_hook, test_execute_stop_hook (also closes the R11b note). validate.py: dropped gate_summary_* from known files and compute_campaign_spec_diff (only fed the gate summary) with its 2 test_f4_* tests in test_friction_245.py. status.py: dropped the gate-summary spec-diff panel. bin/nous-mcp kept (MCP server over campaign_index, not a hook). No v2 gate-summary LLM calls existed to remove.
+Tests before: 1232 passed. After: 1207 passed. grep: no bin/nous-execute-stop or bin/nous-plan-enforcer references outside docs/ (docs are R12).
+Review decisions (code-reviewer): no runtime refs remain; packaging globs fine; no settings.json writer. Fixed: dead compute_campaign_spec_diff removed. Deferred to R12: README/CLAUDE.md/docs mention of gate_summary_design.json, *_thin.md and the shell hooks.
+
+## R11d: delete critic, complexity_tier and v1 YAML readers
+
+Deleted (with tests; none reachable from cli.py, bin/nous-mcp, plugin/, scripts/, k8s/, s390x/): critic, complexity_tier, explore_design, goal_driven (v1 YAML readers); findings_classifier (only validate_design); refute_constraints, promote_gate, pre_work, warm_start, principles_posterior, power (v1 loop steps); cache_stats, status, routines (dead). validate.py 731 -> 57 lines (only validate_meta_findings). Deleted test files test_validate, test_independence_check, test_experiment_spec, test_principles_classifier, test_tradeoff, test_dose_response (v1 validators/schemas). Trimmed v1-only tests in test_friction_245, test_schemas, test_templates, test_engine_search_continuation, test_empirical_content, test_theory_references; conftest pymc guard dropped. Deleted templates bundle.yaml/findings.json/problem.md, v1 schemas bundle/experiment_plan/repo_cache/execute_analyze/pre_work/brief_amendments, all prompts/methodology/. Docs: bundle.yaml->bundle.json, experiment_plan.yaml->plan.json literal swaps.
+grep "bundle\.yaml|experiment_plan\.yaml" over orchestrator bin plugin prompts tests examples: empty.
+Tests before: 1207 passed. After: 842 passed. orchestrator/*.py 6979 -> 3654 lines.
+Review decisions (code-reviewer): runtime reachability clean; conftest guards intact. Deferred to R12 (full docs rewrite): literal swaps left v1 shapes/flags in README.md (--bundle), docs/architecture.md (validate execution), docs/data-model.md (v1 field tables, deleted schema paths), protocol/quickstart listings (problem.md vs problem.json); methodology_layer still scaffolded by create_campaign; root CLAUDE.md names deleted explore_design/complexity_tier.
+
+## R11d branch review (review-pr code + silent-failure, code-review, simplify over orchestrator/v2/)
+
+Simplify (commit before fixes): shared read_json (validators) and update_state (resume, atomic) replace 8 + 3 copies; one evidence mismatch check; locked_parameters/locked_workload one loop; loop _report/_save_ledger/partial; dead preflight dict-matcher path and blank-line runs removed. 2537 -> 2397 lines, 842 passed.
+Skipped simplifications: deleting effort.py / errors.py / poll_wait_for / CostMeter.phase_summary (owned by R1/R5/R6 acceptance; R12b lean pass decides).
+
+Branch-review bugs fixed (test-first, 19 new tests):
+- unknown top-level keys returned as errors (broke B5) -> logged only.
+- evidence lookups raised on bad regex / non-int pointer into list / binary file -> error strings.
+- _merge_principles IndexError on revise after remove (reproduced) -> match by id.
+- best_changed TypeError on non-numeric value -> False.
+- experiment_commands default [] disabled DEFAULT_EXPERIMENT_COMMANDS; task_limits counted every Bash row -> default None, count experiment rows only.
+- relative wait_for paths resolved against process cwd -> target repo (HookState.cwd).
+- FailureBreaker never reset -> reset on ok iteration (3 consecutive identical).
+- resume at EXECUTE relocked bundle, erasing prereg violation -> reuse .bundle.locked.json.
+- --note dropped when resuming at REPORT; no fallback when resume session fails -> note in REPORT message; one fresh-session retry from digest.
+- cost meter ignored cache tokens and double-counted ResultMessage.usage -> cache read 0.1x / write 1.25x input, skip model-less messages (test_result_message_not_double_counted expectation corrected).
+- REPORT secret check only 3 fields -> whole answer.json + report.md.
+- pending_wait_for cleared before polling Stop-gated intermediate turns -> cleared after poll.
+Recorded, not fixed (later candidates, beyond MVP or need design): bundle_hypotheses/claims_needed never set in ValidatorContext so paired-seed/finding_ref/claims coverage checks skip; no baseline semantic check; phase commit does `git add -A` on the user's branch without a campaign worktree (D5) and unchecked return codes; transient-error retry (B9 is_transient) not wired into Session.turn; stop rule ignores min_seeds/needs_ci/conditions and partial status; background repro (exit_code None). Note duplicated when fallback lands at REPORT (harmless).
+Tests: 842 -> 861 passed. v2 runtime 2429 lines.
+
+## R11e: spec gaps from the R11d branch review
+
+(a) Session.connect/turn retry transient errors (errors.is_transient; ResultMessage.is_error with 5xx/overloaded) 3x with injectable backoff, reconnecting with resume=session_id (3.5/B9). (b) validators.iter_context loads bundle hypotheses + problem claims_needed so paired-seed, finding_ref and claims_needed coverage run in the Stop hook and repair path (3.4/B6). (c) check_stop 'answered' needs status ok and checks declared min_seeds / needs_ci / conditions only (3.6); findings.schema.json claims gain optional seeds[] and ci. (d) _commit_phase excludes the work dir when it is inside the target repo, checks git return codes and logs failures; no empty commits.
+Tests before: 861 passed. After: 886 passed (25 new).
+Review decisions (silent-failure-hunter):
+- Fixed: check_stop crashed on malformed seeds when status partial (claims checked before status guard); guard now short-circuits; test added.
+- Fixed: method prompt never told the agent to write seeds/ci on claims, so declared min_seeds could never be met; one line added (method.md 3,542 bytes <= 6,144).
+- Skipped: retry of the very first turn before any session_id loses in-flight context; files on disk survive, low impact, MVP.
+Runtime line count: 2493 (target ~2500).
+
+## R12: docs for v2
+
+Rewrote README.md (450->144), docs/architecture.md (456->107), docs/data-model.md (250->74), protocol (211->45), quickstart (189->69), security (44->23), campaign-authoring-guide (144->42), CLAUDE.md (176->117, v2 test seams), tests/CLAUDE.md; workflow.md seam list. Deleted docs/friction-245-resolution.md (v1 file map) and its links. CLI help describes v2 phases; dropped `stop --immediate` (v2 never read STOP_IMMEDIATE); deprecated commands labelled in help.
+grep "bundle\.yaml|--agent inline" README.md docs (excl. plans): empty.
+Review decisions (comment-analyzer fact-check vs code):
+- Fixed (code, test-first): "session cannot end a phase until artifacts validate" was false. Spec 3.5 repair ran only after EXECUTE; BASELINE and DESIGN invalid artifacts slipped through after 6 Stop blocks. Added _repair after BASELINE and DESIGN (partial DESIGN makes the iteration partial). New test test_design_repaired_before_execute. This exposed invalid shared test fixtures (bundles without control, non-hex git_sha, debug baselines missing observation fields); fixtures fixed, no assertions weakened; one lock test gets the repair turn it now needs.
+- Fixed (docs): README Stop-hook wording, report/replay removed vs deprecated, run_id lookup location, state/digest.json written by Nous; CLAUDE.md/tests/CLAUDE.md FakeClient fires only PostToolUse; architecture evidence wording.
+Noted for R12b: human_gates and rerun_repro parsed but unused; EffortManager (effort ladder, 3.10/B12) not wired into the loop; task_limits.max_wall_seconds sums a field hooks never write; `nous schema campaign` prints the v1 schema; plugin/nous/skills mention --agent and v1 phases; examples/campaign.yaml has v1 `prompts:` key.
+Tests: 886 -> 887 passed. v2 runtime 2498 lines; orchestrator/*.py 3606.
+
+## R12b: lean pass
+
+Audit in docs/plans/nous-v2/LEAN_AUDIT.md (every v2 module/function and campaign.yaml key -> SPEC section; non-v2 keep/delete table; Removals; Gaps).
+v2 runtime: errors.py merged into session.py (is_transient + APIServerError; SDK ProcessError used directly); robustness.poll_wait_for, CostMeter phase tracking, task_limits.max_wall_seconds branch (field never written), final_check per-iter runs.jsonl scan and duplicate evidence loop removed; Stop hook reuses validate_phase_artifacts; CLI reuses hooks.PHASE_ARTIFACTS.
+Non-v2: deleted meta_findings, deployment_recommendation, composite_score, create_campaign, lineage, campaign_index, engine, validate, util, bin/nous-mcp, 4 plugin skills, orchestrator/schemas/*, orchestrator/templates/* and their tests. cli.py keeps run/resume/status/cost/validate/schema/stop; report/replay/reports/create-campaign/lineage/clean/package removed; `nous schema campaign` dropped. pyproject: openai, scipy, optuna, pymc dropped (uv.lock not regenerated: needs network).
+Gaps kept (spec sections, not wired): EffortManager (3.10/B12), human_gates, rerun_repro, per-phase cost/cost_sdk_usd in ledger.
+Lines: orchestrator/v2 runtime 2498 -> 2362; orchestrator/*.py outside v2 3606 -> 714 (cli 980 -> 523, work_dir_resolver 193 -> 191); all orchestrator/ 6104 -> 3076.
+Tests: 887 -> 590 passed (297 removed with deleted v1 modules/schemas; no v2 assertion weakened beyond the removed helpers).
+R12b review decisions (code-reviewer): kept v2 behaviour verified (runs.jsonl location, Stop-hook paths/blocking, is_transient incl. exit 143); no refs to deleted modules; guards intact; CLI matches SPEC 4; LEAN_AUDIT accurate. Fixed: "file not found at <name>" message restored in validate_phase_artifacts; suggest-next.md campaign rules updated for v2 keys; unused v1 state-schema loader removed from test_work_dir_resolver. pytest 590 passed.
+
+## B12 effort ladder wired into the loop (reviewer decision before R13)
+
+Session.turn sets `cut` when the turn ends at the output cap: ResultMessage.stop_reason or the last main-agent AssistantMessage (parent_tool_use_id None) is max_tokens; subagent cut-offs do not count. Campaign._turn on a cut: EffortManager.on_cut (low only after 2 consecutive), persist cut_offs, Session.reconnect(resume=session_id, new effort), send CUT_RESUME_MSG; bounded to one retry per ladder step. _set_phase resets the ladder; the next turn reconnects back to the configured effort (or model default when unset). Resume keeps the campaign-wide cut_offs from state.json.
+Tests (test-first, tests/v2/test_effort.py): one reconnect at lower effort; reset at next phase; two cuts reach low; always-cut bounded; subagent cut ignored; ResultMessage max_tokens counts; unset effort returns to model default; cut_offs continue from state.
+Review (silent-failure-hunter) fixed: subagent max_tokens false cut; cut_offs reset on resume; AssistantMessage stop_reason may be null (also check ResultMessage); unset effort pinned to "high" after a cut. Skipped: invalid configured effort string (e.g. "High") causes one extra reconnect; harmless, later candidate for config validation.
+Tests: 590 -> 598 passed. v2 runtime 2362 -> 2408 lines.
+
+## R13 round 1 fix: stop-rule bookkeeping crashed on non-scalar claim values (general Nous bug)
+
+Evidence: search rep1 crashed after a valid EXECUTE with `TypeError: unhashable type: 'list'` at stop_rule._collect_claims; every claim value in runs/iter-1/findings.json was a list (a Pareto front, legitimate optimize output) and validators had passed. That is a lost run (bar rule 4, zero lost rounds).
+Fix: stop_rule hashes every agent-written claim field via json.dumps (_key) in _collect_claims, _claims_needed_met (ids, seeds, conditions); final_check ignores non-string claim ids instead of hashing them. Other set/dict-key sites checked: validators sets (family, claim_ids, workload_changes, finding_ref ids) run only after schema validation which types them as strings; best_changed already returns False on non-numbers; _merge_principles compares with ==. Tests: TestNonScalarClaimValues (list/dict values, list condition, nested seeds). Verified claims_changed on the real rep1 findings file. 598 -> 600 passed. Not task-specific.
+
+## R13 round 1 fixes before counting (general Nous bugs, reviewer-verified)
+
+1. Cost meter (bar rule 2). Evidence: dbg rep1 ledger said $28.88+$0.95 and output 2,427 tokens; its transcripts hold 48,510 output tokens and price to $11.21 at the CLI's $5/$25 opus-4-6 table (origin/mlsys-exp cost_meter.py, which reproduces CLI total_cost_usd). Causes: defaults.yaml had $15/$75; CostMeter kept the FIRST message per id, but a streamed reply repeats its id with growing usage (68 of 179 ids repeated in that transcript). Fix: CLI prices (opus 5/25, haiku 1/5); meter keeps the largest usage per id (as the ported meter did). Tests: streamed chunks keep largest usage; dbg rep1 totals give $11.21. Replaying the real dbg rep1 transcripts through CostMeter now gives $11.205 / 48,510 output tokens.
+2. Answer evidence location (bar rule 3, C1/R2). Evidence: dbg rep1 claims cite runs/iter-1/*.json, which exist only under the work dir; graders read answer.json from the repo, so C1=R2=0 though the evidence is real. Fix: after the REPORT turn, Nous copies each claim's evidence file to <repo>/nous_evidence/<path> (and the same path under the work dir so the final check still resolves it, mtimes kept) and rewrites answer.json's paths. Test: TestAnswerEvidenceInRepo. General (any task's deliverable), not task-specific.
+Tests: 600 -> 603 passed. Round 1 restarted on all 3 tasks.
+
+## R13 round 1 fix: wait_for misuse stalled a run for hours (general Nous bug)
+
+Evidence: dbg rep1 plan.json had `"wait_for": "R1"`..`"R4"` (the agent's own run ids). The runs had finished and findings/principle_updates were written, yet poll_and_resume treated "R1" as a file and polled 240 x 60 s with no model calls. Schema accepted any string; no prompt explained wait_for. Fix: (1) plan validator rejects a wait_for that is neither cmd:<command> nor a path (contains "/" or "."), with a repair message; (2) no polling when EXECUTE's findings + principle_updates already validate; (3) one line in method.md and the EXECUTE message explains wait_for (method.md 3,7xx bytes <= 6,144). Tests: TestWaitForMisuse (bare word rejected; completed findings never poll). 603 -> 605 passed. dbg rep1 killed and re-run.
+
+## R13 round 1 fix: answer.json evidence shape follows the output contract (format, all tasks)
+
+Evidence: pd rep1 and search rep1 had C1 = R2 = 0 although all 16 exported evidence files existed under the repo. The output contract (mlsys tasks/contract.md:12, SPEC 3.4 answer row) defines claims[].evidence as a path string; v2 wrote {path, key, value}, which a contract reader cannot use. Fix: answer schema accepts evidence as a path string (or the structured item) plus optional evidence_detail; at REPORT export Nous writes `evidence` = repo-relative nous_evidence/... path and keeps {path, key, value} as `evidence_detail`; the answer validator / final check verify evidence_detail when present, else that the string path exists. Tests: TestAnswerEvidenceInRepo updated, test_answer_string_evidence_must_exist. Checked on the real pd rep1 answer: converted form validates with no errors. 605 -> 606 passed. Format-only, not tuning.
+
+## R13 round 1 fix: REPORT crashed on mixed evidence forms (general Nous bug)
+
+Evidence: re-run dbg rep1 (on cb91648) crashed at REPORT with `AttributeError: 'str' object has no attribute 'get'`; its answer.json mixed a {path,key,value} claim already pointing at nous_evidence/ with bare path strings ("R1_treatment.json"). check_evidence_item assumed a dict; export skipped pre-prefixed paths. Fix: check_evidence_item returns an error for non-object items instead of raising; export handles string or object evidence and paths already under nous_evidence/ (copies to the repo if missing, writes the contract string form). Tests: non-object evidence item; mixed/pre-prefixed export. Replayed on the real dbg rep1 work dir: all 3 claims export to existing repo paths, final check has no evidence errors. 606 -> 608 passed.
+
+## R13 round 1 results (code d56a81d; eval.sh bar numbers only)
+
+| task rep | stop | iters | cost $ | accuracy | C1 | R2 | lost |
+|---|---|---|---|---|---|---|---|
+| dbg 1 | answered | 1 | 7.75 | O1 true (D1-D5 all true) | 0.333 | 0.333 | 0 |
+| dbg 2 | answered | 1 | 6.43 | O1 true (D1-D5 all true) | 0.333 | 0.333 | 0 |
+| pd 1 | max_iterations | 5 | 10.47 | O1 false (K1,K2 true; K3,K4 false) | 0.333 | 0.333 | 0 |
+| pd 2 | max_iterations | 5 | 13.33 | O1 false (K1 true) | 0.0 | 0.0 | 0 |
+| search 1 | answered | 2 | 6.60 | O1 false, B1 false, B2 true, limits ok, T=1 | 1.0 | 0.0 | 0 |
+| search 2 | answered | 3 | 5.87 | O1 false, B1 true, B2 true, limits ok, T=2 | 0.0 | 0.0 | 0 |
+Bar: debugging 2/2 passes; formula 0/2 fails (< 2/3); search below baseline; trail C1/R2 low. Hooks ran (no lost rounds, no crashes on this code).
+Transcript evidence for round-2 general fixes (no task content used):
+- REPORT had no repair pass: pd rep2 answer.json used `evidence_ref` (schema-invalid, final_check answer_valid false) and shipped. Spec 3.5 repair applies to every phase.
+- Claims whose value is not literally in the evidence file (dbg 'all pass', True; search prose values) fail "evidence must contain the value"; no validator compared claim value with the evidence value.
+- repro commands began with `cd ws && ...` / env setup although the contract runs repro from the repository root.
+- method.md field lists contradicted the schemas (baseline metrics_path/noise missing; findings error_type values; finding_ref/question_answered placement), so runs rewrote baseline.json 15-25 times and answer.json up to 12 times (pre-fix transcripts pd/search).
+- Agents wrote artifacts into the repo instead of the work dir (relative names in phase messages) and copied them by hand.
+- Optimize runs scored themselves with a self-made metric; verify runs left sub-questions of the task unanswered and ran outside stated ranges.
+
+## R13 round 2 fixes (general; each tied to round-1 evidence above)
+
+- REPORT repair pass (spec 3.5) -> bar rule 3/4: pd rep2 shipped an invalid answer.json (evidence_ref). Now _repair(["answer"]) before export.
+- Claim value must match its evidence (object: equal / isclose; path string: value text in file) -> C1: claims like 'all pass' / prose values failed "evidence must contain the value".
+- repro must not start with `cd` (runs from repository root) -> R2: repro commands began with `cd ws && ...`.
+- Phase messages name absolute artifact paths; REPORT message states the output contract briefly -> transcripts showed artifacts written to the repo and hand-copied; answers skipped sub-questions.
+- method.md field lists match the schemas exactly (baseline observation per task_type, noise shapes, error_type enum, findings/principle_updates fields); rule: claims_needed covers every question the research question asks and stays inside its fixed setup/ranges -> 15-25 baseline rewrites and 12 answer rewrites per run in round-1 transcripts; verify runs left sub-questions unanswered and ran out of range (accuracy rule 1).
+- Checklists: optimize scores with the task's own stated criterion, checked independently; verify answers each question explicitly within fixed ranges -> search runs scored themselves with a self-made count (accuracy rule 1).
+No task content in any change (grep for task terms empty). Tests 608 -> 617. v2 runtime 2488 lines; method.md 4,916 bytes.
+
+## R13 round 2 results (code 95d6c3b)
+
+| task rep | stop | iters | cost $ | accuracy | C1 | R2 | lost |
+|---|---|---|---|---|---|---|---|
+| dbg 1 | answered | 3 | 9.80 | O1 true (D1-D5 true) | 0.5 | 0.5 | 0 |
+| dbg 2 | answered | 1 | 6.06 | O1 true (D1-D5 true) | 1.0 | 1.0 | 0 |
+| pd 1 | max_iterations | 5 | 8.60 | O1 false (K1-K4 false) | 0.938 | 0.938 | 0 |
+| pd 2 | max_iterations | 5 | 9.35 | O1 true (K1-K3 true, K4 false) | 1.0 | 1.0 | 0 |
+| search 1 | answered | 6 | 7.93 | O1 false, B1/B2 false, limits ok, T=1 | 1.0 | 1.0 | 0 |
+| search 2 | max_iterations | 10 | 11.57 | O1 false, B1/B2 false, limits ok, T=2 | 1.0 | 0.0 | 0 |
+vs round 1: trail C1/R2 up from 0-0.33 to 0.5-1.0 on 5 of 6 runs; formula 0/2 -> 1/2 (borderline vs baseline 2/3: spec allows up to 2 extra runs); debugging stays 2/2; search still fails. Costs $6-12 per run, within the baseline's $3-16 range (eval.sh does not print the baseline mean, so the 1.25x ratio is for the human).
+
+## R13 round 3 fixes (general; each tied to round-2 transcript evidence)
+
+- Evidence paths resolve against iter dir, then work dir, then target repo (repo_dir via validator_limits); absolute paths inside a root accepted; pointer without leading "/" normalized; non-JSON `.json` gets a direct message; path errors name the roots -> dbg rep2 spent $2.76 of $6.89 in Stop-hook evidence repairs ("Expecting value", "path does not exist", "escapes base directory"); 8-14 Stop-hook failures per run (rules 3/4, cost rule 2).
+- Numeric strings equal numbers within tolerance (JSON values, regex captures, claim vs evidence) -> "105082" vs 105082 "value mismatch" (rule 2/3).
+- Stop-hook and repair messages add a one-line evidence key-format reminder, only on evidence errors -> repeated pointer/regex-format failures (rule 2).
+- claims_needed append-only: problem.json for iter N>1 may not drop earlier ids; stop rule 'answered' and final_check claims_matched_fraction use the union of claims_needed and all iterations' findings; bundle coverage skips claims already answered -> search rep1 cut 7 claims to 3 by iter 6, then stopped as answered (rules 1/3).
+- REPORT: if the repro in answer.json has no successful run in runs.jsonl, one repair message to run it as written, then re-validate (no loop) -> repro_recorded false in 4/6 runs (R2, rule 3).
+- Evidence export: absolute paths in work dir/repo map to nous_evidence/<relative path>; repo files cited in place -> `nous_evidence//Users/...` paths (C1).
+- Optimize checklist: test a variable in two contrasting settings before dropping it; score the deliverable under every condition the task names -> optimize runs dropped variables after one operating point (rule 1).
+No task content in any change. Tests 617 -> 632. v2 runtime 2582 lines; method.md 5,204 bytes.
+
+## R13 extra pd runs (borderline rule, code 95d6c3b)
+
+pd rep3: answered, 1 iter, $3.97 (0.38x L2), O1 false (K2,K3 true), C1/R2 1.0. pd rep4: max_iterations, 5 iters, $7.14 (0.68x L2), O1 false (K1,K2 true), C1/R2 1.0. With round 2: formula 1/4 on round-2 code vs L2 2/3 -> fails accuracy rule 1. Round 3 runs pd 2x on 816d677.
+
+## R13 round 3 follow-up fix (format; found in round-3 dbg rep2)
+
+Evidence: dbg rep2 (816d677) had C1 = R2 = 0 while final_check was fully valid: every claim value was a numeric string ("114630") present in its evidence file; the output contract defines value as a number. Fix: REPORT export turns a numeric-string claim value into a number (finite only). Test: test_export_coerces_numeric_string_claim_values. 632 -> 633 passed. Applies after search rep1 finishes; it does not change any round-3 run already scored.
+
+## R13 round 3 results (code 816d677) and close-out
+
+dbg 1/2: correct, $4.84/$3.97 (1.42x/1.17x L2), C1/R2 1.0 / 0.0 (numeric-string values; fixed in 33df08e). pd 1/2: wrong/correct, $10.30/$8.58 (0.99x/0.82x), C1/R2 1.0. search 1/2: search-works no, facts 2/3, $13.39/$13.48 (4.1x), C1/R2 1.0. 0 lost rounds, 0 crashes, 0 prereg violations.
+Bar fails after round 3 (formula accuracy, search accuracy and cost, dbg cost borderline). Per SPEC 10 wrote docs/plans/nous-v2/EVAL_REPORT.md; R13 marked done (acceptance: "bar passes, or EVAL_REPORT.md written after round 3"). Next: R14 docs pass.
+
+## R14: docs final pass
+
+method.md checked field-by-field against the schemas (deliverable string, noise_condition, nous_evidence/evidence_detail note; 5,390 bytes). data-model.md: per-task_type observation keys, answer evidence forms, full ledger row, state.json cut_offs. architecture.md: effort ladder, repair after every phase, REPORT sequence (repro repair, evidence export, numeric values), Stop-hook counter, evidence roots + key formats, append-only claims_needed, wait_for, cost meter, --note scope. README: --note scope, run_id for yaml targets, links to quickstart/security, nous_evidence/ in layout. examples/campaign.yaml v2 keys (parses with no warnings). ledger_entry.schema.json now exactly the loop's row (FakeClient rows validate); defaults.yaml trimmed to prices. Deleted v1 wiki commands/scripts/docs (they read v1-only ledger fields) and docs/superpowers/. Added docs/example-campaign/ (SYNTHETIC toy cache/p99 campaign, every artifact + evidence files; nothing from benchmark runs). tests/v2/test_docs_examples.py: example JSONs validate, answer follows contract, yamls parse warning-free, method.md names match schema both ways, v1-term grep empty.
+Left as follow-up: s390x/campaign.yaml + README still use v1 keys (max_turns, execute_analyze; they warn and are ignored).
+Tests: 633 -> 653 passed.
+
+## Pre-merge fixes P1-P6 (full-branch review)
+
+Tests in tests/v2/test_premerge_fixes.py; all 15 fail on 302340d (checked in a detached worktree; the P6 tests with the old fake) and pass now.
+- P1 missing baseline: loop.py dropped the BASELINE repair result, DESIGN raised "baseline.json missing" and resume skipped BASELINE forever. Now a "partial" BASELINE writes state.json baseline_status/stop_reason "no_baseline" and goes straight to REPORT; resume re-runs BASELINE when baseline.json is missing. Tests: test_missing_baseline_goes_to_report (test_loop.py, replaces test_design_rejects_missing_baseline), test_p1_resume_reruns_missing_baseline.
+- P2 error results: session.py returned any non-5xx is_error result as a normal turn. Now every is_error raises: api_error_status 429/5xx (or 5xx/overloaded/429/rate-limit text) is APIServerError and retried; "prompt is too long"/context-full is ContextOverflowError, and Campaign._turn falls back once to a fresh session primed with build_fallback_message (state/digest.json), then re-sends the phase message; anything else is SessionResultError (a phase failure for the breaker). Tests: test_p2_api_error_status_429_is_retried, test_p2_api_error_status_5xx_without_text_is_retried, test_p2_auth_error_raises_not_retried, test_p2_context_full_falls_back_to_fresh_session_from_digest; test_result_is_error_non_api_not_retried now expects the raise.
+- P3 resume at iteration 1 compared iteration 1 with itself (claims_changed false). Now no previous findings when up_to_iteration <= 1. Test: test_p3_resume_at_iteration_1_has_no_previous_findings.
+- P4 phase commits ran git add -A on the user's checkout. Now run/resume create or reuse a git worktree at <repo>/.nous-experiments/<run_id>/ on branch nous/<run_id> from HEAD; session cwd, HookState.cwd (wait_for), validator repo_dir, evidence export and commits all use it. A failed git worktree add is a "Preflight failed" ValueError. Non-git repo_path: one warning at start, agent works in it, no commits. Tests: test_p4_commits_go_to_campaign_worktree_not_user_branch (user branch, dirty file and untracked secret untouched), test_p4_resume_reuses_the_worktree, test_p4_failed_git_step_is_preflight_error, test_p4_non_git_repo_warns_and_makes_no_commits; TestCommitPhase now reads branch nous/test-run.
+- P5 breaker reset on every start. FailureBreaker takes recent=; Campaign persists state.json breaker_recent on every record/reset and reloads it on resume. BASELINE, DESIGN and EXECUTE turn failures all go through _phase_failed (the DESIGN branch is now reachable since error results raise); a trip writes halt.json and still reaches REPORT. Tests: test_p5_breaker_trips_across_resumes, test_p5_design_failure_counts_for_the_breaker, test_p5_repeated_baseline_crash_trips_and_reports.
+- P6 fake fired only PostToolUse. FakeClient now fires PostToolUseFailure for tool_use blocks with is_error, PreCompact for a FakePreCompact script item, and Stop before each result (stop_hook_active true on a re-fire); "block" drops that result and runs the next scripted turn with the next per_turn_files. FakeResultMessage gains api_error_status/errors. Tests: test_p6_fake_fires_failure_precompact_and_stop_hooks, test_p6_stop_gate_blocks_invalid_design_then_allows (loop: Stop gate blocks a one-family bundle, agent fixes it, gate allows, no repair turn). test_cli_v2 locked-parameters test now reads the fake's stop_decisions.
+Tests: 653 -> 668 passed. v2 runtime 2708 lines.
+
+## Pre-merge follow-up: P4 clean user checkout (reviewer note on 8ab3819)
+
+Evidence: after git worktree add under <repo>/.nous-experiments/, the user's git status showed "?? .nous-experiments/". Fix: _prepare_code_dir appends ".nous-experiments/" once to <git-common-dir>/info/exclude (per-clone, never the committed .gitignore; works when repo_path is itself a worktree); a failing rev-parse is a preflight error. Test: test_p4_user_checkout_stays_clean (git status --porcelain empty after run(); one exclude line after a resume), fails without the fix. Tests 668 -> 669. v2 runtime 2725 lines.

@@ -7,23 +7,16 @@ license = {text = "Apache-2.0"}
 dependencies = [
     "jsonschema>=4.20.0",
     "pyyaml>=6.0",
-    "openai>=1.0.0",
-    "scipy>=1.11",
-    # #183: SDK is the recommended (and only user-facing) execution path
-    # post-#120. Make it a required dependency so `pip install nous` lands
-    # users on the SDK by default rather than the deprecated claude -p path.
-    "claude-agent-sdk>=0.0.20",
+    # Nous v2 drives one Claude Code session through the Agent SDK (pinned).
+    "claude-agent-sdk==0.2.172",
     "anyio>=4.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+    "pytest-asyncio>=0.23",
     "pytest-cov>=4.0",
-    # Install optional heavy dependencies in CI so their no-live-execution
-    # guard tests run instead of skipping.
-    "optuna>=3.0",
-    "pymc>=5.0",
 ]
 
 [project.scripts]
@@ -33,11 +26,12 @@ nous = "orchestrator.cli:main"
 include = ["orchestrator*", "prompts*"]
 
 [tool.setuptools.package-data]
-orchestrator = ["schemas/*.yaml", "schemas/*.json", "templates/*.json", "templates/*.yaml", "templates/*.md", "defaults.yaml"]
+orchestrator = ["v2/schemas/*.json", "defaults.yaml"]
 prompts = ["**/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["setuptools>=68.0"]

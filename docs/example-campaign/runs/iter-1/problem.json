@@ -1,0 +1,18 @@
+{
+  "task_type": "optimize",
+  "claims_needed": [
+    {
+      "id": "C1",
+      "description": "p99 latency at cache size 256, with the workload locked",
+      "test_method": "3 paired seeds, cache 256 vs cache 64",
+      "min_seeds": 3,
+      "conditions": ["cache_size=256"]
+    },
+    {
+      "id": "C2",
+      "description": "hit rate at cache size 256",
+      "test_method": "hit_rate field of the same runs",
+      "conditions": ["cache_size=256"]
+    }
+  ]
+}

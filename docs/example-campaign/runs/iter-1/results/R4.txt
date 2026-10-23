@@ -1,0 +1,3 @@
+toy_cache: cache_size=64 seeds=1,2,3 requests=10000
+lookup_us=0.8
+p99_ms=62.2

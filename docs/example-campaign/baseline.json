@@ -1,0 +1,9 @@
+{
+  "task_type": "optimize",
+  "task_type_reason": "The question asks which cache size gives a lower p99.",
+  "command": "python toy_cache.py --cache-size 64 --seeds 1,2,3 --json",
+  "git_sha": "3f2a9c1",
+  "observation": {"score": 62.2},
+  "metrics_path": "baseline_metrics.json",
+  "noise": {"seeds": [1, 2, 3], "values": [62.1, 63.0, 61.5], "sd": 0.75}
+}

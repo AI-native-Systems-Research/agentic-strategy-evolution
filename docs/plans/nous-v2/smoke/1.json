@@ -1,0 +1,36 @@
+{
+  "n": 1,
+  "run_dir": "/Users/merttoslali/nous_v2_smoke/runs/smoke-1-20261022-152037",
+  "minutes": 19.8,
+  "error": null,
+  "summary": {
+    "stop_reason": "answered",
+    "iterations": 1
+  },
+  "hook_records": 110,
+  "experiment_rows": 19,
+  "iterations": 1,
+  "lost_rounds": 0,
+  "answer_valid": true,
+  "repro_recorded": false,
+  "files": [
+    "answer.json",
+    "baseline.json",
+    "baseline_large_kv.json",
+    "baseline_small_kv.json",
+    "ledger.json",
+    "principles.json",
+    "runs/iter-1/.bundle.locked.json",
+    "runs/iter-1/baseline_large_kv.json",
+    "runs/iter-1/baseline_small_kv.json",
+    "runs/iter-1/bundle.json",
+    "runs/iter-1/findings.json",
+    "runs/iter-1/plan.json",
+    "runs/iter-1/principle_updates.json",
+    "runs/iter-1/problem.json",
+    "runs/iter-1/r2_h2_preempt.json",
+    "state.json"
+  ],
+  "exit_code": 0,
+  "reviewer_verdict": "PASS on mechanics. All phases ran live in one session; 110 hook records; 0 lost rounds; bundle locked, no prereg violation; extra-field handling worked on real output; stop rule fired 'answered' after 1 iteration; answer.json valid with 4 claims; real root cause found. repro_recorded=false only because R9 (which writes it) is not built yet; the repro command is present in runs.jsonl. Findings to fix: (1) target_system key must be repo_path (loop.py:171,474); (2) evidence files also written to work_dir root (baseline_*.json) \u2014 tidy, low priority."
+}

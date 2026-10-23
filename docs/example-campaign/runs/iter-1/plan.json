@@ -1,0 +1,16 @@
+{
+  "runs": [
+    {"id": "R1", "hypothesis_id": "H1", "role": "treatment",
+     "command": "python toy_cache.py --cache-size 256 --seeds 1,2,3 --json",
+     "parameters": {"cache_size": 256, "requests": 10000, "concurrency": 8}, "seeds": [1, 2, 3]},
+    {"id": "R2", "hypothesis_id": "H1", "role": "control",
+     "command": "python toy_cache.py --cache-size 64 --seeds 1,2,3 --jsonl",
+     "parameters": {"cache_size": 64, "requests": 10000, "concurrency": 8}, "seeds": [1, 2, 3]},
+    {"id": "R3", "hypothesis_id": "H2", "role": "treatment",
+     "command": "python toy_cache.py --cache-size 256 --seeds 1,2,3 --trace-lookups --csv",
+     "parameters": {"cache_size": 256, "requests": 10000, "concurrency": 8}, "seeds": [1, 2, 3]},
+    {"id": "R4", "hypothesis_id": "H2", "role": "control",
+     "command": "python toy_cache.py --cache-size 64 --seeds 1,2,3 --trace-lookups",
+     "parameters": {"cache_size": 64, "requests": 10000, "concurrency": 8}, "seeds": [1, 2, 3]}
+  ]
+}

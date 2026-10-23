@@ -8,9 +8,6 @@
   "skills": [
     "skills/nous-run.md",
     "skills/nous-status.md",
-    "skills/nous-resume.md",
-    "skills/nous-list.md",
-    "skills/nous-bisect.md",
-    "skills/nous-find-principle.md"
+    "skills/nous-resume.md"
   ]
 }

@@ -1,0 +1,366 @@
+{
+  "spec": "docs/plans/nous-v2/SPEC.md (GitHub issue #330)",
+  "branch": "nous-v2-wip",
+  "items": [
+    {
+      "id": "R1",
+      "title": "Session core: pin claude-agent-sdk exactly to the installed 0.2.172 (`==` in pyproject.toml, `uv lock` + `uv sync`) (first commit, suite green), orchestrator/v2/session.py with client_factory, ClaudeAgentOptions per 3.1, session_id persistence in state.json, transient error classes incl. ProcessError exit 143 (B9), max_buffer_size 32MB (B7), CLAUDE_CODE_MAX_OUTPUT_TOKENS env, tests/fakes/sdk_client.py FakeClient, conftest guard extended to ClaudeSDKClient.connect (3.11); set cli_path to the SDK-bundled CLI and record SDK + CLI versions in state.json; re-check the 3.1 API list on 0.2.172 and note it in progress.txt; first commit also force-adds docs/plans/nous-v2/",
+      "depends_on": [],
+      "tests": [
+        "tests/v2/test_session.py",
+        "tests/v2/test_fake_client.py",
+        "tests/test_no_live_llm_guard.py::test_sdk_client_connect_blocked"
+      ],
+      "acceptance": [
+        "uv.lock pins claude-agent-sdk 0.2.170 and full suite green before other changes",
+        "Session persists session_id after every turn",
+        "ProcessError exit 143 classified transient",
+        "options carry max_buffer_size, env output cap, in-process hooks, preset system prompt with append"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R2",
+      "title": "JSON schemas + validators for every artifact in 3.4 (baseline, problem, bundle, plan, findings, principle_updates, answer, ledger additions): extra-field move to `extra` (B5), evidence rules incl. JSONL/TSV (3.4), noise honesty rule with per-finding noise, paired-seed check, PARTIALLY_CONFIRMED with partial_note, claims_needed requirements, parameters{}/workload_changes[] lock checks, task_limits (B11), bundle hash lock, secret masking helper (3.14); per-task_type baseline.observation rules, the 3 noise shapes, >=2 families or single_family_reason, every claims_needed covered by a hypothesis, evidence file-format limit, REPORT rejects secret values in answer.json/report.md",
+      "depends_on": [
+        "R1"
+      ],
+      "tests": [
+        "tests/v2/test_schemas_v2.py",
+        "tests/v2/test_validators_v2.py",
+        "tests/v2/test_evidence_rules.py",
+        "tests/v2/test_secrets.py"
+      ],
+      "acceptance": [
+        "unknown top-level keys move to extra, never fail",
+        "missing required field returns a repair message listing every error",
+        "evidence value mismatch is reported with path/key/expected/actual",
+        "validators never discard valid content"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R3",
+      "title": "In-process hooks (3.3): PostToolUse + PostToolUseFailure recorder to runs.jsonl (secret-masked, output_bytes, background rows), experiment-command matching (3.9), Stop gate with consecutive-block counter reset by tool calls (allow at 6), PreCompact digest incl. active principles. No PreToolUse hook.; HookMatcher timeouts (Stop 120s, PreCompact 60s); digest is secret-masked",
+      "depends_on": [
+        "R1",
+        "R2"
+      ],
+      "tests": [
+        "tests/v2/test_hooks.py"
+      ],
+      "acceptance": [
+        "hook callbacks invoked by FakeClient write runs.jsonl rows",
+        "Stop hook blocks with rendered errors until files validate",
+        "no PreToolUse hook registered"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R4a",
+      "title": "v2 loop core (3.2): BASELINE phase, DESIGN/EXECUTE/REPORT as turns in one session, one campaign worktree committed each phase, principles in every DESIGN message, baseline refresh on git SHA change, DESIGN rejects bundle.json without valid baseline.json, bundle hash lock before EXECUTE, ledger fields, stop rule 3.6 (answered + declared requirements / stall 2 / max_iterations / STOP), deterministic gates (B8), no ignored validation (B6), human_gates optional, parse new campaign.yaml keys",
+      "depends_on": [
+        "R1",
+        "R2",
+        "R3"
+      ],
+      "tests": [
+        "tests/v2/test_loop.py",
+        "tests/v2/test_stop_rule.py"
+      ],
+      "acceptance": [
+        "full campaign driven by FakeClient produces every file in 3.13",
+        "stall default 2 counts principles_changed",
+        "bundle hash locked before EXECUTE message"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R4b",
+      "title": "v2 robustness (3.5, 3.2 step 4): repair loop (2 tries then partial, never drop), failure breaker (3 identical fingerprints -> halt.json -> REPORT), wait_for polling without model calls, preflight (B4)",
+      "depends_on": [
+        "R4a"
+      ],
+      "tests": [
+        "tests/v2/test_repair_and_breaker.py",
+        "tests/v2/test_wait_for.py",
+        "tests/v2/test_preflight.py"
+      ],
+      "acceptance": [
+        "schema failure triggers repair, never drops results",
+        "breaker writes halt.json and still reaches REPORT",
+        "pending wait_for is not a validation failure",
+        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch; valid findings become new items",
+        "branch review includes /simplify (reuse, simplification, dead code) over orchestrator/v2/; apply only valid simplifications"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R4c",
+      "title": "Human smoke checkpoint 1 (7.5 touchpoint 3): needs docs/plans/nous-v2/smoke/1.json written by the human from ~/nous_v2_smoke/smoke.sh; if missing, write BLOCKED.md and stop",
+      "depends_on": [
+        "R4b"
+      ],
+      "tests": [],
+      "acceptance": [
+        "smoke/1.json exists with exit_code 0, or its failures turned into new plan items"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R5",
+      "title": "Cost meter (3.10, B10): port transcript meter from aiopslab@09dcb1c experiments/frontiercs/gen/cost_meter.py into orchestrator/v2/cost.py; one count per message id, subagents included, price table in defaults.yaml; ledger records cost_meter_usd and cost_sdk_usd plus tokens per phase; reporting only",
+      "depends_on": [
+        "R1"
+      ],
+      "tests": [
+        "tests/v2/test_cost.py"
+      ],
+      "acceptance": [
+        "fixture transcript reproduces a known total",
+        "duplicate message ids counted once",
+        "no code path reads cost to make a decision"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R6",
+      "title": "Effort ladder and output cut-offs (3.10, B12): detect stop_reason max_tokens, interrupt, reconnect with resume and one level lower, low only after 2 consecutive cuts, level resets at each new phase; recorded-transcript fixtures",
+      "depends_on": [
+        "R1",
+        "R4a"
+      ],
+      "tests": [
+        "tests/v2/test_effort.py"
+      ],
+      "acceptance": [
+        "cut reply lowers effort for the rest of the phase only",
+        "state.json records cut_offs"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R7",
+      "title": "Resume (3.7): nous resume by session_id with phase/hooks/effort re-applied, fallback fresh session from ledger+digest, session_scope iteration via the fallback path, --note, persisted cost/time totals, STOP sentinel, process-group spawn and killpg cleanup; context-full fallback (3.10)",
+      "depends_on": [
+        "R4a"
+      ],
+      "tests": [
+        "tests/v2/test_resume.py"
+      ],
+      "acceptance": [
+        "resume continues at saved phase",
+        "fallback path primes from digest",
+        "--note text appears in next phase message and ledger"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R8",
+      "title": "Light method prompt (<=6144 bytes, appended to Claude Code preset) and task-type checklists in prompts/v2/checklists/ (debug, verify, optimize, policy, explain; other = core only), phase messages (3.12)",
+      "depends_on": [
+        "R2"
+      ],
+      "tests": [
+        "tests/v2/test_method_prompt.py"
+      ],
+      "acceptance": [
+        "prompt size <= 6144 bytes",
+        "required field names present",
+        "no required arm menu or complexity-tier prose"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R9",
+      "title": "Final answer check from the record (3.8): answer.json validated, evidence checked, repro_recorded from runs.jsonl and evidence mtimes; optional rerun_repro; claims_matched_fraction; findings resting on unmeasured noise marked lower confidence in answer.json",
+      "depends_on": [
+        "R4a"
+      ],
+      "tests": [
+        "tests/v2/test_final_check.py"
+      ],
+      "acceptance": [
+        "repro not re-run by default",
+        "repro_recorded false when command missing from runs.jsonl",
+        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch",
+        "branch review includes /simplify (reuse, simplification, dead code) over orchestrator/v2/; apply only valid simplifications"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R10",
+      "title": "Human smoke checkpoint 2 (7.4): needs docs/plans/nous-v2/smoke/2.json from ~/nous_v2_smoke/smoke.sh; if missing, write BLOCKED.md saying what to run and stop",
+      "depends_on": [
+        "R4c",
+        "R5",
+        "R6",
+        "R7",
+        "R8",
+        "R9"
+      ],
+      "tests": [],
+      "acceptance": [
+        "smoke JSON with exit 0 present in docs/plans/nous-v2/smoke/",
+        "failures turned into new plan items"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R11a",
+      "title": "CLI cutover per section 4: run/resume call v2; --agent warns and is ignored; new and legacy campaign.yaml keys (legacy warn+ignore; examples/ still load); other commands pointed at v2 or deprecated with warning",
+      "depends_on": [
+        "R10"
+      ],
+      "tests": [
+        "tests/v2/test_cli_v2.py"
+      ],
+      "acceptance": [
+        "every file in examples/ loads with warnings only",
+        "`--agent` warns and is ignored",
+        "legacy campaign.yaml keys warn and are ignored"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R11b",
+      "title": "Delete old planner/executor orchestration (iteration.py/campaign.py loop) and inline/cli/llm dispatch code with their tests",
+      "depends_on": [
+        "R11a"
+      ],
+      "tests": [],
+      "acceptance": [
+        "deleted tests only for deleted modules, listed in progress.txt",
+        "pytest -q green",
+        "grep: no imports of the old iteration/campaign loop or cli/inline/llm dispatch modules remain"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R11c",
+      "title": "Delete shell hooks (bin/nous-*), settings-template hook wiring, gate-summary LLM calls",
+      "depends_on": [
+        "R11a"
+      ],
+      "tests": [],
+      "acceptance": [
+        "no .claude/settings.json hook wiring written",
+        "pytest -q green",
+        "grep: no bin/nous-execute-stop or bin/nous-plan-enforcer references remain"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R11d",
+      "title": "Delete critic and complexity_tier readers; migrate remaining bundle.yaml/experiment_plan.yaml readers, templates and docs to JSON",
+      "depends_on": [
+        "R11a"
+      ],
+      "tests": [],
+      "acceptance": [
+        "no remaining reader of bundle.yaml or experiment_plan.yaml",
+        "pytest -q green",
+        "grep: no bundle.yaml / experiment_plan.yaml readers remain",
+        "after this item: full /pr-review-toolkit:review-pr and /code-review over the branch",
+        "branch review includes /simplify (reuse, simplification, dead code) over orchestrator/v2/; apply only valid simplifications"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R11e",
+      "title": "Spec gaps from the R11d branch review (minimal forms): (a) transient-error retry with backoff around Session turns/connect using errors.is_transient, incl. ResultMessage.is_error API 5xx (3.5/B9); (b) ValidatorContext gets bundle_hypotheses and claims_needed from the iteration's bundle.json/problem.json so paired-seed, finding_ref and claims_needed coverage checks run (3.4/B6); (c) stop rule 'answered' requires status ok and checks declared min_seeds / needs_ci / conditions only where declared (3.6); (d) phase commits check git return codes and never stage the campaign work dir when it lives inside the target repo (3.1/D5 minimal: commit on the target checkout, log failures)",
+      "depends_on": [
+        "R11d"
+      ],
+      "tests": [
+        "tests/v2/test_session.py",
+        "tests/v2/test_loop.py",
+        "tests/v2/test_stop_rule.py"
+      ],
+      "acceptance": [
+        "exit-143 ProcessError on a turn is retried and the campaign continues",
+        "paired-seed / claims_needed checks fire through the Stop hook",
+        "answered not returned when a declared min_seeds is unmet or status is partial",
+        "campaign files under <repo>/.nous are not committed; failed git commit is logged",
+        "pytest -q green; v2 runtime line count recorded"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R12",
+      "title": "Docs: README.md, docs/architecture.md, docs/data-model.md, CLAUDE.md, CLI help updated for v2",
+      "depends_on": [
+        "R11a",
+        "R11b",
+        "R11c",
+        "R11d",
+        "R11e"
+      ],
+      "tests": [],
+      "acceptance": [
+        "docs describe single-session v2, hooks, artifacts, resume",
+        "grep: no `bundle.yaml` or `--agent inline` left in README.md and docs/"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R12b",
+      "title": "Lean pass before the merge bar: audit the whole v2 runtime against SPEC and cut anything not needed for (a) the core method (baseline first, locked predictions, controls, noise-aware claims, principles) or (b) lightweight repro/traceability (runs.jsonl, validators, ledger, evidence checks, resume). For every remaining module/function/config key, list the SPEC section it serves in docs/plans/nous-v2/LEAN_AUDIT.md; remove or merge what has none. Run /simplify and /pr-review-toolkit:code-simplifier over orchestrator/v2/ and apply valid simplifications. Behaviour must not change: pytest -q green.",
+      "depends_on": [
+        "R12"
+      ],
+      "tests": [],
+      "acceptance": [
+        "LEAN_AUDIT.md maps every v2 module and config key to a SPEC section, with removals listed",
+        "orchestrator/v2/ runtime (excluding schemas and tests) at or below ~2,500 lines, line counts before/after recorded in progress.txt",
+        "no new features added in this item",
+        "pytest -q green",
+        "reviewer note: scope also covers orchestrator/*.py outside v2 (cli, meta_findings, create_campaign, campaign_index, deployment_recommendation, composite_score, engine, lineage, validate, work_dir_resolver, util): each listed in LEAN_AUDIT.md as keep/deprecate/delete with SPEC section; delete or deprecate any not working on v2 artifacts or not needed by v2; trim cli.py to the commands SPEC section 4 keeps; line counts before/after for all of orchestrator/"
+      ],
+      "passes": true
+    },
+    {
+      "id": "R13",
+      "title": "Merge-bar evaluation (section 10): needs ~/nous_v2_eval/eval.sh set up by the human (results only); if missing, write BLOCKED.md and stop. Up to 3 improvement rounds of general fixes, up to 2 extra runs on a borderline task, then the held-out p225 run and docs/plans/nous-v2/EVAL_REPORT.md",
+      "depends_on": [
+        "R12b"
+      ],
+      "tests": [],
+      "acceptance": [
+        "bar passes, or EVAL_REPORT.md written after round 3",
+        "only general fixes, each justified in progress.txt",
+        "Reviewer decision (2026-10-22): the Frontier-CS judge (go-judge in Docker) is not available on this Mac (no docker/colima binaries). R13 runs the merge bar on the 3 oracle tasks only (dbg, pd, search; 2 runs each) via ~/nous_v2_eval/eval.sh <task> <rep>. p5 and the held-out p225 move to the follow-up experiments, which need the judge set up anyway. The 3-round improvement loop and 'only general fixes' rules still apply. eval.sh prints only bar numbers; never read ~/nous_v2_eval/sealed or ~/mlsys_runs/keys."
+      ],
+      "passes": true
+    },
+    {
+      "id": "R14",
+      "title": "Docs final pass (after R13 code is final): every user-facing doc correct against the code and readable. From the reviewer's doc audit: (1) method.md field lists exactly from the v2 schemas (error_type values, prediction object, principle_updates fields, finding_ref placement, baseline metrics_path/noise/task_type + per-task_type observation keys, answer deliverable/repro/claims); (2) per-task_type observation keys in data-model.md; (3) examples/campaign.yaml: drop v1 prompts:, add locked_parameters, objective, task_type; (4) port .claude/commands/post-campaign.md, suggest-next.md and docs/nous-wiki.md to v2 ledger/principles, or delete them if not needed (MVP); (5) architecture.md: effort ladder is wired, repair runs after every phase, block counter resets on tool calls; (6) document answer evidence path string + evidence_detail + nous_evidence/ export and all R13 behaviour changes; (7) ledger_entry.schema.json matches what loop.py writes; defaults.yaml trimmed to what is read; (8) README: --note scope, run_id requirement for yaml targets, links to quickstart and security, nous_evidence/ in the layout; (9) delete stale docs/superpowers/* v1 notes; (10) add docs/example-campaign/ with a small real worked example (baseline.json, runs/iter-1/{problem,bundle,plan,findings,principle_updates}.json, answer.json, a runs.jsonl excerpt) SYNTHETIC (a toy question with made-up, schema-valid numbers; never content from the dbg/pd/search benchmark tasks, which would contaminate future evaluations), validated against the schemas, plus evidence-key examples per format, a troubleshooting section (Stop-hook block, partial iteration, halt.json, final_check.json) and a resume walkthrough.",
+      "depends_on": [
+        "R13"
+      ],
+      "tests": [
+        "tests/v2/test_docs_examples.py"
+      ],
+      "acceptance": [
+        "test: every JSON file in docs/example-campaign validates against its v2 schema, and examples/campaign.yaml parses with no warnings",
+        "grep: no v1 terms (planner/executor, bundle.yaml, experiment_plan.yaml, handoff.md, design_profile, --agent inline) in README.md, docs/, prompts/v2/, .claude/commands/",
+        "method.md field names match the schemas (test compares the listed names with the schema properties)",
+        "pytest -q green"
+      ],
+      "passes": true
+    }
+  ],
+  "rules": [
+    "MVP first (user's priority): Nous v2 = (1) light scientific-method core, (2) hooks + validators for traceability and repro, (3) one Claude session. For every item choose the simplest version that meets acceptance; no extra options, layers, retries or abstractions; prefer deleting code; if a spec detail is heavy, implement the minimal form and log it in progress.txt as a later candidate.",
+    "Run Python as .venv/bin/python (3.11); tests with `.venv/bin/python -m pytest -q`.",
+    "v2 tests must not need Go, BLIS or network: use fixture files and echo/python -c commands; test 3.9 regexes on plain strings. Only the human-run smoke and eval scripts use real BLIS.",
+    "docs/plans/ is gitignored: commit docs/plans/nous-v2/* with `git add -f`.",
+    "Push only to origin nous-v2-wip. Open/update draft PRs from nous-v2-wip into nous-v2 (the branch exists). Never push to main or nous-v2.",
+    "Per item: tests first (expect fail), implement, tests pass, /pr-review-toolkit:review-pr on the item diff, fix only valid findings (record each decision in progress.txt), pytest -q green, commit, push.",
+    "Human checkpoints (R4c, R10, R13): if the required human result file is missing, write BLOCKED.md saying exactly what the human must run, commit+push, and stop. Never poll or loop. The human deletes BLOCKED.md to resume.",
+    "The 15-minute progress reporter is run by the human outside the session; not a plan item.",
+    "Never enter plan mode or use any tool that asks an interactive question (EnterPlanMode, AskUserQuestion): this is an unattended background session. Plan in your reasoning or in a file.",
+    "Keep Nous lean (the user's explicit goal): add only what the SPEC requires; no extra abstractions, layers, config options, plugin points or 'future-proofing'; prefer one small module per concern and plain functions over class hierarchies; reuse existing helpers; delete dead code. Target for the whole v2 runtime (orchestrator/v2/, excluding schemas and tests): about 2,500 lines or less. If an item pushes past its share, simplify before marking it done, and record the line count in progress.txt."
+  ]
+}

@@ -1,456 +1,129 @@
-# Architecture
+# Architecture (Nous v2)
 
-This document describes the internal architecture of the Nous framework: what each component does, how they interact, and the design decisions behind them.
+Nous v2 wraps one Claude Code session and forces it through a fixed scientific loop. Python code (not an LLM) decides phase order, checks artifacts, records commands and decides when to stop. All runtime code lives in `orchestrator/v2/`; the CLI entry point is `orchestrator/cli.py`.
 
-## Design Philosophy
+## Session (`session.py`)
 
-Nous separates **deterministic orchestration** from **AI reasoning**. The orchestrator is a Python state machine — it never calls an LLM. It owns phase transitions, checkpointing, gate enforcement, and artifact validation. AI agents are external processes invoked by the orchestrator with structured prompts and schema-governed outputs.
+`nous run` builds one `ClaudeSDKClient` for the whole campaign. `Session.build_agent_options` sets:
 
-This separation exists because:
-- The orchestrator must be auditable and predictable — you need to trust that gates cannot be bypassed, validation runs correctly, and state is always recoverable.
-- AI agents are stochastic and expensive — isolating them makes the system testable without LLM calls and lets you swap agent implementations without touching control flow.
+- `system_prompt`: the `claude_code` preset with the method prompt appended (`prompts/v2/method.md`, plus `prompts/v2/checklists/<task_type>.md` when `task_type` is set; see `prompts.py`).
+- `model` (default `claude-opus-4-6`), optional `effort`, `cwd` = `target_system.repo_path`, `permission_mode="bypassPermissions"`.
+- `env`: `CLAUDE_CODE_MAX_OUTPUT_TOKENS` at the model maximum and `NOUS_WORK_DIR`.
+- `hooks` from `hooks.py`, and `resume=<session_id>` when resuming.
 
-## System Overview
+After each turn the session id is saved to `state.json` with the SDK and CLI versions. Transient errors (process errors, timeouts, API 5xx, "overloaded" results) are retried twice, after 5 s and 30 s, reconnecting with the saved session id (`session.is_transient`).
 
-```
-                    ┌─────────────────────────────────────┐
-                    │          Orchestrator (Python)       │
-                    │                                      │
-                    │  ┌──────────┐    ┌───────────────┐  │
-                    │  │  Engine   │───▶│  state.json   │  │
-                    │  │ (states)  │    │  (checkpoint)  │  │
-                    │  └────┬─────┘    └───────────────┘  │
-                    │       │                              │
-                    │  ┌────▼─────┐    ┌───────────────┐  │
-                    │  │ Dispatch │───▶│  Agent (LLM)  │  │
-                    │  └────┬─────┘    └───────┬───────┘  │
-                    │       │                  │           │
-                    │       │          schema-validated    │
-                    │       │            artifacts         │
-                    │       │                  │           │
-                    │  ┌────▼─────┐    ┌──────▼────────┐  │
-                    │  │  Gates   │    │  Fast-Fail    │  │
-                    │  │ (human)  │    │  (rules)      │  │
-                    │  └──────────┘    └───────────────┘  │
-                    └─────────────────────────────────────┘
+The client is created through a `client_factory` argument. The CLI passes `cli._sdk_client`; tests pass `tests/fakes/sdk_client.FakeClient`.
 
-                    ┌─────────────────────────────────────┐
-                    │           Campaign Directory         │
-                    │                                      │
-                    │  campaign.yaml   state.json          │
-                    │  ledger.json     principles.json     │
-                    │  runs/iter-N/                        │
-                    │    problem.md    bundle.yaml          │
-                    │    experiment_plan.yaml               │
-                    │    execution_results.json              │
-                    │    findings.json                      │
-                    │    principle_updates.json             │
-                    │    gate_summary_*.json                │
-                    └─────────────────────────────────────┘
-```
+## Phases (`loop.py`)
 
-## Components
+`Campaign` sends one user message per phase into the same session:
 
-### Engine (`orchestrator/engine.py`)
-
-The engine owns the 7-state state machine and checkpoint/resume.
-
-**State machine:**
-
-```
-INIT ──▶ DESIGN ──▶ HUMAN_DESIGN_GATE
-            ▲              │
-            │ (reject)     │ (approve)
-            └──────────────┘
-                           │
-                           ▼
-                    EXECUTE_ANALYZE ──▶ HUMAN_FINDINGS_GATE
-                           ▲                              │
-                           │ (reject)                     │ (approve)
-                           └──────────────────────────────┘
-                                                          │
-                                                          ▼
-                                                        DONE
-                                                          │
-                                                          └──▶ DESIGN (next iteration, counter increments)
-```
-
-**Valid transitions:**
-- INIT → DESIGN
-- DESIGN → HUMAN_DESIGN_GATE
-- HUMAN_DESIGN_GATE → EXECUTE_ANALYZE (approve) | DESIGN (reject)
-- EXECUTE_ANALYZE → HUMAN_FINDINGS_GATE
-- HUMAN_FINDINGS_GATE → DONE (approve) | EXECUTE_ANALYZE (reject)
-- DONE → DESIGN (next iteration, increments counter)
-
-**Key behaviors:**
-- `transition(to_state)` validates against the transition table, updates the timestamp, sets `last_entered_phase`, and atomically writes `state.json`. Both fields update only on phase entry — artifact writes within a phase do not refresh them (#236), so operators polling `state.json` for progress see entry-time values linger throughout long phases. Watch artifact mtimes for sub-second progress instead.
-- Iteration counter increments only on the DONE → DESIGN transition (starting a new iteration). Loopbacks from HUMAN_DESIGN_GATE → DESIGN (reject) do NOT increment — they are revisions within the same iteration.
-- The DONE state allows transition to DESIGN for the next iteration.
-
-**Atomic writes:** State is written to a temporary file, fsynced, then renamed over `state.json`. This prevents data loss if the process crashes mid-write. The in-memory state is only updated after the disk write succeeds, so state never diverges.
-
-### Dispatch (`orchestrator/dispatch.py`)
-
-The dispatcher invokes AI agents by role and phase, passing structured input and writing schema-validated output.
-
-**Agent roles:**
-
-| Role | Invoked During | Produces |
+| Phase | Message asks for | Artifacts |
 |---|---|---|
-| **Planner** (Opus, Claude Agent SDK) | DESIGN | `problem.md`, `bundle.yaml`, `handoff_snapshot.md` |
-| **Executor** (Sonnet, Claude Agent SDK) | EXECUTE_ANALYZE | `experiment_plan.yaml`, `findings.json`, `principle_updates.json`, `patches/`, `results/` |
+| BASELINE (once) | one real observation, no hypotheses | `baseline.json` |
+| DESIGN (per iteration) | predictions relative to the baseline; active principles are appended | `runs/iter-N/problem.json`, `bundle.json`, `plan.json` |
+| EXECUTE (per iteration) | run `plan.json`, fix what does not run | `runs/iter-N/findings.json`, `principle_updates.json` |
+| REPORT (once) | the answer | `answer.json`, `report.md` |
 
-Both agents write artifacts directly to the campaign directory (`iter_dir`) and run `nous validate` before claiming done. If validation fails, the agent reads the errors, fixes the artifacts, and retries. The orchestrator runs a post-check as a safety net.
+Each message names the absolute artifact paths, so the agent writes into the work dir, not the repo. Before each phase, `_set_phase` updates the hook state and `state.json` (`phase`, `iteration`) and resets the effort ladder.
 
-**Validation CLI** (`orchestrator/validate.py`):
-- `nous validate design --dir <iter_dir>` — checks problem.md, bundle.yaml (schema), handoff_snapshot.md
-- `nous validate execution --dir <iter_dir>` — checks experiment_plan.yaml (schema), findings.json (schema), principle_updates.json, patches (when code_changes exist), input and output files referenced in plan
+After every phase (BASELINE, DESIGN, EXECUTE, REPORT) Nous re-validates that phase's artifacts and sends up to 2 repair messages listing the errors. If errors remain, the phase is `partial` (the ledger row of a partial DESIGN or EXECUTE gets `status: partial`) and the loop goes on with the valid content.
 
-**Implementations:**
+After DESIGN, Nous copies `bundle.json` to `.bundle.locked.json` and records its sha256 (`bundle_hash`). After EXECUTE, if `bundle.json` no longer matches the hash, Nous restores the locked copy and sets `prereg_violation: true` in the ledger.
 
-- `StubDispatcher` (`dispatch.py`) produces valid, schema-conformant artifacts without calling any LLM. Used for testing the orchestrator loop.
-- `SDKDispatcher` (`sdk_dispatch.py`, default and only user-facing code-access backend post-#183) calls the Claude Agent SDK (`claude-agent-sdk`) directly, giving agents code access and shell tools through native streaming, programmatic prompt caching, and message-level retry. Agents write files directly to `iter_dir`. Selected via `--agent sdk` (the default). Requires `claude-agent-sdk` and `anyio`, both required dependencies of `nous` so `pip install nous` is sufficient.
-- `CLIDispatcher` (`cli_dispatch.py`) is retained as a private base class that `SDKDispatcher` inherits from for the parse / validate / retry-with-feedback machinery. The legacy `--agent api` (claude -p subprocess) path was removed in #183; the class is no longer reachable from the CLI.
+`wait_for` is only for runs started in the background that outlast the turn. It is a file path (must contain `/` or `.`) or `cmd:<shell command>` that exits 0 when done; relative paths and commands resolve in the target repo. The plan validator rejects anything else (for example a bare run id `R1`). After the EXECUTE turn, if `findings.json` and `principle_updates.json` already validate, Nous does not poll. Otherwise it polls every 60 s for up to 4 hours without model calls, then sends a turn when runs finish or time out (`robustness.poll_and_resume`).
 
-**Dispatch interface:**
-```python
-dispatcher.dispatch(
-    role="executor",           # which agent
-    phase="execute-analyze",   # which phase
-    output_path=path,          # where to write
-    iteration=1,               # current iteration
-)
-```
+After each EXECUTE (and its repair pass), Nous merges `principle_updates.json` into `principles.json` (`add`, `revise`, `remove` by id) and appends a ledger row (see [data-model.md](data-model.md)).
 
-All three dispatchers share the same interface. `CLIDispatcher` extends `LLMDispatcher`; `SDKDispatcher` extends `CLIDispatcher` and overrides only `_call_claude` and `preflight_check`.
+### Phase commits
 
-### Stop Hook (`bin/nous-execute-stop`)
+After BASELINE, DESIGN, EXECUTE and REPORT, Nous runs `git add -A` and `git commit` in the target checkout with message `nous: <PHASE>` or `nous: iter-N <PHASE>`. The work dir is excluded when it lives inside the target. A target without `.git` is skipped. Git failures are logged, not raised.
 
-Claude Code Stop hooks fire after every agent turn and decide whether the agent is allowed to terminate. `bin/nous-execute-stop` is Nous's deterministic completion check: the executor is allowed to stop only when both conditions hold on disk, no LLM judgment involved:
+## Hooks (`hooks.py`)
 
-1. `principle_updates.json` exists in the iteration directory.
-2. `nous validate execution --dir $NOUS_ITER_DIR` returns `status: pass`.
+Hooks run in-process via `ClaudeAgentOptions.hooks`; there are no shell hooks or settings files.
 
-If either fails, the hook exits with code 2 and writes a structured reason to stderr; Claude Code feeds that reason back into the agent's conversation so it can fix the artifact and try again. Wire-up lives in the per-campaign `.claude/settings.json` (see #135) — the orchestrator exports `NOUS_ITER_DIR` before launching the executor session.
+- **PostToolUse / PostToolUseFailure** (Bash only): append one row per command to `runs.jsonl` with `ts`, `phase`, `iter`, `tool_use_id`, `command` (secrets masked), `exit_code` (0 on success, parsed from the error on failure, `null` for background commands), `output_bytes`, `cwd`, `background`, `agent_id` and `experiment` (whether the command matches `experiment_commands`; defaults match `blis run`, `python *search|bench|run|sweep*.py`, `make bench`).
+- **Stop**: validates the current phase's artifacts. On any error it returns `decision: block` with the error list (plus a one-line evidence key reminder when an error is about evidence), so the agent keeps working. A counter tracks consecutive blocks: after 6 in a row the next stop is allowed (the post-phase repair pass takes over). Any Bash command (success or failure) resets the counter, so an agent that is still working is never cut off. The stop is also allowed while a `wait_for` condition is still pending.
+- **PreCompact**: writes `state/digest.json` (phase, iteration, baseline summary, principles, last findings, active hypotheses), with secrets masked.
 
-This is preferred over a probabilistic Haiku evaluator anywhere the success criterion is a schema check: cheaper, faster, and immune to evaluator drift.
+## Validators, repair and breaker
 
-## SDK Dispatch
+`validators.py` validates each artifact against `orchestrator/v2/schemas/<name>.schema.json`. Unknown top-level keys are moved into `extra` and never fail. Semantic checks:
 
-`SDKDispatcher` (`--agent sdk`, the default) invokes the Claude Agent SDK for both agent roles. The legacy `--agent api` (claude -p subprocess) backend was removed in #183; only the SDK path is reachable from the CLI.
+- **baseline**: `noise` is one of `{seeds, values, sd}`, `{deterministic: true}`, `{unmeasured: true, reason}`.
+- **problem**: `claims_needed` is append-only. From iteration 2, every earlier id must still be listed; new ids may be added. A claim answered in an earlier iteration needs no hypothesis again.
+- **bundle**: at least 2 distinct `family` values or a `single_family_reason`; each hypothesis has `control` or `no_control_reason`; every `claims_needed` id is covered by some hypothesis `claim_ids`.
+- **plan**: treatment and control runs of a controlled hypothesis use the same seeds; `parameters` match `locked_parameters` / `locked_workload` unless the key is in `workload_changes`; `wait_for` is a path or `cmd:<command>`.
+- **findings**: `PARTIALLY_CONFIRMED` needs `partial_note`. `CONFIRMED`/`REFUTED` need `noise_sd`, `noise_unmeasured: true`, or measured baseline noise; with a noise value, `|effect.value|` must exceed 2 × noise sd. Every `hypotheses[].evidence` item must resolve. `task_limits.max_runs` is checked against `runs.jsonl`.
+- **principle_updates**: each `finding_ref` is a hypothesis id from the bundle.
+- **answer**: `repro` must not start with `cd` (it runs from the repository root). Each claim's evidence resolves and its `value` equals the evidence value (`evidence_detail` is checked when present; for a bare path string the value text must appear in the file). No secret value appears in `answer.json` or `report.md`.
 
-### Retry and Resilience
+### Evidence
 
-**Pre-flight check:** At campaign start, Nous validates that the SDK is importable and credentials work. Environment problems are caught in seconds, not hours into an overnight run.
+An evidence item is `{path, key, value}`. A relative `path` is looked up in order under the iteration dir (findings only), the work dir, then the target repo; the first root that holds the file wins. An absolute path is accepted when it lies inside one of these roots. Errors name the roots searched.
 
-**All failures are retried** with exponential backoff (5s → 30s → 120s → 300s → 600s). There is no permanent/transient classification — the only hard failures are CLI-not-found and repo-path-missing, which are caught before the retry loop. Configurable via `--max-cli-retries` (default 10) and `--timeout` (default 1800s).
-
-On timeout/max-turns retries, the prompt is enriched with a continuation note so the agent checks for existing artifacts and picks up where it left off. The experiment worktree and `iter_dir` artifacts are preserved across retries.
-
-**Failure persistence:** Each retry event is appended to `retry_log.jsonl` in the campaign directory (timestamp, phase, failure_type, attempt, error).
-
-**Campaign-level resilience:** If an iteration fails after retries are exhausted, it is recorded as FAILED in `ledger.json` and the campaign continues to the next iteration.
-
-### Prompt System
-
-Prompts are templates in `prompts/methodology/` (one per role). At dispatch time, `PromptLoader` renders each template by replacing `{{placeholder}}` markers with domain-specific context from `campaign.yaml`:
-
-- `{{target_system}}`, `{{system_description}}` — from `campaign.yaml`
-- `{{observable_metrics}}`, `{{controllable_knobs}}` — from `campaign.yaml`
-- `{{active_principles}}` — formatted from `principles.json`
-- Phase-specific context: `{{bundle_yaml}}`, `{{findings_json}}`
-
-### EXECUTE_ANALYZE: Merged Execution Pipeline
-
-The executor agent (Sonnet, via the Claude Agent SDK) handles the entire execution pipeline in a single session:
-
-1. Receives the approved hypothesis bundle
-2. Explores the target repo, discovers build commands
-3. Produces `experiment_plan.yaml` with exact shell commands per arm
-4. Runs the commands, captures stdout/stderr per condition
-5. Compares observed metrics against predictions
-6. Produces `findings.json` and `principle_updates.json`
-
-After execution, the orchestrator validates artifacts (schema check) and merges principles by ID into `principles.json`.
-
-### Model Configuration
-
-Two Claude Agent SDK calls per iteration:
-
-| Phase | Model | Role |
-|-------|-------|------|
-| DESIGN | Opus | Planner — explores, frames, designs hypothesis bundle |
-| EXECUTE_ANALYZE | Sonnet | Executor — builds, patches, runs, analyzes, extracts |
-
-### Simplified Campaign
-
-With `CLIDispatcher`, a campaign configuration can be as simple as:
-
-```yaml
-research_question: "What drives latency in my system?"
-target_system:
-  name: "My System"
-  description: "A service that processes requests."
-  repo_path: /path/to/repo
-```
-
-The planner explores the codebase to discover observable metrics, controllable knobs, and execution methods. The full campaign format (with explicit metrics and knobs) remains supported — provided values take precedence over what the planner discovers.
-
-### Code Change Intents
-
-When using `CLIDispatcher`, the planner can include optional `code_changes` in bundle arms:
-
-```yaml
-arms:
-  - type: h-main
-    prediction: "TTFT decreases by 15-25%"
-    mechanism: "SJF reorders by predicted compute cost"
-    diagnostic: "Check scheduling order"
-    code_changes:
-      - file: scheduler/policy.go
-        intent: "Replace FCFS with shortest-job-first"
-        rationale: "Prefix-heavy requests have predictable cost"
-```
-
-The planner says **what and why** — the executor implements the actual changes in a git worktree.
-
-### Ledger (`orchestrator/ledger.py`)
-
-Deterministic module that appends a schema-conformant row to `ledger.json` after each iteration. Reads `findings.json`, `bundle.yaml`, and `principles.json` to extract: h_main_result, ablation_results, control_result, robustness_result, prediction accuracy, and principle changes. No LLM calls — purely deterministic computation.
-
-### Gates (`orchestrator/gates.py`)
-
-Human gates are hard stops that cannot be bypassed. They surface the artifact and review summaries, then wait for a decision.
-
-**Valid decisions:**
-- `approve` — advance to the next phase
-- `reject` — loop back (HUMAN_DESIGN_GATE → DESIGN, HUMAN_FINDINGS_GATE → EXECUTE_ANALYZE)
-- `abort` — end the campaign
-
-**Testing modes:** `auto_approve=True` or `auto_response="reject"` for deterministic testing without human interaction.
-
-**Where gates appear:**
-1. HUMAN_DESIGN_GATE — after DESIGN, human sees the hypothesis bundle
-2. HUMAN_FINDINGS_GATE — after EXECUTE_ANALYZE, human sees findings and principle updates
-
-### Gate Summaries
-
-Before each human gate, a formatted summary (`gate_summary_*.json`) is produced. The summary includes a plain-language description and bullet points highlighting what matters for the decision.
-
-Gates display the summary first, then the raw artifact (for those who want full detail).
-
-**Spec-fidelity diff (#249 / F4).** For the design-phase summary,
-``_augment_summary_with_spec_diff`` (in `orchestrator/iteration.py`)
-post-processes the LLM-generated summary to attach a deterministic
-``campaign_spec_diff`` block: locked_parameters violations, depth_overrides
-presence, declared workload changes. Always emitted, regardless of
-``--auto-approve``. ``nous status`` surfaces it in human-readable
-form.
-
-### Spec fidelity (`orchestrator/validate.py`)
-
-Two pure-Python validators close the gap between *self-consistency*
-(the executor matches the bundle) and *spec-fidelity* (the bundle
-matches the campaign):
-
-* `_validate_locked_parameters` (#246 / F1) — every entry in
-  ``campaign.locked_parameters`` must match
-  ``bundle.experiment_spec.verified_parameters`` exactly. Hard-fail
-  regardless of ``--auto-approve``.
-* `_validate_locked_workload` (#265 / F20) — walks the canonical
-  workload structure and diffs against ``bundle.inputs/*.yaml``.
-  Declared deviations (``bundle.workload_changes_from_canonical``)
-  are allowed; undeclared are hard-fails.
-
-`compute_campaign_spec_diff` exposes the same logic for read-only
-auditor use (the F4 gate-summary diff). See
-`docs/campaign-authoring-guide.md` for the discipline these enforce.
-
-### Reproducibility metadata (`orchestrator/reproducibility.py`)
-
-`capture_reproducibility_metadata` (#262 / F17) runs at INIT and
-records target repo HEAD, dirty flag, hardware-config sha,
-language versions, gpu_memory_utilization, latency-config file
-paths. The block is persisted in `state.json` (first-capture wins;
-re-running INIT preserves the original) and surfaced via `nous
-status`. Per-iteration `snapshot_iter_files` copies the actual
-hardware/latency config files into `runs/iter-N/snapshots/` so a
-future reviewer can diff exact numbers even after the operator
-edits the source-of-truth file.
-
-### Cross-campaign code reuse (`orchestrator/lineage.py`)
-
-`emit_cumulative_patch` (#266 / F21) runs at iteration completion,
-*before* the experiment branch is destroyed, capturing
-``git diff <main>..<branch>`` to ``runs/iter-N/patches/cumulative.patch``.
-Future campaigns reuse it via:
-
-```yaml
-derived_from:
-  campaign: paper-memorytime-mirage
-  iteration: 2          # or "final"
-```
-
-`apply_derived_from_patch` resolves and applies the cumulative
-patch to every experiment worktree as a preflight. `nous lineage
-<run_id>` surfaces the inheritance chain.
-
-### Per-phase silence threshold (`orchestrator/sdk_dispatch.py`)
-
-`_resolve_turn_silence_threshold(phase)` (#264 / F19) walks the
-resolution chain — bundle per-phase override → bundle scalar
-override → campaign per-phase value → phase default
-(design=600, execute_analyze=120, report=240). DESIGN's heavy
-reasoning between tool calls earns a longer threshold than
-EXECUTE_ANALYZE's frequent simulator calls, eliminating the active
-stall observed in paper-memorytime-mirage iter-3.
-
-### Plot specs + paper packaging (`orchestrator/plot_specs.py`, `nous package`)
-
-`invoke_plot_specs` (#263 / F18) reads `campaign.plot_specs`,
-invokes each user-supplied figure script with `NOUS_RESULTS_DIR`
-and `NOUS_FIGURES_DIR` environment variables. `nous package`
-tarballs work_dir + reproduce.sh + Dockerfile + README using the
-F17 reproducibility metadata.
-
-
-## Data Flow
-
-### Within One Iteration
-
-```
-                    Planner (Opus)
-                       │
-                       ▼
-              problem.md + bundle.yaml
-                       │
-                       ▼
-              HUMAN_DESIGN_GATE (approve/reject/abort)
-                       │
-                       ▼
-                  Executor (Sonnet)
-                       │
-                       ▼
-         experiment_plan.yaml + execution_results.json
-         + findings.json + principle_updates.json
-                       │
-                       ▼
-              HUMAN_FINDINGS_GATE (approve/reject/abort)
-                       │
-                       ▼
-              principles.json (upsert by ID)
-                       │
-                       ▼
-                     DONE
-```
-
-### Across Iterations
-
-```
-Iteration 1                    Iteration 2                    Iteration N
-┌──────────────────┐          ┌──────────────────┐          ┌──────────────┐
-│ Design           │          │ Design           │          │              │
-│ Execute          │   ───▶   │  (constrained by │   ───▶   │   ...        │
-│ Extract          │          │   principles)    │          │              │
-│  → 2 principles  │          │ Execute          │          │              │
-│                  │          │ Extract          │          │              │
-│                  │          │  → 1 new,        │          │              │
-│                  │          │    1 updated     │          │              │
-└──────────────────┘          └──────────────────┘          └──────────────┘
-
-principles.json grows and refines over time:
-  iter 1: [P1, P2]
-  iter 2: [P1, P2', P3]       (P2 updated, P3 inserted)
-  iter 3: [P1, P2', P4]       (P3 pruned, P4 inserted)
-```
-
-Principles are hard constraints: the Planner must not design bundles that contradict active principles without explicit justification.
-
-### Multi-Iteration Campaign Flow
-
-`run_campaign.py` loops through iterations:
-
-```
-for i in 1..max_iterations:
-  ┌───────────────────────────────────────────────────────────┐
-  │  run_iteration(iteration=i)                               │
-  │    DESIGN → HUMAN_DESIGN_GATE → EXECUTE_ANALYZE           │
-  │    → HUMAN_FINDINGS_GATE → DONE                           │
-  └─────────────────────┬─────────────────────────────────────┘
-                        │
-                  (if not final)
-                        │
-              append_ledger_row(i)
-                        │
-              engine.transition("DESIGN")
-                  (increments iteration counter)
-                        │
-                    next iteration
-                  (principles injected into design prompt)
-```
-
-The deterministic ledger (`orchestrator/ledger.py`) appends one row per iteration with prediction accuracy and principle changes, without any LLM calls.
-
-## Schema Contracts
-
-Every artifact exchanged between components is validated against a JSON Schema (Draft 2020-12). This ensures agents produce well-formed output and makes the system testable without LLMs.
-
-| Schema | Format | Governs |
+| File | `key` | Example |
 |---|---|---|
-| `campaign.schema.yaml` | YAML | Campaign configuration (target system, prompt layers) |
-| `state.schema.json` | JSON | Orchestrator checkpoint (phase, iteration, run_id, config_ref) |
-| `bundle.schema.yaml` | YAML | Hypothesis bundles (arms with predictions, mechanisms, diagnostics) |
-| `experiment_plan.schema.yaml` | YAML | Experiment plans (exact commands per arm/condition) |
-| `findings.schema.json` | JSON | Prediction-vs-outcome tables with error classification |
-| `principles.schema.json` | JSON | Principle store (statement, confidence, regime, evidence, category, status) |
-| `ledger.schema.json` | JSON | Append-only iteration log with prediction accuracy and domain metrics |
+| `.json` | JSON Pointer (a missing leading `/` is added) | `/p99_ms`, `/runs/0/score` |
+| `.jsonl` | `line@pointer`, line numbers from 0 | `1@/p99_ms` |
+| `.csv`, `.tsv` | `column@row`, data rows from 0 | `lookup_us@0` |
+| other text | regex, group 1 is the value | `p99_ms=([0-9.]+)` |
 
-The bundle and campaign schemas use YAML format because they contain free-text fields that are more readable in YAML. All other schemas use JSON.
+Numbers and numeric strings match within a relative tolerance of 1e-3 (`"105082"` equals `105082`). A `.json` file that is not JSON gets a direct message: save it as `.txt`/`.log` and use a regex key. See [example-campaign/](example-campaign/README.md) for one of each.
 
-## Human Review
+`robustness.FailureBreaker` fingerprints failures (type, phase, message with numbers and paths normalised). Three identical failures in a row write `halt.json`. A successful iteration resets it.
 
-Automated AI reviews (DESIGN_REVIEW, FINDINGS_REVIEW) have been removed. Quality control is now handled by:
+`preflight.py` runs before the first turn: it checks validators accept known-good fixtures and reject known-bad ones, and that the Stop hook runs.
 
-1. **HUMAN_DESIGN_GATE** — the human reviews the hypothesis bundle directly after DESIGN
-2. **HUMAN_FINDINGS_GATE** — the human reviews findings and principle updates after EXECUTE_ANALYZE
+## Stop rule (`stop_rule.py`)
 
-This removes the multi-perspective automated review overhead while keeping humans in the loop at both decision points.
+Checked after each iteration, in this order:
 
-## Prediction Error Taxonomy
+1. `halt.json` exists: `halt`.
+2. `STOP` sentinel exists (`nous stop`): `stop_sentinel`.
+3. `findings.question_answered` is true, at least one hypothesis is not `INCONCLUSIVE`, repair status is `ok`, and every `problem.claims_needed` entry is met (claim present, `min_seeds` distinct seeds, a `ci` when `needs_ci`, all `conditions` covered): `answered`.
+4. `iteration >= max_iterations`: `max_iterations`.
+5. The last `stall_iterations` iterations were all quiet (no change in claims, no `best` improvement above `min_improvement`, no principle add/revise): `stall`.
 
-When a prediction is wrong, the error type determines what the system learns:
+`claims_needed` and claims are taken over all iterations so far (append-only), so a claim answered in iteration 1 still counts in iteration 3. Any stop reason leads to REPORT.
 
-| Error Type | Meaning | System Response |
-|---|---|---|
-| **Direction** | Mechanism is fundamentally wrong | Prune or heavily revise the principle |
-| **Magnitude** | Right mechanism, wrong strength | Update principle with calibrated bounds |
-| **Regime** | Works under different conditions | Update principle with correct regime boundaries |
+## REPORT
 
-Direction errors are the most serious and most valuable — they reveal where the causal model is fundamentally flawed. In the BLIS case study, a direction error in iteration 1 (predicting <10% degradation, observing 62.4% degradation) redirected the entire scheduling investigation toward admission control.
+1. The REPORT turn writes `answer.json` and `report.md`; the message restates the output contract (answer every sub-question, claim values copied exactly, repro from the repo root without `cd`).
+2. Repair pass on `answer.json`.
+3. Repro check: if `runs.jsonl` has no successful run of `answer.repro`, Nous sends one message asking the agent to run it as written from the repository root, then repairs once more. No loop.
+4. Evidence export: each claim's evidence file is copied to `<repo>/nous_evidence/<path relative to its root>` and to the same path under the work dir (mtimes kept). `evidence` becomes that repo-relative path string and the `{path, key, value}` item moves to `evidence_detail`, with the new path. A file already in the repo is cited in place. A numeric-string claim `value` becomes a number.
+5. Commit the target checkout, then the final check.
 
-## Crash Safety and Recovery
+## Resume (`resume.py`)
 
-The orchestrator is designed for crash-safe operation:
+`nous resume` reads `state.json` for phase, iteration and session id, and reloads the ledger, principles and previous findings. It resumes the saved session and continues from the saved phase. Resuming at EXECUTE keeps the original `.bundle.locked.json`. Resuming at REPORT only writes the report.
 
-- **Atomic state writes:** `state.json` is written to a temp file, fsynced, then renamed. A crash during write leaves the previous valid state intact.
-- **Checkpoint/resume:** The engine loads state from `state.json` on construction. Kill the process at any point and restart — it resumes from the last committed state.
-- **Append-only ledger:** `ledger.json` is logically append-only — rows are never modified or deleted. Implementation reads, appends, and atomically rewrites the file.
-- **Idempotent principle merge:** The principle merge step reads the existing `principles.json`, upserts principles by ID, and writes back. Re-running for the same iteration produces a duplicate (detectable by ID) rather than corruption.
+Nous uses a fresh session primed with `state/digest.json` (and the note) when there is no session id, when `session_scope: iteration` is set, or when resuming the saved session fails before any turn succeeds.
 
-## Extending Nous
+`--note` is appended to the first EXECUTE message after the resume (or to the REPORT message when resuming at REPORT, or to the fallback priming message) and saved as `note` in that iteration's ledger row.
 
-### Using a Different Dispatcher
+## Final check (`final_check.py`)
 
-Nous ships with three dispatchers:
+After REPORT, Nous checks `answer.json` against the record without calling the model or re-running anything. It writes `final_check.json` with:
 
-- `StubDispatcher` — deterministic stubs for testing.
-- `InlineDispatcher` — emits prompts to stdout for an enclosing agent framework (no subprocess, no API key).
-- `SDKDispatcher` — real agent calls via the Claude Agent SDK (default and only user-facing code-access path post-#183).
+- `answer_valid` and `evidence_errors` (schema, evidence, secrets),
+- `repro_recorded`: some `runs.jsonl` row with exit code 0 contains the `answer.repro` command (or the baseline command) after normalising `export`/`cd` segments, `VAR=` prefixes, pipes and redirections,
+- `claims_matched_fraction`: share of all `claims_needed` ids (union over iterations) that some iteration's findings claim,
+- `unmeasured_noise_findings`: hypothesis ids with `noise_unmeasured: true`.
 
-To create a custom dispatcher, extend `LLMDispatcher`. Your dispatcher must produce artifacts that pass schema validation — the orchestrator trusts the schema contract, not the content.
+`repro_recorded` and `claims_matched_fraction` are also copied into the last ledger row.
 
-### Adding a New Arm Type
+## Cost meter (`cost.py`)
 
-1. Add the type to the `enum` in `schemas/bundle.schema.yaml` (arm type) and `schemas/findings.schema.json` (arm_type)
-2. Add test cases to `tests/test_schemas.py`
+The meter counts each SDK message once by message id. A streamed reply repeats its id with growing usage, so the meter keeps the largest usage seen per id. Subagent messages count too. Prices come from the `prices` table in `orchestrator/defaults.yaml`, which matches the Claude Code CLI (opus $5/$25, sonnet $3/$15, haiku $1/$5 per million input/output tokens; cache reads at 0.1 × input, cache writes at 1.25 ×). A model without a price costs $0. Each ledger row records `cost_meter_usd` and `tokens` for that iteration; the last row also gets `report_cost_usd`. Cost is reported only and never drives a decision. `nous cost` sums these fields.
+
+## Effort (`effort.py`)
+
+`campaign.effort` is passed to the SDK as is (unset means the model default). A turn is cut when the `ResultMessage` or the last main-agent `AssistantMessage` has `stop_reason: max_tokens`; subagent cut-offs do not count. On a cut, Nous steps one level down the ladder `max > xhigh > high > medium > low` (`low` only after 2 consecutive cuts), saves `cut_offs` in `state.json`, reconnects the same session at the lower effort and sends "Your last reply was cut at the output limit. Write and run the simplest correct step first." This is bounded to one retry per ladder step. The next phase resets the ladder and reconnects at the configured effort. Resume keeps the campaign-wide `cut_offs`.
+
+## Secrets (`secrets.py`)
+
+Values of the env vars named in `campaign.secrets` are replaced with `<secret:NAME>` in `runs.jsonl` and the digest. The answer validator fails if any value appears in `answer.json` or `report.md`.

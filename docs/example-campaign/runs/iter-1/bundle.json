@@ -1,0 +1,24 @@
+{
+  "hypotheses": [
+    {
+      "id": "H1",
+      "role": "main",
+      "family": "cache-capacity",
+      "mechanism": "A larger cache raises the hit rate, so fewer requests pay the slow backend call that sets p99.",
+      "prediction": {"metric": "p99_ms", "direction": "decrease", "magnitude_or_threshold": ">= 10 ms"},
+      "control": "cache size 64, same seeds and workload",
+      "falsified_if": "p99 at cache 256 is within 2 noise sd of cache 64",
+      "claim_ids": ["C1", "C2"]
+    },
+    {
+      "id": "H2",
+      "role": "alternative",
+      "family": "lookup-overhead",
+      "mechanism": "A larger cache costs more per lookup and eviction, which raises p99.",
+      "prediction": {"metric": "p99_ms", "direction": "increase"},
+      "control": "cache size 64, same seeds and workload",
+      "falsified_if": "p99 at cache 256 is lower than at cache 64",
+      "claim_ids": ["C1"]
+    }
+  ]
+}

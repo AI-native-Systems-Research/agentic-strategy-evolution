@@ -1,0 +1,6 @@
+{
+  "updates": [
+    {"id": "P1", "text": "In toy_cache, p99 follows the backend miss rate; per-lookup cost is too small to matter up to 256 entries.", "finding_ref": "H1", "action": "add"},
+    {"id": "P2", "text": "Measure hit rate next to p99 so a latency change can be attributed to misses.", "finding_ref": "H2", "action": "add"}
+  ]
+}

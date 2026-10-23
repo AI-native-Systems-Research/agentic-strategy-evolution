@@ -1,0 +1,35 @@
+{
+  "n": 2,
+  "run_dir": "/Users/merttoslali/nous_v2_smoke/runs/smoke-2-20261022-162212",
+  "minutes": 20.7,
+  "error": null,
+  "summary": {
+    "stop_reason": "answered",
+    "iterations": 1
+  },
+  "hook_records": 60,
+  "experiment_rows": 20,
+  "iterations": 1,
+  "lost_rounds": 0,
+  "answer_valid": true,
+  "repro_recorded": false,
+  "files": [
+    "answer.json",
+    "baseline.json",
+    "final_check.json",
+    "ledger.json",
+    "principles.json",
+    "runs/iter-1/.bundle.locked.json",
+    "runs/iter-1/R1_control_small_kv.json",
+    "runs/iter-1/R3_h1_preempt.json",
+    "runs/iter-1/R4_h1_no_preempt.json",
+    "runs/iter-1/bundle.json",
+    "runs/iter-1/findings.json",
+    "runs/iter-1/plan.json",
+    "runs/iter-1/principle_updates.json",
+    "runs/iter-1/problem.json",
+    "state.json"
+  ],
+  "exit_code": 0,
+  "reviewer_verdict": "PASS on mechanics with one bug. Live run, 20.7 min: all phases ran in one session, 60 hook records, 0 lost rounds, no prereg violation, stop rule 'answered' after 1 iteration, answer.json valid, claims_matched_fraction 1.0, final_check.json written, ledger carries cost and tokens. BUG: repro_recorded false although the repro command ran. answer.repro = './blis run --model qwen/qwen3-14b --rate 20 --num-requests 200 --seed 42 --total-kv-blocks 600'; runs.jsonl has it as 'export PATH=...; cd <ws> && ./blis run ... --total-kv-blocks 600 2>/dev/null'. final_check._check_repro uses exact string equality (final_check.py:50). Fix in R11a-pre: match on the normalized command (strip leading env/export/cd segments joined by ; or &&, and trailing redirections), require exit_code 0."
+}

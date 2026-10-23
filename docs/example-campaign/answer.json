@@ -1,0 +1,21 @@
+{
+  "answer": "Yes. Raising --cache-size from 64 to 256 lowered p99 from 62.2 ms to 41.8 ms (3 paired seeds, noise sd 0.75 ms). The hit rate rose from 0.41 to 0.78, which explains the drop: fewer requests pay the slow backend call. Per-lookup cost rose by only 0.1 us, so the lookup-overhead explanation is refuted.",
+  "deliverable": "toy_cache.py --cache-size 256",
+  "repro": "python toy_cache.py --cache-size 256 --seeds 1,2,3 --json",
+  "claims": [
+    {
+      "id": "C1", "metric": "p99_ms", "value": 41.8, "condition": "cache_size=256",
+      "evidence": "nous_evidence/runs/iter-1/results/R1.json",
+      "evidence_detail": {"path": "nous_evidence/runs/iter-1/results/R1.json", "key": "/p99_ms", "value": 41.8}
+    },
+    {
+      "id": "C2", "metric": "hit_rate", "value": 0.78, "condition": "cache_size=256",
+      "evidence": "nous_evidence/runs/iter-1/results/R1.json",
+      "evidence_detail": {"path": "nous_evidence/runs/iter-1/results/R1.json", "key": "/hit_rate", "value": 0.78}
+    },
+    {
+      "id": "C0", "metric": "p99_ms", "value": 62.2, "condition": "cache_size=64 (baseline)",
+      "evidence": "nous_evidence/baseline_metrics.json"
+    }
+  ]
+}

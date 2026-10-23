@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Nous v2 plan artifact",
+  "type": "object",
+  "required": ["runs"],
+  "properties": {
+    "runs": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "hypothesis_id", "role", "command", "parameters", "seeds"],
+        "properties": {
+          "id": { "type": "string" },
+          "hypothesis_id": { "type": "string" },
+          "role": { "type": "string", "enum": ["treatment", "control"] },
+          "command": { "type": "string" },
+          "parameters": { "type": "object" },
+          "seeds": {
+            "type": "array",
+            "items": { "type": "integer" },
+            "minItems": 1
+          },
+          "wait_for": { "type": "string" },
+          "workload_changes": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "extra": { "type": "object" }
+  },
+  "additionalProperties": false
+}

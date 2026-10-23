@@ -1,0 +1,21 @@
+# Synthetic example: a toy script with an LRU cache. All numbers are made up.
+research_question: >
+  Does raising --cache-size from 64 to 256 lower the p99 latency of
+  toy_cache.py, and does the hit rate explain the change?
+run_id: toy-cache-p99
+max_iterations: 3
+task_type: optimize
+target_system:
+  name: toy_cache
+  description: >
+    `python toy_cache.py --cache-size N --seeds 1,2,3 --json` replays 10,000
+    requests through an LRU cache and prints p99_ms and hit_rate as JSON.
+  repo_path: /path/to/toy-cache
+objective:
+  metric: p99_ms
+  direction: decrease
+locked_parameters:
+  requests: 10000
+  concurrency: 8
+experiment_commands:
+  - '\btoy_cache\.py\b'

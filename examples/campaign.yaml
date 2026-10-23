@@ -1,17 +1,24 @@
+# Example Nous v2 campaign. Set repo_path to your target checkout.
+# Every key is listed in the README's "Campaign file" table.
 research_question: >
-  With total input length held fixed, does increasing the prefix portion
-  (cached tokens) reduce TTFT under moderate load?
+  Does raising the cache size from 64 to 256 entries lower the p99 latency
+  of the request benchmark, with the workload held fixed?
 
-run_id: blis-fast
-max_iterations: 2
+run_id: cache-p99
+max_iterations: 3
+task_type: optimize          # debug | verify | optimize | policy | explain | other
 
 target_system:
-  name: "BLIS — LLM Inference Serving Simulator"
+  name: My service
   description: >
-    BLIS is a discrete-event simulator for LLM inference serving.
-    It models request arrivals, scheduling, and KV-cache management.
-  repo_path: /path/to/your/blis  # Set to your local checkout
+    A service with an in-process LRU cache. `python bench.py --cache-size N --seed S`
+    prints p99 latency in ms and writes results/<run>.json.
+  repo_path: /path/to/your/repo   # required: the target git checkout
 
-prompts:
-  methodology_layer: "prompts/methodology"
-  domain_adapter_layer: null
+objective:
+  metric: p99_ms
+  direction: decrease         # findings.best improves when p99_ms goes down
+
+locked_parameters:            # every plan.json run must use these values
+  requests: 10000
+  concurrency: 8
