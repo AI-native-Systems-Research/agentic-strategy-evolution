@@ -538,3 +538,22 @@ Evidence: pd rep1 and search rep1 had C1 = R2 = 0 although all 16 exported evide
 ## R13 round 1 fix: REPORT crashed on mixed evidence forms (general Nous bug)
 
 Evidence: re-run dbg rep1 (on cb91648) crashed at REPORT with `AttributeError: 'str' object has no attribute 'get'`; its answer.json mixed a {path,key,value} claim already pointing at nous_evidence/ with bare path strings ("R1_treatment.json"). check_evidence_item assumed a dict; export skipped pre-prefixed paths. Fix: check_evidence_item returns an error for non-object items instead of raising; export handles string or object evidence and paths already under nous_evidence/ (copies to the repo if missing, writes the contract string form). Tests: non-object evidence item; mixed/pre-prefixed export. Replayed on the real dbg rep1 work dir: all 3 claims export to existing repo paths, final check has no evidence errors. 606 -> 608 passed.
+
+## R13 round 1 results (code d56a81d; eval.sh bar numbers only)
+
+| task rep | stop | iters | cost $ | accuracy | C1 | R2 | lost |
+|---|---|---|---|---|---|---|---|
+| dbg 1 | answered | 1 | 7.75 | O1 true (D1-D5 all true) | 0.333 | 0.333 | 0 |
+| dbg 2 | answered | 1 | 6.43 | O1 true (D1-D5 all true) | 0.333 | 0.333 | 0 |
+| pd 1 | max_iterations | 5 | 10.47 | O1 false (K1,K2 true; K3,K4 false) | 0.333 | 0.333 | 0 |
+| pd 2 | max_iterations | 5 | 13.33 | O1 false (K1 true) | 0.0 | 0.0 | 0 |
+| search 1 | answered | 2 | 6.60 | O1 false, B1 false, B2 true, limits ok, T=1 | 1.0 | 0.0 | 0 |
+| search 2 | answered | 3 | 5.87 | O1 false, B1 true, B2 true, limits ok, T=2 | 0.0 | 0.0 | 0 |
+Bar: debugging 2/2 passes; formula 0/2 fails (< 2/3); search below baseline; trail C1/R2 low. Hooks ran (no lost rounds, no crashes on this code).
+Transcript evidence for round-2 general fixes (no task content used):
+- REPORT had no repair pass: pd rep2 answer.json used `evidence_ref` (schema-invalid, final_check answer_valid false) and shipped. Spec 3.5 repair applies to every phase.
+- Claims whose value is not literally in the evidence file (dbg 'all pass', True; search prose values) fail "evidence must contain the value"; no validator compared claim value with the evidence value.
+- repro commands began with `cd ws && ...` / env setup although the contract runs repro from the repository root.
+- method.md field lists contradicted the schemas (baseline metrics_path/noise missing; findings error_type values; finding_ref/question_answered placement), so runs rewrote baseline.json 15-25 times and answer.json up to 12 times (pre-fix transcripts pd/search).
+- Agents wrote artifacts into the repo instead of the work dir (relative names in phase messages) and copied them by hand.
+- Optimize runs scored themselves with a self-made metric; verify runs left sub-questions of the task unanswered and ran outside stated ranges.
