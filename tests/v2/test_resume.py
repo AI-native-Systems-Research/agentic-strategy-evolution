@@ -178,7 +178,7 @@ class TestCampaignResume:
         }
         pu = {"updates": []}
         answer = {"answer": "fixed", "deliverable": "patch", "repro": "pytest",
-                  "claims": [{"id": "c1", "metric": "pass", "value": 1.0, "condition": "default", "evidence": []}]}
+                  "claims": []}
 
         per_turn = [
             {  # EXECUTE turn writes findings + pu
@@ -255,7 +255,7 @@ class TestCampaignResume:
         }
         pu = {"updates": []}
         answer = {"answer": "fixed", "deliverable": "patch", "repro": "pytest",
-                  "claims": [{"id": "c1", "metric": "pass", "value": 1.0, "condition": "default", "evidence": []}]}
+                  "claims": []}
 
         # Turns: fallback prime, DESIGN, EXECUTE, REPORT = 4 turns
         per_turn = [
@@ -365,7 +365,7 @@ class TestCampaignResume:
         }
         pu = {"updates": []}
         answer = {"answer": "greedy wins", "deliverable": "patch", "repro": "bench.py",
-                  "claims": [{"id": "c1", "metric": "score", "value": 20.0, "condition": "default", "evidence": []}]}
+                  "claims": []}
 
         per_turn = [
             {
@@ -417,7 +417,7 @@ class TestCampaignResume:
         }
         pu = {"updates": []}
         answer = {"answer": "fixed", "deliverable": "patch", "repro": "pytest",
-                  "claims": [{"id": "c1", "metric": "pass", "value": 1.0, "condition": "default", "evidence": []}]}
+                  "claims": []}
 
         per_turn = [
             {str(work_dir / "baseline.json"): json.dumps({
@@ -505,7 +505,7 @@ class TestCampaignResume:
         }
         pu = {"updates": []}
         answer = {"answer": "fixed", "deliverable": "patch", "repro": "pytest",
-                  "claims": [{"id": "c1", "metric": "pass", "value": 1.0, "condition": "default", "evidence": []}]}
+                  "claims": []}
 
         # Turns: fallback prime, DESIGN, EXECUTE, REPORT = 4
         per_turn = [
@@ -592,7 +592,7 @@ class TestCampaignStateResumeFields:
         }
         pu = {"updates": []}
         answer = {"answer": "fixed", "deliverable": "patch", "repro": "pytest",
-                  "claims": [{"id": "c1", "metric": "pass", "value": 1.0, "condition": "default", "evidence": []}]}
+                  "claims": []}
 
         per_turn = [
             {str(work_dir / "baseline.json"): json.dumps({

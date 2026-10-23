@@ -226,7 +226,7 @@ class Campaign:
             await self._turn(
                 session,
                 "BASELINE phase. Do not design hypotheses yet. "
-                f"Get one real observation and write baseline.json.{task_hint}",
+                f"Get one real observation and write {self._work_dir / 'baseline.json'}.{task_hint}",
             )
             await self._repair(session, self._work_dir, ["baseline"])
             self._commit_phase(0, "BASELINE")
@@ -255,11 +255,11 @@ class Campaign:
                     await self._turn(
                         session,
                         f"Iteration {iteration}, DESIGN phase. "
-                        f"Read state/digest.json and baseline.json. "
+                        f"Read {self._work_dir / 'state' / 'digest.json'} and "
+                        f"{self._work_dir / 'baseline.json'}. "
                         f"Frame predictions relative to baseline. "
-                        f"Write runs/iter-{iteration}/problem.json, "
-                        f"runs/iter-{iteration}/bundle.json, "
-                        f"runs/iter-{iteration}/plan.json.{principles_text}",
+                        f"Write {idir / 'problem.json'}, {idir / 'bundle.json'}, "
+                        f"{idir / 'plan.json'}.{principles_text}",
                     )
                 except Exception as exc:
                     fp = breaker.record(type(exc).__name__, "DESIGN", str(exc))
@@ -289,8 +289,7 @@ class Campaign:
                 f"Iteration {iteration}, EXECUTE phase. "
                 f"Run plan.json; fix anything that does not run. "
                 f"Use wait_for only for runs started in the background. "
-                f"Write runs/iter-{iteration}/findings.json "
-                f"and runs/iter-{iteration}/principle_updates.json."
+                f"Write {idir / 'findings.json'} and {idir / 'principle_updates.json'}."
             )
             if execute_note:
                 exec_prompt += f"\n\nHuman note: {execute_note}"
@@ -378,8 +377,14 @@ class Campaign:
         phase_iteration: int, commit_iteration: int, note: str | None = None,
     ) -> None:
         self._set_phase(hook_state, "REPORT", phase_iteration)
-        msg = "REPORT phase. Write answer.json and report.md."
+        msg = (
+            f"REPORT phase. Write {self._work_dir / 'answer.json'} and {self._work_dir / 'report.md'}. "
+            "`answer` answers every question and sub-question of the research question. "
+            "`claims` are the quantitative conclusions, each value copied exactly from the cited file. "
+            "`repro` is one command run from the repository root (no cd)."
+        )
         await self._turn(session, msg + (f"\n\nHuman note: {note}" if note else ""))
+        await self._repair(session, self._work_dir, ["answer"])
         self._export_evidence()
         self._commit_phase(commit_iteration, "REPORT")
         self._record_final_check()

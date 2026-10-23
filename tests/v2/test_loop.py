@@ -155,6 +155,14 @@ def _answer() -> dict:
     }
 
 
+def _answer_turn(work_dir: Path) -> dict:
+    """REPORT turn files: answer.json plus the evidence file its claim cites."""
+    return {
+        str(work_dir / "runs" / "iter-1" / "results.json"): json.dumps({"pass_rate": 1.0}),
+        str(work_dir / "answer.json"): json.dumps(_answer()),
+    }
+
+
 def _campaign_yaml(
     *,
     research_question: str = "Is the bug fixable?",
@@ -208,6 +216,7 @@ def _build_per_turn_files(work_dir: Path, *, answered: bool = True) -> list[dict
             str(iter_dir / "principle_updates.json"): json.dumps(
                 _principle_updates()
             ),
+            str(iter_dir / "results.json"): json.dumps({"pass_rate": 1.0}),  # the answer's evidence
         },
         {
             str(work_dir / "answer.json"): json.dumps(_answer()),
@@ -354,7 +363,7 @@ class TestCampaignLifecycle:
                     _principle_updates()
                 ),
             },
-            {str(work_dir / "answer.json"): json.dumps(_answer())},
+            _answer_turn(work_dir),
         ]
         # Turns: BASELINE, DESIGN1, EXECUTE1, DESIGN2, EXECUTE2, REPORT
         script = _make_script(6)
@@ -408,7 +417,7 @@ class TestCampaignLifecycle:
                     _principle_updates()
                 ),
             },
-            {str(work_dir / "answer.json"): json.dumps(_answer())},
+            _answer_turn(work_dir),
         ]
         script = _make_script(6)
 
@@ -465,7 +474,7 @@ class TestBundleHashLock:
                 ),
                 str(iter_dir / "bundle.json"): json.dumps(modified_bundle),
             },
-            {str(work_dir / "answer.json"): json.dumps(_answer())},
+            _answer_turn(work_dir),
         ]
         script = _make_script(4)
 
@@ -589,7 +598,7 @@ class TestPrinciples:
                     _principle_updates()
                 ),
             },
-            {str(work_dir / "answer.json"): json.dumps(_answer())},
+            _answer_turn(work_dir),
         ]
         script = _make_script(6)
 
@@ -718,7 +727,7 @@ class TestLedgerPerIteration:
                     str(iter1 / "findings.json"): json.dumps(findings),
                     str(iter1 / "principle_updates.json"): json.dumps({"updates": []}),
                 }
-            return {}
+            return _answer_turn(work_dir)
 
         per_turn = [write_files_on_turn(i) for i in range(4)]
         # 4 turns: BASELINE, DESIGN, EXECUTE, REPORT
@@ -945,7 +954,7 @@ def test_answer_string_evidence_must_exist(tmp_path):
     errs = validate_artifact("answer", ans, ValidatorContext(work_dir=tmp_path))
     assert any("missing.json" in e for e in errs)
     (tmp_path / "nous_evidence").mkdir()
-    (tmp_path / "nous_evidence" / "missing.json").write_text("{}")
+    (tmp_path / "nous_evidence" / "missing.json").write_text('{"pass_rate": 1.0}')
     assert validate_artifact("answer", ans, ValidatorContext(work_dir=tmp_path)) == []
 
 
@@ -968,3 +977,43 @@ def test_export_handles_mixed_and_pre_prefixed_evidence(tmp_path):
     assert (repo / "nous_evidence" / "R1.json").is_file()
     from orchestrator.v2.final_check import check_answer
     assert check_answer(work)["evidence_errors"] == []
+
+
+async def test_report_repairs_invalid_answer_before_export(tmp_path):
+    """Spec 3.5 at REPORT: an invalid answer.json gets a repair turn; the repaired one is exported."""
+    repo, work_dir = tmp_path / "repo", tmp_path / "work"
+    repo.mkdir(); work_dir.mkdir()
+    (work_dir / "runs" / "iter-1").mkdir(parents=True)
+    (work_dir / "runs" / "iter-1" / "results.json").write_text(json.dumps({"pass_rate": 1.0}))
+    bad = _answer()
+    bad["claims"][0]["evidence_ref"] = bad["claims"][0].pop("evidence")
+    per_turn = _build_per_turn_files(work_dir, answered=True)
+    per_turn[3] = {str(work_dir / "answer.json"): json.dumps(bad)}
+    per_turn.append({str(work_dir / "answer.json"): json.dumps(_answer())})
+    client = FakeClient(script=_make_script(5), per_turn_files=per_turn)
+    cfg = parse_campaign_config(_campaign_yaml(repo_path=str(repo)))
+    await Campaign(cfg, work_dir, client_factory=lambda _o: client).run()
+
+    assert "Repair" in client.queries[4] and "answer" in client.queries[4]
+    answer = json.loads((work_dir / "answer.json").read_text())
+    assert answer["claims"][0]["evidence"] == "nous_evidence/runs/iter-1/results.json"
+    assert (repo / "nous_evidence" / "runs" / "iter-1" / "results.json").is_file()
+
+
+async def test_phase_messages_name_absolute_paths(tmp_path):
+    work_dir = tmp_path / "work"
+    work_dir.mkdir()
+    (work_dir / "runs" / "iter-1").mkdir(parents=True)
+    (work_dir / "runs" / "iter-1" / "results.json").write_text(json.dumps({"pass_rate": 1.0}))
+    client = FakeClient(script=_make_script(4), per_turn_files=_build_per_turn_files(work_dir))
+    await Campaign(parse_campaign_config(_campaign_yaml()), work_dir,
+                   client_factory=lambda _o: client).run()
+    q = client.queries
+    idir = work_dir / "runs" / "iter-1"
+    assert str(work_dir / "baseline.json") in q[0]
+    for name in ("problem.json", "bundle.json", "plan.json"):
+        assert str(idir / name) in q[1]
+    for name in ("findings.json", "principle_updates.json"):
+        assert str(idir / name) in q[2]
+    assert str(work_dir / "answer.json") in q[3] and str(work_dir / "report.md") in q[3]
+    assert "repository root" in q[3]

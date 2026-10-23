@@ -1,49 +1,62 @@
 # Nous: scientific investigation method
 
 You are running a structured scientific investigation. Follow this loop exactly.
+Field lists below match the validators exactly; `?` marks optional. Put any other key under `extra`.
 
 ## Phases
 
-**BASELINE** — Observe the current system before changing anything.
-- Run the simplest command that produces a real measurement.
-- Write `baseline.json`: observation (the measured value), command, git_sha.
-- If task_type is not set, determine it (debug/verify/optimize/policy/explain/other) and include task_type_reason.
-- Aim for about 5 turns. Do not design hypotheses yet.
+**BASELINE**: observe the system before changing anything.
+- Run the simplest command that produces a real measurement. Aim for about 5 turns. Do not design hypotheses yet.
+- `baseline.json`: `task_type` (debug|verify|optimize|policy|explain|other), `task_type_reason?`, `command`, `git_sha` (7-40 hex), `observation`, `metrics_path`, `noise`.
+- `observation` by task_type:
+  - debug: `{reproduced: true, symptom, expected, actual}`
+  - verify: `{points: [{condition, predicted, measured}]}` (at least 1)
+  - optimize: `{score}` with score > 0
+  - policy / other: `{metrics: {...}}` (at least 1 key)
+  - explain: `{symptom, control}`
+- `noise` is exactly one of: `{seeds: [int], values: [number], sd}` | `{deterministic: true}` | `{unmeasured: true, reason}`.
 
-**DESIGN** — Frame testable hypotheses relative to the baseline.
-- Read `state/digest.json` and `baseline.json`.
-- Write `problem.json`: research sub-question, claims_needed (what must be true to answer the campaign question).
-- Write `bundle.json`: a list of hypotheses, each with:
-  - `family`: the mechanism family (e.g. "algorithm", "configuration"). Use at least 2 families when the problem allows, or give `single_family_reason`.
-  - `prediction`: a concrete numeric or boolean prediction relative to baseline.
-  - `control`: what stays unchanged to isolate the variable.
-  - `falsified_if`: the observation that would refute this hypothesis.
-  - Parameters and workload must match locked values exactly.
-- Write `plan.json`: the runs to execute, with commands and expected outputs. Set a run's `wait_for` (a file path, or `cmd:<command>` that exits 0 when done) only for runs started in the background that outlast the turn.
+**DESIGN**: frame testable hypotheses relative to the baseline.
+- Read `state/digest.json`, `baseline.json` and the active principles.
+- `problem.json`: `task_type`, `claims_needed: [{id, description, test_method, min_seeds?, needs_ci?, conditions?: [str]}]`.
+  - claims_needed must cover every question and sub-question the research question asks, and stay within the setup, parameters and ranges the research question fixes.
+- `bundle.json`: `hypotheses: [...]`, `single_family_reason?`. Each hypothesis:
+  - `id`, `role`, `family` (mechanism family), `mechanism`, `falsified_if`, `claim_ids: [str]`
+  - `prediction: {metric, direction: increase|decrease|equal|change, magnitude_or_threshold?}`
+  - `control` (what stays unchanged), or `no_control_reason`
+  - Use at least 2 families, or give `single_family_reason`. Every claims_needed id must appear in some `claim_ids`.
+- `plan.json`: `runs: [{id, hypothesis_id, role: treatment|control, command, parameters: {}, seeds: [int], wait_for?, workload_changes?: [str]}]`.
+  - Treatment and control runs of one hypothesis use the same seeds. Locked parameters keep their values unless named in `workload_changes`.
+  - Set `wait_for` (a file path, or `cmd:<command>` that exits 0 when done) only for runs started in the background that outlast the turn.
 - Predictions are locked after DESIGN. Do not change them during EXECUTE.
 
-**EXECUTE** — Run the plan and record what happened.
-- Execute each run in plan.json. Fix anything that does not run.
-- For each hypothesis, write its `status`: CONFIRMED, REFUTED, PARTIALLY_CONFIRMED, or INCONCLUSIVE.
-- Write `findings.json`: per-hypothesis results with:
-  - `status`, `error_type` (prediction/measurement/design/scope), `evidence` (list of {path, key, value} pointing to real files).
-  - per claim: `claim_id` (from claims_needed), `metric`, `condition`, `value`, plus `seeds` (list) and `ci` when claims_needed declares min_seeds / needs_ci.
-  - `question_answered`: true/false — did the findings resolve the campaign question?
-  - `finding_ref`: identifier linking back to the hypothesis.
-  - If noise was measured, include `noise_sd`. A finding resting on unmeasured noise must set `noise_unmeasured: true`.
-- Write `principle_updates.json`: lessons learned (add/revise/remove), each with an id and evidence.
+**EXECUTE**: run the plan and record what happened. Fix anything that does not run.
+- `findings.json`: `hypotheses: [...]`, `best?: {metric, value}`, `question_answered` (bool: is the campaign question resolved?), `reason`. Each hypothesis:
+  - `id`, `status`: CONFIRMED|PARTIALLY_CONFIRMED|REFUTED|INCONCLUSIVE (`partial_note` required for PARTIALLY_CONFIRMED)
+  - `error_type`: direction|magnitude|regime|shape|none (how the prediction missed; none if it held)
+  - `evidence: [{path, key, value}]` pointing to real files
+  - `effect?: {value, evidence?}`; noise: `noise_sd`, or `noise_unmeasured: true` + `noise_reason`
+  - `claims?: [{claim_id, metric, condition, value, seeds?, ci?}]`; give `seeds` and `ci` when claims_needed sets min_seeds / needs_ci.
+- `principle_updates.json`: `updates: [{id, text, finding_ref (a hypothesis id), action: add|revise|remove}]`.
 
-**REPORT** — Summarize the investigation.
-- Write `answer.json`: the answer to the research question, with claims_matched_fraction and evidence.
-- Write `report.md`: a human-readable summary.
+**REPORT**: answer the research question.
+- `answer.json`: `{answer, deliverable, repro, claims}`.
+  - `answer`: prose that answers every question and sub-question of the research question.
+  - `deliverable`: path or null. `repro`: one shell command, run from the repository root (no `cd`), that regenerates the headline numbers.
+  - `claims: [{id, metric, value, condition, evidence}]`: every quantitative conclusion you rely on. `evidence` is the path of the file holding the number, or `{path, key, value}`; `value` is copied exactly from that file.
+- `report.md`: a human-readable summary.
+
+## Evidence keys
+
+`{path, key, value}`: `.json` key is a JSON Pointer (`/a/0/b`); `.jsonl` `line@pointer`; `.csv`/`.tsv` `column@row`; other text: a regex whose group 1 is the value.
 
 ## Rules
 
 1. **Baseline first.** Always measure before changing. Every prediction is a delta from baseline.
-2. **Lock predictions.** After DESIGN, predictions in bundle.json are frozen. If EXECUTE changes them, the bundle hash check will flag it.
+2. **Lock predictions.** After DESIGN, bundle.json is frozen. If EXECUTE changes it, the bundle hash check flags it.
 3. **One variable per experiment.** Each hypothesis isolates one mechanism. Include a control.
-4. **Noise-aware claims.** If the effect is within 2x the noise sd, it is not a real effect. Measure noise on the baseline when the system is non-deterministic.
-5. **Evidence must be checkable.** Every claim must cite a file path, JSON key, and value that a validator can verify. Use JSON, JSONL, CSV, or TSV files.
+4. **Noise-aware claims.** CONFIRMED/REFUTED needs |effect.value| > 2x noise sd. Measure noise on the baseline when the system is non-deterministic.
+5. **Evidence must be checkable.** Every number you report cites a file a validator can read.
 6. **Secrets.** Use environment variables for secrets, never literal values. The system masks secrets in logs.
 7. **Long output.** Redirect long command output to a file and read only what you need. Do not paste large logs.
-8. **Principles compound.** Read active principles before each DESIGN. Add new principles only with evidence; revise or remove when evidence changes.
+8. **Principles compound.** Add new principles only with evidence; revise or remove when evidence changes.

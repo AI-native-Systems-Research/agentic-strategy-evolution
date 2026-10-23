@@ -453,19 +453,43 @@ def _check_principle_updates_semantics(
     return errors
 
 
+_COPY_VALUE = ("copy the exact value from the file; claims are quantitative "
+               "(put prose in `answer`)")
+
+
+def _same_value(a: Any, b: Any) -> bool:
+    nums = (int, float)
+    if isinstance(a, nums) and isinstance(b, nums) and not isinstance(a, bool) and not isinstance(b, bool):
+        return math.isclose(a, b, rel_tol=1e-9)
+    return a == b
+
+
 def _check_answer_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
     """Check answer-specific rules."""
     errors: list[str] = []
 
-    # Evidence checks on claims
+    if data.get("repro", "").lstrip().startswith("cd "):
+        errors.append("repro must not start with `cd`: it runs from the repository root")
+
+    # Evidence checks on claims; the claim value must be the evidence value
     base_dir = ctx.work_dir
     for claim in data.get("claims", []):
         ev = claim.get("evidence_detail") or claim.get("evidence")
-        if isinstance(ev, str):  # contract form: the path must exist
-            if not (base_dir / ev).is_file():
+        value, cid = claim.get("value"), claim.get("id")
+        if isinstance(ev, str):  # contract form: the path must exist and hold the value
+            path = base_dir / ev
+            if not path.is_file():
                 errors.append(f"evidence file not found: {ev}")
+            elif isinstance(value, (int, float, str)) and not isinstance(value, bool):
+                text = path.read_text(errors="replace")
+                forms = {str(value), repr(value)} if isinstance(value, float) else {str(value)}
+                if not any(f in text for f in forms):
+                    errors.append(f"claim {cid!r}: value {value!r} not found in {ev}; {_COPY_VALUE}")
         elif ev:
             errors.extend(check_evidence_item(ev, base_dir))
+            if isinstance(ev, dict) and not _same_value(value, ev.get("value")):
+                errors.append(f"claim {cid!r}: value {value!r} != evidence value "
+                              f"{ev.get('value')!r}; {_COPY_VALUE}")
 
     # Secret check (3.14): no literal secret value anywhere in answer.json or report.md
     if ctx.secrets:

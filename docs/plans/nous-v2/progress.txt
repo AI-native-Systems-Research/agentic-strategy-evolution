@@ -557,3 +557,13 @@ Transcript evidence for round-2 general fixes (no task content used):
 - method.md field lists contradicted the schemas (baseline metrics_path/noise missing; findings error_type values; finding_ref/question_answered placement), so runs rewrote baseline.json 15-25 times and answer.json up to 12 times (pre-fix transcripts pd/search).
 - Agents wrote artifacts into the repo instead of the work dir (relative names in phase messages) and copied them by hand.
 - Optimize runs scored themselves with a self-made metric; verify runs left sub-questions of the task unanswered and ran outside stated ranges.
+
+## R13 round 2 fixes (general; each tied to round-1 evidence above)
+
+- REPORT repair pass (spec 3.5) -> bar rule 3/4: pd rep2 shipped an invalid answer.json (evidence_ref). Now _repair(["answer"]) before export.
+- Claim value must match its evidence (object: equal / isclose; path string: value text in file) -> C1: claims like 'all pass' / prose values failed "evidence must contain the value".
+- repro must not start with `cd` (runs from repository root) -> R2: repro commands began with `cd ws && ...`.
+- Phase messages name absolute artifact paths; REPORT message states the output contract briefly -> transcripts showed artifacts written to the repo and hand-copied; answers skipped sub-questions.
+- method.md field lists match the schemas exactly (baseline observation per task_type, noise shapes, error_type enum, findings/principle_updates fields); rule: claims_needed covers every question the research question asks and stays inside its fixed setup/ranges -> 15-25 baseline rewrites and 12 answer rewrites per run in round-1 transcripts; verify runs left sub-questions unanswered and ran out of range (accuracy rule 1).
+- Checklists: optimize scores with the task's own stated criterion, checked independently; verify answers each question explicitly within fixed ranges -> search runs scored themselves with a self-made count (accuracy rule 1).
+No task content in any change (grep for task terms empty). Tests 608 -> 617. v2 runtime 2488 lines; method.md 4,916 bytes.

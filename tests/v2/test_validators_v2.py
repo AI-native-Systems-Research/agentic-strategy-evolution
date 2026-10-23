@@ -676,3 +676,53 @@ class TestReviewFixes:
         ctx = _ctx(tmp_path, secrets={"api_key": "sk-12345secret"})
         errs = validate_artifact("answer", _valid_answer(tmp_path), ctx)
         assert any("report.md" in e and "api_key" in e for e in errs)
+
+
+# ── Round 2: claim value must match its evidence; repro hygiene ──────────
+
+
+class TestClaimValueMatchesEvidence:
+    def test_object_evidence_value_mismatch_rejected(self, tmp_path):
+        data = _valid_answer(tmp_path)
+        data["claims"][0]["value"] = 41
+        errs = validate_artifact("answer", data, _ctx(tmp_path))
+        assert any("copy the exact value" in e for e in errs)
+
+    def test_evidence_detail_value_mismatch_rejected(self, tmp_path):
+        data = _valid_answer(tmp_path)
+        claim = data["claims"][0]
+        claim["evidence_detail"] = claim["evidence"]
+        claim["evidence"] = "final.json"
+        claim["value"] = "about 42"
+        errs = validate_artifact("answer", data, _ctx(tmp_path))
+        assert any("copy the exact value" in e for e in errs)
+
+    def test_object_evidence_float_close_accepted(self, tmp_path):
+        (tmp_path / "f.json").write_text(json.dumps({"x": 0.1 + 0.2}))
+        data = _valid_answer(tmp_path)
+        data["claims"][0].update(value=0.3, evidence={"path": "f.json", "key": "/x", "value": 0.3})
+        assert validate_artifact("answer", data, _ctx(tmp_path)) == []
+
+    def test_string_evidence_value_in_file_accepted(self, tmp_path):
+        data = _valid_answer(tmp_path)
+        data["claims"][0]["evidence"] = "final.json"
+        assert validate_artifact("answer", data, _ctx(tmp_path)) == []
+
+    def test_string_evidence_value_not_in_file_rejected(self, tmp_path):
+        data = _valid_answer(tmp_path)
+        data["claims"][0].update(evidence="final.json", value=17.5)
+        errs = validate_artifact("answer", data, _ctx(tmp_path))
+        assert any("17.5" in e and "copy the exact value" in e for e in errs)
+
+
+class TestReproHygiene:
+    def test_repro_starting_with_cd_rejected(self, tmp_path):
+        data = _valid_answer(tmp_path)
+        data["repro"] = "cd sub && make test"
+        errs = validate_artifact("answer", data, _ctx(tmp_path))
+        assert any("repository root" in e for e in errs)
+
+    def test_repro_without_cd_accepted(self, tmp_path):
+        data = _valid_answer(tmp_path)
+        data["repro"] = "make -C sub test"
+        assert validate_artifact("answer", data, _ctx(tmp_path)) == []

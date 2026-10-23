@@ -5,3 +5,4 @@
 - Report the size and sign of each error and the regime boundary.
 - State the mechanism behind any breakdown.
 - Check multiple input ranges, not just the convenient middle.
+- Answer each question the task asks, explicitly, with the measured numbers; stay inside the ranges and setup the task fixes.
