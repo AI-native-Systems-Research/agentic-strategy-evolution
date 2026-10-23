@@ -397,15 +397,18 @@ class Campaign:
         for claim in answer.get("claims") or []:
             ev = claim.get("evidence") if isinstance(claim, dict) else None
             path = ev.get("path") if isinstance(ev, dict) else ev
-            if not isinstance(path, str) or path.startswith(EVIDENCE_DIR + "/"):
+            if not isinstance(path, str):
                 continue
+            new = path if path.startswith(EVIDENCE_DIR + "/") else f"{EVIDENCE_DIR}/{path}"
             src = (self._work_dir / path).resolve()
+            if not src.is_file():
+                src = (self._work_dir / new).resolve()
             if not src.is_file() or not src.is_relative_to(self._work_dir.resolve()):
                 continue  # left as is; the final check reports it
-            new = f"{EVIDENCE_DIR}/{path}"
             for root in (Path(repo), self._work_dir):
-                (root / new).parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(src, root / new)
+                if (root / new).resolve() != src:
+                    (root / new).parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(src, root / new)
             # Output contract: evidence is the path string; keep {path, key, value} as evidence_detail
             if isinstance(ev, dict):
                 claim["evidence_detail"] = {**ev, "path": new}

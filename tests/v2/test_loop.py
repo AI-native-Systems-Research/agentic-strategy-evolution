@@ -947,3 +947,24 @@ def test_answer_string_evidence_must_exist(tmp_path):
     (tmp_path / "nous_evidence").mkdir()
     (tmp_path / "nous_evidence" / "missing.json").write_text("{}")
     assert validate_artifact("answer", ans, ValidatorContext(work_dir=tmp_path)) == []
+
+
+def test_export_handles_mixed_and_pre_prefixed_evidence(tmp_path):
+    """dbg rep1 (R13): claims mixed {path,key,value} already under nous_evidence/ and bare path strings."""
+    repo, work = tmp_path / "ws", tmp_path / "work"
+    repo.mkdir(); (work / "nous_evidence").mkdir(parents=True)
+    (work / "R1.json").write_text('{"n": 5}')
+    (work / "nous_evidence" / "R1.json").write_text('{"n": 5}')
+    (work / "answer.json").write_text(json.dumps({**_answer(), "claims": [
+        {"id": "C1", "metric": "n", "value": 5, "condition": "c",
+         "evidence": {"path": "nous_evidence/R1.json", "key": "/n", "value": 5}},
+        {"id": "C2", "metric": "n", "value": 5, "condition": "c", "evidence": "R1.json"},
+    ]}))
+    cfg = parse_campaign_config(_campaign_yaml(repo_path=str(repo)))
+    Campaign(cfg, work, client_factory=None)._export_evidence()
+    claims = json.loads((work / "answer.json").read_text())["claims"]
+    assert [c["evidence"] for c in claims] == ["nous_evidence/R1.json"] * 2
+    assert claims[0]["evidence_detail"]["key"] == "/n"
+    assert (repo / "nous_evidence" / "R1.json").is_file()
+    from orchestrator.v2.final_check import check_answer
+    assert check_answer(work)["evidence_errors"] == []

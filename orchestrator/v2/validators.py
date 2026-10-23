@@ -130,6 +130,8 @@ def _values_match(expected: Any, actual: Any) -> bool:
 
 def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
     """Validate a single evidence item ``{path, key, value}``."""
+    if not isinstance(item, dict):
+        return [f"evidence item must be an object {{path, key, value}}, got {item!r}"]
     errors: list[str] = []
     path_str = item.get("path", "")
     key = item.get("key", "")

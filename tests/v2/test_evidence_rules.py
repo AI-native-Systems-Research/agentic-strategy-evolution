@@ -324,3 +324,9 @@ class TestMalformedInputs:
         (tmp_path / "blob.bin").write_bytes(b"\xff\xfe\x00\x81")
         errs = check_evidence_item({"path": "blob.bin", "key": "(x)", "value": "x"}, tmp_path)
         assert errs
+
+
+def test_non_object_evidence_item_is_an_error_not_a_crash(tmp_path):
+    from orchestrator.v2.validators import check_evidence_item
+    assert check_evidence_item("R1.json", tmp_path)
+    assert check_evidence_item(None, tmp_path)
