@@ -1017,3 +1017,18 @@ async def test_phase_messages_name_absolute_paths(tmp_path):
         assert str(idir / name) in q[2]
     assert str(work_dir / "answer.json") in q[3] and str(work_dir / "report.md") in q[3]
     assert "repository root" in q[3]
+
+
+def test_export_coerces_numeric_string_claim_values(tmp_path):
+    """Output contract: claim value is a number. R13 round 3: "114630" passed Nous but not the contract reader."""
+    repo, work = tmp_path / "ws", tmp_path / "work"
+    repo.mkdir(); work.mkdir()
+    (work / "out.txt").write_text("total: 114630 rate: 1.5")
+    (work / "answer.json").write_text(json.dumps({**_answer(), "claims": [
+        {"id": "C1", "metric": "n", "value": "114630", "condition": "c", "evidence": "out.txt"},
+        {"id": "C2", "metric": "r", "value": "1.5", "condition": "c", "evidence": "out.txt"},
+        {"id": "C3", "metric": "s", "value": "PASS", "condition": "c", "evidence": "out.txt"},
+    ]}))
+    Campaign(parse_campaign_config(_campaign_yaml(repo_path=str(repo))), work, client_factory=None)._export_evidence()
+    vals = [c["value"] for c in json.loads((work / "answer.json").read_text())["claims"]]
+    assert vals == [114630, 1.5, "PASS"]

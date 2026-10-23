@@ -8,6 +8,7 @@ from __future__ import annotations
 import functools
 import json
 import logging
+import math
 import os
 import shutil
 import subprocess
@@ -47,6 +48,17 @@ def iter_dir(work_dir: Path, iteration: int) -> Path:
 def _write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
+
+
+def _as_number(text: str) -> int | float | None:
+    try:
+        return int(text)
+    except ValueError:
+        try:
+            x = float(text)
+        except ValueError:
+            return None
+        return x if math.isfinite(x) else None
 
 
 def _merge_principles(existing: list[dict], updates: dict | None) -> list[dict]:
@@ -416,6 +428,10 @@ class Campaign:
         repo_r, work_r = Path(repo).resolve(), self._work_dir.resolve()
         changed = False
         for claim in answer.get("claims") or []:
+            if isinstance(claim, dict) and isinstance(claim.get("value"), str):
+                num = _as_number(claim["value"])  # output contract: claim values are numbers
+                if num is not None:
+                    claim["value"], changed = num, True
             ev = claim.get("evidence") if isinstance(claim, dict) else None
             path = ev.get("path") if isinstance(ev, dict) else ev
             if not isinstance(path, str):

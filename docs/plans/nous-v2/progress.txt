@@ -594,3 +594,7 @@ No task content in any change. Tests 617 -> 632. v2 runtime 2582 lines; method.m
 ## R13 extra pd runs (borderline rule, code 95d6c3b)
 
 pd rep3: answered, 1 iter, $3.97 (0.38x L2), O1 false (K2,K3 true), C1/R2 1.0. pd rep4: max_iterations, 5 iters, $7.14 (0.68x L2), O1 false (K1,K2 true), C1/R2 1.0. With round 2: formula 1/4 on round-2 code vs L2 2/3 -> fails accuracy rule 1. Round 3 runs pd 2x on 816d677.
+
+## R13 round 3 follow-up fix (format; found in round-3 dbg rep2)
+
+Evidence: dbg rep2 (816d677) had C1 = R2 = 0 while final_check was fully valid: every claim value was a numeric string ("114630") present in its evidence file; the output contract defines value as a number. Fix: REPORT export turns a numeric-string claim value into a number (finite only). Test: test_export_coerces_numeric_string_claim_values. 632 -> 633 passed. Applies after search rep1 finishes; it does not change any round-3 run already scored.
