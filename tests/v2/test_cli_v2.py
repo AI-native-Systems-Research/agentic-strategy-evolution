@@ -147,21 +147,12 @@ class TestRun:
         assert saved["max_iterations"] == 1
         assert saved["run_id"] == "other-id"
 
-    def test_agent_and_legacy_flags_warn_and_are_ignored(
-        self, tmp_path, campaigns, fake_factory, monkeypatch, capsys,
-    ):
+    def test_v1_flags_removed(self, tmp_path, campaigns, monkeypatch):
+        """v1 flags are gone: argparse rejects them (exit 2) instead of silently ignoring them."""
         path = _write_campaign(tmp_path)
-        work_dir = campaigns / "cli-run"
-        fake_factory(work_dir)
-
-        code = _nous(monkeypatch, "run", str(path), "--agent", "inline", "--auto-approve",
-                     "--timeout", "5", "--max-cli-retries", "1", "--sandbox", "default")
-        assert code == 0
-        err = capsys.readouterr().err
-        for flag in ("--agent", "--auto-approve", "--timeout", "--max-cli-retries", "--sandbox"):
-            assert flag in err
-        assert "ignored" in err
-        assert (work_dir / "answer.json").exists()
+        for flag in (["--agent", "sdk"], ["--auto-approve"], ["--timeout", "5"],
+                     ["--max-cli-retries", "1"], ["--sandbox", "default"]):
+            assert _nous(monkeypatch, "run", str(path), *flag) == 2
 
     def test_v1_bundle_flag_removed(self, tmp_path, campaigns, monkeypatch):
         path = _write_campaign(tmp_path)
@@ -187,12 +178,10 @@ class TestResume:
             {"phase": "BASELINE", "iteration": 0, "session_id": "ses-old"}))
         built = fake_factory(work_dir)
 
-        assert _nous(monkeypatch, "resume", str(work_dir), "--note", "check X",
-                     "--agent", "sdk") == 0
+        assert _nous(monkeypatch, "resume", str(work_dir), "--note", "check X") == 0
         ledger = json.loads((work_dir / "ledger.json").read_text())
         assert ledger[0]["note"] == "check X"
         assert built[0].resume == "ses-old"
-        assert "--agent" in capsys.readouterr().err
 
 
 # ── campaign.yaml keys ───────────────────────────────────────────────────

@@ -7,9 +7,7 @@ license = {text = "Apache-2.0"}
 dependencies = [
     "jsonschema>=4.20.0",
     "pyyaml>=6.0",
-    # #183: SDK is the recommended (and only user-facing) execution path
-    # post-#120. Make it a required dependency so `pip install nous` lands
-    # users on the SDK by default rather than the deprecated claude -p path.
+    # Nous v2 drives one Claude Code session through the Agent SDK (pinned).
     "claude-agent-sdk==0.2.172",
     "anyio>=4.0",
 ]

@@ -120,21 +120,10 @@ def resolve_work_dir(target):
     return work_dir
 
 
-_LEGACY_FLAGS = ("agent", "auto_approve", "timeout", "max_cli_retries", "sandbox")
-
-
 def _sdk_client(options):
     """Client factory seam; tests replace this with a fake."""
     from claude_agent_sdk import ClaudeSDKClient
     return ClaudeSDKClient(options)
-
-
-def _warn_ignored_flags(args) -> None:
-    for name in _LEGACY_FLAGS:
-        if getattr(args, name, None) not in (None, False):
-            flag = "--" + name.replace("_", "-")
-            print(f"Warning: {flag} is ignored (Nous v2 always uses one Claude SDK session).",
-                  file=sys.stderr)
 
 
 def _parse_or_exit(raw):
@@ -173,7 +162,6 @@ def _cmd_run(args):
     from orchestrator.work_dir_resolver import find_existing_work_dir
     from orchestrator.work_dir_resolver import resolve_work_dir as resolve_new
 
-    _warn_ignored_flags(args)
     campaign_path = Path(args.campaign)
     if not campaign_path.exists():
         print(f"Campaign file not found: {campaign_path}", file=sys.stderr)
@@ -200,7 +188,6 @@ def _cmd_run(args):
 
 
 def _cmd_resume(args):
-    _warn_ignored_flags(args)
     target = Path(args.target)
     if target.is_dir() and not (target / "state.json").exists():
         print(f"No state.json in {target}. Nothing to resume; use `nous run`.", file=sys.stderr)
@@ -420,15 +407,6 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    def add_legacy_flags(sp):
-        """v1 flags: accepted, warned about, ignored (spec section 4)."""
-        sp.add_argument("--agent", choices=["inline", "sdk"], default=None,
-                        help="Ignored (v2 always uses one Claude SDK session).")
-        sp.add_argument("--auto-approve", action="store_true", help="Ignored.")
-        sp.add_argument("--timeout", type=int, default=None, help="Ignored.")
-        sp.add_argument("--max-cli-retries", type=int, default=None, help="Ignored.")
-        sp.add_argument("--sandbox", choices=["bypass", "default"], default=None, help="Ignored.")
-
     p_run = subparsers.add_parser("run", help="Run a Nous v2 campaign in one Claude session.")
     p_run.add_argument("campaign", help="Path to a campaign.yaml.")
     p_run.add_argument("--max-iterations", type=int,
@@ -436,7 +414,6 @@ def main():
     p_run.add_argument("--model", help="Session model. Overrides campaign.models.")
     p_run.add_argument("--run-id", help="Work dir name. Defaults to campaign.run_id "
                        "or a value derived from the file path.")
-    add_legacy_flags(p_run)
     p_run.set_defaults(func=_cmd_run)
 
     p_resume = subparsers.add_parser("resume", help="Resume a v2 campaign from its work dir.")
@@ -446,7 +423,6 @@ def main():
     p_resume.add_argument("--max-iterations", type=int,
                           help="Iteration cap. Saved to the work dir's campaign.yaml.")
     p_resume.add_argument("--model", help="Session model. Saved to the work dir's campaign.yaml.")
-    add_legacy_flags(p_resume)
     p_resume.set_defaults(func=_cmd_resume)
 
     p_schema = subparsers.add_parser(

@@ -79,7 +79,7 @@ nous schema {answer|baseline|bundle|findings|ledger_entry|plan|principle_updates
 - `status` prints phase, iteration, session id and ledger rows. `cost` sums the cost meter from `ledger.json`.
 - `validate` runs the same validators as the loop. `--dir` is `runs/iter-N` for `design`/`execute`, the work dir for `baseline`/`report`.
 
-`--agent`, `--auto-approve`, `--timeout`, `--max-cli-retries` and `--sandbox` are accepted for v1 compatibility, print a warning and do nothing. The v1-only commands `report`, `replay`, `reports`, `create-campaign`, `lineage`, `clean` and `package` were removed; they only read v1 artifacts.
+The v1 flags `--agent`, `--auto-approve`, `--timeout`, `--max-cli-retries` and `--sandbox` were removed; passing one is an error. The v1-only commands `report`, `replay`, `reports`, `create-campaign`, `lineage`, `clean` and `package` were removed; they only read v1 artifacts.
 
 ## Work dir
 
