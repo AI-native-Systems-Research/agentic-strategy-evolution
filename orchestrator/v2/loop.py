@@ -387,7 +387,8 @@ class Campaign:
     def _export_evidence(self) -> None:
         """Make answer.json self-contained in the deliverable: copy each claim's evidence file
         into <repo>/nous_evidence/<path> (and the same path under the work dir, so the final
-        check still resolves it) and point the claim there."""
+        check still resolves it). Per the output contract, `evidence` becomes that path string;
+        the structured {path, key, value} item moves to `evidence_detail`."""
         repo = self._config.target_system.get("repo_path")
         answer = _read_json(self._work_dir / "answer.json")
         if not repo or not isinstance(answer, dict):
@@ -395,7 +396,7 @@ class Campaign:
         changed = False
         for claim in answer.get("claims") or []:
             ev = claim.get("evidence") if isinstance(claim, dict) else None
-            path = ev.get("path") if isinstance(ev, dict) else None
+            path = ev.get("path") if isinstance(ev, dict) else ev
             if not isinstance(path, str) or path.startswith(EVIDENCE_DIR + "/"):
                 continue
             src = (self._work_dir / path).resolve()
@@ -405,7 +406,10 @@ class Campaign:
             for root in (Path(repo), self._work_dir):
                 (root / new).parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src, root / new)
-            ev["path"] = new
+            # Output contract: evidence is the path string; keep {path, key, value} as evidence_detail
+            if isinstance(ev, dict):
+                claim["evidence_detail"] = {**ev, "path": new}
+            claim["evidence"] = new
             changed = True
         if changed:
             _write_json(self._work_dir / "answer.json", answer)

@@ -458,8 +458,11 @@ def _check_answer_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
     # Evidence checks on claims
     base_dir = ctx.work_dir
     for claim in data.get("claims", []):
-        ev = claim.get("evidence")
-        if ev:
+        ev = claim.get("evidence_detail") or claim.get("evidence")
+        if isinstance(ev, str):  # contract form: the path must exist
+            if not (base_dir / ev).is_file():
+                errors.append(f"evidence file not found: {ev}")
+        elif ev:
             errors.extend(check_evidence_item(ev, base_dir))
 
     # Secret check (3.14): no literal secret value anywhere in answer.json or report.md

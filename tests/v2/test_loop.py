@@ -928,9 +928,22 @@ class TestAnswerEvidenceInRepo:
         await Campaign(config=config, work_dir=work_dir, client_factory=lambda _o: client).run()
 
         answer = json.loads((work_dir / "answer.json").read_text())
-        path = answer["claims"][0]["evidence"]["path"]
+        claim = answer["claims"][0]
+        # Output contract: evidence is a repo-relative path string; the {path,key,value} record is kept
+        path = claim["evidence"]
         assert path == "nous_evidence/runs/iter-1/results.json"
+        assert claim["evidence_detail"] == {"path": path, "key": "/pass_rate", "value": 1.0}
         assert json.loads((repo / path).read_text()) == {"pass_rate": 1.0}
         assert (work_dir / path).exists()
         check = json.loads((work_dir / "final_check.json").read_text())
         assert check["answer_valid"] is True and check["evidence_errors"] == []
+
+
+def test_answer_string_evidence_must_exist(tmp_path):
+    from orchestrator.v2.validators import ValidatorContext, validate_artifact
+    ans = {**_answer(), "claims": [{**_answer()["claims"][0], "evidence": "nous_evidence/missing.json"}]}
+    errs = validate_artifact("answer", ans, ValidatorContext(work_dir=tmp_path))
+    assert any("missing.json" in e for e in errs)
+    (tmp_path / "nous_evidence").mkdir()
+    (tmp_path / "nous_evidence" / "missing.json").write_text("{}")
+    assert validate_artifact("answer", ans, ValidatorContext(work_dir=tmp_path)) == []
