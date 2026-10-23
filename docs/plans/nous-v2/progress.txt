@@ -598,3 +598,8 @@ pd rep3: answered, 1 iter, $3.97 (0.38x L2), O1 false (K2,K3 true), C1/R2 1.0. p
 ## R13 round 3 follow-up fix (format; found in round-3 dbg rep2)
 
 Evidence: dbg rep2 (816d677) had C1 = R2 = 0 while final_check was fully valid: every claim value was a numeric string ("114630") present in its evidence file; the output contract defines value as a number. Fix: REPORT export turns a numeric-string claim value into a number (finite only). Test: test_export_coerces_numeric_string_claim_values. 632 -> 633 passed. Applies after search rep1 finishes; it does not change any round-3 run already scored.
+
+## R13 round 3 results (code 816d677) and close-out
+
+dbg 1/2: correct, $4.84/$3.97 (1.42x/1.17x L2), C1/R2 1.0 / 0.0 (numeric-string values; fixed in 33df08e). pd 1/2: wrong/correct, $10.30/$8.58 (0.99x/0.82x), C1/R2 1.0. search 1/2: search-works no, facts 2/3, $13.39/$13.48 (4.1x), C1/R2 1.0. 0 lost rounds, 0 crashes, 0 prereg violations.
+Bar fails after round 3 (formula accuracy, search accuracy and cost, dbg cost borderline). Per SPEC 10 wrote docs/plans/nous-v2/EVAL_REPORT.md; R13 marked done (acceptance: "bar passes, or EVAL_REPORT.md written after round 3"). Next: R14 docs pass.

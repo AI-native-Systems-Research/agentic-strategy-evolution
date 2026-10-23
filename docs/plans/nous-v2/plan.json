@@ -331,7 +331,7 @@
         "only general fixes, each justified in progress.txt",
         "Reviewer decision (2026-10-22): the Frontier-CS judge (go-judge in Docker) is not available on this Mac (no docker/colima binaries). R13 runs the merge bar on the 3 oracle tasks only (dbg, pd, search; 2 runs each) via ~/nous_v2_eval/eval.sh <task> <rep>. p5 and the held-out p225 move to the follow-up experiments, which need the judge set up anyway. The 3-round improvement loop and 'only general fixes' rules still apply. eval.sh prints only bar numbers; never read ~/nous_v2_eval/sealed or ~/mlsys_runs/keys."
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R14",
