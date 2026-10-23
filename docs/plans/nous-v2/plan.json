@@ -317,7 +317,7 @@
         "pytest -q green",
         "reviewer note: scope also covers orchestrator/*.py outside v2 (cli, meta_findings, create_campaign, campaign_index, deployment_recommendation, composite_score, engine, lineage, validate, work_dir_resolver, util): each listed in LEAN_AUDIT.md as keep/deprecate/delete with SPEC section; delete or deprecate any not working on v2 artifacts or not needed by v2; trim cli.py to the commands SPEC section 4 keeps; line counts before/after for all of orchestrator/"
       ],
-      "passes": false
+      "passes": true
     },
     {
       "id": "R13",
