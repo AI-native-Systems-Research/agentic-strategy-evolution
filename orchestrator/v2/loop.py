@@ -112,6 +112,7 @@ class Campaign:
                            "Nous makes no phase commits", repo)
             return
         wt = Path(repo).resolve() / EXPERIMENTS_DIR / self._config.run_id
+        self._exclude_experiments_dir(repo)
         if not (wt / ".git").exists():
             branch = f"nous/{self._config.run_id}"
             has_branch = subprocess.run(
@@ -127,6 +128,22 @@ class Campaign:
                 raise ValueError(f"Preflight failed:\n  - git worktree add {wt}: "
                                  f"{(r.stderr or r.stdout).strip()}")
         self._code_dir, self._commits = str(wt), True
+
+    @staticmethod
+    def _exclude_experiments_dir(repo: str) -> None:
+        """Keep the user's checkout clean: list .nous-experiments/ in the per-clone
+        info/exclude (never the committed .gitignore). repo may itself be a worktree."""
+        r = subprocess.run(["git", "rev-parse", "--git-common-dir"], cwd=repo,
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            raise ValueError(f"Preflight failed:\n  - git rev-parse --git-common-dir: "
+                             f"{(r.stderr or r.stdout).strip()}")
+        exclude = (Path(repo) / r.stdout.strip()).resolve() / "info" / "exclude"
+        line = f"{EXPERIMENTS_DIR}/"
+        text = exclude.read_text() if exclude.is_file() else ""
+        if line not in text.splitlines():
+            exclude.parent.mkdir(parents=True, exist_ok=True)
+            exclude.write_text(text + ("" if not text or text.endswith("\n") else "\n") + line + "\n")
 
     def _breaker_record(self, exc_type: str, phase: str, message: str) -> str | None:
         fp = self._breaker.record(exc_type, phase, message)

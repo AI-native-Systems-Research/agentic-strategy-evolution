@@ -152,6 +152,25 @@ async def test_p4_commits_go_to_campaign_worktree_not_user_branch(tmp_path):
     assert "nous: iter-1 REPORT" in _git(repo, "log", "--format=%s", "nous/test-run")
 
 
+async def test_p4_user_checkout_stays_clean(tmp_path):
+    repo = _init_repo(tmp_path)
+    work_dir = tmp_path / "work"  # NOUS_CAMPAIGN_PARENT-style, outside the repo
+    work_dir.mkdir()
+    wt = repo / ".nous-experiments" / "test-run"
+    per_turn = _build_per_turn_files(work_dir)
+    per_turn[1][str(wt / "src.py")] = "print('fix')\n"
+    client = FakeClient(script=_make_script(4), per_turn_files=per_turn)
+    cfg = parse_campaign_config(_campaign_yaml(repo_path=str(repo)))
+    assert (await Campaign(cfg, work_dir, lambda _o: client).run())["stop_reason"] == "answered"
+    assert _git(repo, "status", "--porcelain") == ""
+    assert ".gitignore" not in _git(repo, "ls-files").split()
+    exclude = (repo / ".git" / "info" / "exclude").read_text().splitlines()
+    assert exclude.count(".nous-experiments/") == 1
+    await Campaign(cfg, work_dir, lambda _o: FakeClient(script=_make_script(1), per_turn_files=[
+        _build_per_turn_files(work_dir)[3]])).resume()
+    assert (repo / ".git" / "info" / "exclude").read_text().splitlines().count(".nous-experiments/") == 1
+
+
 async def test_p4_resume_reuses_the_worktree(tmp_path):
     repo = _init_repo(tmp_path)
     work_dir = repo / ".nous" / "test-run"
