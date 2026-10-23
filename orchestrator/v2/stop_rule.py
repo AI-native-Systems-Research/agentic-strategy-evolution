@@ -6,7 +6,13 @@ continue, enter REPORT, or halt.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+
+def _key(v) -> str:
+    """Hashable form of any agent-written JSON value (lists, dicts: e.g. a Pareto front)."""
+    return json.dumps(v, sort_keys=True, default=str)
 
 
 def _collect_claims(findings: dict) -> set[tuple]:
@@ -14,12 +20,7 @@ def _collect_claims(findings: dict) -> set[tuple]:
     claims: set[tuple] = set()
     for hyp in findings.get("hypotheses", []):
         for c in hyp.get("claims", []):
-            claims.add((
-                c.get("claim_id"),
-                c.get("metric"),
-                c.get("condition"),
-                c.get("value"),
-            ))
+            claims.add(tuple(_key(c.get(k)) for k in ("claim_id", "metric", "condition", "value")))
     return claims
 
 
@@ -139,16 +140,16 @@ def _claims_needed_met(
     by_id: dict = {}
     for hyp in findings.get("hypotheses", []):
         for c in hyp.get("claims", []):
-            by_id.setdefault(c.get("claim_id"), []).append(c)
+            by_id.setdefault(_key(c.get("claim_id")), []).append(c)
     for need in claims_needed or []:
-        got = by_id.get(need.get("id"))
+        got = by_id.get(_key(need.get("id")))
         if not got:
             return False
-        seeds = {repr(s) for c in got for s in c.get("seeds") or []}
+        seeds = {_key(s) for c in got if isinstance(c.get("seeds"), list) for s in c["seeds"]}
         if len(seeds) < need.get("min_seeds", 0):
             return False
         if need.get("needs_ci") and not any(c.get("ci") is not None for c in got):
             return False
-        if not set(need.get("conditions", [])) <= {c.get("condition") for c in got}:
+        if not {_key(x) for x in need.get("conditions") or []} <= {_key(c.get("condition")) for c in got}:
             return False
     return True

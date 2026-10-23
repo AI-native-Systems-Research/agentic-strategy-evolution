@@ -72,12 +72,12 @@ def _claims_matched_fraction(
     """Fraction of claims_needed ids addressed by findings' claims."""
     if not claims_needed:
         return 1.0
-    needed_ids = {c.get("id") for c in claims_needed if c.get("id")}
+    needed_ids = {c.get("id") for c in claims_needed if isinstance(c.get("id"), str)}
     addressed: set[str] = set()
     for hyp in findings_list:
         for claim in hyp.get("claims", []):
             cid = claim.get("claim_id")
-            if cid in needed_ids:
+            if isinstance(cid, str) and cid in needed_ids:
                 addressed.add(cid)
     return len(addressed) / len(needed_ids)
 

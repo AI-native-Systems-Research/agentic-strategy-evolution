@@ -550,3 +550,22 @@ class TestAnsweredRequirements:
 
     def test_undeclared_requirements_not_added(self, tmp_path):
         assert _stop(tmp_path, _claim_findings([_c()]), [{"id": "c1"}]) == "answered"
+
+
+class TestNonScalarClaimValues:
+    """Valid agent output (e.g. a Pareto front as a list) must never crash bookkeeping."""
+
+    def _f(self, value, cond="a"):
+        return {"hypotheses": [{"id": "h1", "status": "CONFIRMED", "claims": [
+            {"claim_id": "c1", "metric": "m", "condition": cond, "value": value, "seeds": [[1, 2]]}]}]}
+
+    def test_list_and_dict_values_compare(self):
+        assert claims_changed(None, self._f([[1, 2], [3, 4]])) is True
+        assert claims_changed(self._f([1, 2]), self._f([1, 2])) is False
+        assert claims_changed(self._f({"a": 1}), self._f({"a": 2})) is True
+
+    def test_unhashable_condition_and_seeds(self, tmp_path):
+        f = self._f([1], cond=["x", "y"])
+        assert claims_changed(None, f) is True
+        need = [{"id": "c1", "min_seeds": 1, "conditions": ["z"]}]
+        assert _stop(tmp_path, f, need) is None
