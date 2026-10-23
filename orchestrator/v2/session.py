@@ -76,6 +76,7 @@ class Session:
         self._options = dict(options)
         self._client: Any | None = None
         self._session_id: str | None = options.get("resume")
+        self.cut = False  # last turn ended at the output cap (B12)
 
     # ── Option building ───────────────────────────────────────────────
 
@@ -172,10 +173,15 @@ class Session:
         await self._client.query(prompt)
 
         result = None
+        last_main_stop = None
         async for msg in self._client.receive_response():
             if on_message is not None:
                 on_message(msg)
             result = msg
+            if hasattr(msg, "content") and getattr(msg, "parent_tool_use_id", None) is None:
+                last_main_stop = getattr(msg, "stop_reason", None)
+        # B12: the turn ended at the output cap (subagent cut-offs do not count)
+        self.cut = "max_tokens" in (getattr(result, "stop_reason", None), last_main_stop)
 
         if result is not None and hasattr(result, "session_id") and result.session_id:
             self._session_id = result.session_id
@@ -185,6 +191,15 @@ class Session:
         if getattr(result, "is_error", False) and _API_5XX.search(text):
             raise APIServerError(500, text)
         return result
+
+    @property
+    def effort(self) -> str | None:
+        return self._options.get("effort")
+
+    async def reconnect(self, effort: str | None) -> None:
+        """Resume the same session with a new effort level (spec 3.10)."""
+        self._options["effort"] = effort
+        await self._retry(self._connect_once)
 
     async def disconnect(self) -> None:
         if self._client is not None:

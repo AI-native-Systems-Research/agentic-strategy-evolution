@@ -133,3 +133,101 @@ class TestEffortStateJson:
         state = json.loads(state_path.read_text())
         assert state["session_id"] == "ses-1"
         assert state["cut_offs"] == 1
+
+
+# ── Loop integration (spec 3.10 / B12) ──────────────────────────────────
+
+
+import json as _json
+
+from orchestrator.v2.effort import EffortManager
+from orchestrator.v2.loop import Campaign, parse_campaign_config
+from tests.fakes.sdk_client import FakeAssistantMessage, FakeClient, FakeResultMessage
+from tests.v2.test_loop import _build_per_turn_files, _campaign_yaml
+
+
+def _cut():
+    return [FakeAssistantMessage(stop_reason="max_tokens"), FakeResultMessage()]
+
+
+def _ok():
+    return [FakeResultMessage()]
+
+
+async def _run_with(tmp_path, script, cut_turns, effort="high"):
+    """Run a 1-iteration campaign; each turn index in cut_turns is cut once and
+    re-asked, so per-turn files shift by one for the resumed query."""
+    work_dir = tmp_path / "wd"
+    work_dir.mkdir()
+    files = _build_per_turn_files(work_dir)
+    for i in sorted(cut_turns, reverse=True):
+        files.insert(i, {})  # cut query writes nothing; the resume query writes the files
+    built: list = []
+
+    def factory(opts):
+        built.append(opts)
+        if len(built) == 1:
+            factory.client = FakeClient(script=script, per_turn_files=files)
+        else:  # reconnect continues the same scripted conversation
+            factory.client._connected = False
+        return factory.client
+
+    raw = {**_campaign_yaml(max_iterations=1), "effort": effort}
+    result = await Campaign(parse_campaign_config(raw), work_dir, client_factory=factory).run()
+    return result, built, factory.client, work_dir
+
+
+class TestCutOffInLoop:
+    async def test_cut_reconnects_once_at_lower_effort(self, tmp_path):
+        script = _ok() + _cut() + _ok() + _ok() + _ok()  # DESIGN turn is cut once
+        result, built, client, work_dir = await _run_with(tmp_path, script, cut_turns=[1])
+        assert result["stop_reason"] == "answered"
+        assert [o.effort for o in built][:2] == ["high", "medium"]  # exactly one cut reconnect
+        assert sum(o.effort == "medium" for o in built) == 1
+        assert built[1].resume is not None
+        assert "cut at the output limit" in client.queries[2]
+        assert _json.loads((work_dir / "state.json").read_text())["cut_offs"] == 1
+
+    async def test_effort_resets_at_next_phase(self, tmp_path):
+        script = _ok() + _cut() + _ok() + _ok() + _ok()
+        _, built, _, _ = await _run_with(tmp_path, script, cut_turns=[1])
+        # EXECUTE starts a new phase: reconnect back at the configured effort
+        assert [o.effort for o in built] == ["high", "medium", "high"]
+
+    async def test_two_cuts_in_a_row_reach_low(self, tmp_path):
+        script = _ok() + _cut() + _cut() + _ok() + _ok() + _ok()
+        result, built, _, work_dir = await _run_with(tmp_path, script, cut_turns=[1, 1])
+        assert result["stop_reason"] == "answered"
+        assert [o.effort for o in built][:3] == ["high", "medium", "low"]
+        assert _json.loads((work_dir / "state.json").read_text())["cut_offs"] == 2
+
+    async def test_always_cut_is_bounded(self, tmp_path):
+        script = _ok() + _cut() * 5 + _ok() + _ok() + _ok() + _ok()
+        result, built, _, _ = await _run_with(tmp_path, script, cut_turns=[1] * 5)
+        assert result["stop_reason"] in ("answered", "max_iterations")
+        assert len([o for o in built if o.effort == "low"]) <= 4
+
+
+class TestCutDetection:
+    async def test_subagent_cut_is_not_a_cut(self, tmp_path):
+        sub = FakeAssistantMessage(stop_reason="max_tokens", parent_tool_use_id="tu-1")
+        script = _ok() + [sub, FakeAssistantMessage(), FakeResultMessage()] + _ok() + _ok() + _ok()
+        _, built, _, work_dir = await _run_with(tmp_path, script, cut_turns=[])
+        assert [o.effort for o in built] == ["high"]
+        assert "cut_offs" not in _json.loads((work_dir / "state.json").read_text())
+
+    async def test_result_stop_reason_max_tokens_is_a_cut(self, tmp_path):
+        script = _ok() + [FakeResultMessage(stop_reason="max_tokens")] + _ok() + _ok() + _ok()
+        _, built, _, _ = await _run_with(tmp_path, script, cut_turns=[1])
+        assert [o.effort for o in built][:2] == ["high", "medium"]
+
+    async def test_default_effort_returns_to_model_default_next_phase(self, tmp_path):
+        script = _ok() + _cut() + _ok() + _ok() + _ok()
+        _, built, _, _ = await _run_with(tmp_path, script, cut_turns=[1], effort=None)
+        assert [o.effort for o in built] == [None, "medium", None]
+
+    def test_cut_offs_count_continues_from_state(self, tmp_path):
+        m = EffortManager(None, total_cuts=3)
+        m.on_cut()
+        m.persist_cut_offs(tmp_path / "state.json")
+        assert _json.loads((tmp_path / "state.json").read_text())["cut_offs"] == 4

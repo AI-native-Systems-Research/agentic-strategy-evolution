@@ -508,3 +508,10 @@ Gaps kept (spec sections, not wired): EffortManager (3.10/B12), human_gates, rer
 Lines: orchestrator/v2 runtime 2498 -> 2362; orchestrator/*.py outside v2 3606 -> 714 (cli 980 -> 523, work_dir_resolver 193 -> 191); all orchestrator/ 6104 -> 3076.
 Tests: 887 -> 590 passed (297 removed with deleted v1 modules/schemas; no v2 assertion weakened beyond the removed helpers).
 R12b review decisions (code-reviewer): kept v2 behaviour verified (runs.jsonl location, Stop-hook paths/blocking, is_transient incl. exit 143); no refs to deleted modules; guards intact; CLI matches SPEC 4; LEAN_AUDIT accurate. Fixed: "file not found at <name>" message restored in validate_phase_artifacts; suggest-next.md campaign rules updated for v2 keys; unused v1 state-schema loader removed from test_work_dir_resolver. pytest 590 passed.
+
+## B12 effort ladder wired into the loop (reviewer decision before R13)
+
+Session.turn sets `cut` when the turn ends at the output cap: ResultMessage.stop_reason or the last main-agent AssistantMessage (parent_tool_use_id None) is max_tokens; subagent cut-offs do not count. Campaign._turn on a cut: EffortManager.on_cut (low only after 2 consecutive), persist cut_offs, Session.reconnect(resume=session_id, new effort), send CUT_RESUME_MSG; bounded to one retry per ladder step. _set_phase resets the ladder; the next turn reconnects back to the configured effort (or model default when unset). Resume keeps the campaign-wide cut_offs from state.json.
+Tests (test-first, tests/v2/test_effort.py): one reconnect at lower effort; reset at next phase; two cuts reach low; always-cut bounded; subagent cut ignored; ResultMessage max_tokens counts; unset effort returns to model default; cut_offs continue from state.
+Review (silent-failure-hunter) fixed: subagent max_tokens false cut; cut_offs reset on resume; AssistantMessage stop_reason may be null (also check ResultMessage); unset effort pinned to "high" after a cut. Skipped: invalid configured effort string (e.g. "High") causes one extra reconnect; harmless, later candidate for config validation.
+Tests: 590 -> 598 passed. v2 runtime 2362 -> 2408 lines.

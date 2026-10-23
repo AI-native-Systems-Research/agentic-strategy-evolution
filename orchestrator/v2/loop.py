@@ -20,6 +20,7 @@ from .preflight import run_preflight
 from .resume import build_fallback_message, load_campaign_state, resume_phase, update_state
 from .robustness import FailureBreaker, poll_and_resume, write_halt
 from .prompts import build_system_prompt
+from .effort import CUT_RESUME_MSG, EFFORT_LADDER, EffortManager
 from .session import DEFAULT_MODEL, Session
 from .final_check import check_answer
 from .stop_rule import (
@@ -74,6 +75,7 @@ class Campaign:
         self._principles: list[dict] = []
         self._prev_findings: dict | None = None
         self._turns_ok = 0
+        self._effort = EffortManager(config.effort)
 
     def _init_meter(self) -> None:
         defaults_path = Path(__file__).resolve().parent.parent / "defaults.yaml"
@@ -127,6 +129,8 @@ class Campaign:
         state = load_campaign_state(self._work_dir)
         if state is None:
             return await self.run()
+        # Keep the campaign-wide cut-off count across resume
+        self._effort = EffortManager(self._config.effort, state.get("cut_offs", 0))
 
         saved_phase, saved_iteration = resume_phase(state)
         session_id = state.get("session_id")
@@ -174,7 +178,18 @@ class Campaign:
                 self._prev_findings = prev
 
     async def _turn(self, session: Session, prompt: str) -> Any:
+        """One turn; on an output cut-off, resume one effort level lower (spec 3.10, B12)."""
+        if session.effort != self._effort.level:  # phase reset after a cut
+            await session.reconnect(self._effort.level)
         result = await session.turn(prompt, on_message=self._meter.record)
+        for _ in EFFORT_LADDER:  # bounded: a reply cut even at "low" is accepted as is
+            if not session.cut:
+                break
+            self._effort.on_cut()
+            self._effort.persist_cut_offs(self._work_dir / "state.json")
+            await session.reconnect(self._effort.level)
+            result = await session.turn(CUT_RESUME_MSG, on_message=self._meter.record)
+        self._effort.on_success()
         self._turns_ok += 1
         return result
 
@@ -379,6 +394,7 @@ class Campaign:
         hook_state.phase = phase
         hook_state.iteration = iteration
         update_state(self._work_dir, phase=phase, iteration=iteration)
+        self._effort.reset()
 
     def _lock_bundle(self, idir: Path) -> str:
         bundle = _read_json(idir / "bundle.json")
