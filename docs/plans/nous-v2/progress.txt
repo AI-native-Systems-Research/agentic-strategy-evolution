@@ -590,3 +590,7 @@ vs round 1: trail C1/R2 up from 0-0.33 to 0.5-1.0 on 5 of 6 runs; formula 0/2 ->
 - Evidence export: absolute paths in work dir/repo map to nous_evidence/<relative path>; repo files cited in place -> `nous_evidence//Users/...` paths (C1).
 - Optimize checklist: test a variable in two contrasting settings before dropping it; score the deliverable under every condition the task names -> optimize runs dropped variables after one operating point (rule 1).
 No task content in any change. Tests 617 -> 632. v2 runtime 2582 lines; method.md 5,204 bytes.
+
+## R13 extra pd runs (borderline rule, code 95d6c3b)
+
+pd rep3: answered, 1 iter, $3.97 (0.38x L2), O1 false (K2,K3 true), C1/R2 1.0. pd rep4: max_iterations, 5 iters, $7.14 (0.68x L2), O1 false (K1,K2 true), C1/R2 1.0. With round 2: formula 1/4 on round-2 code vs L2 2/3 -> fails accuracy rule 1. Round 3 runs pd 2x on 816d677.
