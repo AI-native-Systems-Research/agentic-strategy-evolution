@@ -11,7 +11,7 @@ import logging
 import re
 from pathlib import Path
 
-from .validators import ValidatorContext, read_json, validate_artifact
+from .validators import ValidatorContext, campaign_record, read_json, validate_artifact
 
 logger = logging.getLogger(__name__)
 
@@ -122,15 +122,11 @@ def check_answer(work_dir: Path, limits: dict | None = None) -> dict:
 
     iter_dir = _find_latest_iter_dir(work_dir)
     if iter_dir:
+        # claims_needed are append-only; a claim answered in any iteration stays answered
+        claims_needed, all_hyps = campaign_record(work_dir)
+        report["claims_matched_fraction"] = _claims_matched_fraction(all_hyps, claims_needed)
         findings = read_json(iter_dir / "findings.json")
-        problem = read_json(iter_dir / "problem.json")
-
-        hypotheses = findings.get("hypotheses", []) if findings else []
-        claims_needed = problem.get("claims_needed", []) if problem else []
-
-        report["claims_matched_fraction"] = _claims_matched_fraction(
-            hypotheses, claims_needed,
-        )
+        hypotheses = findings.get("hypotheses", []) if isinstance(findings, dict) else []
         report["unmeasured_noise_findings"] = _find_unmeasured_noise(hypotheses)
 
     return report

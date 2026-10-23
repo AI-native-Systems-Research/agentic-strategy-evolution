@@ -23,18 +23,21 @@ from .robustness import FailureBreaker, poll_and_resume, write_halt
 from .prompts import build_system_prompt
 from .effort import CUT_RESUME_MSG, EFFORT_LADDER, EffortManager
 from .session import DEFAULT_MODEL, Session
-from .final_check import check_answer
+from .final_check import _check_repro, check_answer
 from .stop_rule import (
     best_changed,
     check_stop,
     claims_changed,
     principles_changed,
 )
-from .validators import bundle_hash, read_json as _read_json, validate_phase_artifacts
+from .validators import (bundle_hash, campaign_record, evidence_hint, read_json as _read_json,
+                         resolve_evidence_path, validate_phase_artifacts)
 
 logger = logging.getLogger(__name__)
 
 EVIDENCE_DIR = "nous_evidence"  # answer evidence copied into the target repo
+REPRO_REPAIR_MSG = ("Run the repro command from answer.json exactly as written, from the "
+                    "repository root, and fix answer.json until it succeeds.")
 
 
 def iter_dir(work_dir: Path, iteration: int) -> Path:
@@ -205,7 +208,7 @@ class Campaign:
                 break
             error_text = "\n".join(f"  - {e}" for e in errors)
             logger.warning("Repair attempt %d: %s", attempt + 1, error_text)
-            await self._turn(session, f"Repair: fix these validation errors:\n{error_text}")
+            await self._turn(session, f"Repair: fix these validation errors:\n{error_text}{evidence_hint(errors)}")
         logger.warning("Repair exhausted, marking partial")
         return "partial"
 
@@ -324,7 +327,7 @@ class Campaign:
             self._principles = _merge_principles(self._principles, pu)
             _write_json(self._work_dir / "principles.json", self._principles)
 
-            problem = _read_json(idir / "problem.json") or {}
+            claims_needed, all_hyps = campaign_record(self._work_dir, iteration)
             iter_cost = self._meter.iter_delta()
             entry: dict[str, Any] = {
                 "iteration": iteration,
@@ -356,7 +359,8 @@ class Campaign:
                 halt_path=self._work_dir / "halt.json",
                 stop_sentinel_path=self._work_dir / "STOP",
                 current_claims_changed=cc, current_best_changed=bc,
-                claims_needed=problem.get("claims_needed"), status=status,
+                claims_needed=claims_needed, status=status,
+                claim_findings={"hypotheses": all_hyps},
             )
             if stop_reason is not None:
                 entry["stop_reason"] = stop_reason
@@ -384,36 +388,50 @@ class Campaign:
             "`repro` is one command run from the repository root (no cd)."
         )
         await self._turn(session, msg + (f"\n\nHuman note: {note}" if note else ""))
-        await self._repair(session, self._work_dir, ["answer"])
+        if await self._repair(session, self._work_dir, ["answer"]) == "ok":
+            await self._repair_repro(session)
         self._export_evidence()
         self._commit_phase(commit_iteration, "REPORT")
         self._record_final_check()
 
+    async def _repair_repro(self, session: Session) -> None:
+        """The repro must have run as written (runs.jsonl); if not, one repair message, no loop.
+        Without a hook record there is nothing to check against; the final check reports it."""
+        answer = _read_json(self._work_dir / "answer.json")
+        if (self._work_dir / "runs.jsonl").is_file() and isinstance(answer, dict) \
+                and not _check_repro(self._work_dir, answer.get("repro")):
+            await self._turn(session, REPRO_REPAIR_MSG)
+            await self._repair(session, self._work_dir, ["answer"])
+
     def _export_evidence(self) -> None:
         """Make answer.json self-contained in the deliverable: copy each claim's evidence file
-        into <repo>/nous_evidence/<path> (and the same path under the work dir, so the final
-        check still resolves it). Per the output contract, `evidence` becomes that path string;
-        the structured {path, key, value} item moves to `evidence_detail`."""
+        into <repo>/nous_evidence/<path relative to its root> (and the same path under the work
+        dir, so the final check still resolves it). A file already in the repo is cited in place.
+        Per the output contract, `evidence` becomes that path string; the structured
+        {path, key, value} item moves to `evidence_detail`."""
         repo = self._config.target_system.get("repo_path")
         answer = _read_json(self._work_dir / "answer.json")
         if not repo or not isinstance(answer, dict):
             return
+        repo_r, work_r = Path(repo).resolve(), self._work_dir.resolve()
         changed = False
         for claim in answer.get("claims") or []:
             ev = claim.get("evidence") if isinstance(claim, dict) else None
             path = ev.get("path") if isinstance(ev, dict) else ev
             if not isinstance(path, str):
                 continue
-            new = path if path.startswith(EVIDENCE_DIR + "/") else f"{EVIDENCE_DIR}/{path}"
-            src = (self._work_dir / path).resolve()
-            if not src.is_file():
-                src = (self._work_dir / new).resolve()
-            if not src.is_file() or not src.is_relative_to(self._work_dir.resolve()):
+            src, _ = resolve_evidence_path(path, [work_r, repo_r, work_r / EVIDENCE_DIR])
+            if src is None or not src.is_file():
                 continue  # left as is; the final check reports it
-            for root in (Path(repo), self._work_dir):
-                if (root / new).resolve() != src:
-                    (root / new).parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(src, root / new)
+            if src.is_relative_to(work_r):
+                rel = src.relative_to(work_r).as_posix()
+                new = rel if rel.startswith(EVIDENCE_DIR + "/") else f"{EVIDENCE_DIR}/{rel}"
+                for root in (repo_r, work_r):
+                    if (root / new).resolve() != src:
+                        (root / new).parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(src, root / new)
+            else:  # already in the repo: cite it in place
+                new = src.relative_to(repo_r).as_posix()
             # Output contract: evidence is the path string; keep {path, key, value} as evidence_detail
             if isinstance(ev, dict):
                 claim["evidence_detail"] = {**ev, "path": new}

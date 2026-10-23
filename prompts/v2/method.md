@@ -20,6 +20,7 @@ Field lists below match the validators exactly; `?` marks optional. Put any othe
 - Read `state/digest.json`, `baseline.json` and the active principles.
 - `problem.json`: `task_type`, `claims_needed: [{id, description, test_method, min_seeds?, needs_ci?, conditions?: [str]}]`.
   - claims_needed must cover every question and sub-question the research question asks, and stay within the setup, parameters and ranges the research question fixes.
+  - From iteration 2, keep every earlier claims_needed id (you may add new ones); a claim answered in an earlier iteration stays answered.
 - `bundle.json`: `hypotheses: [...]`, `single_family_reason?`. Each hypothesis:
   - `id`, `role`, `family` (mechanism family), `mechanism`, `falsified_if`, `claim_ids: [str]`
   - `prediction: {metric, direction: increase|decrease|equal|change, magnitude_or_threshold?}`
@@ -48,7 +49,7 @@ Field lists below match the validators exactly; `?` marks optional. Put any othe
 
 ## Evidence keys
 
-`{path, key, value}`: `.json` key is a JSON Pointer (`/a/0/b`); `.jsonl` `line@pointer`; `.csv`/`.tsv` `column@row`; other text: a regex whose group 1 is the value.
+`{path, key, value}`: `.json` key is a JSON Pointer (`/a/0/b`); `.jsonl` `line@pointer`; `.csv`/`.tsv` `column@row`; other text: a regex whose group 1 is the value. A relative `path` resolves against the iteration dir, then the work dir, then the repository; save command output that is not JSON as `.txt`/`.log`.
 
 ## Rules
 

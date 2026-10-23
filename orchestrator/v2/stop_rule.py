@@ -89,10 +89,13 @@ def check_stop(
     current_best_changed: bool = False,
     claims_needed: list[dict] | None = None,
     status: str = "ok",
+    claim_findings: dict | None = None,
 ) -> str | None:
     """Return stop reason string or None to continue.
 
     Priority: halt > stop_sentinel > answered > max_iterations > stall > None.
+    *claim_findings* (default *findings*) holds the claims checked against claims_needed,
+    e.g. those of every iteration so far.
     """
     if halt_path.exists():
         return "halt"
@@ -107,7 +110,7 @@ def check_stop(
         for h in hypotheses
     )
     if (status == "ok" and question_answered and has_non_inconclusive
-            and _claims_needed_met(findings, claims_needed)):
+            and _claims_needed_met(claim_findings or findings, claims_needed)):
         return "answered"
 
     if iteration >= max_iterations:

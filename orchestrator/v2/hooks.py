@@ -14,7 +14,7 @@ from typing import Any
 from claude_agent_sdk.types import HookMatcher
 
 from .secrets import mask_secrets
-from .validators import read_json, validate_phase_artifacts
+from .validators import evidence_hint, read_json, validate_phase_artifacts
 
 logger = logging.getLogger(__name__)
 
@@ -154,7 +154,7 @@ def make_stop_hook(state: HookState):
             error_text = "\n".join(f"  - {e}" for e in all_errors)
             return {
                 "decision": "block",
-                "reason": f"Phase {state.phase} validation failed:\n{error_text}",
+                "reason": f"Phase {state.phase} validation failed:\n{error_text}{evidence_hint(all_errors)}",
             }
 
         state.consecutive_blocks = 0

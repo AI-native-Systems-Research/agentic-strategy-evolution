@@ -66,16 +66,48 @@ class ValidatorContext:
     bundle_hypotheses: list[dict] | None = None
     claims_needed: list[dict] | None = None
     runs_jsonl: Path | None = None
+    repo_dir: Path | None = None  # target repo: a third root for evidence paths
+    prior_claim_ids: set | None = None  # claims_needed ids of earlier iterations (append-only)
+
+
+def _iter_num(d: Path | None) -> int:
+    name = d.name if d else ""
+    return int(name[5:]) if name.startswith("iter-") and name[5:].isdigit() else 0
+
+
+def campaign_record(work_dir: Path, up_to: int | None = None) -> tuple[list[dict], list[dict]]:
+    """(claims_needed union, findings hypotheses) over iterations 1..up_to: claims_needed
+    are append-only; a later entry for an id overrides the earlier fields."""
+    runs = work_dir / "runs"
+    nums = sorted(_iter_num(d) for d in runs.iterdir()) if runs.is_dir() else []
+    needed: dict = {}
+    hyps: list[dict] = []
+    for n in (n for n in nums if n and (up_to is None or n <= up_to)):
+        problem = read_json(runs / f"iter-{n}" / "problem.json")
+        for c in (problem.get("claims_needed") or []) if isinstance(problem, dict) else []:
+            if isinstance(c, dict) and isinstance(c.get("id"), str):
+                needed[c["id"]] = {**needed.get(c["id"], {}), **c}
+        findings = read_json(runs / f"iter-{n}" / "findings.json")
+        if isinstance(findings, dict):
+            hyps += [h for h in findings.get("hypotheses") or [] if isinstance(h, dict)]
+    return list(needed.values()), hyps
 
 
 def iter_context(work_dir: Path, iter_dir: Path | None, **limits: Any) -> ValidatorContext:
-    """Context with bundle hypotheses and claims_needed read from *iter_dir* (spec 3.4)."""
+    """Context with bundle hypotheses and claims_needed read from *iter_dir* (spec 3.4).
+    Claims already answered in earlier iterations need no hypothesis again."""
     bundle = (read_json(iter_dir / "bundle.json") or {}) if iter_dir else {}
     problem = (read_json(iter_dir / "problem.json") or {}) if iter_dir else {}
+    needed = problem.get("claims_needed") if isinstance(problem, dict) else None
+    n = _iter_num(iter_dir)
+    prior_needed, prior_hyps = campaign_record(work_dir, n - 1) if n > 1 else ([], [])
+    answered = {c.get("claim_id") for h in prior_hyps for c in h.get("claims") or [] if isinstance(c, dict)}
+    if isinstance(needed, list):
+        needed = [c for c in needed if not (isinstance(c, dict) and c.get("id") in answered)]
     return ValidatorContext(
         work_dir=work_dir, iter_dir=iter_dir, **limits,
         bundle_hypotheses=bundle.get("hypotheses") if isinstance(bundle, dict) else None,
-        claims_needed=problem.get("claims_needed") if isinstance(problem, dict) else None,
+        claims_needed=needed, prior_claim_ids={c["id"] for c in prior_needed},
     )
 
 
@@ -121,15 +153,58 @@ def _resolve_json_pointer(doc: Any, pointer: str) -> Any:
     return current
 
 
-def _values_match(expected: Any, actual: Any) -> bool:
-    """Compare two values with tolerance for numbers, exact for strings."""
-    if isinstance(expected, (int, float)) and isinstance(actual, (int, float)):
-        return math.isclose(expected, actual, rel_tol=1e-3, abs_tol=1e-9)
+def _num(v: Any) -> float | None:
+    """A number, or a numeric string, as float; None otherwise (bools are not numbers)."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(v.strip()) if isinstance(v, str) else None
+    except ValueError:
+        return None
+
+
+def _values_match(expected: Any, actual: Any, rel_tol: float = 1e-3) -> bool:
+    """Numbers (or numeric strings) match within tolerance; anything else exactly."""
+    a, b = _num(expected), _num(actual)
+    if a is not None and b is not None:
+        return math.isclose(a, b, rel_tol=rel_tol, abs_tol=1e-9)
     return expected == actual
 
 
-def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
-    """Validate a single evidence item ``{path, key, value}``."""
+EVIDENCE_KEY_HINT = ("Evidence keys: .json a JSON pointer /a/b; .jsonl N@/ptr; .csv/.tsv col@row; "
+                     "other text a regex with one capture group. Relative paths resolve against "
+                     "the iteration dir, the work dir, then the repository.")
+
+
+def evidence_hint(errors: list[str]) -> str:
+    """One-line reminder of the evidence key formats, only when an evidence error occurred."""
+    return f"\n{EVIDENCE_KEY_HINT}" if any("evidence" in e for e in errors) else ""
+
+
+def resolve_evidence_path(path_str: str, roots: list[Path]) -> tuple[Path | None, str]:
+    """Find *path_str* under the first root that holds it; absolute paths must lie in a root."""
+    roots = [r.resolve() for r in roots if r is not None]
+    names = ", ".join(str(r) for r in roots)
+    p = Path(path_str)
+    cands = [p.resolve()] if p.is_absolute() else [(r / p).resolve() for r in roots]
+    inside = [c for c in cands if any(c.is_relative_to(r) for r in roots)]
+    if not inside:
+        return None, f"evidence path escapes the allowed roots ({names}): {path_str!r}"
+    for c in inside:
+        if c.exists():
+            return c, ""
+    return None, f"evidence path does not exist: {path_str} (searched {names})"
+
+
+def _ptr(key: str) -> str:
+    return key if key == "" or key.startswith("/") else "/" + key
+
+
+def check_evidence_item(item: dict, base_dir: Path, *more_roots: Path | None) -> list[str]:
+    """Validate a single evidence item ``{path, key, value}``; a relative path resolves
+    against *base_dir*, then each of *more_roots* in order."""
     if not isinstance(item, dict):
         return [f"evidence item must be an object {{path, key, value}}, got {item!r}"]
     errors: list[str] = []
@@ -141,19 +216,19 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
         errors.append("evidence item missing 'path'")
         return errors
 
-    evidence_path = (base_dir / path_str).resolve()
-    if not evidence_path.is_relative_to(base_dir.resolve()):
-        errors.append(f"evidence path escapes base directory: {path_str!r}")
-        return errors
-    if not evidence_path.exists():
-        errors.append(f"evidence path does not exist: {path_str}")
-        return errors
+    evidence_path, err = resolve_evidence_path(path_str, [base_dir, *more_roots])
+    if evidence_path is None:
+        return [err]
 
     suffix = evidence_path.suffix.lower()
     try:
         if suffix == ".json":
-            doc = json.loads(evidence_path.read_text())
-            actual = _resolve_json_pointer(doc, key)
+            try:
+                doc = json.loads(evidence_path.read_text())
+            except ValueError:
+                return [f"evidence file {path_str} is not JSON; save JSON output as .json "
+                        "or use a .txt/.log path with a regex key"]
+            actual = _resolve_json_pointer(doc, _ptr(key))
         elif suffix == ".jsonl":
             # key format: line_number@pointer
             m = re.match(r"^(\d+)@(.*)$", key)
@@ -173,7 +248,7 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
                 )
                 return errors
             doc = json.loads(lines[line_no])
-            actual = _resolve_json_pointer(doc, pointer)
+            actual = _resolve_json_pointer(doc, _ptr(pointer))
         elif suffix in (".csv", ".tsv"):
             # key format: column@row_index
             m = re.match(r"^(.+)@(\d+)$", key)
@@ -201,12 +276,6 @@ def check_evidence_item(item: dict, base_dir: Path) -> list[str]:
                 )
                 return errors
             actual = rows[row_idx][column]
-            # Numeric comparison when the expected value is numeric
-            if isinstance(value, (int, float)):
-                try:
-                    actual = float(actual)
-                except ValueError:
-                    pass
         else:
             # Plain text: key is a regex whose group 1 is the value
             text = evidence_path.read_text()
@@ -429,9 +498,8 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
                         )
 
         # Evidence path checks
-        base_dir = ctx.iter_dir or ctx.work_dir
         for ev in h.get("evidence", []):
-            errors.extend(check_evidence_item(ev, base_dir))
+            errors.extend(check_evidence_item(ev, ctx.iter_dir or ctx.work_dir, ctx.work_dir, ctx.repo_dir))
 
     return errors
 
@@ -458,10 +526,7 @@ _COPY_VALUE = ("copy the exact value from the file; claims are quantitative "
 
 
 def _same_value(a: Any, b: Any) -> bool:
-    nums = (int, float)
-    if isinstance(a, nums) and isinstance(b, nums) and not isinstance(a, bool) and not isinstance(b, bool):
-        return math.isclose(a, b, rel_tol=1e-9)
-    return a == b
+    return _values_match(a, b, rel_tol=1e-9)
 
 
 def _check_answer_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
@@ -472,21 +537,21 @@ def _check_answer_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
         errors.append("repro must not start with `cd`: it runs from the repository root")
 
     # Evidence checks on claims; the claim value must be the evidence value
-    base_dir = ctx.work_dir
+    roots = [ctx.work_dir, ctx.repo_dir]
     for claim in data.get("claims", []):
         ev = claim.get("evidence_detail") or claim.get("evidence")
         value, cid = claim.get("value"), claim.get("id")
         if isinstance(ev, str):  # contract form: the path must exist and hold the value
-            path = base_dir / ev
-            if not path.is_file():
-                errors.append(f"evidence file not found: {ev}")
+            path, err = resolve_evidence_path(ev, roots)
+            if path is None or not path.is_file():
+                errors.append(err or f"evidence file not found: {ev}")
             elif isinstance(value, (int, float, str)) and not isinstance(value, bool):
                 text = path.read_text(errors="replace")
                 forms = {str(value), repr(value)} if isinstance(value, float) else {str(value)}
                 if not any(f in text for f in forms):
                     errors.append(f"claim {cid!r}: value {value!r} not found in {ev}; {_COPY_VALUE}")
         elif ev:
-            errors.extend(check_evidence_item(ev, base_dir))
+            errors.extend(check_evidence_item(ev, *roots))
             if isinstance(ev, dict) and not _same_value(value, ev.get("value")):
                 errors.append(f"claim {cid!r}: value {value!r} != evidence value "
                               f"{ev.get('value')!r}; {_COPY_VALUE}")
@@ -502,6 +567,16 @@ def _check_answer_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
                 errors.append(f"{label} contains secret {name!r}")
 
     return errors
+
+
+def _check_problem_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
+    """claims_needed are append-only across iterations."""
+    ids = {c.get("id") for c in data.get("claims_needed", [])}
+    dropped = sorted((ctx.prior_claim_ids or set()) - ids)
+    if dropped:
+        return [f"claims_needed ids may be added, not removed (missing {dropped}); "
+                "mark them answered in findings instead"]
+    return []
 
 
 def _check_task_limits(data: dict, ctx: ValidatorContext) -> list[str]:
@@ -541,6 +616,7 @@ def bundle_hash(data: dict) -> str:
 
 # Dispatch table: artifact_type -> semantic check fn (absent = none)
 _SEMANTIC_CHECKS: dict[str, Any] = {
+    "problem": _check_problem_semantics,
     "bundle": _check_bundle_semantics,
     "plan": _check_plan_semantics,
     "findings": _check_findings_semantics,

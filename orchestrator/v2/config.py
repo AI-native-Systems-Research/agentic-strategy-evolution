@@ -83,4 +83,5 @@ def validator_limits(cfg: CampaignConfig, work_dir: Path) -> dict:
     """Campaign limits every ValidatorContext needs (spec 3.4, 3.14)."""
     return {"locked_parameters": cfg.locked_parameters, "locked_workload": cfg.locked_workload,
             "task_limits": cfg.task_limits, "runs_jsonl": work_dir / "runs.jsonl",
-            "secrets": {k: os.environ.get(k, "") for k in cfg.secrets}}
+            "secrets": {k: os.environ.get(k, "") for k in cfg.secrets},
+            "repo_dir": Path(cfg.target_system["repo_path"]) if cfg.target_system.get("repo_path") else None}
