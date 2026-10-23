@@ -332,6 +332,23 @@
         "Reviewer decision (2026-10-22): the Frontier-CS judge (go-judge in Docker) is not available on this Mac (no docker/colima binaries). R13 runs the merge bar on the 3 oracle tasks only (dbg, pd, search; 2 runs each) via ~/nous_v2_eval/eval.sh <task> <rep>. p5 and the held-out p225 move to the follow-up experiments, which need the judge set up anyway. The 3-round improvement loop and 'only general fixes' rules still apply. eval.sh prints only bar numbers; never read ~/nous_v2_eval/sealed or ~/mlsys_runs/keys."
       ],
       "passes": false
+    },
+    {
+      "id": "R14",
+      "title": "Docs final pass (after R13 code is final): every user-facing doc correct against the code and readable. From the reviewer's doc audit: (1) method.md field lists exactly from the v2 schemas (error_type values, prediction object, principle_updates fields, finding_ref placement, baseline metrics_path/noise/task_type + per-task_type observation keys, answer deliverable/repro/claims); (2) per-task_type observation keys in data-model.md; (3) examples/campaign.yaml: drop v1 prompts:, add locked_parameters, objective, task_type; (4) port .claude/commands/post-campaign.md, suggest-next.md and docs/nous-wiki.md to v2 ledger/principles, or delete them if not needed (MVP); (5) architecture.md: effort ladder is wired, repair runs after every phase, block counter resets on tool calls; (6) document answer evidence path string + evidence_detail + nous_evidence/ export and all R13 behaviour changes; (7) ledger_entry.schema.json matches what loop.py writes; defaults.yaml trimmed to what is read; (8) README: --note scope, run_id requirement for yaml targets, links to quickstart and security, nous_evidence/ in the layout; (9) delete stale docs/superpowers/* v1 notes; (10) add docs/example-campaign/ with a small real worked example (baseline.json, runs/iter-1/{problem,bundle,plan,findings,principle_updates}.json, answer.json, a runs.jsonl excerpt) taken from a real eval run and validated against the schemas, plus evidence-key examples per format, a troubleshooting section (Stop-hook block, partial iteration, halt.json, final_check.json) and a resume walkthrough.",
+      "depends_on": [
+        "R13"
+      ],
+      "tests": [
+        "tests/v2/test_docs_examples.py"
+      ],
+      "acceptance": [
+        "test: every JSON file in docs/example-campaign validates against its v2 schema, and examples/campaign.yaml parses with no warnings",
+        "grep: no v1 terms (planner/executor, bundle.yaml, experiment_plan.yaml, handoff.md, design_profile, --agent inline) in README.md, docs/, prompts/v2/, .claude/commands/",
+        "method.md field names match the schemas (test compares the listed names with the schema properties)",
+        "pytest -q green"
+      ],
+      "passes": false
     }
   ],
   "rules": [
