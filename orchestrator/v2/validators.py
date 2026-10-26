@@ -479,7 +479,7 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
                         "baseline with measured noise"
                     )
 
-            if noise_sd is not None:
+            if noise_sd:  # zero noise (deterministic): nothing to beat, no effect needed
                 effect = h.get("effect", {})
                 effect_value = effect.get("value") if isinstance(effect, dict) else None
                 if effect_value is None:
@@ -487,7 +487,7 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
                         f"hypothesis {hid!r}: {status} with noise_sd "
                         "requires 'effect.value'"
                     )
-                elif isinstance(noise_sd, (int, float)) and noise_sd > 0:  # zero noise: any effect is real
+                elif isinstance(noise_sd, (int, float)):
                     if abs(effect_value) <= 2 * noise_sd:
                         errors.append(
                             f"hypothesis {hid!r}: |effect| "
@@ -507,14 +507,8 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
 def _check_principle_updates_semantics(
     data: dict, ctx: ValidatorContext
 ) -> list[str]:
-    """finding_ref values are valid hypothesis ids; add/revise state the scope they were tested in."""
+    """Check that finding_ref values are valid hypothesis ids."""
     errors: list[str] = []
-    for upd in data.get("updates", []):
-        if upd.get("action") in ("add", "revise") and not str(upd.get("scope") or "").strip():
-            errors.append(
-                f"principle update {upd.get('id')!r}: {upd.get('action')} needs 'scope': the "
-                "settings it was tested in (a principle holds only there until tested elsewhere)"
-            )
     if ctx.bundle_hypotheses:
         known_ids = {h.get("id") for h in ctx.bundle_hypotheses if isinstance(h, dict)}
         for upd in data.get("updates", []):
@@ -631,46 +625,7 @@ _SEMANTIC_CHECKS: dict[str, Any] = {
 }
 
 
-def _fix_formatting(data: dict, schema: dict) -> bool:
-    """Fix formatting the agent often gets wrong, in place; True if anything changed.
-    A numeric string where a number is required becomes the number; an optional field set
-    to null, or to false where only true is allowed, is dropped. Prose is never coerced."""
-    validator = jsonschema.Draft202012Validator(schema)
-    changed = False
-    for _ in range(50):  # each pass fixes what it can; bounded
-        fixed = False
-        for e in validator.iter_errors(data):
-            path = list(e.absolute_path)
-            if not path:
-                continue
-            parent = data
-            for k in path[:-1]:
-                parent = parent[k]
-            key = path[-1]
-            if e.validator == "type" and e.validator_value in ("number", "integer"):
-                num = _num(e.instance) if isinstance(e.instance, str) else None
-                if num is not None and math.isfinite(num):
-                    parent[key] = int(num) if e.validator_value == "integer" and num.is_integer() else num
-                    fixed = True
-                    break
-            optional = isinstance(parent, dict) and key not in (
-                _subschema(schema, path[:-1]).get("required") or [])
-            if optional and (e.instance is None or (e.validator == "const" and e.instance is False)):
-                del parent[key]
-                fixed = True
-                break
-        if not fixed:
-            break
-        changed = True
-    return changed
-
-
-def _subschema(schema: dict, path: list) -> dict:
-    """The schema node that describes the instance at *path* (objects and arrays only)."""
-    node = schema
-    for k in path:
-        node = node.get("items", {}) if isinstance(k, int) else node.get("properties", {}).get(k, {})
-    return node
+MAX_SCHEMA_ERRORS = 10  # keeps a repair message small
 
 
 def validate_artifact(
@@ -691,14 +646,13 @@ def validate_artifact(
     schema = _load_schema(artifact_type)
     _move_extras(data, schema)  # logs only; unknown keys never fail
 
-    # JSON Schema validation: fix formatting, then report every remaining error at once
-    _fix_formatting(data, schema)
+    # JSON Schema validation: every error at once (capped), each with its path
     schema_errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(data),
                            key=lambda e: list(map(str, e.absolute_path)))
     if schema_errors:
         # Return early on schema failure; semantic checks assume valid shape
         return [f"schema: {'/'.join(map(str, e.absolute_path)) or '(top level)'}: {e.message[:200]}"
-                for e in schema_errors]
+                for e in schema_errors[:MAX_SCHEMA_ERRORS]]
 
     # Noise sub-schema validation for baseline
     if artifact_type == "baseline":
@@ -733,9 +687,5 @@ def validate_phase_artifacts(
             all_errors.append(f"{atype}: invalid JSON — {exc}")
             continue
         ctx = iter_context(work_dir, phase_dir, **limits)
-        before = json.dumps(data, sort_keys=True)
-        errors = validate_artifact(atype, data, ctx)
-        if json.dumps(data, sort_keys=True) != before:  # formatting fixed: save the fixed file
-            path.write_text(json.dumps(data, indent=2))
-        all_errors.extend(f"{atype}: {e}" for e in errors)
+        all_errors.extend(f"{atype}: {e}" for e in validate_artifact(atype, data, ctx))
     return all_errors

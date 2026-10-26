@@ -38,7 +38,7 @@ Field lists below match the validators exactly; `?` marks optional. Put any othe
   - `evidence: [{path, key, value}]` pointing to real files
   - `effect?: {value, note?, evidence?}`: `value` is one number (treatment minus control), `note` any prose, `evidence` a list of `{path, key, value}`. Noise: `noise_sd` (+ `noise_condition?`), or `noise_unmeasured: true` + `noise_reason`
   - `claims?: [{claim_id, metric, condition, value, seeds?, ci?}]`; give `seeds` and `ci` when claims_needed sets min_seeds / needs_ci.
-- `principle_updates.json`: `updates: [{id, text, finding_ref (a hypothesis id), action: add|revise|remove, scope?}]`. `scope` (required for add and revise): the settings the principle was tested in.
+- `principle_updates.json`: `updates: [{id, text, finding_ref (a hypothesis id), action: add|revise|remove, scope?}]`. `scope`: the settings the principle was tested in; give it for every add and revise.
 
 **REPORT**: answer the research question.
 - `answer.json`: `{answer, deliverable, repro, claims}`.

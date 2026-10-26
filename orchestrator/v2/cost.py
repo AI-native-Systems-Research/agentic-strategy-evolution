@@ -77,6 +77,7 @@ class CostMeter:
         if not isinstance(cli, (int, float)):
             return  # no CLI figure: keep the priced estimate
         prev = self._session_cost.get(sid, 0.0)
+        # Cumulative per session id, also across a resume (measured: CLI 2.1.308, SDK 0.2.172)
         if cli < prev:  # the CLI restarted its count for this session id
             prev = 0.0
         self._settled += cli - prev

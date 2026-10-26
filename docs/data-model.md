@@ -47,7 +47,7 @@ Each hypothesis requires `id`, `status` (`CONFIRMED|PARTIALLY_CONFIRMED|REFUTED|
 
 ## principle_updates.json (EXECUTE)
 
-Required: `updates`: list of `{id, text, finding_ref, action}`, `action` in `add|revise|remove`, `finding_ref` a hypothesis id from the bundle. `scope` (the settings the principle was tested in) is required for `add` and `revise`. Nous merges these into `principles.json` (a list of `{id, text, scope}`).
+Required: `updates`: list of `{id, text, finding_ref, action}`, `action` in `add|revise|remove`, `finding_ref` a hypothesis id from the bundle. Optional `scope`: the settings the principle was tested in. Nous merges these into `principles.json` (a list of `{id, text, scope}`).
 
 ## answer.json (REPORT)
 

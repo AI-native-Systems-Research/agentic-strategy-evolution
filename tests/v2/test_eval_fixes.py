@@ -2,9 +2,9 @@
 
 1. answered: a declared condition is covered by a claim whose condition contains it; the
    agent is told which requirements are still unmet.
-2. validators: every schema error at once, with its path; formatting auto-fixed on disk.
-3. noise: zero noise (deterministic) never blocks a CONFIRMED/REFUTED status.
-4. principles: add/revise must state the scope they were tested in.
+2. validators: every schema error at once (capped at 10), with its path.
+3. noise: zero noise (deterministic) never blocks a CONFIRMED/REFUTED status, effect or not.
+4. principles: an optional scope (where it was tested) is kept and shown in later DESIGN messages.
 5. session: the user's own settings and CLAUDE.md do not leak into a campaign.
 6. cost: the CLI's own session cost is the meter's authority.
 """
@@ -20,7 +20,6 @@ from orchestrator.v2.stop_rule import check_stop, unmet_requirements
 from orchestrator.v2.validators import (
     ValidatorContext,
     validate_artifact,
-    validate_phase_artifacts,
 )
 from tests.fakes.sdk_client import FakeAssistantMessage, FakeClient, FakeResultMessage
 from tests.v2.test_loop import (
@@ -122,25 +121,11 @@ class TestAllSchemaErrors:
         assert len(errs) >= 2
         assert "hypotheses/0/effect/value" in joined and "hypotheses/0/effect/evidence" in joined
 
-    def test_formatting_fixed_on_disk(self, tmp_path):
-        idir = tmp_path / "runs" / "iter-1"
-        idir.mkdir(parents=True)
-        doc = _findings_doc(status="PARTIALLY_CONFIRMED", partial_note="held at low load",
-                            effect={"value": " 5.5 "}, noise_sd="0.1", noise_unmeasured=False,
-                            noise_reason=None)
-        (idir / "findings.json").write_text(json.dumps(doc))
-        assert validate_phase_artifacts(tmp_path, idir, ["findings"]) == []
-        h = json.loads((idir / "findings.json").read_text())["hypotheses"][0]
-        assert h["effect"]["value"] == 5.5 and h["noise_sd"] == 0.1
-        assert "noise_unmeasured" not in h and "noise_reason" not in h
-        assert h["partial_note"] == "held at low load"
-
-    def test_prose_is_not_coerced(self, tmp_path):
-        idir = tmp_path / "runs" / "iter-1"
-        idir.mkdir(parents=True)
-        (idir / "findings.json").write_text(json.dumps(_findings_doc(effect={"value": "30% loss"})))
-        errs = validate_phase_artifacts(tmp_path, idir, ["findings"])
-        assert any("effect/value" in e for e in errs)
+    def test_error_list_is_capped(self, tmp_path):
+        doc = {"hypotheses": [{"id": f"h{i}", "status": "BAD", "error_type": "x", "evidence": 1}
+                              for i in range(10)], "question_answered": "no", "reason": 1}
+        errs = validate_artifact("findings", doc, ValidatorContext(work_dir=tmp_path, iter_dir=tmp_path))
+        assert len(errs) == 10
 
 
 # ── 3. zero noise ────────────────────────────────────────────────────────
@@ -159,6 +144,11 @@ class TestZeroNoise:
         ctx = ValidatorContext(work_dir=tmp_path, iter_dir=tmp_path)
         assert validate_artifact("findings", self._doc(), ctx) == []
 
+    def test_deterministic_needs_no_effect_value(self, tmp_path):
+        (tmp_path / "baseline.json").write_text(json.dumps(_baseline()))
+        ctx = ValidatorContext(work_dir=tmp_path, iter_dir=tmp_path)
+        assert validate_artifact("findings", _findings_doc(status="CONFIRMED"), ctx) == []
+
     def test_nonzero_noise_still_enforced(self, tmp_path):
         ctx = ValidatorContext(work_dir=tmp_path, iter_dir=tmp_path)
         errs = validate_artifact("findings", self._doc(noise_sd=0.5), ctx)
@@ -172,16 +162,10 @@ class TestPrincipleScope:
     def _ctx(self, tmp_path):
         return ValidatorContext(work_dir=tmp_path, iter_dir=tmp_path)
 
-    def test_add_without_scope_rejected(self, tmp_path):
-        doc = {"updates": [{"id": "p1", "text": "block size does not matter", "finding_ref": "h1",
-                            "action": "add"}]}
-        assert any("scope" in e for e in validate_artifact("principle_updates", doc, self._ctx(tmp_path)))
-
-    def test_add_with_scope_and_remove_without(self, tmp_path):
+    def test_scope_is_optional(self, tmp_path):
         doc = {"updates": [
-            {"id": "p1", "text": "block size does not matter", "finding_ref": "h1", "action": "add",
-             "scope": "tested at kv_blocks=5000 only (no memory pressure)"},
-            {"id": "p0", "text": "old", "finding_ref": "h1", "action": "remove"}]}
+            {"id": "p1", "text": "t", "finding_ref": "h1", "action": "add"},
+            {"id": "p2", "text": "t", "finding_ref": "h1", "action": "add", "scope": "kv_blocks=5000 only"}]}
         assert validate_artifact("principle_updates", doc, self._ctx(tmp_path)) == []
 
     async def test_scope_kept_and_shown_in_next_design(self, tmp_path):
