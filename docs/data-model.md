@@ -65,7 +65,7 @@ The validator checks `evidence_detail` when present; otherwise the path must exi
 
 ## Files written by Nous
 
-**state.json**: `phase`, `iteration`, `session_id`, `sdk_version`, `cli_version`, and `cut_offs` (output cut-offs so far) once one happens. Merged with atomic writes.
+**state.json**: `phase`, `iteration`, `session_id`, `sdk_version`, `cli_version`, `cut_offs` (output cut-offs so far) once one happens, and `session_costs` (the CLI's cumulative cost per session id, so a resumed session's spend is not counted twice). Merged with atomic writes.
 
 **ledger.json**: list of rows, one per iteration, written by `loop.py`. `ledger_entry.schema.json` (`nous schema ledger_entry`) is the exact row shape.
 

@@ -162,9 +162,9 @@ class Campaign:
             write_halt(self._work_dir, fp, phase, str(exc))
         return fp is not None
 
-    def _init_meter(self) -> None:
+    def _init_meter(self, session_costs: dict | None = None) -> None:
         defaults_path = Path(__file__).resolve().parent.parent / "defaults.yaml"
-        self._meter = CostMeter(load_prices(defaults_path))
+        self._meter = CostMeter(load_prices(defaults_path), session_costs)
 
     def _build_hooks_and_session_opts(self) -> tuple[HookState, dict, dict]:
         hook_state = HookState(
@@ -215,7 +215,7 @@ class Campaign:
         state = load_campaign_state(self._work_dir)
         if state is None:
             return await self.run()
-        self._init_meter()
+        self._init_meter(state.get("session_costs"))  # a resumed session's CLI total is cumulative
         self._prepare_code_dir()
         hook_state, hooks, session_opts = self._build_hooks_and_session_opts()
         self._breaker = FailureBreaker(recent=state.get("breaker_recent"))
@@ -561,6 +561,7 @@ class Campaign:
 
     def _save_ledger(self) -> None:
         _write_json(self._work_dir / "ledger.json", self._ledger)
+        update_state(self._work_dir, session_costs=self._meter.session_costs)
 
     def _record_final_check(self) -> None:
         """Spec 3.8: check answer.json against the record and log the result in the ledger."""

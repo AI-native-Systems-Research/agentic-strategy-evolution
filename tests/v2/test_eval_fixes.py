@@ -245,3 +245,11 @@ class TestCliCostAuthority:
         m = CostMeter(PRICES)
         m.record(_msg("a"))
         assert round(m.total()["cost_usd"], 6) == 0.025
+
+
+def test_resume_does_not_recount_earlier_spend():
+    m = CostMeter(PRICES)
+    m.record(FakeResultMessage(session_id="s1", total_cost_usd=4.0))
+    resumed = CostMeter(PRICES, m.session_costs)  # nous resume restores state.json session_costs
+    resumed.record(FakeResultMessage(session_id="s1", total_cost_usd=5.0))
+    assert round(resumed.iter_delta()["cost_usd"], 6) == 1.0

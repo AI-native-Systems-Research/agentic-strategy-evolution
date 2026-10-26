@@ -32,12 +32,14 @@ class CostMeter:
     none, assistant usage is priced per message id (largest usage wins: a streamed reply repeats
     its id). Streamed usage undercounts output, so the CLI figure replaces the estimate."""
 
-    def __init__(self, prices: dict[str, dict[str, float]]) -> None:
+    def __init__(self, prices: dict[str, dict[str, float]],
+                 session_costs: dict[str, float] | None = None) -> None:
         self._prices = prices
         self._by_id: dict[str, tuple[float, int, int]] = {}  # id -> (cost, input, output)
         self._tokens: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
         self._settled = 0.0  # CLI-reported cost, summed over sessions
-        self._session_cost: dict[str, float] = {}  # session id -> last cumulative CLI cost
+        # session id -> last cumulative CLI cost; restored on resume, where the CLI keeps counting
+        self._session_cost: dict[str, float] = dict(session_costs or {})
         self._estimate = 0.0  # priced usage since the last CLI-reported result
         self._last_snapshot: dict[str, Any] = self.total()
 
@@ -83,6 +85,10 @@ class CostMeter:
         self._settled += cli - prev
         self._session_cost[sid] = cli
         self._estimate = 0.0
+
+    @property
+    def session_costs(self) -> dict[str, float]:
+        return dict(self._session_cost)
 
     def total(self) -> dict[str, Any]:
         return {**self._tokens, "cost_usd": self._settled + self._estimate}
