@@ -118,6 +118,9 @@ class Session:
             "max_buffer_size": DEFAULT_MAX_BUFFER_SIZE,
             "env": env,
             "permission_mode": "bypassPermissions",
+            # The target repo's settings and CLAUDE.md, never the user's own (~/.claude): a
+            # campaign must not inherit someone's global instructions, plugins or agents.
+            "setting_sources": ["project", "local"],
         }
 
         effort = self._options.get("effort")

@@ -36,9 +36,9 @@ Field lists below match the validators exactly; `?` marks optional. Put any othe
   - `id`, `status`: CONFIRMED|PARTIALLY_CONFIRMED|REFUTED|INCONCLUSIVE (`partial_note` required for PARTIALLY_CONFIRMED)
   - `error_type`: direction|magnitude|regime|shape|none (how the prediction missed; none if it held)
   - `evidence: [{path, key, value}]` pointing to real files
-  - `effect?: {value, evidence?}`; noise: `noise_sd` (+ `noise_condition?`), or `noise_unmeasured: true` + `noise_reason`
+  - `effect?: {value, note?, evidence?}`: `value` is one number (treatment minus control), `note` any prose, `evidence` a list of `{path, key, value}`. Noise: `noise_sd` (+ `noise_condition?`), or `noise_unmeasured: true` + `noise_reason`
   - `claims?: [{claim_id, metric, condition, value, seeds?, ci?}]`; give `seeds` and `ci` when claims_needed sets min_seeds / needs_ci.
-- `principle_updates.json`: `updates: [{id, text, finding_ref (a hypothesis id), action: add|revise|remove}]`.
+- `principle_updates.json`: `updates: [{id, text, finding_ref (a hypothesis id), action: add|revise|remove, scope?}]`. `scope` (required for add and revise): the settings the principle was tested in.
 
 **REPORT**: answer the research question.
 - `answer.json`: `{answer, deliverable, repro, claims}`.
@@ -56,8 +56,9 @@ Field lists below match the validators exactly; `?` marks optional. Put any othe
 1. **Baseline first.** Always measure before changing. Every prediction is a delta from baseline.
 2. **Lock predictions.** After DESIGN, bundle.json is frozen. If EXECUTE changes it, the bundle hash check flags it.
 3. **One variable per experiment.** Each hypothesis isolates one mechanism. Include a control.
-4. **Noise-aware claims.** CONFIRMED/REFUTED needs |effect.value| > 2x noise sd. Measure noise on the baseline when the system is non-deterministic.
+4. **Noise-aware claims.** CONFIRMED/REFUTED needs |effect.value| > 2x noise sd. Measure noise on the baseline when the system is non-deterministic; a deterministic system needs no extra seeds.
 5. **Evidence must be checkable.** Every number you report cites a file a validator can read.
 6. **Secrets.** Use environment variables for secrets, never literal values. The system masks secrets in logs.
 7. **Long output.** Redirect long command output to a file and read only what you need. Do not paste large logs.
-8. **Principles compound.** Add new principles only with evidence; revise or remove when evidence changes.
+8. **Principles compound, within their scope.** Add new principles only with evidence; revise or remove when evidence changes. A principle holds only in its `scope`: before a decision relies on it in other settings, test it there or say it is untested.
+9. **Check against the original, not your shortcut.** Validate a deliverable against the task's own space or criterion, never against a reduced version you built.

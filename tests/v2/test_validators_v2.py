@@ -112,6 +112,7 @@ def _valid_principle_updates() -> dict:
                 "text": "Use 4 threads.",
                 "finding_ref": "h1",
                 "action": "add",
+                "scope": "4-core host",
             }
         ]
     }
@@ -508,7 +509,8 @@ class TestFindingsSemantics:
         del h["noise_sd"]
         h["effect"] = {"value": 0.0}
         errs = validate_artifact("findings", data, _ctx(tmp_path))
-        assert any("2" in e and "noise" in e for e in errs)
+        # Deterministic: no noise to beat, so a zero effect is a real result (pd rep2 was blocked here)
+        assert not any("noise" in e for e in errs)
 
     def test_no_baseline_no_noise_sd_no_unmeasured_is_error(self, tmp_path):
         data = _valid_findings(tmp_path)

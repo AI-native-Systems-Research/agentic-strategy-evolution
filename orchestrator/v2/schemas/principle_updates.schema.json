@@ -13,6 +13,7 @@
           "id": { "type": "string" },
           "text": { "type": "string" },
           "finding_ref": { "type": "string" },
+          "scope": { "type": "string" },
           "action": {
             "type": "string",
             "enum": ["add", "revise", "remove"]

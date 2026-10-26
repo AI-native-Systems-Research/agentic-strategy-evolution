@@ -9,6 +9,7 @@ Nous v2 wraps one Claude Code session and forces it through a fixed scientific l
 - `system_prompt`: the `claude_code` preset with the method prompt appended (`prompts/v2/method.md`, plus `prompts/v2/checklists/<task_type>.md` when `task_type` is set; see `prompts.py`).
 - `model` (default `claude-opus-4-6`), optional `effort`, `cwd` = `target_system.repo_path`, `permission_mode="bypassPermissions"`.
 - `env`: `CLAUDE_CODE_MAX_OUTPUT_TOKENS` at the model maximum and `NOUS_WORK_DIR`.
+- `setting_sources=["project", "local"]`: the target repo's settings and `CLAUDE.md` load, the user's own `~/.claude` settings, plugins and global `CLAUDE.md` do not.
 - `hooks` from `hooks.py`, and `resume=<session_id>` when resuming.
 
 After each turn the session id is saved to `state.json` with the SDK and CLI versions. Transient errors (process errors, timeouts, API 5xx, "overloaded" results) are retried twice, after 5 s and 30 s, reconnecting with the saved session id (`session.is_transient`).
@@ -45,7 +46,7 @@ After BASELINE, DESIGN, EXECUTE and REPORT, Nous runs `git add -A` and `git comm
 Hooks run in-process via `ClaudeAgentOptions.hooks`; there are no shell hooks or settings files.
 
 - **PostToolUse / PostToolUseFailure** (Bash only): append one row per command to `runs.jsonl` with `ts`, `phase`, `iter`, `tool_use_id`, `command` (secrets masked), `exit_code` (0 on success, parsed from the error on failure, `null` for background commands), `output_bytes`, `cwd`, `background`, `agent_id` and `experiment` (whether the command matches `experiment_commands`; defaults match `blis run`, `python *search|bench|run|sweep*.py`, `make bench`).
-- **Stop**: validates the current phase's artifacts. On any error it returns `decision: block` with the error list (plus a one-line evidence key reminder when an error is about evidence), so the agent keeps working. A counter tracks consecutive blocks: after 6 in a row the next stop is allowed (the post-phase repair pass takes over). Any Bash command (success or failure) resets the counter, so an agent that is still working is never cut off. The stop is also allowed while a `wait_for` condition is still pending.
+- **Stop**: validates the current phase's artifacts. It first fixes formatting in place (a numeric string where a number is required, an optional field set to `null`, `noise_unmeasured: false`), then reports every remaining schema error at once with its JSON path. On any error it returns `decision: block` with the error list (plus a one-line evidence key reminder when an error is about evidence), so the agent keeps working. A counter tracks consecutive blocks: after 6 in a row the next stop is allowed (the post-phase repair pass takes over). Any Bash command (success or failure) resets the counter, so an agent that is still working is never cut off. The stop is also allowed while a `wait_for` condition is still pending.
 - **PreCompact**: writes `state/digest.json` (phase, iteration, baseline summary, principles, last findings, active hypotheses), with secrets masked.
 
 ## Validators, repair and breaker
@@ -83,7 +84,7 @@ Checked after each iteration, in this order:
 
 1. `halt.json` exists: `halt`.
 2. `STOP` sentinel exists (`nous stop`): `stop_sentinel`.
-3. `findings.question_answered` is true, at least one hypothesis is not `INCONCLUSIVE`, repair status is `ok`, and every `problem.claims_needed` entry is met (claim present, `min_seeds` distinct seeds, a `ci` when `needs_ci`, all `conditions` covered): `answered`.
+3. `findings.question_answered` is true, at least one hypothesis is not `INCONCLUSIVE`, repair status is `ok`, and every `problem.claims_needed` entry is met (claim present, `min_seeds` distinct seeds, a `ci` when `needs_ci`): `answered`. Declared `conditions` are free text, so they do not gate the stop; each later DESIGN message lists every requirement still unmet, conditions included (a claim covers a condition when its own condition text contains it).
 4. `iteration >= max_iterations`: `max_iterations`.
 5. The last `stall_iterations` iterations were all quiet (no change in claims, no `best` improvement above `min_improvement`, no principle add/revise): `stall`.
 
@@ -118,7 +119,7 @@ After REPORT, Nous checks `answer.json` against the record without calling the m
 
 ## Cost meter (`cost.py`)
 
-The meter counts each SDK message once by message id. A streamed reply repeats its id with growing usage, so the meter keeps the largest usage seen per id. Subagent messages count too. Prices come from the `prices` table in `orchestrator/defaults.yaml`, which matches the Claude Code CLI (opus $5/$25, sonnet $3/$15, haiku $1/$5 per million input/output tokens; cache reads at 0.1 × input, cache writes at 1.25 ×). A model without a price costs $0. Each ledger row records `cost_meter_usd` and `tokens` for that iteration; the last row also gets `report_cost_usd`. Cost is reported only and never drives a decision. `nous cost` sums these fields.
+The authority is the CLI's own cost: each `ResultMessage.total_cost_usd` is cumulative for its session id (subagents included), so the meter adds its increase per session. Between results, or when the CLI reports no cost, it prices assistant usage instead, counting each message once by id and keeping the largest usage seen per id (a streamed reply repeats its id). Streamed usage undercounts output tokens, which made the old meter read 15–28% low. Prices for that estimate come from the `prices` table in `orchestrator/defaults.yaml`, which matches the Claude Code CLI (opus $5/$25, sonnet $3/$15, haiku $1/$5 per million input/output tokens; cache reads at 0.1 × input, cache writes at 1.25 ×). A model without a price costs $0. Each ledger row records `cost_meter_usd` and `tokens` for that iteration; the last row also gets `report_cost_usd`. Cost is reported only and never drives a decision. `nous cost` sums these fields.
 
 ## Effort (`effort.py`)
 

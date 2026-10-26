@@ -39,6 +39,7 @@
             "required": ["value"],
             "properties": {
               "value": { "type": "number" },
+              "note": { "type": "string" },
               "evidence": {
                 "type": "array",
                 "items": {
@@ -70,7 +71,8 @@
                 "condition": { "type": "string" },
                 "value": {},
                 "seeds": { "type": "array" },
-                "ci": {}
+                "ci": {},
+                "evidence": {}
               },
               "additionalProperties": false
             }

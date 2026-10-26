@@ -43,11 +43,11 @@ Required: `runs`: list of `{id, hypothesis_id, role, command, parameters, seeds}
 
 Required: `hypotheses`, `question_answered` (bool), `reason`. Optional: `best: {metric, value}`.
 
-Each hypothesis requires `id`, `status` (`CONFIRMED|PARTIALLY_CONFIRMED|REFUTED|INCONCLUSIVE`), `error_type` (`direction|magnitude|regime|shape|none`), `evidence` (list of evidence items). Optional: `partial_note`, `effect: {value, evidence}`, `noise_sd`, `noise_condition`, `noise_unmeasured`, `noise_reason`, `claims`: list of `{claim_id, metric, condition, value}` with optional `seeds` and `ci`.
+Each hypothesis requires `id`, `status` (`CONFIRMED|PARTIALLY_CONFIRMED|REFUTED|INCONCLUSIVE`), `error_type` (`direction|magnitude|regime|shape|none`), `evidence` (list of evidence items). Optional: `partial_note`, `effect: {value (number), note, evidence}`, `noise_sd`, `noise_condition`, `noise_unmeasured`, `noise_reason`, `claims`: list of `{claim_id, metric, condition, value}` with optional `seeds`, `ci` and `evidence`.
 
 ## principle_updates.json (EXECUTE)
 
-Required: `updates`: list of `{id, text, finding_ref, action}`, `action` in `add|revise|remove`, `finding_ref` a hypothesis id from the bundle. Nous merges these into `principles.json` (a list of `{id, text}`).
+Required: `updates`: list of `{id, text, finding_ref, action}`, `action` in `add|revise|remove`, `finding_ref` a hypothesis id from the bundle. `scope` (the settings the principle was tested in) is required for `add` and `revise`. Nous merges these into `principles.json` (a list of `{id, text, scope}`).
 
 ## answer.json (REPORT)
 

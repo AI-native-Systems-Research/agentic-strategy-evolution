@@ -30,6 +30,7 @@ from .stop_rule import (
     check_stop,
     claims_changed,
     principles_changed,
+    unmet_requirements,
 )
 from .validators import (bundle_hash, campaign_record, evidence_hint, read_json as _read_json,
                          resolve_evidence_path, validate_phase_artifacts)
@@ -72,10 +73,11 @@ def _merge_principles(existing: list[dict], updates: dict | None) -> list[dict]:
             continue
         action = u.get("action", "add")
         text = u.get("text", "")
+        entry = {"id": uid, "text": text, **({"scope": u["scope"]} if u.get("scope") else {})}
         if action == "add":
-            result.append({"id": uid, "text": text})
+            result.append(entry)
         elif action == "revise":
-            result = [{"id": uid, "text": text} if p["id"] == uid else p for p in result]
+            result = [entry if p["id"] == uid else p for p in result]
         elif action == "remove":
             result = [p for p in result if p["id"] != uid]
     return result
@@ -356,6 +358,11 @@ class Campaign:
                 principles_text = ""
                 if self._principles:
                     principles_text = "\n\nActive principles:\n" + json.dumps(self._principles, indent=2)
+                if iteration > 1:  # tell the agent what the stop rule still waits for (spec 3.6)
+                    needed, hyps = campaign_record(self._work_dir, iteration - 1)
+                    unmet = unmet_requirements({"hypotheses": hyps}, needed)
+                    if unmet:
+                        principles_text += "\n\nclaims_needed not yet met:\n" + "\n".join(f"- {u}" for u in unmet)
                 try:
                     await self._turn(
                         session,

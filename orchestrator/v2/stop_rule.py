@@ -135,24 +135,44 @@ def check_stop(
     return None
 
 
-def _claims_needed_met(
-    findings: dict, claims_needed: list[dict] | None
-) -> bool:
-    """True if every claims_needed entry is produced and meets its declared
-    min_seeds / needs_ci / conditions (spec 3.6). Undeclared ones are not checked."""
+def _norm(v) -> str:
+    """Case- and whitespace-insensitive text of a condition."""
+    text = v if isinstance(v, str) else _key(v)
+    return " ".join(text.lower().split())
+
+
+def unmet_requirements(
+    findings: dict, claims_needed: list[dict] | None, *, conditions: bool = True,
+) -> list[str]:
+    """One line per claims_needed requirement not yet met (spec 3.6): claim missing, fewer
+    than min_seeds distinct seeds, no ci when needs_ci and, with *conditions*, a declared
+    condition no claim of that id names (its condition text contains it). Conditions are
+    free text ("rate in {10,...,150}"), so they are advice for the agent, never a stop gate.
+    Undeclared requirements are not checked."""
     by_id: dict = {}
     for hyp in findings.get("hypotheses", []):
         for c in hyp.get("claims", []):
             by_id.setdefault(_key(c.get("claim_id")), []).append(c)
+    unmet: list[str] = []
     for need in claims_needed or []:
-        got = by_id.get(_key(need.get("id")))
+        cid = need.get("id")
+        got = by_id.get(_key(cid))
         if not got:
-            return False
+            unmet.append(f"{cid}: no claim yet")
+            continue
         seeds = {_key(s) for c in got if isinstance(c.get("seeds"), list) for s in c["seeds"]}
         if len(seeds) < need.get("min_seeds", 0):
-            return False
+            unmet.append(f"{cid}: {len(seeds)} distinct seeds, needs {need['min_seeds']}")
         if need.get("needs_ci") and not any(c.get("ci") is not None for c in got):
-            return False
-        if not {_key(x) for x in need.get("conditions") or []} <= {_key(c.get("condition")) for c in got}:
-            return False
-    return True
+            unmet.append(f"{cid}: needs a ci")
+        if not conditions:
+            continue
+        conds = [_norm(c.get("condition")) for c in got]
+        missing = [x for x in need.get("conditions") or [] if not any(_norm(x) in c for c in conds)]
+        if missing:
+            unmet.append(f"{cid}: no claim under condition(s) {missing}")
+    return unmet
+
+
+def _claims_needed_met(findings: dict, claims_needed: list[dict] | None) -> bool:
+    return not unmet_requirements(findings, claims_needed, conditions=False)
