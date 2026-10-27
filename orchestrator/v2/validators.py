@@ -479,7 +479,7 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
                         "baseline with measured noise"
                     )
 
-            if noise_sd is not None:
+            if noise_sd:  # zero noise (deterministic): nothing to beat, no effect needed
                 effect = h.get("effect", {})
                 effect_value = effect.get("value") if isinstance(effect, dict) else None
                 if effect_value is None:
@@ -625,6 +625,9 @@ _SEMANTIC_CHECKS: dict[str, Any] = {
 }
 
 
+MAX_SCHEMA_ERRORS = 10  # keeps a repair message small
+
+
 def validate_artifact(
     artifact_type: str,
     data: dict,
@@ -643,13 +646,13 @@ def validate_artifact(
     schema = _load_schema(artifact_type)
     _move_extras(data, schema)  # logs only; unknown keys never fail
 
-    # JSON Schema validation
-    try:
-        jsonschema.validate(data, schema)
-    except jsonschema.ValidationError as exc:
-        errors.append(f"schema: {exc.message}")
+    # JSON Schema validation: every error at once (capped), each with its path
+    schema_errors = sorted(jsonschema.Draft202012Validator(schema).iter_errors(data),
+                           key=lambda e: list(map(str, e.absolute_path)))
+    if schema_errors:
         # Return early on schema failure; semantic checks assume valid shape
-        return errors
+        return [f"schema: {'/'.join(map(str, e.absolute_path)) or '(top level)'}: {e.message[:200]}"
+                for e in schema_errors[:MAX_SCHEMA_ERRORS]]
 
     # Noise sub-schema validation for baseline
     if artifact_type == "baseline":
@@ -684,6 +687,5 @@ def validate_phase_artifacts(
             all_errors.append(f"{atype}: invalid JSON — {exc}")
             continue
         ctx = iter_context(work_dir, phase_dir, **limits)
-        for e in validate_artifact(atype, data, ctx):
-            all_errors.append(f"{atype}: {e}")
+        all_errors.extend(f"{atype}: {e}" for e in validate_artifact(atype, data, ctx))
     return all_errors

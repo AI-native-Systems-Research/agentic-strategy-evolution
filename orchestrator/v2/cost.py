@@ -27,16 +27,26 @@ def load_prices(defaults_path: Path) -> dict[str, dict[str, float]]:
 
 
 class CostMeter:
-    """One count per message id (largest usage wins: a streamed reply repeats its id), subagents included."""
+    """Campaign cost. The authority is the CLI's own session cost (``ResultMessage.total_cost_usd``,
+    cumulative per session id, subagents included). Between results, and when the CLI reports
+    none, assistant usage is priced per message id (largest usage wins: a streamed reply repeats
+    its id). Streamed usage undercounts output, so the CLI figure replaces the estimate."""
 
-    def __init__(self, prices: dict[str, dict[str, float]]) -> None:
+    def __init__(self, prices: dict[str, dict[str, float]],
+                 session_costs: dict[str, float] | None = None) -> None:
         self._prices = prices
         self._by_id: dict[str, tuple[float, int, int]] = {}  # id -> (cost, input, output)
-        self._total: dict[str, Any] = {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0}
-        self._last_snapshot: dict[str, Any] = dict(self._total)
+        self._tokens: dict[str, int] = {"input_tokens": 0, "output_tokens": 0}
+        self._settled = 0.0  # CLI-reported cost, summed over sessions
+        # session id -> last cumulative CLI cost; restored on resume, where the CLI keeps counting
+        self._session_cost: dict[str, float] = dict(session_costs or {})
+        self._estimate = 0.0  # priced usage since the last CLI-reported result
+        self._last_snapshot: dict[str, Any] = self.total()
 
     def record(self, message: Any) -> None:
-        # ResultMessage carries no model and repeats the per-message usage: skip it
+        if hasattr(message, "total_cost_usd"):  # ResultMessage: its usage repeats the messages
+            self._settle(message)
+            return
         model = getattr(message, "model", None)
         usage = getattr(message, "usage", None)
         if not model or not usage:
@@ -59,12 +69,29 @@ class CostMeter:
         if cost <= prev[0] and (input_t, output_t) <= prev[1:]:
             return
         self._by_id[msg_id] = (cost, input_t, output_t)
-        self._total["input_tokens"] += input_t - prev[1]
-        self._total["output_tokens"] += output_t - prev[2]
-        self._total["cost_usd"] += cost - prev[0]
+        self._tokens["input_tokens"] += input_t - prev[1]
+        self._tokens["output_tokens"] += output_t - prev[2]
+        self._estimate += cost - prev[0]
+
+    def _settle(self, result: Any) -> None:
+        cli = getattr(result, "total_cost_usd", None)
+        sid = getattr(result, "session_id", None) or ""
+        if not isinstance(cli, (int, float)):
+            return  # no CLI figure: keep the priced estimate
+        prev = self._session_cost.get(sid, 0.0)
+        # Cumulative per session id, also across a resume (measured: CLI 2.1.308, SDK 0.2.172)
+        if cli < prev:  # the CLI restarted its count for this session id
+            prev = 0.0
+        self._settled += cli - prev
+        self._session_cost[sid] = cli
+        self._estimate = 0.0
+
+    @property
+    def session_costs(self) -> dict[str, float]:
+        return dict(self._session_cost)
 
     def total(self) -> dict[str, Any]:
-        return dict(self._total)
+        return {**self._tokens, "cost_usd": self._settled + self._estimate}
 
     def iter_delta(self) -> dict[str, Any]:
         """Return cost since the last call to iter_delta (per-iteration)."""

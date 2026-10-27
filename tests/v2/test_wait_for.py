@@ -108,7 +108,8 @@ def _findings() -> dict:
 
 
 def _principle_updates() -> dict:
-    return {"updates": [{"id": "p1", "action": "add", "text": "Fast is better", "finding_ref": "h1"}]}
+    return {"updates": [{"id": "p1", "action": "add", "text": "Fast is better", "finding_ref": "h1",
+                         "scope": "default load"}]}
 
 
 def _answer() -> dict:

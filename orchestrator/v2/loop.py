@@ -30,6 +30,7 @@ from .stop_rule import (
     check_stop,
     claims_changed,
     principles_changed,
+    unmet_requirements,
 )
 from .validators import (bundle_hash, campaign_record, evidence_hint, read_json as _read_json,
                          resolve_evidence_path, validate_phase_artifacts)
@@ -72,10 +73,11 @@ def _merge_principles(existing: list[dict], updates: dict | None) -> list[dict]:
             continue
         action = u.get("action", "add")
         text = u.get("text", "")
+        entry = {"id": uid, "text": text, **({"scope": u["scope"]} if u.get("scope") else {})}
         if action == "add":
-            result.append({"id": uid, "text": text})
+            result.append(entry)
         elif action == "revise":
-            result = [{"id": uid, "text": text} if p["id"] == uid else p for p in result]
+            result = [entry if p["id"] == uid else p for p in result]
         elif action == "remove":
             result = [p for p in result if p["id"] != uid]
     return result
@@ -129,6 +131,15 @@ class Campaign:
                                  f"{(r.stderr or r.stdout).strip()}")
         self._code_dir, self._commits = str(wt), True
 
+    def _working_copy_note(self) -> str:
+        """The agent reads repo_path in campaign.yaml; name the campaign copy so it works there."""
+        repo = self._config.target_system.get("repo_path")
+        if not self._commits or not self._code_dir or not repo:
+            return ""
+        return (f"\n\nYour working copy is {self._code_dir} (git branch nous/{self._config.run_id}), "
+                f"a copy of {repo}. Build, run, edit and commit only in the working copy; never "
+                f"change {repo}.")
+
     @staticmethod
     def _exclude_experiments_dir(repo: str) -> None:
         """Keep the user's checkout clean: list .nous-experiments/ in the per-clone
@@ -160,9 +171,9 @@ class Campaign:
             write_halt(self._work_dir, fp, phase, str(exc))
         return fp is not None
 
-    def _init_meter(self) -> None:
+    def _init_meter(self, session_costs: dict | None = None) -> None:
         defaults_path = Path(__file__).resolve().parent.parent / "defaults.yaml"
-        self._meter = CostMeter(load_prices(defaults_path))
+        self._meter = CostMeter(load_prices(defaults_path), session_costs)
 
     def _build_hooks_and_session_opts(self) -> tuple[HookState, dict, dict]:
         hook_state = HookState(
@@ -213,7 +224,7 @@ class Campaign:
         state = load_campaign_state(self._work_dir)
         if state is None:
             return await self.run()
-        self._init_meter()
+        self._init_meter(state.get("session_costs"))  # a resumed session's CLI total is cumulative
         self._prepare_code_dir()
         hook_state, hooks, session_opts = self._build_hooks_and_session_opts()
         self._breaker = FailureBreaker(recent=state.get("breaker_recent"))
@@ -322,7 +333,8 @@ class Campaign:
                 await self._turn(
                     session,
                     "BASELINE phase. Do not design hypotheses yet. "
-                    f"Get one real observation and write {self._work_dir / 'baseline.json'}.{task_hint}",
+                    f"Get one real observation and write {self._work_dir / 'baseline.json'}.{task_hint}"
+                    f"{self._working_copy_note()}",
                 )
             except Exception as exc:
                 if not self._phase_failed(exc, "BASELINE"):
@@ -356,6 +368,11 @@ class Campaign:
                 principles_text = ""
                 if self._principles:
                     principles_text = "\n\nActive principles:\n" + json.dumps(self._principles, indent=2)
+                if iteration > 1:  # tell the agent what the stop rule still waits for (spec 3.6)
+                    needed, hyps = campaign_record(self._work_dir, iteration - 1)
+                    unmet = unmet_requirements({"hypotheses": hyps}, needed)
+                    if unmet:
+                        principles_text += "\n\nclaims_needed not yet met:\n" + "\n".join(f"- {u}" for u in unmet)
                 try:
                     await self._turn(
                         session,
@@ -554,6 +571,7 @@ class Campaign:
 
     def _save_ledger(self) -> None:
         _write_json(self._work_dir / "ledger.json", self._ledger)
+        update_state(self._work_dir, session_costs=self._meter.session_costs)
 
     def _record_final_check(self) -> None:
         """Spec 3.8: check answer.json against the record and log the result in the ledger."""

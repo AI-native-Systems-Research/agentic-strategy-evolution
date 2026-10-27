@@ -132,6 +132,7 @@ def _principle_updates(*, count: int = 0) -> dict:
                 "text": f"principle {i}",
                 "finding_ref": "h1",
                 "action": "add",
+                "scope": "default settings",
             }
             for i in range(count)
         ],

@@ -539,9 +539,9 @@ class TestAnsweredRequirements:
         f = _claim_findings([_c(ci=[0.9, 1.1])])
         assert _stop(tmp_path, f, need) == "answered"
 
-    def test_conditions_unmet(self, tmp_path):
+    def test_conditions_are_advice_not_a_gate(self, tmp_path):
         need = [{"id": "c1", "conditions": ["wl-a", "wl-b"]}]
-        assert _stop(tmp_path, _claim_findings([_c("wl-a")]), need) is None
+        assert _stop(tmp_path, _claim_findings([_c("wl-a")]), need) == "answered"
 
     def test_conditions_met(self, tmp_path):
         need = [{"id": "c1", "conditions": ["wl-a", "wl-b"]}]
@@ -567,5 +567,5 @@ class TestNonScalarClaimValues:
     def test_unhashable_condition_and_seeds(self, tmp_path):
         f = self._f([1], cond=["x", "y"])
         assert claims_changed(None, f) is True
-        need = [{"id": "c1", "min_seeds": 1, "conditions": ["z"]}]
-        assert _stop(tmp_path, f, need) is None
+        need = [{"id": "c1", "min_seeds": 2, "conditions": ["z"]}]
+        assert _stop(tmp_path, f, need) is None  # one distinct seed ([1, 2] is one list)
