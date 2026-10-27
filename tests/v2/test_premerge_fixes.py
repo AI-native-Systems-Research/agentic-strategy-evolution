@@ -307,3 +307,14 @@ async def test_p6_stop_gate_blocks_invalid_design_then_allows(tmp_path):
     assert holder["c"].stop_decisions == [None, "block", None, None, None]
     assert len(holder["c"].queries) == 4  # the gate fixed DESIGN; no repair turn needed
     assert json.loads((idir / "bundle.json").read_text()) == _bundle()
+
+
+async def test_baseline_message_names_the_working_copy(tmp_path):
+    """dbg eval run: the agent read repo_path from campaign.yaml and fixed the user's checkout."""
+    repo = _init_repo(tmp_path)
+    client = FakeClient(script=_make_script(4), per_turn_files=_build_per_turn_files(repo / ".nous" / "test-run"))
+    campaign, _ = _git_campaign(repo, client)
+    await campaign.run()
+    wt = repo / ".nous-experiments" / "test-run"
+    assert f"Your working copy is {wt}" in client.queries[0]
+    assert f"never change {repo}" in client.queries[0]

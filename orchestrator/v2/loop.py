@@ -131,6 +131,15 @@ class Campaign:
                                  f"{(r.stderr or r.stdout).strip()}")
         self._code_dir, self._commits = str(wt), True
 
+    def _working_copy_note(self) -> str:
+        """The agent reads repo_path in campaign.yaml; name the campaign copy so it works there."""
+        repo = self._config.target_system.get("repo_path")
+        if not self._commits or not self._code_dir or not repo:
+            return ""
+        return (f"\n\nYour working copy is {self._code_dir} (git branch nous/{self._config.run_id}), "
+                f"a copy of {repo}. Build, run, edit and commit only in the working copy; never "
+                f"change {repo}.")
+
     @staticmethod
     def _exclude_experiments_dir(repo: str) -> None:
         """Keep the user's checkout clean: list .nous-experiments/ in the per-clone
@@ -324,7 +333,8 @@ class Campaign:
                 await self._turn(
                     session,
                     "BASELINE phase. Do not design hypotheses yet. "
-                    f"Get one real observation and write {self._work_dir / 'baseline.json'}.{task_hint}",
+                    f"Get one real observation and write {self._work_dir / 'baseline.json'}.{task_hint}"
+                    f"{self._working_copy_note()}",
                 )
             except Exception as exc:
                 if not self._phase_failed(exc, "BASELINE"):
