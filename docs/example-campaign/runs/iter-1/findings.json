@@ -29,8 +29,8 @@
   "best": {"metric": "p99_ms", "value": 41.8},
   "question_answered": true,
   "self_check": {
-    "alternative": "The p99 drop is run-to-run noise, not the larger cache.",
-    "ruled_out_by": [{"path": "results/R1.json", "key": "/p99_ms", "value": 41.8}]
+    "alternative": "The 20.4 ms p99 drop is run-to-run noise, not the larger cache.",
+    "ruled_out_by": [{"path": "baseline.json", "key": "/noise/sd", "value": 0.75}]
   },
   "reason": "Cache 256 lowers p99 by 20.4 ms (sd 0.75) and doubles the hit rate; lookup cost rose by only 0.1 us."
 }

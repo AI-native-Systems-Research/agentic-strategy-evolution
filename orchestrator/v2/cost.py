@@ -59,10 +59,11 @@ class CostMeter:
         if not price:
             logger.debug("no price entry for model %r, costing at $0", model)
         pin = price.get("input_tokens", 0)
-        # Anthropic ratios: cache read 0.1x input, cache write 1.25x input
+        # Cache prices per model when listed, else Anthropic's 0.1x (read) / 1.25x (write) of input
         cost = (
             input_t * pin + output_t * price.get("output_tokens", 0)
-            + cache_r * pin * 0.1 + cache_w * pin * 1.25
+            + cache_r * price.get("cache_read_input_tokens", pin * 0.1)
+            + cache_w * price.get("cache_creation_input_tokens", pin * 1.25)
         ) / 1_000_000
         msg_id = getattr(message, "message_id", None) or getattr(message, "uuid", None) or id(message)
         prev = self._by_id.get(msg_id, (0.0, 0, 0))

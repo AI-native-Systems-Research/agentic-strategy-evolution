@@ -301,3 +301,16 @@ class TestSelfCheckBeforeAnswered:
         doc = {"hypotheses": [{"id": "h1", "status": "INCONCLUSIVE", "error_type": "none", "evidence": []}],
                "question_answered": False, "reason": "r"}
         assert validate_artifact("findings", doc, ValidatorContext(work_dir=tmp_path, iter_dir=tmp_path)) == []
+
+
+def test_opus_5_5_estimate_matches_cli_pricing():
+    """Live probe: the CLI charged $0.0801 for this usage (Opus 5.5 list: $4/$20, cache read $0.20, write $5)."""
+    from pathlib import Path
+
+    from orchestrator.v2.cost import load_prices
+    prices = load_prices(Path(__file__).resolve().parents[2] / "orchestrator" / "defaults.yaml")
+    m = CostMeter(prices)
+    m.record(FakeAssistantMessage(message_id="a", model="claude-opus-5-5", usage={
+        "input_tokens": 4163, "output_tokens": 2853, "cache_read_input_tokens": 24663,
+        "cache_creation_input_tokens": 291}))
+    assert round(m.total()["cost_usd"], 4) == 0.0801

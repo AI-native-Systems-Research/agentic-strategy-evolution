@@ -11,7 +11,7 @@ from pathlib import Path
 
 
 def _key(v) -> str:
-    """Hashable form of any agent-written JSON value (lists, dicts: e.g. a Pareto front)."""
+    """Hashable form of any agent-written JSON value (lists, dicts: e.g. a list of solutions)."""
     return json.dumps(v, sort_keys=True, default=str)
 
 
