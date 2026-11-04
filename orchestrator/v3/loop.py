@@ -26,7 +26,6 @@ from orchestrator.v2.final_check import _check_repro, check_answer
 from orchestrator.v2.loop import Campaign as V2Campaign
 from orchestrator.v2.prompts import load_checklist
 from orchestrator.v2.resume import load_campaign_state, update_state
-from orchestrator.v2.session import DEFAULT_MODEL
 from orchestrator.v2.validators import read_json, validate_phase_artifacts
 
 from .notebook import check_notebook, summary
@@ -36,6 +35,7 @@ logger = logging.getLogger(__name__)
 _METHOD = Path(__file__).resolve().parents[2] / "prompts" / "v3" / "method.md"
 MAX_STOP_BLOCKS = 6  # consecutive Stop blocks before the stop is allowed (the repair turns take over)
 MAX_REPAIRS = 2
+CHALLENGER_MODEL = "claude-sonnet-5-5"  # reads and judges only; a smaller model is enough
 CHALLENGER_TOOLS_DENIED = ["Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch"]
 
 CONTINUE_MSG = ("Continue the investigation. When every part of the question is answered, write "
@@ -206,7 +206,7 @@ class Campaign(V2Campaign):
     async def _challenge(self) -> dict | None:
         """One fresh, read-only reviewer session. Any failure skips the challenge (never blocks)."""
         opts = ClaudeAgentOptions(
-            model=self._config.model or DEFAULT_MODEL, cwd=str(self._work_dir),
+            model=CHALLENGER_MODEL, cwd=str(self._work_dir),
             system_prompt={"type": "preset", "preset": "claude_code"}, permission_mode="bypassPermissions",
             disallowed_tools=CHALLENGER_TOOLS_DENIED, setting_sources=["project", "local"],
             add_dirs=[self._code_dir] if self._code_dir else [])

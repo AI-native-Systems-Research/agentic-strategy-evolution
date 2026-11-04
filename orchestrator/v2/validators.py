@@ -189,6 +189,8 @@ def resolve_evidence_path(path_str: str, roots: list[Path]) -> tuple[Path | None
     names = ", ".join(str(r) for r in roots)
     p = Path(path_str)
     cands = [p.resolve()] if p.is_absolute() else [(r / p).resolve() for r in roots]
+    if not p.is_absolute() and len(p.parts) > 1:  # "work/x.json" said from the work dir's parent
+        cands += [(r / Path(*p.parts[1:])).resolve() for r in roots if r.name == p.parts[0]]
     inside = [c for c in cands if any(c.is_relative_to(r) for r in roots)]
     if not inside:
         return None, f"evidence path escapes the allowed roots ({names}): {path_str!r}"

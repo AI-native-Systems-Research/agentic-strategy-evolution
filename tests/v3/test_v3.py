@@ -184,3 +184,12 @@ def test_repro_must_run_in_any_copy(tmp_path):
     for bad in ["export P=x && cd /somewhere && make", f"{tmp_path / 'repo'}/blis run --x", "make; cd sub; ls"]:
         assert any("repro" in e for e in validate_artifact("answer", {**base, "repro": bad}, ctx)), bad
     assert validate_artifact("answer", {**base, "repro": "go build -o blis main.go && ./blis run --x"}, ctx) == []
+
+
+def test_evidence_path_naming_the_work_dir_resolves(tmp_path):
+    from orchestrator.v2.validators import check_evidence_item
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "e.json").write_text('{"v": 3}')
+    assert check_evidence_item({"path": "work/e.json", "key": "/v", "value": 3}, work) == []
+    assert check_evidence_item({"path": "other/e.json", "key": "/v", "value": 3}, work) != []
