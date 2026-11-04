@@ -570,8 +570,10 @@ class TestPreCompactHook:
 
 
 class TestExperimentCommandMatching:
-    def test_blis_run_matches(self):
-        assert is_experiment_command("blis run --config x.yaml", DEFAULT_EXPERIMENT_COMMANDS)
+    def test_testbed_tool_needs_its_own_pattern(self):
+        """Defaults stay generic: a target's own tool is declared in campaign.experiment_commands."""
+        assert not is_experiment_command("blis run --config x.yaml", DEFAULT_EXPERIMENT_COMMANDS)
+        assert is_experiment_command("blis run --config x.yaml", [r"\bblis\s+run\b"])
 
     def test_python_bench_matches(self):
         assert is_experiment_command("python3 run_bench.py", DEFAULT_EXPERIMENT_COMMANDS)

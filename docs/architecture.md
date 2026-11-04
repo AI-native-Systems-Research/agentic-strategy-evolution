@@ -7,7 +7,7 @@ Nous v2 wraps one Claude Code session and forces it through a fixed scientific l
 `nous run` builds one `ClaudeSDKClient` for the whole campaign. `Session.build_agent_options` sets:
 
 - `system_prompt`: the `claude_code` preset with the method prompt appended (`prompts/v2/method.md`, plus `prompts/v2/checklists/<task_type>.md` when `task_type` is set; see `prompts.py`).
-- `model` (default `claude-opus-4-6`), optional `effort`, `cwd` = `target_system.repo_path`, `permission_mode="bypassPermissions"`.
+- `model` (default `claude-opus-5-5`), optional `effort`, `cwd` = `target_system.repo_path`, `permission_mode="bypassPermissions"`.
 - `env`: `CLAUDE_CODE_MAX_OUTPUT_TOKENS` at the model maximum and `NOUS_WORK_DIR`.
 - `setting_sources=["project", "local"]`: the target repo's settings and `CLAUDE.md` load, the user's own `~/.claude` settings, plugins and global `CLAUDE.md` do not.
 - `hooks` from `hooks.py`, and `resume=<session_id>` when resuming.

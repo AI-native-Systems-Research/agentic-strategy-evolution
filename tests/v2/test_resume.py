@@ -174,7 +174,7 @@ class TestCampaignResume:
                 "noise_unmeasured": True, "noise_reason": "single",
                 "claims": [{"claim_id": "c1", "metric": "pass", "condition": "default", "value": 1.0}],
             }],
-            "question_answered": True,
+            "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True,
             "reason": "fixed",
         }
         pu = {"updates": []}
@@ -252,7 +252,7 @@ class TestCampaignResume:
                 "noise_unmeasured": True, "noise_reason": "single",
                 "claims": [{"claim_id": "c1", "metric": "pass", "condition": "default", "value": 1.0}],
             }],
-            "question_answered": True, "reason": "fixed",
+            "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True, "reason": "fixed",
         }
         pu = {"updates": []}
         answer = {"answer": "fixed", "deliverable": "patch", "repro": "pytest",
@@ -362,7 +362,7 @@ class TestCampaignResume:
                 "noise_unmeasured": True, "noise_reason": "single",
                 "claims": [{"claim_id": "c1", "metric": "score", "condition": "default", "value": 20.0}],
             }],
-            "question_answered": True, "reason": "greedy worked",
+            "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True, "reason": "greedy worked",
         }
         pu = {"updates": []}
         answer = {"answer": "greedy wins", "deliverable": "patch", "repro": "bench.py",
@@ -418,7 +418,7 @@ class TestCampaignResume:
                 "noise_unmeasured": True, "noise_reason": "single",
                 "claims": [{"claim_id": "c1", "metric": "pass", "condition": "default", "value": 1.0}],
             }],
-            "question_answered": True, "reason": "fixed",
+            "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True, "reason": "fixed",
         }
         pu = {"updates": []}
         answer = {"answer": "fixed", "deliverable": "patch", "repro": "pytest",
@@ -506,7 +506,7 @@ class TestCampaignResume:
                 "noise_unmeasured": True, "noise_reason": "single",
                 "claims": [{"claim_id": "c1", "metric": "pass", "condition": "default", "value": 1.0}],
             }],
-            "question_answered": True, "reason": "fixed",
+            "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True, "reason": "fixed",
         }
         pu = {"updates": []}
         answer = {"answer": "fixed", "deliverable": "patch", "repro": "pytest",
@@ -593,7 +593,7 @@ class TestCampaignStateResumeFields:
                 "noise_unmeasured": True, "noise_reason": "single",
                 "claims": [{"claim_id": "c1", "metric": "pass", "condition": "default", "value": 1.0}],
             }],
-            "question_answered": True, "reason": "fixed",
+            "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True, "reason": "fixed",
         }
         pu = {"updates": []}
         answer = {"answer": "fixed", "deliverable": "patch", "repro": "pytest",
@@ -664,7 +664,7 @@ _FINDINGS = {"hypotheses": [{
     "id": "h1", "status": "CONFIRMED", "error_type": "none", "evidence": [],
     "noise_unmeasured": True, "noise_reason": "single",
     "claims": [{"claim_id": "c1", "metric": "pass", "condition": "default", "value": 1.0}]}],
-    "question_answered": True, "reason": "fixed"}
+    "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True, "reason": "fixed"}
 _ANSWER = {"answer": "fixed", "deliverable": "patch", "repro": "pytest", "claims": []}
 
 

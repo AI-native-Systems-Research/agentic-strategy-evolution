@@ -100,7 +100,7 @@ def _valid_findings_hypothesis(**overrides) -> dict:
 def _valid_findings() -> dict:
     return {
         "hypotheses": [_valid_findings_hypothesis()],
-        "question_answered": True,
+        "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True,
         "reason": "metric improved",
     }
 

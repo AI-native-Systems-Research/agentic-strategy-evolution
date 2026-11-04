@@ -253,3 +253,51 @@ def test_resume_does_not_recount_earlier_spend():
     resumed = CostMeter(PRICES, m.session_costs)  # nous resume restores state.json session_costs
     resumed.record(FakeResultMessage(session_id="s1", total_cost_usd=5.0))
     assert round(resumed.iter_delta()["cost_usd"], 6) == 1.0
+
+
+# ── 7. release fixes: model key, default model, self-check before answered, generic defaults ──
+
+
+def test_top_level_model_key_is_used():
+    assert parse_campaign_config({**_campaign_yaml(), "model": "claude-opus-5-5"}).model == "claude-opus-5-5"
+    both = {**_campaign_yaml(), "model": "a", "models": {"session": "b"}}
+    assert parse_campaign_config(both).model == "b"  # models.session is the explicit one
+
+
+def test_default_model_is_current():
+    from orchestrator.v2.session import DEFAULT_MODEL, MODEL_MAX_OUTPUT
+    assert DEFAULT_MODEL == "claude-opus-5-5" and MODEL_MAX_OUTPUT[DEFAULT_MODEL] == 128_000
+
+
+def test_default_experiment_commands_name_no_testbed_tool():
+    from orchestrator.v2.hooks import DEFAULT_EXPERIMENT_COMMANDS
+    assert not any("blis" in p for p in DEFAULT_EXPERIMENT_COMMANDS)
+
+
+def _answered(tmp_path, **extra):
+    (tmp_path / "m.json").write_text(json.dumps({"err_pct": 19.2}))
+    doc = {"hypotheses": [{"id": "h1", "status": "CONFIRMED", "error_type": "none", "evidence": [],
+                           "noise_unmeasured": True, "noise_reason": "one run"}],
+           "question_answered": True, "reason": "r", **extra}
+    return validate_artifact("findings", doc, ValidatorContext(work_dir=tmp_path, iter_dir=tmp_path))
+
+
+class TestSelfCheckBeforeAnswered:
+    def test_answered_without_self_check_is_rejected(self, tmp_path):
+        assert any("self_check" in e for e in _answered(tmp_path))
+
+    def test_alternative_must_be_ruled_out_by_a_measurement(self, tmp_path):
+        errs = _answered(tmp_path, self_check={"alternative": "the gap is a measurement artifact",
+                                               "ruled_out_by": []})
+        assert any("ruled_out_by" in e for e in errs)
+
+    def test_ruled_out_by_evidence_is_checked(self, tmp_path):
+        bad = {"alternative": "x", "ruled_out_by": [{"path": "m.json", "key": "/err_pct", "value": 5}]}
+        assert any("mismatch" in e for e in _answered(tmp_path, self_check=bad))
+        good = {"alternative": "x", "ruled_out_by": [{"path": "m.json", "key": "/err_pct", "value": 19.2}]}
+        assert _answered(tmp_path, self_check=good) == []
+
+    def test_not_answered_needs_no_self_check(self, tmp_path):
+        doc = {"hypotheses": [{"id": "h1", "status": "INCONCLUSIVE", "error_type": "none", "evidence": []}],
+               "question_answered": False, "reason": "r"}
+        assert validate_artifact("findings", doc, ValidatorContext(work_dir=tmp_path, iter_dir=tmp_path)) == []

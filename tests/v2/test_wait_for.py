@@ -102,7 +102,7 @@ def _findings() -> dict:
             },
         ],
         "best": {"metric": "score", "value": 50},
-        "question_answered": True,
+        "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True,
         "reason": "confirmed by experiment",
     }
 

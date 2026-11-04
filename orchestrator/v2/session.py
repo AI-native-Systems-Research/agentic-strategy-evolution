@@ -52,6 +52,8 @@ def is_transient(exc: BaseException) -> bool:
 
 
 MODEL_MAX_OUTPUT: dict[str, int] = {
+    "claude-opus-5-5": 128_000,
+    "claude-sonnet-5-5": 128_000,
     "claude-opus-4-6": 128_000,
     "claude-opus-4-5-20250514": 128_000,
     "claude-sonnet-4-5-20250514": 128_000,
@@ -69,7 +71,7 @@ except ImportError:  # pragma: no cover
     CLI_VERSION = "unknown"
 
 
-DEFAULT_MODEL = "claude-opus-4-6"
+DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_MAX_BUFFER_SIZE = 32 * 1024 * 1024  # 32 MB (fixes B7)
 
 

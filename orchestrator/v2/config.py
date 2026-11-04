@@ -10,7 +10,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _KNOWN_KEYS = frozenset({
-    "research_question", "target_system", "run_id", "max_iterations", "models",
+    "research_question", "target_system", "run_id", "max_iterations", "models", "model",
     "locked_parameters", "locked_workload", "effort", "human_gates", "secrets",
     "min_improvement", "stall_iterations", "task_type", "session_scope",
     "experiment_commands", "task_limits", "objective", "rerun_repro",
@@ -62,7 +62,7 @@ def parse_campaign_config(raw: dict) -> CampaignConfig:
         run_id=raw.get("run_id", "unnamed"),
         max_iterations=raw.get("max_iterations", 5),
         target_system=raw["target_system"],
-        model=models.get("session") or models.get("design"),
+        model=models.get("session") or models.get("design") or raw.get("model"),
         locked_parameters=raw.get("locked_parameters"),
         locked_workload=raw.get("locked_workload"),
         effort=raw.get("effort"),

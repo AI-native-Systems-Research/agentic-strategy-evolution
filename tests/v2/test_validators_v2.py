@@ -80,7 +80,7 @@ def _valid_findings(tmp_path: Path) -> dict:
                 "noise_sd": 0.1,
             }
         ],
-        "question_answered": True,
+        "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "results.json", "key": "/latency", "value": 1.5}]}, "question_answered": True,
         "reason": "latency dropped",
     }
 
@@ -431,7 +431,7 @@ class TestFindingsSemantics:
                     "noise_sd": 0.1,
                 }
             ],
-            "question_answered": True,
+            "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "results.json", "key": "/latency", "value": 1.5}]}, "question_answered": True,
             "reason": "latency dropped",
         }
         errs = validate_artifact("findings", data, _ctx(tmp_path))

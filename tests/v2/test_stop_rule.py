@@ -43,7 +43,7 @@ def _findings(
         ]
     result: dict[str, Any] = {
         "hypotheses": hypotheses,
-        "question_answered": question_answered,
+        "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": question_answered,
         "reason": reason,
     }
     if best is not None:

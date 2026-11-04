@@ -91,6 +91,23 @@
       "additionalProperties": false
     },
     "question_answered": { "type": "boolean" },
+    "self_check": {
+      "type": "object",
+      "required": ["alternative", "ruled_out_by"],
+      "properties": {
+        "alternative": { "type": "string" },
+        "ruled_out_by": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "key", "value"],
+            "properties": { "path": { "type": "string" }, "key": { "type": "string" }, "value": {} },
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "reason": { "type": "string" },
     "extra": { "type": "object" }
   },

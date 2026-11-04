@@ -102,7 +102,7 @@ def _findings(*, answered: bool = True) -> dict:
             },
         ],
         "best": {"metric": "score", "value": 50},
-        "question_answered": answered,
+        "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": answered,
         "reason": "confirmed by experiment" if answered else "not yet",
     }
 

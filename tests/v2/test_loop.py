@@ -119,7 +119,7 @@ def _findings(
                 "claims": claims,
             },
         ],
-        "question_answered": answered,
+        "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": answered,
         "reason": "test passes now",
     }
 
@@ -734,7 +734,7 @@ class TestLedgerPerIteration:
                 "claims": [{"claim_id": "c1", "metric": "m",
                             "condition": "a", "value": 1}],
             }],
-            "question_answered": True,
+            "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True,
             "reason": "done",
         }
 
@@ -857,7 +857,7 @@ class TestExperimentCommandsDefault:
         campaign = Campaign(config=config, work_dir=tmp_path, client_factory=lambda _o: None)
         _state, hooks, _opts = campaign._build_hooks_and_session_opts()
         cb = hooks["PostToolUse"][0].hooks[0]
-        await cb({"tool_name": "Bash", "tool_input": {"command": "blis run --x"}}, None, {})
+        await cb({"tool_name": "Bash", "tool_input": {"command": "python3 run_bench.py --x"}}, None, {})
         row = json.loads((tmp_path / "runs.jsonl").read_text().splitlines()[0])
         assert row["experiment"] is True
 

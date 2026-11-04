@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 DEFAULT_EXPERIMENT_COMMANDS: list[str] = [
-    r"\bblis\s+run\b",
     r"\bpython3?\s+\S*(search|bench|run|sweep)\S*\.py\b",
     r"\bmake\s+bench",
 ]

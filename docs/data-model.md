@@ -41,7 +41,7 @@ Required: `runs`: list of `{id, hypothesis_id, role, command, parameters, seeds}
 
 ## findings.json (EXECUTE)
 
-Required: `hypotheses`, `question_answered` (bool), `reason`. Optional: `best: {metric, value}`.
+Required: `hypotheses`, `question_answered` (bool), `reason`. Optional: `best: {metric, value}`. When `question_answered` is true, `self_check: {alternative, ruled_out_by}` is required: the strongest other explanation of the main result, and the evidence items (checked like any other) that rule it out.
 
 Each hypothesis requires `id`, `status` (`CONFIRMED|PARTIALLY_CONFIRMED|REFUTED|INCONCLUSIVE`), `error_type` (`direction|magnitude|regime|shape|none`), `evidence` (list of evidence items). Optional: `partial_note`, `effect: {value (number), note, evidence}`, `noise_sd`, `noise_condition`, `noise_unmeasured`, `noise_reason`, `claims`: list of `{claim_id, metric, condition, value}` with optional `seeds`, `ci` and `evidence`.
 

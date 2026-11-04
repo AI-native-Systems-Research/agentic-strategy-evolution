@@ -4,6 +4,12 @@
 # Reporting only: cost never drives a Nous decision. Matches the Claude Code
 # CLI's own pricing (cache write 1.25x input, cache read 0.1x input; see cost.py).
 prices:
+  claude-opus-5-5:
+    input_tokens: 5.0
+    output_tokens: 25.0
+  claude-sonnet-5-5:
+    input_tokens: 3.0
+    output_tokens: 15.0
   claude-opus-4-6:
     input_tokens: 5.0
     output_tokens: 25.0

@@ -46,7 +46,7 @@ Required keys are `research_question` and `target_system.repo_path`. Optional ke
 |---|---|
 | `run_id` | Work dir name. `--run-id` overrides it; if both are absent, `<campaign file's dir name>-run`. Passing the yaml to `resume`, `stop` or `status` needs `run_id` in the file (or use the work dir path). |
 | `max_iterations` | Iteration cap (default 5). |
-| `models.session` | Session model (default `claude-opus-4-6`). |
+| `models.session` (or `model`) | Session model (default `claude-opus-5-5`). |
 | `effort` | SDK effort level passed to the session. |
 | `locked_parameters`, `locked_workload` | Values every `plan.json` run must use, unless the run lists the key in `workload_changes`. |
 | `objective` | `{metric, direction}`; `direction` (`increase`/`decrease`) decides whether `findings.best` improved. |

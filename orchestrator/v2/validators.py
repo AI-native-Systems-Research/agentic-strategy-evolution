@@ -447,6 +447,19 @@ def _check_findings_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
     """Check findings-specific rules beyond JSON Schema."""
     errors: list[str] = []
 
+    # Before "answered": the strongest other explanation, ruled out by a measurement (spec 3.6)
+    if data.get("question_answered") is True:
+        sc = data.get("self_check")
+        if not isinstance(sc, dict):
+            errors.append("question_answered is true: add self_check {alternative, ruled_out_by}: the "
+                          "strongest other explanation of your result, and the measurement that rules it out")
+        elif not sc.get("ruled_out_by"):
+            errors.append("self_check.ruled_out_by is empty: cite the measurement ({path, key, value}) that "
+                          "rules out the alternative; if none exists yet, run it or set question_answered false")
+        else:
+            for ev in sc["ruled_out_by"]:
+                errors.extend(check_evidence_item(ev, ctx.iter_dir or ctx.work_dir, ctx.work_dir, ctx.repo_dir))
+
     for h in data.get("hypotheses", []):
         hid = h.get("id", "?")
         status = h.get("status", "")

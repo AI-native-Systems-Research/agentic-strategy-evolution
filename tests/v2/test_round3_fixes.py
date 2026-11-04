@@ -77,6 +77,7 @@ def test_findings_evidence_resolves_against_work_dir_and_repo(tmp_path):
     idir, work, repo = _roots(tmp_path)
     _w(work / "runs" / "iter-1" / "r.json", '{"v": 1}')
     _w(repo / "bench.csv", "v\n5\n")
+    _w(work / "baseline.json", json.dumps(_baseline()))  # cited by the fixture's self_check
     findings = _findings()
     findings["hypotheses"][0]["evidence"] = [
         {"path": "runs/iter-1/r.json", "key": "/v", "value": 1},

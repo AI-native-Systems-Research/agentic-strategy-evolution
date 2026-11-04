@@ -64,7 +64,7 @@ def _make_findings(work_dir: Path, hypotheses: list[dict] | None = None) -> dict
                 "effect": {"value": 58.0},
             }
         ],
-        "question_answered": True,
+        "self_check": {"alternative": "noise", "ruled_out_by": [{"path": "baseline.json", "key": "/noise/deterministic", "value": True}]}, "question_answered": True,
         "reason": "Bug fixed.",
     }
     idir = work_dir / "runs" / "iter-1"

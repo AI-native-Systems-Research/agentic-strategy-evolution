@@ -32,13 +32,13 @@ Field lists below match the validators exactly; `?` marks optional. Put any othe
 - Predictions are locked after DESIGN. Do not change them during EXECUTE.
 
 **EXECUTE**: run the plan and record what happened. Fix anything that does not run.
-- `findings.json`: `hypotheses: [...]`, `best?: {metric, value}`, `question_answered` (bool: is the campaign question resolved?), `reason`. Each hypothesis:
+- `findings.json`: `hypotheses: [...]`, `best?: {metric, value}`, `question_answered` (bool: is the campaign question resolved?), `reason`, `self_check?: {alternative, ruled_out_by: [{path, key, value}]}`. Before `question_answered: true`, name the strongest other explanation of your main result (noise, an artifact, only the settings tested) and cite the measurement that rules it out; if none does, run one. Each hypothesis:
   - `id`, `status`: CONFIRMED|PARTIALLY_CONFIRMED|REFUTED|INCONCLUSIVE (`partial_note` required for PARTIALLY_CONFIRMED)
   - `error_type`: direction|magnitude|regime|shape|none (how the prediction missed; none if it held)
   - `evidence: [{path, key, value}]` pointing to real files
   - `effect?: {value, note?, evidence?}`: `value` is one number (treatment minus control), `note` any prose, `evidence` a list of `{path, key, value}`. Noise: `noise_sd` (+ `noise_condition?`), or `noise_unmeasured: true` + `noise_reason`
   - `claims?: [{claim_id, metric, condition, value, seeds?, ci?}]`; give `seeds` and `ci` when claims_needed sets min_seeds / needs_ci.
-- `principle_updates.json`: `updates: [{id, text, finding_ref (a hypothesis id), action: add|revise|remove, scope?}]`. `scope`: the settings the principle was tested in; give it for every add and revise.
+- `principle_updates.json`: `updates: [{id, text, finding_ref (a hypothesis id), action: add|revise|remove, scope?}]`. `scope`: where it was tested; give it for every add and revise.
 
 **REPORT**: answer the research question.
 - `answer.json`: `{answer, deliverable, repro, claims}`.
@@ -60,5 +60,5 @@ Field lists below match the validators exactly; `?` marks optional. Put any othe
 5. **Evidence must be checkable.** Every number you report cites a file a validator can read.
 6. **Secrets.** Use environment variables for secrets, never literal values. The system masks secrets in logs.
 7. **Long output.** Redirect long command output to a file and read only what you need. Do not paste large logs.
-8. **Principles compound, within their scope.** Add new principles only with evidence; revise or remove when evidence changes. A principle holds only in its `scope`: before a decision relies on it in other settings, test it there or say it is untested.
-9. **Check against the original, not your shortcut.** Validate a deliverable against the task's own space or criterion, never against a reduced version you built.
+8. **Principles compound, within their scope.** Add only with evidence; revise or remove when evidence changes. A principle holds only in its `scope`; test it before relying on it elsewhere.
+9. **Check against the original, not your shortcut.** Validate against the task's own space or criterion, never a reduced version you built.
