@@ -546,8 +546,13 @@ def _check_answer_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
     """Check answer-specific rules."""
     errors: list[str] = []
 
-    if data.get("repro", "").lstrip().startswith("cd "):
-        errors.append("repro must not start with `cd`: it runs from the repository root")
+    repro = data.get("repro", "")
+    if re.search(r"(^|[;&|]\s*)cd(\s|$)", repro.strip()):
+        errors.append("repro must not `cd` anywhere: it runs from the repository root, in any copy of it")
+    for root in (ctx.repo_dir, ctx.work_dir):
+        if root and str(root) and str(Path(root).resolve()) in repro:
+            errors.append(f"repro must not use the absolute path {Path(root).resolve()}: use paths relative "
+                          "to the repository root, so it runs in any copy")
 
     # Evidence checks on claims; the claim value must be the evidence value
     roots = [ctx.work_dir, ctx.repo_dir]

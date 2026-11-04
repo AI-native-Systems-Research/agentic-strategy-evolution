@@ -175,3 +175,12 @@ def test_cli_selects_v3(tmp_path, monkeypatch):
     args = argparse.Namespace(max_iterations=None, model=None, verbose=False, v3=False, note=None)
     cli._drive_campaign(raw, tmp_path, args)
     assert seen["cls"] == "orchestrator.v3.loop"
+
+
+def test_repro_must_run_in_any_copy(tmp_path):
+    from orchestrator.v2.validators import ValidatorContext, validate_artifact
+    base = {"answer": "a", "deliverable": "d", "claims": []}
+    ctx = ValidatorContext(work_dir=tmp_path / "w", repo_dir=tmp_path / "repo")
+    for bad in ["export P=x && cd /somewhere && make", f"{tmp_path / 'repo'}/blis run --x", "make; cd sub; ls"]:
+        assert any("repro" in e for e in validate_artifact("answer", {**base, "repro": bad}, ctx)), bad
+    assert validate_artifact("answer", {**base, "repro": "go build -o blis main.go && ./blis run --x"}, ctx) == []
