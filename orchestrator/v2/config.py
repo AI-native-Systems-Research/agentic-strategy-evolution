@@ -13,7 +13,7 @@ _KNOWN_KEYS = frozenset({
     "research_question", "target_system", "run_id", "max_iterations", "models", "model",
     "locked_parameters", "locked_workload", "effort", "human_gates", "secrets",
     "min_improvement", "stall_iterations", "task_type", "session_scope",
-    "experiment_commands", "task_limits", "objective", "rerun_repro",
+    "experiment_commands", "task_limits", "objective", "rerun_repro", "nous_version",
 })
 
 _REQUIRED_KEYS = ("research_question", "target_system")

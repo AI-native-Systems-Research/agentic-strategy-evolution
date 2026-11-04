@@ -140,7 +140,11 @@ def _drive_campaign(raw: dict, work_dir: Path, args, *, resume: bool = False) ->
     import asyncio
     import logging
 
-    from orchestrator.v2.loop import Campaign
+    if getattr(args, "v3", False) or raw.get("nous_version") == 3:
+        raw["nous_version"] = 3
+        from orchestrator.v3.loop import Campaign
+    else:
+        from orchestrator.v2.loop import Campaign
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
     if args.max_iterations is not None:
@@ -412,6 +416,8 @@ def main():
     p_run.add_argument("--max-iterations", type=int,
                        help="Iteration cap. Overrides campaign.max_iterations.")
     p_run.add_argument("--model", help="Session model. Overrides campaign.models.")
+    p_run.add_argument("--v3", action="store_true", help="Nous v3: one free session, notebook, final gate "
+                       "and challenger (also set by `nous_version: 3` in campaign.yaml).")
     p_run.add_argument("--run-id", help="Work dir name. Defaults to campaign.run_id "
                        "or a value derived from the file path.")
     p_run.set_defaults(func=_cmd_run)
