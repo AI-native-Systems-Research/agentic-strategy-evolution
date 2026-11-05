@@ -8,7 +8,7 @@ A Nous campaign runs a Claude Code session with shell access in your target repo
 - The agent runs as your shell user, with your network access and credentials.
 - Nous commits the worktree once at the end (`git add -A`, `git commit`) on branch `nous/<run_id>`. Use a dedicated clone.
 
-For anything beyond a disposable checkout, run Nous inside a container or VM with limited network and file-system access (see `s390x/` for a Podman setup).
+For anything beyond a disposable checkout, run Nous inside a container or VM with limited network and file-system access.
 
 ## What Nous enforces
 

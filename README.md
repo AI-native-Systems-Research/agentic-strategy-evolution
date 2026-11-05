@@ -110,7 +110,6 @@ prompts/lightweight/          method note and task-type checklists
 examples/                     example campaign.yaml
 docs/example-campaign/        worked example: every file of a finished campaign
 tests/                        test suite (tests/lightweight/ for the runtime)
-s390x/                        running Nous on IBM Z via Podman (see s390x/README.md)
 ```
 
 ## Contributing
