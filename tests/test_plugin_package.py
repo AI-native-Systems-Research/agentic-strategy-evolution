@@ -81,7 +81,7 @@ class TestSkillFrontmatter:
 
 
 class TestSkillCoverage:
-    """The plugin wraps the v2 CLI commands run, status and resume."""
+    """The plugin wraps the CLI commands run, status and resume."""
 
     EXPECTED_SKILLS = {"nous-run", "nous-status", "nous-resume"}
 

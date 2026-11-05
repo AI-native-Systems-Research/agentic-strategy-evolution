@@ -20,9 +20,10 @@ a real provider.
 **Standard injection seams**:
 - `Session(client_factory=...)` / `Campaign(cfg, work_dir, client_factory=...)`
   with `tests/fakes/sdk_client.FakeClient` (scripted messages, simulated
-  file writes, `PostToolUse` hooks for scripted tool calls).
+  file writes, hooks for scripted tool calls); pass `challenger_factory=`
+  for the reviewer session.
 - CLI: `monkeypatch.setattr(cli, "_sdk_client", factory)`; see
-  `tests/v2/test_cli_v2.py`.
+  `tests/lightweight/test_cli_run.py`.
 
 ## Behavioral testing only
 

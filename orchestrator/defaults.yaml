@@ -1,4 +1,4 @@
-# Nous defaults. Only `prices` is read (orchestrator/v2/cost.py).
+# Nous defaults. Only `prices` is read (orchestrator/lightweight/cost.py).
 #
 # Per-model token prices (USD per million tokens) for the cost meter.
 # Reporting only: cost never drives a Nous decision. Matches the Claude Code

@@ -7,7 +7,7 @@ license = {text = "Apache-2.0"}
 dependencies = [
     "jsonschema>=4.20.0",
     "pyyaml>=6.0",
-    # Nous v2 drives one Claude Code session through the Agent SDK (pinned).
+    # Nous drives one Claude Code session through the Agent SDK (pinned).
     "claude-agent-sdk==0.2.172",
     "anyio>=4.0",
 ]
@@ -26,7 +26,7 @@ nous = "orchestrator.cli:main"
 include = ["orchestrator*", "prompts*"]
 
 [tool.setuptools.package-data]
-orchestrator = ["v2/schemas/*.json", "defaults.yaml"]
+orchestrator = ["lightweight/schemas/*.json", "defaults.yaml"]
 prompts = ["**/*.md"]
 
 [tool.pytest.ini_options]

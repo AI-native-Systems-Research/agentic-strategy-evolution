@@ -127,7 +127,7 @@ def _sdk_client(options):
 
 
 def _parse_or_exit(raw):
-    from orchestrator.v2.config import parse_campaign_config
+    from orchestrator.lightweight.config import parse_campaign_config
 
     try:
         return parse_campaign_config(raw)
@@ -140,11 +140,7 @@ def _drive_campaign(raw: dict, work_dir: Path, args, *, resume: bool = False) ->
     import asyncio
     import logging
 
-    if getattr(args, "v3", False) or raw.get("nous_version") == 3:
-        raw["nous_version"] = 3
-        from orchestrator.v3.loop import Campaign
-    else:
-        from orchestrator.v2.loop import Campaign
+    from orchestrator.lightweight.loop import Campaign
 
     logging.basicConfig(level=logging.DEBUG if args.verbose else logging.INFO)
     if args.max_iterations is not None:
@@ -211,160 +207,7 @@ def _cmd_resume(args):
     _drive_campaign(raw, work_dir, args, resume=True)
 
 
-def _cmd_stop(args):
-    """Write a ``STOP`` sentinel at the work_dir root.
-
-    The v2 loop checks it after each iteration's EXECUTE phase and then
-    runs REPORT and exits (stop_reason ``stop_sentinel``). Ctrl+C still
-    works for a mid-phase halt; ``nous resume`` continues from state.json.
-    """
-    work_dir = resolve_work_dir(args.target)
-    if not work_dir.exists():
-        print(f"Error: work_dir does not exist: {work_dir}", file=sys.stderr)
-        sys.exit(1)
-
-    sentinel = work_dir / "STOP"
-    if sentinel.exists():
-        print(
-            f"STOP sentinel already present at {sentinel}. "
-            f"Campaign will halt at the next checkpoint.",
-        )
-        sys.exit(0)
-
-    reason = (args.reason or "").strip()
-    sentinel.write_text(reason + ("\n" if reason else ""))
-    print(f"Wrote STOP sentinel: {sentinel}")
-    if reason:
-        print(f"Reason: {reason}")
-    print(
-        "The campaign will halt at the next phase boundary it checks "
-        "(the end of the current iteration's EXECUTE phase), then write "
-        "its REPORT. To cancel the stop request, delete the sentinel file."
-    )
-
-
-_V2_SCHEMAS = Path(__file__).resolve().parent / "v2" / "schemas"
-
-
-def _cmd_schema(args):
-    """Print a v2 artifact JSON Schema (md, json or yaml). Pure Python, no LLM."""
-    schema = json.loads((_V2_SCHEMAS / f"{args.artifact}.schema.json").read_text())
-    if args.format == "json":
-        print(json.dumps(schema, indent=2))
-    elif args.format == "yaml":
-        print(yaml.safe_dump(schema, sort_keys=False))
-    else:
-        print(_render_schema_markdown(schema, artifact=args.artifact))
-
-
-def _render_schema_markdown(schema: dict, *, artifact: str) -> str:
-    """Render a schema as a human-friendly Markdown reference.
-
-    Walks ``properties`` once and groups required vs optional fields.
-    Captures field descriptions verbatim so the schema stays the single
-    source of truth — no risk of doc/schema drift.
-    """
-    title = schema.get("title", artifact)
-    description = schema.get("description", "").strip()
-    required = set(schema.get("required", []))
-    properties = schema.get("properties", {}) or {}
-
-    lines: list[str] = []
-    lines.append(f"# {title}")
-    if description:
-        lines.append("")
-        lines.append(description)
-    lines.append("")
-    extra = (
-        "Allows additional properties." if schema.get("additionalProperties")
-        else "Rejects unknown top-level properties."
-    )
-    lines.append(f"_{extra}_")
-    lines.append("")
-
-    if required:
-        lines.append("## Required fields")
-        lines.append("")
-        for name in sorted(required):
-            spec = properties.get(name, {})
-            lines.extend(_render_property_md(name, spec))
-        lines.append("")
-
-    optional = [n for n in properties if n not in required]
-    if optional:
-        lines.append("## Optional fields")
-        lines.append("")
-        for name in sorted(optional):
-            spec = properties.get(name, {})
-            lines.extend(_render_property_md(name, spec))
-        lines.append("")
-
-    return "\n".join(lines)
-
-
-def _render_property_md(name: str, spec: dict) -> list[str]:
-    """Render one schema property as Markdown bullets."""
-    if not isinstance(spec, dict):
-        return [f"- **{name}**"]
-    type_str = spec.get("type", "")
-    if isinstance(type_str, list):
-        type_str = " | ".join(type_str)
-    enum = spec.get("enum")
-    desc = (spec.get("description") or "").strip()
-    out = [f"- **{name}** _{type_str}_"]
-    if enum:
-        out.append(f"  - Allowed values: {', '.join(repr(e) for e in enum)}")
-    if desc:
-        # Indent each line so the bullet renders cleanly.
-        for line in desc.splitlines():
-            out.append(f"  {line}")
-    sub_props = spec.get("properties")
-    if isinstance(sub_props, dict) and sub_props:
-        sub_required = set(spec.get("required", []))
-        for sub_name in sorted(sub_props):
-            sub_spec = sub_props[sub_name]
-            sub_type = ""
-            if isinstance(sub_spec, dict):
-                t = sub_spec.get("type", "")
-                if isinstance(t, list):
-                    t = " | ".join(t)
-                sub_type = t
-            req_marker = " (required)" if sub_name in sub_required else ""
-            out.append(f"  - `{sub_name}` _{sub_type}_{req_marker}")
-            sub_desc = (
-                sub_spec.get("description", "").strip()
-                if isinstance(sub_spec, dict) else ""
-            )
-            if sub_desc:
-                first_line = sub_desc.splitlines()[0]
-                out.append(f"    - {first_line}")
-    return out
-
-
-def _phase_artifacts() -> dict[str, list[str]]:
-    from orchestrator.v2.hooks import PHASE_ARTIFACTS
-    return {phase.lower(): names for phase, names in PHASE_ARTIFACTS.items()}
-
-
-def _cmd_validate(args):
-    """Validate v2 phase artifacts in --dir (an iter dir, or the work dir for baseline/report)."""
-    from orchestrator.v2.validators import validate_phase_artifacts
-
-    from orchestrator.v2.config import validator_limits
-
-    d = args.dir.resolve()
-    work_dir = d.parent.parent if d.parent.name == "runs" else d
-    limits = {}
-    if (work_dir / "campaign.yaml").exists():  # same locks the loop checks
-        cfg = _parse_or_exit(yaml.safe_load((work_dir / "campaign.yaml").read_text()))
-        limits = validator_limits(cfg, work_dir)
-    errors = validate_phase_artifacts(work_dir, d, _phase_artifacts()[args.phase], **limits)
-    print(json.dumps({"status": "fail" if errors else "pass", "errors": errors}, indent=2))
-    if errors:
-        sys.exit(1)
-
-
-def _read_v2_run(target) -> tuple[Path, dict, list]:
+def _read_run(target) -> tuple[Path, dict, list]:
     work_dir = resolve_work_dir(target)
     if not (work_dir / "state.json").exists():
         print(f"Error: no state.json at {work_dir}", file=sys.stderr)
@@ -376,7 +219,7 @@ def _read_v2_run(target) -> tuple[Path, dict, list]:
 
 
 def _cmd_status(args):
-    work_dir, state, ledger = _read_v2_run(args.target)
+    work_dir, state, ledger = _read_run(args.target)
     print(f"Work dir:   {work_dir}")
     print(f"Phase:      {state.get('phase')}  iteration {state.get('iteration')}")
     print(f"Session id: {state.get('session_id')}")
@@ -386,7 +229,7 @@ def _cmd_status(args):
 
 
 def _cmd_cost(args):
-    _, _, ledger = _read_v2_run(args.target)
+    _, _, ledger = _read_run(args.target)
     cost = sum((r.get("cost_meter_usd") or 0) + (r.get("report_cost_usd") or 0) for r in ledger)
     tin = sum((r.get("tokens") or {}).get("input", 0) for r in ledger)
     tout = sum((r.get("tokens") or {}).get("output", 0) for r in ledger)
@@ -399,10 +242,11 @@ def main():
     parser = argparse.ArgumentParser(
         prog="nous",
         description=(
-            "Nous v2: hypothesis-driven experimentation in one Claude "
-            "session. Phases: BASELINE once, then DESIGN and EXECUTE per "
-            "iteration, then REPORT. Start with `nous run campaign.yaml`; "
-            "continue with `nous resume <work_dir>`."
+            "Nous Lightweight: Claude investigates a research question in "
+            "one session, keeping a notebook; Nous records every command, "
+            "checks the answer against the evidence and runs one independent "
+            "challenger. Start with `nous run campaign.yaml`; continue with "
+            "`nous resume <work_dir>`."
         ),
     )
     parser.add_argument(
@@ -411,73 +255,30 @@ def main():
     )
     subparsers = parser.add_subparsers(dest="command")
 
-    p_run = subparsers.add_parser("run", help="Run a Nous v2 campaign in one Claude session.")
+    p_run = subparsers.add_parser("run", help="Run a Nous campaign in one Claude session.")
     p_run.add_argument("campaign", help="Path to a campaign.yaml.")
     p_run.add_argument("--max-iterations", type=int,
-                       help="Iteration cap. Overrides campaign.max_iterations.")
+                       help="Continue messages sent when the agent stops without an answer. "
+                       "Overrides campaign.max_iterations.")
     p_run.add_argument("--model", help="Session model. Overrides campaign.models.")
-    p_run.add_argument("--v3", action="store_true", help="Nous v3: one free session, notebook, final gate "
-                       "and challenger (also set by `nous_version: 3` in campaign.yaml).")
     p_run.add_argument("--run-id", help="Work dir name. Defaults to campaign.run_id "
                        "or a value derived from the file path.")
     p_run.set_defaults(func=_cmd_run)
 
-    p_resume = subparsers.add_parser("resume", help="Resume a v2 campaign from its work dir.")
+    p_resume = subparsers.add_parser("resume", help="Resume a campaign from its work dir.")
     p_resume.add_argument("target", help="Work dir, run_id, or campaign.yaml.")
     p_resume.add_argument("--note", default=None,
-                          help="Human note added to the next phase message and the ledger.")
+                          help="Human note added to the first message after the resume.")
     p_resume.add_argument("--max-iterations", type=int,
-                          help="Iteration cap. Saved to the work dir's campaign.yaml.")
+                          help="Continue-message cap. Saved to the work dir's campaign.yaml.")
     p_resume.add_argument("--model", help="Session model. Saved to the work dir's campaign.yaml.")
     p_resume.set_defaults(func=_cmd_resume)
 
-    p_schema = subparsers.add_parser(
-        "schema", help="Print the JSON Schema for a v2 artifact.",
-    )
-    p_schema.add_argument(
-        "artifact",
-        choices=sorted(p.name.split(".")[0] for p in _V2_SCHEMAS.glob("*.schema.json")),
-        help="Which artifact schema to print.",
-    )
-    p_schema.add_argument(
-        "--format", choices=["md", "json", "yaml"], default="md",
-        help="Output format. 'md' (default) is human-readable. "
-             "'json' and 'yaml' print the raw schema for tooling.",
-    )
-    p_schema.set_defaults(func=_cmd_schema)
-
-    p_validate = subparsers.add_parser("validate", help="Validate v2 phase artifacts.")
-    p_validate.add_argument("phase", choices=list(_phase_artifacts()))
-    p_validate.add_argument("--dir", required=True, type=Path,
-                            help="runs/iter-N for design/execute; the work dir for baseline/report.")
-    p_validate.set_defaults(func=_cmd_validate)
-
-    p_stop = subparsers.add_parser(
-        "stop",
-        help="Ask a running campaign to halt cleanly at the next phase "
-             "boundary by writing a STOP sentinel.",
-        description=(
-            "Write a STOP sentinel in the work dir. The v2 loop checks it "
-            "at the phase boundary after each iteration's EXECUTE phase, "
-            "then runs REPORT and exits. For a mid-phase halt use Ctrl+C; "
-            "`nous resume` continues from state.json."
-        ),
-    )
-    p_stop.add_argument(
-        "target",
-        help="Work dir, campaign.yaml, or run_id.",
-    )
-    p_stop.add_argument(
-        "--reason", default=None,
-        help="Optional human-readable reason written into the sentinel.",
-    )
-    p_stop.set_defaults(func=_cmd_stop)
-
-    p_status = subparsers.add_parser("status", help="Show v2 campaign state and ledger.")
+    p_status = subparsers.add_parser("status", help="Show campaign state and ledger.")
     p_status.add_argument("target", help="Work dir, campaign.yaml, or run_id.")
     p_status.set_defaults(func=_cmd_status)
 
-    p_cost = subparsers.add_parser("cost", help="Sum the v2 cost meter from ledger.json.")
+    p_cost = subparsers.add_parser("cost", help="Sum the cost meter from ledger.json.")
     p_cost.add_argument("target", help="Work dir, campaign.yaml, or run_id.")
     p_cost.set_defaults(func=_cmd_cost)
 
