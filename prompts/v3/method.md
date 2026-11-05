@@ -5,7 +5,8 @@ Work on the task the way you normally would. Nous records your commands. Two ext
 **Notebook.** Append one JSON line to `$NOUS_WORK_DIR/notebook.jsonl` (with a shell command) when you:
 - form a hypothesis, before testing it: `{"kind": "hypothesis", "id": "H1", "claim": "...", "predict": "what you expect to measure"}`;
 - get its result: `{"kind": "result", "id": "H1", "status": "confirmed|refuted|inconclusive", "evidence": [{"path", "key", "value"}]}`.
-A confirmed or refuted result cites the file holding the measured number. Write each entry once; Nous checks them all when you finish, so you need not re-read the notebook.
+A confirmed or refuted result cites the file holding the measured number. Write each entry once; Nous checks them when you finish, so you need not re-read the notebook.
+To update a result, append a new result line; old lines are kept as history.
 
 **Answer.** Finish by writing `$NOUS_WORK_DIR/answer.json`: `{answer, deliverable, repro, claims}`.
 - `answer`: prose answering every part of the question.

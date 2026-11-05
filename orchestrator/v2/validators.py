@@ -549,10 +549,11 @@ def _check_answer_semantics(data: dict, ctx: ValidatorContext) -> list[str]:
     errors: list[str] = []
 
     repro = data.get("repro", "")
-    if re.search(r"(^|[;&|]\s*)cd(\s|$)", repro.strip()):
+    if re.search(r"(^|[;&|(\n]\s*)cd(\s|$)", repro.strip()):
         errors.append("repro must not `cd` anywhere: it runs from the repository root, in any copy of it")
     for root in (ctx.repo_dir, ctx.work_dir):
-        if root and str(root) and str(Path(root).resolve()) in repro:
+        # The root as a whole path component: /x/proj, not /x/proj-data
+        if root and str(root) and re.search(re.escape(str(Path(root).resolve())) + r"(?=[/\s'\"]|$)", repro):
             errors.append(f"repro must not use the absolute path {Path(root).resolve()}: use paths relative "
                           "to the repository root, so it runs in any copy")
 

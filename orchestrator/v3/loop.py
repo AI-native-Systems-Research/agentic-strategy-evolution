@@ -13,6 +13,7 @@ Cost is measured and reported only.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -36,10 +37,13 @@ _METHOD = Path(__file__).resolve().parents[2] / "prompts" / "v3" / "method.md"
 MAX_STOP_BLOCKS = 6  # consecutive Stop blocks before the stop is allowed (the repair turns take over)
 MAX_REPAIRS = 2
 CHALLENGER_MODEL = "claude-sonnet-5-5"  # reads and judges only; a smaller model is enough
+CHALLENGER_TIMEOUT_S = 15 * 60  # a hung reviewer is skipped, like any other reviewer failure
 CHALLENGER_TOOLS_DENIED = ["Bash", "Write", "Edit", "NotebookEdit", "WebFetch", "WebSearch"]
 
 CONTINUE_MSG = ("Continue the investigation. When every part of the question is answered, write "
                 "{answer} (see the method) and stop.")
+RESUME_FRESH_MSG = ("\n\nThis is a resumed campaign: continue from the existing notebook ({notebook}) and the "
+                    "work already in the working copy rather than starting over.")
 REPRO_MSG = ("Run the repro command from answer.json exactly as written, from the repository root, and fix "
              "answer.json until it succeeds.")
 
@@ -83,6 +87,7 @@ class Campaign(V2Campaign):
                  challenger_factory: Callable | None = None) -> None:
         super().__init__(config, work_dir, client_factory)
         self._challenger_factory = challenger_factory or client_factory
+        self._prev_cost = 0.0  # spend recorded before a resume
 
     # ── checks ──────────────────────────────────────────────────────────
 
@@ -137,20 +142,41 @@ class Campaign(V2Campaign):
         state = load_campaign_state(self._work_dir)
         if state is None:
             return await self.run()
+        ledger = read_json(self._work_dir / "ledger.json")
+        prev = ledger[0] if isinstance(ledger, list) and ledger and isinstance(ledger[0], dict) else None
+        if state.get("phase") == "DONE" and prev:  # finished: report, never redo the work
+            return {"stop_reason": prev.get("stop_reason", "answered"), "iterations": 1}
+        # An earlier process's spend: its ledger row, else the figure saved on entering CHALLENGE
+        self._prev_cost = (prev or {}).get("cost_meter_usd", state.get("cost_usd", 0.0))
         self._init_meter(state.get("session_costs"))
         self._prepare_code_dir()
         _, _, opts = self._build_hooks_and_session_opts()
+        human = f"\n\nHuman note: {note}" if note else ""
+
+        async def attempt(resumed: bool) -> dict:
+            session = await self._start_session(opts)
+            try:
+                if resumed:
+                    msg = CONTINUE_MSG.format(answer=self._work_dir / "answer.json")
+                else:  # fresh session: the task again, plus where the earlier work is
+                    msg = self._task_message() + RESUME_FRESH_MSG.format(
+                        notebook=self._work_dir / "notebook.jsonl")
+                await self._turn(session, msg + human)
+                return await self._finish(session)
+            finally:
+                await session.disconnect()
+
         if state.get("session_id"):
             opts["resume"] = state["session_id"]
-        session = await self._start_session(opts)
-        try:
-            msg = CONTINUE_MSG.format(answer=self._work_dir / "answer.json")
-            if not state.get("session_id"):  # fresh session: give the task again
-                msg = self._task_message()
-            await self._turn(session, msg + (f"\n\nHuman note: {note}" if note else ""))
-            return await self._finish(session)
-        finally:
-            await session.disconnect()
+            self._turns_ok = 0
+            try:
+                return await attempt(True)
+            except Exception as exc:  # a stale session id: start fresh, as v2 does
+                if self._turns_ok:
+                    raise
+                logger.warning("resume of session %s failed (%s); starting fresh", state["session_id"], exc)
+                opts.pop("resume")
+        return await attempt(False)
 
     def _task_message(self) -> str:
         return (f"{self._config.research_question}\n\n"
@@ -170,7 +196,8 @@ class Campaign(V2Campaign):
                 status = await self._repair_answer(session)
         challenge = await self._challenge() if status == "ok" else None
         if challenge and challenge.get("gap") and challenge.get("test"):
-            update_state(self._work_dir, phase="CHALLENGE")
+            update_state(self._work_dir, phase="CHALLENGE", session_costs=self._meter.session_costs,
+                         cost_usd=self._cost_usd())
             await self._turn(session, (
                 "An independent reviewer read your answer and evidence and asks for one more check:\n"
                 f"{challenge['test']}\n(Reason: {challenge.get('why', '')})\n"
@@ -184,7 +211,7 @@ class Campaign(V2Campaign):
                       notebook_errors=check_notebook(self._work_dir, Path(self._code_dir) if self._code_dir else None),
                       challenger=challenge, status=status)
         (self._work_dir / "final_check.json").write_text(json.dumps(report, indent=2))
-        cost = self._meter.total()
+        cost = {**self._meter.total(), "cost_usd": self._cost_usd()}
         self._ledger = [{"iteration": 1, "status": status, "stop_reason": "answered" if status == "ok" else "partial",
                          "cost_meter_usd": cost["cost_usd"],
                          "tokens": {"input": cost["input_tokens"], "output": cost["output_tokens"]},
@@ -192,6 +219,10 @@ class Campaign(V2Campaign):
         self._save_ledger()
         update_state(self._work_dir, phase="DONE")
         return {"stop_reason": self._ledger[0]["stop_reason"], "iterations": 1}
+
+    def _cost_usd(self) -> float:
+        """This process's meter plus any spend before a resume."""
+        return self._meter.total()["cost_usd"] + self._prev_cost
 
     async def _repair_answer(self, session) -> str:
         for attempt in range(MAX_REPAIRS + 1):
@@ -211,7 +242,9 @@ class Campaign(V2Campaign):
             disallowed_tools=CHALLENGER_TOOLS_DENIED, setting_sources=["project", "local"],
             add_dirs=[self._code_dir] if self._code_dir else [])
         text, client = "", None
-        try:
+
+        async def exchange() -> None:
+            nonlocal text, client
             client = self._challenger_factory(opts)
             await client.connect()
             await client.query(challenger_prompt(self._config.research_question, self._work_dir))
@@ -223,7 +256,12 @@ class Campaign(V2Campaign):
                         text = t
                 if getattr(msg, "result", None):
                     text = msg.result
+
+        try:
+            await asyncio.wait_for(exchange(), CHALLENGER_TIMEOUT_S)
         except Exception as exc:  # the challenger is advice; it never stops a campaign
+            if isinstance(exc, asyncio.TimeoutError):
+                exc = TimeoutError(f"no reply within {CHALLENGER_TIMEOUT_S}s")
             logger.warning("challenger failed (%s); skipped", exc)
             return {"gap": None, "error": str(exc)[:300]}
         finally:

@@ -193,3 +193,131 @@ def test_evidence_path_naming_the_work_dir_resolves(tmp_path):
     (work / "e.json").write_text('{"v": 3}')
     assert check_evidence_item({"path": "work/e.json", "key": "/v", "value": 3}, work) == []
     assert check_evidence_item({"path": "other/e.json", "key": "/v", "value": 3}, work) != []
+
+
+# ── review fixes ─────────────────────────────────────────────────────────
+
+
+class _HangingClient(FakeClient):
+    async def receive_response(self):
+        import asyncio
+        await asyncio.sleep(30)
+        yield FakeResultMessage(session_id="rev")
+
+
+async def test_hung_challenger_times_out_and_never_stops_the_campaign(tmp_path, monkeypatch):
+    import orchestrator.v3.loop as v3
+    monkeypatch.setattr(v3, "CHALLENGER_TIMEOUT_S", 0.05)
+    work = tmp_path / "work"
+    work.mkdir()
+    client = FakeClient(script=[FakeResultMessage(session_id="s")],
+                        per_turn_files=[{str(work / "answer.json"): _answer(work)}])
+    c = Campaign(_cfg(), work, client_factory=lambda _o: client, challenger_factory=lambda _o: _HangingClient())
+    assert (await c.run())["stop_reason"] == "answered"
+    ch = json.loads((work / "final_check.json").read_text())["challenger"]
+    assert ch["gap"] is None and ch["error"]
+
+
+async def test_resume_of_a_stale_session_starts_fresh_with_the_task(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "state.json").write_text(json.dumps({"phase": "INVESTIGATE", "session_id": "gone"}))
+    fresh = FakeClient(script=[FakeResultMessage(session_id="s2")],
+                       per_turn_files=[{str(work / "answer.json"): _answer(work)}])
+
+    class Stale(FakeClient):
+        async def query(self, prompt):
+            raise RuntimeError("No conversation found with session ID: gone")
+
+    c = Campaign(_cfg(), work, client_factory=lambda o: Stale() if o.resume else fresh,
+                 challenger_factory=_challenger('{"gap": false, "why": "x"}'))
+    assert (await c.resume())["stop_reason"] == "answered"
+    assert "Is the cache worth it?" in fresh.queries[0]
+
+
+async def test_fresh_resume_says_continue_from_the_notebook(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "state.json").write_text(json.dumps({"phase": "INVESTIGATE"}))
+    client = FakeClient(script=[FakeResultMessage(session_id="s")],
+                        per_turn_files=[{str(work / "answer.json"): _answer(work)}])
+    c = Campaign(_cfg(), work, client_factory=lambda _o: client,
+                 challenger_factory=_challenger('{"gap": false, "why": "x"}'))
+    await c.resume()
+    assert "Is the cache worth it?" in client.queries[0]
+    assert "continue" in client.queries[0].lower() and str(work / "notebook.jsonl") in client.queries[0]
+
+
+async def test_resume_of_a_finished_campaign_runs_nothing(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    (work / "state.json").write_text(json.dumps({"phase": "DONE", "session_id": "s"}))
+    (work / "ledger.json").write_text(json.dumps([{"iteration": 1, "stop_reason": "partial", "cost_meter_usd": 2.0}]))
+
+    def no_client(_o):
+        raise AssertionError("a finished campaign must not start a session")
+
+    out = await Campaign(_cfg(), work, client_factory=no_client).resume()
+    assert out == {"stop_reason": "partial", "iterations": 1}
+    assert json.loads((work / "ledger.json").read_text())[0]["cost_meter_usd"] == 2.0
+
+
+async def test_resume_after_a_crash_in_challenge_keeps_the_earlier_cost(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    per_turn = [{str(work / "answer.json"): _answer(work)}]
+
+    class Crash(FakeClient):  # the challenge turn dies with the process
+        async def query(self, prompt):
+            if "independent reviewer" in prompt:
+                raise KeyboardInterrupt
+            await super().query(prompt)
+
+    first = Crash(script=[FakeResultMessage(session_id="s1", total_cost_usd=1.0)], per_turn_files=per_turn)
+    gap = '{"gap": true, "test": "repeat at cache=16", "why": "w"}'
+    c = Campaign(_cfg(), work, client_factory=lambda _o: first, challenger_factory=_challenger(gap))
+    try:
+        await c.run()
+    except KeyboardInterrupt:
+        pass
+    assert json.loads((work / "state.json").read_text())["phase"] == "CHALLENGE"
+    second = FakeClient(script=[FakeResultMessage(session_id="s2", total_cost_usd=0.5)] * 2)
+    c2 = Campaign(_cfg(), work, client_factory=lambda _o: second,
+                  challenger_factory=_challenger('{"gap": false, "why": "x"}'))
+    await c2.resume()
+    cost = json.loads((work / "ledger.json").read_text())[0]["cost_meter_usd"]
+    assert abs(cost - (1.0 + 0.01 + 0.5)) < 1e-9  # first process (agent + challenger) + this one
+
+
+class TestNotebookRobustness:
+    def test_unhashable_id_is_an_error_not_a_crash(self, tmp_path):
+        _nb(tmp_path, {**H, "id": ["H1"]}, {**R, "id": ["H1"]})
+        assert any("id" in e for e in check_notebook(tmp_path))
+
+    def test_bad_evidence_items_are_errors_not_crashes(self, tmp_path):
+        for ev in ([{"path": 5, "key": "/p99", "value": 40}], ["r.json"]):
+            _nb(tmp_path, H, {**R, "evidence": ev})
+            assert check_notebook(tmp_path) != []
+
+    def test_only_the_latest_result_per_hypothesis_is_checked(self, tmp_path):
+        (tmp_path / "r.json").write_text('{"p99": 31}')  # the rerun rewrote the file
+        new = {**R, "evidence": [{"path": "r.json", "key": "/p99", "value": 31}]}
+        _nb(tmp_path, H, R, new)
+        assert check_notebook(tmp_path) == []
+        _nb(tmp_path, H, new, R)
+        assert any("mismatch" in e for e in check_notebook(tmp_path))
+
+
+def test_repro_absolute_path_and_cd_checks(tmp_path):
+    from orchestrator.v2.validators import ValidatorContext, validate_artifact
+    base = {"answer": "a", "deliverable": "d", "claims": []}
+    repo = tmp_path / "proj"
+    ctx = ValidatorContext(work_dir=tmp_path / "w", repo_dir=repo)
+    errs = lambda r: [e for e in validate_artifact("answer", {**base, "repro": r}, ctx) if "repro" in e]  # noqa: E731
+    root = str(repo.resolve())
+    assert errs(f"python run.py --data {root}-data/x.csv") == []
+    assert errs(f"python run.py --out '{root}-data'") == []
+    for bad in [f"{root}/run.sh", f"python x.py --root {root}", f"python x.py --root '{root}'",
+                "(cd sub && make)", "make\ncd sub\nls"]:
+        assert errs(bad), bad
+    assert errs("make abcd") == [] and errs("./scd run") == []
