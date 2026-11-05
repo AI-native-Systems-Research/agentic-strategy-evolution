@@ -1,0 +1,4 @@
+{"cache_size": 64, "seed": 1, "p99_ms": 62.1}
+{"cache_size": 64, "seed": 2, "p99_ms": 63.0}
+{"cache_size": 64, "seed": 3, "p99_ms": 61.5}
+{"cache_size": 64, "seeds": [1, 2, 3], "p99_ms": 62.2}

@@ -1,0 +1,38 @@
+{
+  "answer": "Yes. At 256 entries p99 fell from 62.2 ms to 41.8 ms (3 seeds) and the hit rate at 256 was 0.93. Lookups did not get slower (0.9 us), so the extra hits explain the drop. The drop holds at concurrency 16 (44.9 ms).",
+  "deliverable": "toy_cache.py default --cache-size 256",
+  "repro": "python toy_cache.py --cache-size 256 --seeds 1,2,3 --json",
+  "claims": [
+    {
+      "id": "C1",
+      "metric": "p99_ms",
+      "value": 41.8,
+      "condition": "cache_size=256",
+      "evidence": "nous_evidence/results/R1.json",
+      "evidence_detail": {
+        "path": "nous_evidence/results/R1.json",
+        "key": "/p99_ms",
+        "value": 41.8
+      }
+    },
+    {
+      "id": "C2",
+      "metric": "hit_rate",
+      "value": 0.93,
+      "condition": "cache_size=256",
+      "evidence": "nous_evidence/results/R1.json",
+      "evidence_detail": {
+        "path": "nous_evidence/results/R1.json",
+        "key": "/hit_rate",
+        "value": 0.93
+      }
+    },
+    {
+      "id": "C3",
+      "metric": "p99_ms",
+      "value": 62.2,
+      "condition": "cache_size=64",
+      "evidence": "nous_evidence/results/R2.jsonl"
+    }
+  ]
+}

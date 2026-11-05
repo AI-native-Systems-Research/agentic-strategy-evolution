@@ -68,3 +68,18 @@ class TestSDKQueryGuard:
         import anyio
         with pytest.raises(LiveLLMCallBlocked):
             anyio.run(_drive)
+
+
+class TestSDKClientConnectGuard:
+    """ClaudeSDKClient.connect must be blocked so tests use FakeClient."""
+
+    def test_sdk_client_connect_blocked(self):
+        try:
+            from claude_agent_sdk import ClaudeSDKClient, ClaudeAgentOptions
+        except ImportError:
+            pytest.skip("claude-agent-sdk not installed; nothing to guard")
+
+        opts = ClaudeAgentOptions()
+        client = ClaudeSDKClient(opts)
+        with pytest.raises(LiveLLMCallBlocked, match="FakeClient"):
+            client.connect()

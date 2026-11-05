@@ -10,23 +10,20 @@ These apply to every PR, every test, every contributor. They are also restated i
 
 ### 🚫 Tests must NEVER make live LLM calls
 
-**No unit, integration, or end-to-end test in this repo may make a real API call to Anthropic, OpenAI, or any other LLM provider.** Tests must mock LLMs at the dispatcher seam:
+**No unit, integration, or end-to-end test in this repo may make a real API call to Anthropic, OpenAI, or any other LLM provider.** Tests fake the SDK client at its seam:
 
-- `LLMDispatcher` → pass `completion_fn=`.
-- `CLIDispatcher` → patch `orchestrator.cli_dispatch.subprocess.run`.
-- `SDKDispatcher` → pass `sdk_runner=` returning `SDKResult`.
-- `InlineDispatcher` → pre-populate the `.nous_response_*` signal file.
-- Or use `StubDispatcher` for end-to-end orchestrator flows.
+- `Session` / `Campaign` → pass `client_factory=` returning `tests/fakes/sdk_client.FakeClient`.
+- CLI → `monkeypatch.setattr(cli, "_sdk_client", factory)`.
 
-`tests/conftest.py` installs an autouse `block_live_llm_calls` fixture that strips LLM API keys from the env and patches `urllib.request.urlopen` + `claude_agent_sdk.query` to hard-fail on real network calls. If a test trips the guard, fix the test by injecting a fake — never disable the guard.
+`tests/conftest.py` installs an autouse `block_live_llm_calls` fixture that strips LLM API keys from the env and patches `urllib.request.urlopen`, `claude_agent_sdk.query` and `ClaudeSDKClient.connect` to hard-fail on real calls. If a test trips the guard, fix the test by injecting a fake; never disable the guard.
 
 ### Behavioral testing only
 
-Assert what's on disk, what's in metrics rows, what schemas validate. Don't assert which methods were called or what argv was constructed. The dispatcher seams are the contract.
+Assert what's on disk, what's in `ledger.json` / `runs.jsonl`, what the answer and notebook checks return. Don't assert which methods were called or what argv was constructed. The client seam is the contract.
 
 ### Token-budget discipline
 
-`nous` runs against real LLMs in production; CI cannot. Every PR that touches `orchestrator/` must keep the cache-friendly invariant: methodology lives in `CLAUDE.md` (auto-loaded), system blocks are stable across calls (cache hits), per-iteration content goes in the user message (cache busts when it should). `nous cost --cache-stats` is the regression gate.
+`nous` runs against real LLMs in production; CI cannot. Every PR that touches `orchestrator/` must keep the cache-friendly invariant: the method prompt is appended to the system prompt once per session and stays stable, and per-turn content goes in the user message. `nous cost` reports the cost meter per campaign.
 
 ---
 
@@ -44,7 +41,7 @@ Any contributor with Claude Code should follow this workflow when working on an 
 /superpowers:using-git-worktrees
 ```
 
-This creates an isolated working directory linked to the same git repository. All subsequent steps happen inside this worktree. The worktree skill creates and checks out a branch — this is the branch you will push in Step 8.
+This creates an isolated working directory linked to the same git repository. All subsequent steps happen inside this worktree. The worktree skill creates and checks out a branch. This is the branch you will push in Step 8.
 
 ---
 
@@ -70,7 +67,7 @@ Invoke the planning skill to structure your implementation plan:
 
 The skill guides the planning process. Save the resulting plan to `docs/plans/` using the naming convention `YYYY-MM-DD-<feature-name>-plan.md`. The plan must include: goal, architecture, exact file paths, step-by-step tasks with code, and a commit message per task.
 
-`docs/plans/` is listed in `.gitignore` — plan files never appear in PRs.
+`docs/plans/` is listed in `.gitignore`, so plan files never appear in PRs.
 
 ---
 
@@ -117,7 +114,7 @@ Invoke the subagent-driven development skill to execute the approved plan. This 
 ```
 
 - Mark each task complete before starting the next.
-- Keep changes focused — no scope creep.
+- Keep changes focused. No scope creep.
 - Commit after each task using the message from the plan.
 - Run tests after each task if applicable.
 
@@ -167,7 +164,7 @@ EOF
 ```
 
 **PR checklist before submitting:**
-- [ ] Worktree was used — main worktree untouched
+- [ ] Worktree was used; main worktree untouched
 - [ ] Plan was reviewed by agent and approved by human gate
 - [ ] All plan tasks completed and committed
 - [ ] `/pr-review-toolkit:review-pr` passed

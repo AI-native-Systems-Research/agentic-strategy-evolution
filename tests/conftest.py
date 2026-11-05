@@ -1,13 +1,6 @@
-import json
 import urllib.request
-from pathlib import Path
 
 import pytest
-import yaml
-
-
-SCHEMAS_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "schemas"
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "orchestrator" / "templates"
 
 
 # ─── No-live-LLM enforcement (project principle, see CLAUDE.md) ────────────
@@ -23,9 +16,9 @@ _BLOCKED_HOSTS = (
 class LiveLLMCallBlocked(RuntimeError):
     """A test triggered something that would call a real LLM provider.
 
-    The fix is to inject a fake at the dispatcher seam (sdk_runner=,
-    completion_fn=, monkeypatch subprocess.run, etc.) — NEVER to
-    disable this guard. See CLAUDE.md.
+    The fix is to inject a fake (tests.fakes.sdk_client.FakeClient,
+    monkeypatch subprocess.run, etc.) — NEVER to disable this guard.
+    See CLAUDE.md.
     """
 
 
@@ -63,14 +56,14 @@ def block_live_llm_calls(monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", _guarded_urlopen)
 
     # Patch claude_agent_sdk.query if installed; this catches accidental
-    # uses of the default sdk_runner path.
+    # one-shot SDK calls.
     try:
         import claude_agent_sdk  # type: ignore[import-not-found]
 
         async def _blocked_query(*args, **kwargs):
             raise LiveLLMCallBlocked(
-                "Test invoked claude_agent_sdk.query — pass sdk_runner= "
-                "to SDKDispatcher with a fake. See CLAUDE.md."
+                "Test invoked claude_agent_sdk.query — use "
+                "tests.fakes.sdk_client.FakeClient instead. See CLAUDE.md."
             )
             yield  # pragma: no cover  (makes the function an async generator)
 
@@ -78,71 +71,16 @@ def block_live_llm_calls(monkeypatch):
     except ImportError:
         pass
 
-    # Block live PyMC NUTS sampling (issue #164). Importing pymc is
-    # allowed; running pymc.sample() is not — it pulls in MCMC chains
-    # that take seconds-to-minutes per call and inject randomness into
-    # the test suite. The seam is principles_posterior.posterior(
-    # posterior_fn=...) — inject a deterministic fake.
+    # Block ClaudeSDKClient.connect — tests must use FakeClient instead.
     try:
-        import pymc  # type: ignore[import-not-found]
+        from claude_agent_sdk import ClaudeSDKClient
 
-        def _blocked_sample(*args, **kwargs):
-            raise RuntimeError(
-                "Test invoked pymc.sample — live MCMC is forbidden in tests. "
-                "Inject a deterministic posterior_fn= into "
-                "orchestrator.principles_posterior.posterior(). See CLAUDE.md."
+        def _blocked_connect(self, *args, **kwargs):
+            raise LiveLLMCallBlocked(
+                "Test invoked ClaudeSDKClient.connect — use "
+                "tests.fakes.sdk_client.FakeClient instead. See CLAUDE.md."
             )
 
-        monkeypatch.setattr(pymc, "sample", _blocked_sample)
+        monkeypatch.setattr(ClaudeSDKClient, "connect", _blocked_connect)
     except ImportError:
         pass
-
-    # Block live Optuna trial execution (issue #165). Importing optuna
-    # is allowed; running Study.optimize() is not — it triggers per-trial
-    # function calls that the seam is meant to control. Inject a sampler=
-    # callable into orchestrator.arm_sweep.run_sweep() instead.
-    try:
-        import optuna  # type: ignore[import-not-found]
-
-        def _blocked_optimize(self, *args, **kwargs):
-            raise RuntimeError(
-                "Test invoked optuna Study.optimize — live trial execution "
-                "is forbidden in tests. Inject a sampler= callable into "
-                "orchestrator.arm_sweep.run_sweep(). See CLAUDE.md."
-            )
-
-        monkeypatch.setattr(optuna.study.Study, "optimize", _blocked_optimize)
-    except ImportError:
-        pass
-
-
-@pytest.fixture
-def schemas_dir():
-    return SCHEMAS_DIR
-
-
-@pytest.fixture
-def templates_dir():
-    return TEMPLATES_DIR
-
-
-@pytest.fixture
-def load_schema(schemas_dir):
-    def _load(name: str) -> dict:
-        path = schemas_dir / name
-        if path.suffix in (".yaml", ".yml"):
-            return yaml.safe_load(path.read_text())
-        return json.loads(path.read_text())
-    return _load
-
-
-@pytest.fixture
-def load_template(templates_dir):
-    def _load(name: str):
-        path = templates_dir / name
-        if path.suffix in (".yaml", ".yml"):
-            return yaml.safe_load(path.read_text())
-        if path.suffix == ".json":
-            return json.loads(path.read_text())
-        return path.read_text()
-    return _load

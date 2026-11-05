@@ -1,0 +1,14 @@
+[
+  {
+    "iteration": 1,
+    "status": "ok",
+    "stop_reason": "answered",
+    "cost_meter_usd": 0.75,
+    "tokens": {
+      "input": 500,
+      "output": 250
+    },
+    "repro_recorded": true,
+    "nous_version": 3
+  }
+]

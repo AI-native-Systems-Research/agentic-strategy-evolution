@@ -1,30 +1,29 @@
 ---
 name: nous-resume
-description: Resume a Nous campaign that was interrupted mid-flight (timeout, crash, ctrl-c). Picks up at the last checkpointed phase. Use when the user says "resume", "continue", or references a campaign that already has a state.json.
+description: Resume a Nous campaign that was interrupted (timeout, crash, ctrl-c). Use when the user says "resume", "continue", or references a campaign that already has a state.json.
 ---
 
 # `nous-resume`
 
-Resume an interrupted Nous campaign from the latest checkpoint (#91).
+Resume an interrupted Nous campaign from its work dir.
 
 ## When to use
 
 - The user says "resume the saturation campaign" or "pick up where it left off".
-- A previous run was killed and the campaign's `state.json` is mid-flight (phase != INIT, != DONE).
+- A previous run was killed and the campaign's `state.json` exists.
 
 ## Inputs
 
-- `target` (required): campaign.yaml path. The orchestrator reads `state.json` from `$NOUS_CAMPAIGN_PARENT/<run-id>/` if that env var is set, else from `<repo>/.nous/<run-id>/` (legacy default; #239). `find_existing_work_dir` checks both candidates plus state.json's recorded `work_dir`, so campaigns created before/after env-var adoption are both resumable.
-- `max-iterations` (optional): override the campaign's cap.
-- `agent` (optional): backend to use on resume — usually matches the original.
+- `target` (required): work dir, run_id, or campaign.yaml.
+- `note` (optional): a human note added to the first message after the resume.
+- `max-iterations` (optional): override the continue-message cap.
 
 ## Run
 
 ```bash
-nous resume "$TARGET" --max-iterations "${MAX:-$(yq '.max_iterations' "$TARGET")}" --agent "${AGENT:-api}"
+nous resume "$TARGET" ${NOTE:+--note "$NOTE"} ${MAX:+--max-iterations "$MAX"}
 ```
 
 ## Notes
 
-- Resume is idempotent — running it on a DONE campaign starts the next iteration if `max_iterations` allows.
-- If the campaign was killed mid-EXECUTE_ANALYZE, the agent receives a continuation hint and picks up from existing artifacts in the iter dir (no full re-run).
+- Resume reconnects to the saved session id. If that fails before any turn succeeds, it starts a fresh session with the task and a pointer to the existing notebook. A finished campaign is not run again.

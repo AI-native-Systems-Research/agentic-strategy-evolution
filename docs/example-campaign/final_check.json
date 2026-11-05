@@ -1,0 +1,21 @@
+{
+  "answer_valid": true,
+  "evidence_errors": [],
+  "repro_recorded": true,
+  "claims_matched_fraction": 0.0,
+  "unmeasured_noise_findings": [],
+  "notebook": {
+    "hypotheses": 3,
+    "confirmed": 2,
+    "refuted": 1,
+    "inconclusive": 0,
+    "notes": 1
+  },
+  "notebook_errors": [],
+  "challenger": {
+    "gap": true,
+    "test": "repeat cache_size=256 at concurrency 16",
+    "why": "every run used concurrency 8, so the drop may not hold under more load"
+  },
+  "status": "ok"
+}
