@@ -1,11 +1,13 @@
 # Example Nous campaign. Set repo_path to your target checkout.
 # Every key is listed in the README's "Campaign file" table.
+# The agent gets only research_question; name and description are notes for people.
 research_question: >
   Does raising the cache size from 64 to 256 entries lower the p99 latency
   of the request benchmark, with requests=10000 and concurrency=8 held fixed?
+  Run the benchmark with `python bench.py --cache-size N --seed S`.
 
 run_id: cache-p99
-task_type: optimize          # debug | verify | optimize | policy | explain | other
+task_type: optimize          # optional hint: debug | verify | optimize | policy | explain | other
 
 target_system:
   name: My service

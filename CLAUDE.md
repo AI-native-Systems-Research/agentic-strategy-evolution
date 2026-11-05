@@ -1,4 +1,4 @@
-# Nous — project conventions
+# Nous: project conventions
 
 This file is auto-loaded by Claude Code on every session in this repo. The
 rules below are non-negotiable; when they conflict with general AI/coding
@@ -11,7 +11,7 @@ API call to Anthropic, OpenAI, or any other LLM provider. Period.**
 
 Why this is a hard rule:
 - Tests run on every CI build, every contributor's laptop, and every PR
-  rebase. Live LLM calls would burn tokens for no signal — the test
+  rebase. Live LLM calls would burn tokens for no signal: the test
   result depends on what the model said today, not on the code under test.
 - Token budget for `nous` is mission-critical. We refuse to spend it on
   CI churn.
@@ -72,7 +72,7 @@ export NOUS_CAMPAIGN_PARENT=~/Documents/Projects/nous-campaigns
 ```
 
 When set, work_dirs land at ``$NOUS_CAMPAIGN_PARENT/<run_id>/``.
-The target repo's working tree stays clean — ``git stash -u`` won't
+The target repo's working tree stays clean: ``git stash -u`` won't
 capture campaign output, ``git status`` stays uncluttered, ``git add .``
 won't accidentally stage campaign content.
 

@@ -135,7 +135,7 @@ def make_precompact_hook(state: HookState):
                 "noise": baseline.get("noise"),
             }
 
-        # Active principles
+        # Kept so the digest format stays the same; Lightweight writes no principles.json
         principles = read_json(state.work_dir / "principles.json")
         digest["principles"] = principles if principles is not None else []
 

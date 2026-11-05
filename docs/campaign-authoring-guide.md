@@ -8,7 +8,7 @@ The research question is the only task the agent gets. State what an answer must
 
 ## State what must not change
 
-Lightweight has no parameter locks. List every knob whose deviation would invalidate the result in `target_system.description` or the question itself ("keep `requests=10000` and `concurrency=8`"). Enumerate them before the campaign starts. A sample inventory for an LLM-serving target:
+Lightweight has no parameter locks. List every knob whose deviation would invalidate the result in the question itself ("keep `requests=10000` and `concurrency=8`"). Enumerate them before the campaign starts. A sample inventory for an LLM-serving target:
 
 | Category | Parameter | Hold fixed? | Reason |
 |---|---|---|---|
@@ -27,7 +27,7 @@ Before fixing values, compute the closed-form prediction at those values. In pap
 
 ## Say how to run the benchmark
 
-Describe the build and benchmark commands in `target_system.description`, and add an `experiment_commands` regex for them so `runs.jsonl` marks experiment runs. The `repro` command must run from the repository root, so prefer commands that take relative paths.
+Describe the build and benchmark commands in the research question (Nous does not send `target_system.description` to the agent), and add an `experiment_commands` regex for them so `runs.jsonl` marks experiment runs. The `repro` command must run from the repository root, so prefer commands that take relative paths.
 
 ## Validate invariants on attribution, not totals
 

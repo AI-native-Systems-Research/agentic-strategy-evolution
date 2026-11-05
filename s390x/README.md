@@ -1,8 +1,10 @@
-# s390x — Nous on IBM Z
+# s390x: Nous on IBM Z
 
-This directory contains everything needed to build and run the Nous agentic research framework natively on an IBM Z (s390x) host using Podman containers.
+This directory contains everything needed to build and run Nous natively on an IBM Z (s390x) host using Podman containers.
 
-The image is **built natively on the remote machine** — no cross-compilation or emulation. All orchestration runs from your local machine over SSH; the container itself executes on the IBM Z host.
+> **Out of date.** `run_campaign.sh` still calls `nous run` with `--agent`, `--timeout`, `--max-cli-retries` and `--auto-approve`. Nous Lightweight replaced the earlier phase-based Nous and removed these flags, so `deploy` fails at the run step until the script is updated. `nous run` now accepts only `--max-iterations`, `--model` and `--run-id`.
+
+The image is **built natively on the remote machine**, with no cross-compilation or emulation. All orchestration runs from your local machine over SSH; the container itself executes on the IBM Z host.
 
 ---
 
@@ -34,7 +36,7 @@ The [`Dockerfile`](Dockerfile) builds a single image from **Red Hat UBI 10** (`l
 | Layer | What it installs |
 |---|---|
 | System packages | GCC / G++ / gfortran, Rust, Clang, LLVM, CMake, OpenSSL, Node.js |
-| Claude Code CLI | `@anthropic-ai/claude-code` (via npm) — baked into the image |
+| Claude Code CLI | `@anthropic-ai/claude-code` (via npm), baked into the image |
 | Miniconda | Python 3.12 environment for s390x (`environment.yml`) |
 | Python packages | NumPy, SciPy, Pandas, PyMC, ArviZ, Pydantic, OpenAI SDK, `claude-agent-sdk`, and more |
 | Nous | Installed in editable mode from the local repo (`orchestrator/`, `prompts/`, `pyproject.toml`) |
@@ -50,7 +52,7 @@ The container runs as a **non-root user** (UID 1001) and writes campaign artifac
 | SSH access to an IBM Z machine | Key-based auth recommended (`SSH_KEY`); password auth supported via `sshpass` |
 | `podman` installed on the remote host | Required to build and run the image natively |
 | `rsync` and `scp` on your local machine | Used to transfer files |
-| An Anthropic API key | Required — Nous will not start without it |
+| An Anthropic API key | Required. The Claude Code CLI in the container needs it. |
 
 ---
 
@@ -111,7 +113,7 @@ This performs the full flow in one command:
 
 ## Campaign configuration
 
-[`campaign.yaml`](campaign.yaml) defines what Nous investigates. The included example studies **Flask request routing overhead** — it measures whether the number of registered routes causes measurable per-request latency regression, and at what threshold the overhead exceeds 5%.
+[`campaign.yaml`](campaign.yaml) defines what Nous investigates. The included example studies **Flask request routing overhead**. It measures whether the number of registered routes causes measurable per-request latency regression, and at what threshold the overhead exceeds 5%.
 
 Key fields:
 
@@ -119,11 +121,10 @@ Key fields:
 research_question: "..."       # The question Nous will try to answer
 target_system:
   repo_path: /workspace        # Path inside the container (bind-mounted from TARGET_REPO_PATH)
-max_iterations: 5              # How many experiment iterations to run
-max_turns:
-  design: 60                   # Claude turn budget for the design phase
-  execute_analyze: 80          # Claude turn budget for the execute/analyse phase
+max_iterations: 5              # Continue messages sent if the agent stops without answer.json
 ```
+
+See the top-level [README](../README.md#campaign-file) for every key.
 
 To run a different campaign, either edit `campaign.yaml` or set `LOCAL_CAMPAIGN_YAML` in `.env` to point to a different file.
 
@@ -138,11 +139,11 @@ All variables are documented inline in [`.env.example`](.env.example). Key group
 | **Remote host** | `REMOTE_HOST`, `REMOTE_USER`, `SSH_KEY`, `SSH_PASSWORD`, `REMOTE_WORKDIR` |
 | **Image** | `IMAGE_NAME`, `IMAGE_TAG`, `CLAUDE_CODE_VERSION` |
 | **Anthropic / Claude** | `ANTHROPIC_API_KEY`, `ANTHROPIC_BASE_URL` |
-| **OpenAI-compatible LLM** | `OPENAI_API_KEY`, `OPENAI_BASE_URL` (used for gate summaries and reports) |
-| **Nous framework** | `NOUS_CAMPAIGN_HOST_DIR`, `NOUS_CAMPAIGN_PARENT`, `NOUS_ALLOW_AUTO_APPROVE` |
+| **OpenAI-compatible LLM** | `OPENAI_API_KEY`, `OPENAI_BASE_URL` (passed into the container; Nous does not use them) |
+| **Nous** | `NOUS_CAMPAIGN_HOST_DIR`, `NOUS_CAMPAIGN_PARENT`, `NOUS_ALLOW_AUTO_APPROVE` (adds the removed `--auto-approve` flag) |
 | **Target repo** | `TARGET_REPO_GIT_URL`, `TARGET_REPO_BRANCH`, `TARGET_REPO_TOKEN`, `TARGET_REPO_PATH` |
-| **Run parameters** | `NOUS_MAX_ITERATIONS`, `NOUS_TIMEOUT`, `NOUS_MAX_CLI_RETRIES` |
-| **Output** | `LOCAL_ARTIFACTS_DIR` — where artifacts land locally after `sync` |
+| **Run parameters** | `NOUS_MAX_ITERATIONS` (`--max-iterations`), `NOUS_TIMEOUT` and `NOUS_MAX_CLI_RETRIES` (both feed removed flags) |
+| **Output** | `LOCAL_ARTIFACTS_DIR`: where artifacts land locally after `sync` |
 
 ---
 
@@ -168,7 +169,7 @@ Run it manually at any time:
 
 ## Smoke check (manual only)
 
-[`check_claude_agent.py`](check_claude_agent.py) is a **manual operator smoke-check** — it is **not** a pytest test and must never be run by CI. It requires a live s390x host, valid API credentials, and a built container image. Run it by hand after deployment to confirm the stack end-to-end:
+[`check_claude_agent.py`](check_claude_agent.py) is a **manual operator smoke-check**. It is **not** a pytest test and must never be run by CI. It requires a live s390x host, valid API credentials, and a built container image. Run it by hand after deployment to confirm the stack end-to-end:
 
 ```bash
 python3 s390x/check_claude_agent.py
@@ -189,8 +190,11 @@ After a run, `s390x/campaigns/` (or `LOCAL_ARTIFACTS_DIR`) will contain:
 
 | File | Description |
 |---|---|
-| `state.json` | Full campaign state including all iterations |
-| `findings.json` | Distilled empirical findings from each iteration |
-| `principles.json` | Generalised principles extracted across iterations |
-| `ledger.json` | Token and cost accounting per phase |
-| `report.md` | Human-readable campaign report |
+| `answer.json` | The agent's answer and its claims |
+| `notebook.jsonl` | The agent's hypotheses and results |
+| `runs.jsonl` | One row per Bash command |
+| `final_check.json` | Answer and notebook checks, and the challenger's reply |
+| `ledger.json` | Status, stop reason, cost and tokens |
+| `state.json` | Phase, session id and session costs |
+
+See [docs/data-model.md](../docs/data-model.md) for each file.

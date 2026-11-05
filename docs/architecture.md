@@ -10,8 +10,8 @@ Nous Lightweight wraps one Claude Code session. Python code (not an LLM) records
 2. **Task.** One session starts. `state.json` gets `phase: INVESTIGATE`. Nous sends one message: the research question, the absolute paths of `notebook.jsonl` and `answer.json`, and (with a worktree) the working-copy note "Build, run, edit and commit only in the working copy".
 3. **Continue.** If the agent stops without writing `answer.json`, Nous sends "Continue the investigation..." up to `max_iterations` times.
 4. **Repair.** If `answer.json` or the notebook fails its checks, Nous sends "Fix these before you stop:" with up to 10 errors, at most 2 times. Still failing means `status: partial`.
-5. **Repro.** If `runs.jsonl` exists and holds no successful run of `answer.repro`, Nous sends one message asking the agent to run it exactly as written from the repository root, then repairs again.
-6. **Challenger.** Only when the answer is valid. See below. If the challenger names a gap with a test, `state.json` gets `phase: CHALLENGE` (with the cost so far), Nous sends that test to the agent, and repairs again.
+5. **Repro.** Nous only reads the record; it never runs the `repro` command itself. If `runs.jsonl` exists and holds no successful run of `answer.repro`, Nous sends one message asking the agent to run it exactly as written from the repository root, then repairs again. A repro that is still missing does not make the status `partial`; it shows as `repro_recorded: false`.
+6. **Challenger.** Only when the answer is valid. See below. The challenger never blocks the campaign. If the challenger names a gap with a test, `state.json` gets `phase: CHALLENGE` (with the cost so far), Nous sends that test to the agent, and repairs again.
 7. **Export, commit, record.** Nous exports the evidence, commits the worktree (`nous: iter-1 ANSWER`), writes `final_check.json` and `ledger.json`, and sets `phase: DONE`.
 
 `run()` returns `{"stop_reason": "answered" | "partial", "iterations": 1}`.
@@ -20,7 +20,7 @@ Nous Lightweight wraps one Claude Code session. Python code (not an LLM) records
 
 `Session.build_agent_options` sets:
 
-- `system_prompt`: the `claude_code` preset with the method note appended (`prompts/lightweight/method.md`, plus `prompts/lightweight/checklists/<task_type>.md` when `task_type` is set). The note is static, so it caches.
+- `system_prompt`: the `claude_code` preset with the method note appended (`prompts/lightweight/method.md`, plus `prompts/lightweight/checklists/<task_type>.md` when the optional `task_type` names one of the five checklists). The note is static, so it caches.
 - `model` (default `claude-opus-5-5`), optional `effort`, `cwd` (the working copy), `permission_mode="bypassPermissions"`.
 - `env`: `CLAUDE_CODE_MAX_OUTPUT_TOKENS` at the model maximum and `NOUS_WORK_DIR`.
 - `setting_sources=["project", "local"]`: the target repo's settings and `CLAUDE.md` load; the user's own `~/.claude` settings, plugins and global `CLAUDE.md` do not.
@@ -38,7 +38,7 @@ Hooks run in-process via `ClaudeAgentOptions.hooks`.
 
 - **PostToolUse / PostToolUseFailure** (Bash only): append one row per command to `runs.jsonl` with `ts`, `phase`, `iter`, `tool_use_id`, `command` (secrets masked), `exit_code` (0 on success, parsed from the error on failure, `null` for background commands), `output_bytes`, `cwd`, `background`, `agent_id` and `experiment` (whether the command matches `experiment_commands`; the defaults match `python *search|bench|run|sweep*.py` and `make bench`).
 - **Stop**: when `answer.json` exists and fails its checks, returns `decision: block` with the errors, so the agent keeps working. No answer yet means the agent paused; the stop is allowed and Nous sends a continue message instead. After 6 blocks in a row the stop is allowed and the repair messages take over.
-- **PreCompact**: writes `state/digest.json` (phase, iteration, principles if any), secrets masked.
+- **PreCompact**: writes `state/digest.json` with the phase and iteration, secrets masked. Its other fields are kept for a stable format and stay empty.
 
 ## Checks
 
@@ -65,7 +65,7 @@ Numbers and numeric strings match within a relative tolerance of 1e-3 (`"105082"
 
 ## The challenger
 
-A fresh session with `model=claude-sonnet-5-5`, `cwd` = the work dir, the working copy as an extra dir, `setting_sources=["project", "local"]`, and `Bash`, `Write`, `Edit`, `NotebookEdit`, `WebFetch`, `WebSearch` disallowed. Its prompt gives the research question and asks it to read `answer.json`, `notebook.jsonl` and the files they cite, then reply with one JSON object: `{"gap": true, "test": ..., "why": ...}` or `{"gap": false, "why": ...}`. Nous takes the last such object in the reply.
+A separate, fresh session with `model=claude-sonnet-5-5`, `cwd` = the work dir, the working copy as an extra dir, `setting_sources=["project", "local"]`, and `Bash`, `Write`, `Edit`, `NotebookEdit`, `WebFetch`, `WebSearch` disallowed. Its prompt gives the research question and asks it to read `answer.json`, `notebook.jsonl` and the files they cite, then reply with one JSON object: `{"gap": true, "test": ..., "why": ...}` or `{"gap": false, "why": ...}`. Nous takes the last such object in the reply.
 
 The challenger is advice. A crash, a 15-minute timeout or a reply without a verdict is recorded in `final_check.json` (`gap: null` with an `error`) and the campaign goes on.
 
@@ -87,7 +87,7 @@ The authority is the CLI's own cost: each `ResultMessage.total_cost_usd` is cumu
 
 ## Effort (`effort.py`)
 
-`campaign.effort` is passed to the SDK as is (unset means the model default). A turn is cut when the `ResultMessage` or the last main-agent `AssistantMessage` has `stop_reason: max_tokens`; subagent cut-offs do not count. On a cut, Nous steps one level down `max > xhigh > high > medium > low` (`low` only after 2 cuts in a row), saves `cut_offs` in `state.json`, reconnects the same session and sends "Your last reply was cut at the output limit. Write and run the simplest correct step first." This is bounded to one retry per ladder step.
+`campaign.effort` is passed to the SDK as is (unset means the model default). A turn is cut when the `ResultMessage` or the last main-agent `AssistantMessage` has `stop_reason: max_tokens`; subagent cut-offs do not count. On a cut, Nous steps one level down `max > xhigh > high > medium > low`, counting from `high` when `effort` is unset (`low` only after 2 cuts in a row), saves `cut_offs` in `state.json`, reconnects the same session and sends "Your last reply was cut at the output limit. Write and run the simplest correct step first." This is bounded to one retry per ladder step.
 
 ## Secrets (`secrets.py`)
 

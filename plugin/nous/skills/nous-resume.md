@@ -26,4 +26,4 @@ nous resume "$TARGET" ${NOTE:+--note "$NOTE"} ${MAX:+--max-iterations "$MAX"}
 
 ## Notes
 
-- Resume reconnects to the saved session id. If that fails, it starts a fresh session with the task and a pointer to the existing notebook. A finished campaign is not run again.
+- Resume reconnects to the saved session id. If that fails before any turn succeeds, it starts a fresh session with the task and a pointer to the existing notebook. A finished campaign is not run again.

@@ -15,7 +15,7 @@ These apply to every PR, every test, every contributor. They are also restated i
 - `Session` / `Campaign` → pass `client_factory=` returning `tests/fakes/sdk_client.FakeClient`.
 - CLI → `monkeypatch.setattr(cli, "_sdk_client", factory)`.
 
-`tests/conftest.py` installs an autouse `block_live_llm_calls` fixture that strips LLM API keys from the env and patches `urllib.request.urlopen`, `claude_agent_sdk.query` and `ClaudeSDKClient.connect` to hard-fail on real calls. If a test trips the guard, fix the test by injecting a fake — never disable the guard.
+`tests/conftest.py` installs an autouse `block_live_llm_calls` fixture that strips LLM API keys from the env and patches `urllib.request.urlopen`, `claude_agent_sdk.query` and `ClaudeSDKClient.connect` to hard-fail on real calls. If a test trips the guard, fix the test by injecting a fake; never disable the guard.
 
 ### Behavioral testing only
 
@@ -41,7 +41,7 @@ Any contributor with Claude Code should follow this workflow when working on an 
 /superpowers:using-git-worktrees
 ```
 
-This creates an isolated working directory linked to the same git repository. All subsequent steps happen inside this worktree. The worktree skill creates and checks out a branch — this is the branch you will push in Step 8.
+This creates an isolated working directory linked to the same git repository. All subsequent steps happen inside this worktree. The worktree skill creates and checks out a branch. This is the branch you will push in Step 8.
 
 ---
 
@@ -67,7 +67,7 @@ Invoke the planning skill to structure your implementation plan:
 
 The skill guides the planning process. Save the resulting plan to `docs/plans/` using the naming convention `YYYY-MM-DD-<feature-name>-plan.md`. The plan must include: goal, architecture, exact file paths, step-by-step tasks with code, and a commit message per task.
 
-`docs/plans/` is listed in `.gitignore` — plan files never appear in PRs.
+`docs/plans/` is listed in `.gitignore`, so plan files never appear in PRs.
 
 ---
 
@@ -114,7 +114,7 @@ Invoke the subagent-driven development skill to execute the approved plan. This 
 ```
 
 - Mark each task complete before starting the next.
-- Keep changes focused — no scope creep.
+- Keep changes focused. No scope creep.
 - Commit after each task using the message from the plan.
 - Run tests after each task if applicable.
 
@@ -164,7 +164,7 @@ EOF
 ```
 
 **PR checklist before submitting:**
-- [ ] Worktree was used — main worktree untouched
+- [ ] Worktree was used; main worktree untouched
 - [ ] Plan was reviewed by agent and approved by human gate
 - [ ] All plan tasks completed and committed
 - [ ] `/pr-review-toolkit:review-pr` passed

@@ -1,11 +1,12 @@
 # Nous: hypothesis-driven experimentation for software systems
 
-Nous gives Claude Code a research question about a software system and lets it investigate the way it normally would, in one session (through the Claude Agent SDK). Nous adds a light scientific discipline around that session:
+Nous gives Claude Code a research question about a software system and lets it investigate the way it normally would, in one session (through the Claude Agent SDK). Nous adds a light scientific discipline around that session. Nous Lightweight replaces the earlier phase-based Nous.
+
 
 1. **Notebook.** The agent writes each hypothesis, with a prediction, before testing it, and each result afterwards, with the file that holds the measured number (`notebook.jsonl`).
 2. **Checked answer.** The agent finishes with `answer.json`: the answer, the deliverable, one `repro` command and quantitative claims. Each claim cites a file, and Nous checks that the value is really there.
-3. **Record.** Every Bash command is recorded in `runs.jsonl`. If the `repro` command never ran as written, Nous asks the agent to run it.
-4. **Challenger.** One fresh, read-only reviewer session reads the answer and the notebook and names the strongest untested reason the conclusion could be wrong. The agent runs that check and updates the answer.
+3. **Record.** Every Bash command is recorded in `runs.jsonl`. Nous looks there for a successful run of the `repro` command. If there is none, Nous asks the agent once to run it. Nous never runs it itself.
+4. **Challenger.** One fresh, read-only reviewer session (`claude-sonnet-5-5`, 15 minute timeout) reads the answer and the notebook and names the strongest untested reason the conclusion could be wrong. The agent runs that check and updates the answer. If the reviewer fails or times out, the campaign goes on without it.
 
 At the end Nous copies the cited evidence into the target repo and writes `final_check.json`. Cost is measured and reported only; it never drives a decision.
 
@@ -39,19 +40,19 @@ target_system:
   repo_path: /path/to/repo          # required: the target git checkout
 ```
 
-Required keys are `research_question` and `target_system.repo_path`. Optional keys:
+Required keys are `research_question` and `target_system.repo_path`. The task message holds only the research question. Nous does not send `target_system.name` or `target_system.description` to the agent, so put anything the agent must know (benchmark command, fixed parameters) in the question. Optional keys:
 
 | Key | Meaning |
 |---|---|
 | `run_id` | Work dir name. `--run-id` overrides it; if both are absent, `<campaign file's dir name>-run`. Passing the yaml to `resume` or `status` needs `run_id` in the file (or use the work dir path). |
 | `max_iterations` | How many "continue" messages Nous sends when the agent stops without writing `answer.json` (default 5). |
-| `models.session` (or `model`) | Session model (default `claude-opus-5-5`). The challenger always uses `claude-sonnet-5-5`. |
-| `effort` | SDK effort level passed to the session. |
-| `task_type` | `debug`, `verify`, `optimize`, `policy`, `explain` or `other`. Adds a short checklist to the method note. |
-| `experiment_commands` | Regexes that mark a Bash command as an experiment in `runs.jsonl`. |
+| `models.session` (or `models.design`, or `model`) | Session model (default `claude-opus-5-5`). `--model` overrides it. The challenger always uses `claude-sonnet-5-5`. |
+| `effort` | SDK effort level for the session: `low`, `medium`, `high`, `xhigh` or `max`. Unset means the model default. Nous steps it down when a reply is cut at the output limit. |
+| `task_type` | Optional hint: `debug`, `verify`, `optimize`, `policy` or `explain` adds a short checklist to the method note. `other` (or any other value) adds none. |
+| `experiment_commands` | Regexes that mark a Bash command as an experiment in `runs.jsonl`. The defaults match `python <...search|bench|run|sweep...>.py` and `make bench`. |
 | `secrets` | Env var names whose values are masked in `runs.jsonl` and the digest, and must not appear in `answer.json`. |
 
-Older keys (`locked_parameters`, `locked_workload`, `objective`, `min_improvement`, `stall_iterations`, `session_scope`, `task_limits`, `human_gates`, `rerun_repro`, `nous_version`) are accepted and ignored. Any other key logs a warning and is ignored.
+Keys from the earlier Nous (`locked_parameters`, `locked_workload`, `objective`, `min_improvement`, `stall_iterations`, `session_scope`, `task_limits`, `human_gates`, `rerun_repro`, `nous_version`) are accepted and ignored. Any other key logs a warning and is ignored.
 
 ## Commands
 

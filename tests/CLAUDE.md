@@ -1,4 +1,4 @@
-# Tests — local conventions
+# Tests: local conventions
 
 This file is auto-loaded whenever Claude Code is operating inside `tests/`.
 It restates the non-negotiable rules from the root `CLAUDE.md` so they're

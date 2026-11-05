@@ -4,7 +4,7 @@ No phases. One task message; the agent works as it would alone, keeping notebook
 (hypothesis before each test, result with evidence) and finishing with answer.json. Nous:
 - records every Bash command (hooks, runs.jsonl) and commits the campaign worktree;
 - at Stop, blocks only while answer.json or the notebook fails its checks;
-- asks the agent to rerun `repro` if it never ran as written;
+- asks the agent to run `repro` if runs.jsonl has no successful run of it (Nous never runs it);
 - runs one independent challenger (a fresh, read-only session) that names the strongest untested
   reason the conclusion could be wrong; the agent runs that test and updates the answer;
 - exports evidence and writes final_check.json.

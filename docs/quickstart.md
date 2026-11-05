@@ -28,11 +28,11 @@ research_question: >
 run_id: my-first-campaign
 target_system:
   name: My system
-  description: What the system does, how to build it and how to run its benchmark.
+  description: Notes for people reading the file. Nous does not send this to the agent.
   repo_path: /path/to/your/repo
 ```
 
-See the README for every key. [examples/campaign.yaml](../examples/campaign.yaml) is a working example (set its `repo_path`). [example-campaign/](example-campaign/README.md) shows every file a finished campaign leaves behind.
+The research question is the only task text the agent gets, so name the benchmark command and anything that must stay fixed there. See the README for every key. [examples/campaign.yaml](../examples/campaign.yaml) is a working example (set its `repo_path`). [example-campaign/](example-campaign/README.md) shows every file a finished campaign leaves behind.
 
 ## Run
 
