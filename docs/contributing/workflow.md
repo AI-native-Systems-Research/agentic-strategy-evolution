@@ -19,11 +19,11 @@ These apply to every PR, every test, every contributor. They are also restated i
 
 ### Behavioral testing only
 
-Assert what's on disk, what's in `ledger.json` / `runs.jsonl`, what schemas validate. Don't assert which methods were called or what argv was constructed. The client seam is the contract.
+Assert what's on disk, what's in `ledger.json` / `runs.jsonl`, what the answer and notebook checks return. Don't assert which methods were called or what argv was constructed. The client seam is the contract.
 
 ### Token-budget discipline
 
-`nous` runs against real LLMs in production; CI cannot. Every PR that touches `orchestrator/` must keep the cache-friendly invariant: the method prompt is appended to the system prompt once per session and stays stable, and per-phase content goes in the user message. `nous cost` reports the cost meter per campaign.
+`nous` runs against real LLMs in production; CI cannot. Every PR that touches `orchestrator/` must keep the cache-friendly invariant: the method prompt is appended to the system prompt once per session and stays stable, and per-turn content goes in the user message. `nous cost` reports the cost meter per campaign.
 
 ---
 

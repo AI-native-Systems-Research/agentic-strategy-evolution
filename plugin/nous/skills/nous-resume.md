@@ -1,6 +1,6 @@
 ---
 name: nous-resume
-description: Resume a Nous campaign that was interrupted (timeout, crash, ctrl-c, STOP). Use when the user says "resume", "continue", or references a campaign that already has a state.json.
+description: Resume a Nous campaign that was interrupted (timeout, crash, ctrl-c). Use when the user says "resume", "continue", or references a campaign that already has a state.json.
 ---
 
 # `nous-resume`
@@ -15,8 +15,8 @@ Resume an interrupted Nous campaign from its work dir.
 ## Inputs
 
 - `target` (required): work dir, run_id, or campaign.yaml.
-- `note` (optional): a human note added to the next phase message and the ledger.
-- `max-iterations` (optional): override the campaign's cap.
+- `note` (optional): a human note added to the first message after the resume.
+- `max-iterations` (optional): override the continue-message cap.
 
 ## Run
 
@@ -26,4 +26,4 @@ nous resume "$TARGET" ${NOTE:+--note "$NOTE"} ${MAX:+--max-iterations "$MAX"}
 
 ## Notes
 
-- Resume reconnects to the saved session id. If that fails, it starts a fresh session primed from `state/digest.json`.
+- Resume reconnects to the saved session id. If that fails, it starts a fresh session with the task and a pointer to the existing notebook. A finished campaign is not run again.

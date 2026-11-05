@@ -1,0 +1,9 @@
+{
+  "phase": "DONE",
+  "iteration": 1,
+  "session_id": "ses-1",
+  "session_costs": {
+    "ses-1": 0.71,
+    "rev-1": 0.04
+  }
+}

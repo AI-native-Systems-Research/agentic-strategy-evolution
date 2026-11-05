@@ -26,16 +26,13 @@ export NOUS_CAMPAIGN_PARENT=~/nous-campaigns
 research_question: >
   What mechanism drives the main latency bottleneck in this system?
 run_id: my-first-campaign
-max_iterations: 3
 target_system:
   name: My system
-  description: What the system does and what to investigate.
+  description: What the system does, how to build it and how to run its benchmark.
   repo_path: /path/to/your/repo
-locked_parameters:          # optional: values every planned run must use
-  duration_seconds: 600
 ```
 
-See the README for every key. [examples/campaign.yaml](../examples/campaign.yaml) is a working example (set its `repo_path`). [example-campaign/](example-campaign/README.md) shows every artifact a finished campaign leaves behind.
+See the README for every key. [examples/campaign.yaml](../examples/campaign.yaml) is a working example (set its `repo_path`). [example-campaign/](example-campaign/README.md) shows every file a finished campaign leaves behind.
 
 ## Run
 
@@ -43,13 +40,12 @@ See the README for every key. [examples/campaign.yaml](../examples/campaign.yaml
 nous run campaign.yaml
 ```
 
-Nous prints the work dir, then runs BASELINE, DESIGN and EXECUTE per iteration, and REPORT in one Claude session. It prints a JSON summary with `stop_reason` and `iterations` at the end.
+Nous prints the work dir, then runs one Claude session on the question in a worktree of your repo. It prints a JSON summary with `stop_reason` at the end.
 
 While it runs, from another terminal:
 
 ```bash
-nous status <work_dir>      # phase, iteration, ledger rows
-nous stop <work_dir>        # halt after the current iteration, then REPORT
+nous status <work_dir>      # phase and session id
 ```
 
 If the process dies or you press Ctrl+C:
@@ -60,10 +56,11 @@ nous resume <work_dir> --note "use 5 seeds per arm"
 
 ## Read the results
 
-- `answer.json`, `report.md`: the answer and its evidence. The cited files are also copied to `<repo>/nous_evidence/`.
-- `final_check.json`: whether the answer's evidence resolves and the repro command was actually run.
-- `ledger.json`: one row per iteration (stop reason, cost, prereg violations). `nous cost <work_dir>` sums the cost.
-- `runs/iter-N/`: problem, bundle, plan, findings and principle updates for each iteration.
+- `answer.json`: the answer and its claims. The cited files are also copied to `<repo>/nous_evidence/`.
+- `notebook.jsonl`: the hypotheses the agent tested and what it found.
+- `final_check.json`: whether the answer's evidence resolves, whether the repro command was actually run, and what the challenger asked.
+- `ledger.json`: status, cost and tokens. `nous cost <work_dir>` sums the cost.
 - `runs.jsonl`: every Bash command the agent ran.
+- The agent's code changes are on branch `nous/<run_id>` of your repo.
 
-See [data-model.md](data-model.md) for each file and [architecture.md](architecture.md) for how the loop works.
+See [data-model.md](data-model.md) for each file and [architecture.md](architecture.md) for how Nous works.

@@ -1,0 +1,7 @@
+{"kind": "hypothesis", "id": "H1", "claim": "more hits mean fewer slow backend misses", "predict": "p99 at 256 entries is at least 10 ms below p99 at 64"}
+{"kind": "hypothesis", "id": "H2", "claim": "a bigger cache makes each lookup slower", "predict": "lookup time at 256 entries is at least 2x lookup time at 64"}
+{"kind": "result", "id": "H1", "status": "confirmed", "evidence": [{"path": "results/R1.json", "key": "/p99_ms", "value": 41.8}, {"path": "results/R2.jsonl", "key": "1@/p99_ms", "value": 63.0}]}
+{"kind": "result", "id": "H2", "status": "refuted", "evidence": [{"path": "results/R3.csv", "key": "lookup_us@0", "value": 0.9}]}
+{"kind": "hypothesis", "id": "H3", "claim": "the drop holds at a higher request rate", "predict": "p99 at 256 entries stays below 50 ms at concurrency 16"}
+{"kind": "result", "id": "H3", "status": "confirmed", "evidence": [{"path": "results/R4.txt", "key": "p99_ms=([0-9.]+)", "value": 44.9}]}
+{"kind": "note", "text": "the reviewer asked for concurrency 16; the conclusion holds"}

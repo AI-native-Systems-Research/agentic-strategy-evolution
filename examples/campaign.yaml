@@ -1,11 +1,10 @@
-# Example Nous v2 campaign. Set repo_path to your target checkout.
+# Example Nous campaign. Set repo_path to your target checkout.
 # Every key is listed in the README's "Campaign file" table.
 research_question: >
   Does raising the cache size from 64 to 256 entries lower the p99 latency
-  of the request benchmark, with the workload held fixed?
+  of the request benchmark, with requests=10000 and concurrency=8 held fixed?
 
 run_id: cache-p99
-max_iterations: 3
 task_type: optimize          # debug | verify | optimize | policy | explain | other
 
 target_system:
@@ -15,10 +14,5 @@ target_system:
     prints p99 latency in ms and writes results/<run>.json.
   repo_path: /path/to/your/repo   # required: the target git checkout
 
-objective:
-  metric: p99_ms
-  direction: decrease         # findings.best improves when p99_ms goes down
-
-locked_parameters:            # every plan.json run must use these values
-  requests: 10000
-  concurrency: 8
+experiment_commands:          # regexes that mark a Bash command as an experiment in runs.jsonl
+  - '\bbench\.py\b'

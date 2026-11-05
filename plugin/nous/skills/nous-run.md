@@ -14,12 +14,12 @@ Start a Nous campaign from a `campaign.yaml`.
 
 ## What this does
 
-Shells out to `nous run`. Nous v2 drives one Claude session through BASELINE (once), then DESIGN and EXECUTE per iteration, then REPORT. It stops when the question is answered, the campaign stalls, or `max_iterations` is reached.
+Shells out to `nous run`. Nous runs one Claude session on the question: the agent keeps a notebook of hypotheses and results and finishes with `answer.json`, which Nous checks against the evidence. One independent reviewer then asks for one more check before Nous writes `final_check.json`.
 
 ## Inputs
 
 - `campaign` (required): path to a `campaign.yaml`.
-- `max-iterations` (optional): override the iteration cap declared in the campaign.
+- `max-iterations` (optional): how many continue messages Nous sends if the agent stops without an answer.
 
 ## Run
 

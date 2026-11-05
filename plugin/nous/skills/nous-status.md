@@ -1,6 +1,6 @@
 ---
 name: nous-status
-description: Show the current status of a Nous campaign: phase, iteration, session id and ledger rows. Use when the user asks "where is the campaign", "is it stuck", or "report progress".
+description: Show the current status of a Nous campaign: phase, session id and ledger row. Use when the user asks "where is the campaign", "is it stuck", or "report progress".
 ---
 
 # `nous-status`
@@ -9,7 +9,7 @@ Read-only campaign status.
 
 ## When to use
 
-- The user asks where a campaign is, what phase it is in, or how its iterations went.
+- The user asks where a campaign is, whether it finished, or what it cost.
 
 ## Inputs
 

@@ -2,13 +2,15 @@
 
 Practices that keep a Nous campaign faithful to its intent and easy to defend. Most come from the paper-memorytime-mirage friction report (#245).
 
-## Lock what must not change
+## Put the bar in the question
 
-`locked_parameters` and `locked_workload` are maps of key to value. The plan validator fails any `plan.json` run whose `parameters` contain a locked key with a different value, unless that run lists the key in `workload_changes`. The Stop hook blocks the end of DESIGN on a failing plan, and the post-phase repair pass re-checks it. Locks are the cheapest defence against the agent quietly rewriting the experiment.
+The research question is the only task the agent gets. State what an answer must contain: the metric, the conditions, how many seeds, whether a confidence interval is needed (for example "with 5 seeds and a 95% CI"). The challenger reads the same question, so a sub-question left unanswered is the first gap it names.
 
-Enumerate every parameter that could affect the result before the campaign starts and decide, for each, whether deviation is acceptable. Adding locks one review round at a time is far slower. A sample inventory for an LLM-serving target:
+## State what must not change
 
-| Category | Parameter | Lock? | Reason |
+Lightweight has no parameter locks. List every knob whose deviation would invalidate the result in `target_system.description` or the question itself ("keep `requests=10000` and `concurrency=8`"). Enumerate them before the campaign starts. A sample inventory for an LLM-serving target:
+
+| Category | Parameter | Hold fixed? | Reason |
 |---|---|---|---|
 | Workload | `model` | yes | Different model, different latency physics. |
 | Workload | `concurrency_per_tenant` | yes | Directly drives the metric. |
@@ -19,19 +21,13 @@ Enumerate every parameter that could affect the result before the campaign start
 | Latency model | TP factor | if testing distribution | Changes per-token cost. |
 | Network | `rtt_ms`, `bandwidth` | if testing | Change timing. |
 
-Only keys that appear in a run's `parameters` are checked, so ask in `target_system.description` that plans spell out locked keys.
+## Check the prediction by hand first
 
-## Check the prediction by hand before locking
+Before fixing values, compute the closed-form prediction at those values. In paper-memorytime-mirage, fixing `D=8` output tokens and `K=1M` KV blocks put the system in a regime where the campaign's own theory predicted a ratio of about 1.06, a null result. A few minutes of arithmetic would have caught it before the run. Closed-form math is cheap; a campaign is not.
 
-Before locking values, compute the closed-form prediction at those values. In paper-memorytime-mirage, locking `D=8` output tokens and `K=1M` KV blocks put the system in a regime where the campaign's own theory predicted a ratio of about 1.06, a null result. A few minutes of arithmetic would have caught it before iteration 1. Closed-form math is cheap; a campaign iteration is not.
+## Say how to run the benchmark
 
-## Declare the claims you need
-
-`problem.json.claims_needed` is where the agent states what must be measured. Each entry may set `min_seeds`, `needs_ci` and `conditions`. The stop rule only accepts `answered` once every declared claim meets them, and the final check reports `claims_matched_fraction`. Put the bar in the research question (for example "with 5 seeds and a 95% CI") so the agent declares it.
-
-## Measure noise
-
-Run the baseline with several seeds when the system is not deterministic, so `baseline.json.noise` holds a measured `sd`. Findings then need an effect larger than twice that sd to be `CONFIRMED` or `REFUTED`.
+Describe the build and benchmark commands in `target_system.description`, and add an `experiment_commands` regex for them so `runs.jsonl` marks experiment runs. The `repro` command must run from the repository root, so prefer commands that take relative paths.
 
 ## Validate invariants on attribution, not totals
 
@@ -39,4 +35,4 @@ If the bug or effect involves how work is attributed among items, the check must
 
 ## Keep secrets out of the file
 
-List env var names under `secrets` and export the values. Nous masks them in its logs and fails validation if they appear in the answer.
+List env var names under `secrets` and export the values. Nous masks them in its logs and fails the answer check if they appear in the answer.

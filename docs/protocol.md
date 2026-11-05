@@ -1,6 +1,6 @@
 # Nous protocol
 
-Nous applies a light version of the scientific method to a software system. The method text the agent sees is `prompts/v2/method.md`, plus a task-type checklist from `prompts/v2/checklists/`. This page summarises it; [architecture.md](architecture.md) describes how Nous enforces it.
+Nous applies a light version of the scientific method to a software system. The text the agent sees is `prompts/lightweight/method.md`, plus a task-type checklist from `prompts/lightweight/checklists/`. This page summarises it; [architecture.md](architecture.md) describes how Nous enforces it.
 
 ## Preconditions
 
@@ -10,36 +10,20 @@ Nous applies a light version of the scientific method to a software system. The 
 | Controllable knobs | There is something to change: code, configuration, policy, workload. |
 | Reproducible runs | A command, simulator or testbed that can be re-run, ideally with seeds. |
 
-## The loop
+## The method
 
-1. **BASELINE.** Measure the system before changing anything. Record the command, git sha, observation and noise (`baseline.json`). If `task_type` is unset, choose one.
-2. **DESIGN.** Frame the sub-problem and the claims needed to answer the question (`problem.json`). Write a bundle of hypotheses (`bundle.json`), each with a mechanism, a prediction relative to the baseline, a control, and a `falsified_if` condition. Write the runs that test them (`plan.json`). Predictions are locked once DESIGN ends.
-3. **EXECUTE.** Run the plan. Mark each hypothesis `CONFIRMED`, `PARTIALLY_CONFIRMED`, `REFUTED` or `INCONCLUSIVE`, with evidence that points at real files (`findings.json`). Propose principle changes (`principle_updates.json`).
-4. Repeat DESIGN and EXECUTE until the stop rule fires.
-5. **REPORT.** Write the answer, the deliverable, a repro command and evidence-backed claims (`answer.json`), plus `report.md`.
+The agent works on the task the way it normally would. Nous asks for three things:
 
-## Rules
+1. **Predict before testing.** Before each test, the agent writes a hypothesis and what it expects to measure to `notebook.jsonl`.
+2. **Cite the number.** After each test, it writes the result (`confirmed`, `refuted` or `inconclusive`). A confirmed or refuted result cites the file, key and value that hold the measurement.
+3. **Answer with checkable claims.** It finishes with `answer.json`: prose that answers every part of the question, the deliverable, one `repro` command that regenerates the headline numbers, and claims whose values are copied from files.
 
-1. **Baseline first.** Every prediction is a change relative to the baseline.
-2. **Locked predictions.** Editing `bundle.json` after DESIGN is reverted and flagged as a `prereg_violation`.
-3. **Controls.** Each hypothesis has a control, or says why it cannot. Treatment and control runs use the same seeds.
-4. **Competing explanations.** A bundle covers at least 2 mechanism families, or gives a `single_family_reason`.
-5. **Noise-aware claims.** A `CONFIRMED` or `REFUTED` status needs a noise estimate, and the effect must exceed twice the noise sd. Otherwise the agent must add seeds, mark the result `INCONCLUSIVE`, or declare the noise unmeasured with a reason.
-6. **Checkable evidence.** Every claim cites a file, a key and a value that a validator re-reads.
-7. **Compounding principles.** Principles are added, revised or removed only with a `finding_ref` to a tested hypothesis. Active principles are shown at each DESIGN.
+## What Nous adds
 
-## Prediction errors
-
-When a prediction is wrong, `findings.json` records an `error_type`:
-
-| Error type | Meaning |
-|---|---|
-| `direction` | The effect went the other way; the mechanism model is wrong. |
-| `magnitude` | Right direction, wrong size. |
-| `regime` | The effect holds under different conditions than predicted. |
-| `shape` | The functional form (for example linear vs threshold) differs. |
-| `none` | The prediction held. |
+- **Checks.** Nous re-reads every cited value. A wrong value, a missing file, a result without an earlier hypothesis, or a `repro` that uses `cd` or an absolute path blocks the stop until it is fixed.
+- **Repro.** The `repro` command must appear in the command record with exit code 0. If it does not, Nous asks the agent to run it as written.
+- **One challenger.** A fresh, read-only reviewer reads the answer and notebook and names the strongest reason the conclusion could be wrong that the measurements do not already rule out: an untested regime, a confound, the wrong baseline, a sub-question left open. The agent runs that check, records it in the notebook and updates the answer.
 
 ## Stopping
 
-The campaign stops after an iteration when the question is answered with all declared claims measured, when `max_iterations` is reached, when `stall_iterations` quiet iterations occur in a row, when `nous stop` was called, or when the failure breaker trips. REPORT always runs. See [architecture.md](architecture.md#stop-rule-stop_rulepy) for the exact order.
+The campaign ends when a valid answer has passed the repro check and the challenger step (`answered`), or when the answer still fails its checks after the repair messages (`partial`). Nous then exports the evidence and writes the final record.

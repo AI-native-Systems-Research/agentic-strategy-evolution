@@ -1,97 +1,53 @@
-# Data model (Nous v2)
+# Data model
 
-The agent writes the artifacts below; Nous validates them against `orchestrator/v2/schemas/*.schema.json` plus the semantic checks in [architecture.md](architecture.md#validators-repair-and-breaker). Run `nous schema <name>` for the full schema. Unknown top-level keys are moved into an `extra` object, never rejected.
+The agent writes `notebook.jsonl` and `answer.json`; Nous checks both (see [architecture.md](architecture.md#checks)) and writes everything else. [example-campaign/](example-campaign/README.md) has a complete set of files.
 
-Paths: `baseline.json`, `answer.json`, `report.md` sit in the work dir; the rest sit in `runs/iter-N/`.
+An **evidence item** is `{path, key, value}`: a file, a locator inside it, and the value expected there. Key formats and path roots are in [architecture.md](architecture.md#evidence).
 
-An **evidence item** is `{path, key, value}`: a file, a locator inside it, and the value expected there. Key formats and path roots are in [architecture.md](architecture.md#evidence). [example-campaign/](example-campaign/README.md) has a complete, valid set of artifacts.
+## notebook.jsonl (agent)
 
-## baseline.json (BASELINE)
+One JSON object per line, appended as the agent works:
 
-Required: `task_type` (`debug|verify|optimize|policy|explain|other`), `command`, `git_sha` (7-40 hex), `observation`, `metrics_path`, `noise`. Optional: `task_type_reason`.
+- `{"kind": "hypothesis", "id": "H1", "claim": "...", "predict": "..."}`: written before the test. `id` and `predict` are required.
+- `{"kind": "result", "id": "H1", "status": "confirmed|refuted|inconclusive", "evidence": [items]}`: written after it. A confirmed or refuted result needs `evidence`.
+- `{"kind": "note", "text": "..."}`: anything else worth keeping.
 
-`observation` keys depend on `task_type`:
+To update a result, the agent appends a new result line; only the latest one per id is checked.
 
-| task_type | observation |
-|---|---|
-| `debug` | `{reproduced: true, symptom, expected, actual}` |
-| `verify` | `{points: [{condition, predicted, measured}]}`, at least 1 point |
-| `optimize` | `{score}`, a number > 0 |
-| `policy`, `other` | `{metrics: {...}}`, at least 1 key |
-| `explain` | `{symptom, control}` |
+## answer.json (agent, rewritten by Nous)
 
-`noise` is exactly one of:
-- `{seeds: [int], values: [number], sd: number}` (measured),
-- `{deterministic: true}`,
-- `{unmeasured: true, reason: string}`.
+Required: `answer` (prose answering every part of the question), `deliverable` (a path or short description), `repro` (one command run from the repository root, relative paths only, no `cd`), `claims`: list of `{id, metric, value, condition, evidence}` plus optional `evidence_detail`. The schema is `orchestrator/lightweight/schemas/answer.schema.json`.
 
-## problem.json (DESIGN)
-
-Required: `task_type`, `claims_needed`: list of `{id, description, test_method}` with optional `min_seeds`, `needs_ci`, `conditions` (list). These declare what must be measured to answer the question; the stop rule and the final check read them. They are append-only: from iteration 2, every earlier id must still be listed.
-
-## bundle.json (DESIGN, locked)
-
-Required: `hypotheses`: list of `{id, role, family, mechanism, prediction, falsified_if, claim_ids}` plus `control` or `no_control_reason`. `prediction` is `{metric, direction}` with `direction` in `increase|decrease|equal|change` and optional `magnitude_or_threshold`. Optional top level: `single_family_reason` (needed when fewer than 2 families).
-
-Nous copies it to `.bundle.locked.json` after DESIGN and restores that copy if EXECUTE edits it.
-
-## plan.json (DESIGN)
-
-Required: `runs`: list of `{id, hypothesis_id, role, command, parameters, seeds}`, `role` in `treatment|control`, `seeds` at least one int. Optional per run: `wait_for` (a file path containing `/` or `.`, or `cmd:<shell>`; only for background runs), `workload_changes` (keys allowed to differ from locked values).
-
-## findings.json (EXECUTE)
-
-Required: `hypotheses`, `question_answered` (bool), `reason`. Optional: `best: {metric, value}`. When `question_answered` is true, `self_check: {alternative, ruled_out_by}` is required: the strongest other explanation of the main result, and the evidence items (checked like any other) that rule it out.
-
-Each hypothesis requires `id`, `status` (`CONFIRMED|PARTIALLY_CONFIRMED|REFUTED|INCONCLUSIVE`), `error_type` (`direction|magnitude|regime|shape|none`), `evidence` (list of evidence items). Optional: `partial_note`, `effect: {value (number), note, evidence}`, `noise_sd`, `noise_condition`, `noise_unmeasured`, `noise_reason`, `claims`: list of `{claim_id, metric, condition, value}` with optional `seeds`, `ci` and `evidence`.
-
-## principle_updates.json (EXECUTE)
-
-Required: `updates`: list of `{id, text, finding_ref, action}`, `action` in `add|revise|remove`, `finding_ref` a hypothesis id from the bundle. Optional `scope`: the settings the principle was tested in. Nous merges these into `principles.json` (a list of `{id, text, scope}`).
-
-## answer.json (REPORT)
-
-Required: `answer`, `deliverable` (string), `repro` (one command, run from the repository root, not starting with `cd`), `claims`: list of `{id, metric, value, condition, evidence}` plus optional `evidence_detail`. `report.md` is free-form.
-
-`evidence` is either a path string or an evidence item. After REPORT, Nous rewrites every claim to the output-contract form: `evidence` is a repo-relative `nous_evidence/...` path (the file is copied into the target repo), the original item moves to `evidence_detail` with the same new path, and a numeric-string `value` becomes a number:
+`evidence` is either a path string or an evidence item. At the end, Nous rewrites every claim to the output-contract form: `evidence` is a repo-relative `nous_evidence/...` path (the file is copied into the target repo), the original item moves to `evidence_detail` with the same new path, and a numeric-string `value` becomes a number:
 
 ```json
 {"id": "C1", "metric": "p99_ms", "value": 41.8, "condition": "cache_size=256",
- "evidence": "nous_evidence/runs/iter-1/results/R1.json",
- "evidence_detail": {"path": "nous_evidence/runs/iter-1/results/R1.json", "key": "/p99_ms", "value": 41.8}}
+ "evidence": "nous_evidence/results/R1.json",
+ "evidence_detail": {"path": "nous_evidence/results/R1.json", "key": "/p99_ms", "value": 41.8}}
 ```
 
-The validator checks `evidence_detail` when present; otherwise the path must exist and contain the value text.
+The check reads `evidence_detail` when present; otherwise the path must exist and contain the value text.
 
 ## Files written by Nous
 
-**state.json**: `phase`, `iteration`, `session_id`, `sdk_version`, `cli_version`, `cut_offs` (output cut-offs so far) once one happens, and `session_costs` (the CLI's cumulative cost per session id, so a resumed session's spend is not counted twice). Merged with atomic writes.
+**runs.jsonl**: one row per Bash command: `ts`, `phase` (`INVESTIGATE`), `iter` (0), `tool_use_id`, `command`, `exit_code`, `output_bytes`, `cwd`, `background`, `agent_id`, `experiment`.
 
-**ledger.json**: list of rows, one per iteration, written by `loop.py`. `ledger_entry.schema.json` (`nous schema ledger_entry`) is the exact row shape.
+**final_check.json**:
 
 | Field | Meaning |
 |---|---|
-| `iteration` | iteration number |
-| `bundle_hash` | sha256 of the locked bundle |
-| `claims_changed` | claim set differs from the previous iteration |
-| `best_changed` | `findings.best.value` improved by more than `min_improvement` |
-| `principles_changed` | at least one `add` or `revise` |
-| `prereg_violation` | `bundle.json` was edited after the lock |
-| `status` | `ok`, or `partial` when a DESIGN or EXECUTE repair ran out |
-| `stop_reason` | `null`, or `halt`, `stop_sentinel`, `answered`, `max_iterations`, `stall` |
-| `cost_meter_usd` | cost meter for this iteration |
-| `tokens` | `{input, output}` for this iteration |
-| `note` | `--note` text, on the first iteration after a resume |
-| `report_cost_usd` | last row only: cost meter for REPORT |
-| `repro_recorded` | last row only: from `final_check.json` |
-| `claims_matched_fraction` | last row only: from `final_check.json` |
+| `answer_valid`, `evidence_errors` | the answer check (schema, evidence, repro form, secrets) |
+| `repro_recorded` | `runs.jsonl` holds a successful run of `repro` |
+| `notebook` | counts: `hypotheses`, `confirmed`, `refuted`, `inconclusive`, `notes` |
+| `notebook_errors` | the notebook check |
+| `challenger` | the reviewer's verdict, `{gap: null, error}` when it failed, or `null` when the answer was not valid |
+| `status` | `ok`, or `partial` when the answer still failed its checks after the repair messages |
+| `claims_matched_fraction`, `unmeasured_noise_findings` | kept for a stable format; always 0.0 and `[]` |
 
-**runs.jsonl**: one row per Bash command: `ts`, `phase`, `iter`, `tool_use_id`, `command`, `exit_code`, `output_bytes`, `cwd`, `background`, `agent_id`, `experiment`.
+**ledger.json**: a list with one row: `iteration` (1), `status`, `stop_reason` (`answered` or `partial`), `cost_meter_usd`, `tokens` (`{input, output}`), `repro_recorded`, `nous_version` (3, kept so existing readers parse it).
 
-**final_check.json**: `answer_valid`, `evidence_errors`, `repro_recorded`, `claims_matched_fraction`, `unmeasured_noise_findings` (see [architecture.md](architecture.md#final-check-final_checkpy)).
+**state.json**: `phase` (`INVESTIGATE`, `CHALLENGE`, `DONE`), `iteration`, `session_id`, `sdk_version`, `cli_version`, `session_costs` (the CLI's cumulative cost per session id, so a resumed session's spend is not counted twice), `cut_offs` once a reply is cut, and `cost_usd` while in `CHALLENGE`. Merged with atomic writes.
 
 **nous_evidence/**: copies of the files that `answer.json` claims cite, in both the target repo and the work dir.
 
-**halt.json**: `fingerprint`, `phase`, `message` (failure breaker).
-
-**state/digest.json**: `phase`, `iteration`, `baseline` (`task_type`, `command`, `git_sha`, `noise`), `principles`, `last_findings`, `active_hypotheses` (`id`, `mechanism`). Written by the PreCompact hook; used to prime a fresh session on resume.
+**state/digest.json**: written by the PreCompact hook; used to prime a fresh session when the context is full.
